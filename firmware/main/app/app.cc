@@ -34,8 +34,8 @@
 namespace {
 constexpr char kTag[] = "App";
 
-// 组合键 UP+DOWN 同时按下 = 全屏刷新(清残影)。仅依赖按下/释放瞬间事件维护
-// "当前按住中" 标志:两个键都处于按住中时立即触发 + 标记 consumed,本次按键
+// 组合键 UP+DOWN 同时按下 = 全屏刷新（清残影）。仅依赖按下/释放瞬间事件维护
+// 「当前按住中」标志：两个键都处于按住中时立即触发 + 标记 consumed，本次按键
 // 周期内的 OnClick / OnLongPress 一律 skip,避免组合键又触发单按动作。
 // 下一次 OnPressDown 来时清 consumed,开新会话。
 struct ComboState {

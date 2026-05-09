@@ -40,7 +40,7 @@ FrameView::FrameView(lv_obj_t* parent) {
     lv_obj_clear_flag(container_, LV_OBJ_FLAG_SCROLLABLE);
 
     // image 全屏居中。状态栏白底浮在最上 28px 会盖住 image 顶部一小块,
-    // 12 张工程车图主体在中间偏下,顶部通常是天空/留白,可接受。
+    // 多数素材主体在中间偏下,顶部通常是留白,可接受。
     image_ = lv_image_create(container_);
     lv_obj_align(image_, LV_ALIGN_CENTER, 0, 0);
 }

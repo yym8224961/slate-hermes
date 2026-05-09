@@ -43,7 +43,7 @@ class EpdSsd1683 {
     uint8_t* prev_buffer_ = nullptr;  // 上次刷到 EPD 的快照
     uint8_t* tx_buf_      = nullptr;  // refresh_task 用的临时快照
 
-    // 200 而非 128:LVGL anti-alias 字体边缘的灰度像素被划入"黑",
+    // 200 而非 128：LVGL anti-alias 字体边缘的灰度像素被划入「黑」，
     // 字体看起来粗实清晰。128 中性二值化会让灰边判白丢失,字体发虚。
     uint8_t bw_threshold_ = 200;
 

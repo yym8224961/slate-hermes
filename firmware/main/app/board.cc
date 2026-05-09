@@ -51,7 +51,7 @@ void Board::InitPower() {
     power_->PowerAudioOn();   // GPIO42=1,AVDD_3V3 起来,I²C 上拉才有效
 
     // 等用户松开下键(SW1=GPIO18)。开机时硬件靠 SW1 把 Q5 栅极拉低维持电源,
-    // VbatPowerOn 之后软件接管;但按键驱动一启动就会读到下键的"已按"状态而误触
+    // VbatPowerOn 之后软件接管；但按键驱动一启动就会读到下键的「已按」状态而误触
     // 一次回调,所以 busy-wait 等用户先松开。
     // 2s 超时是兜底:理论上电源故障跑不到这,但加上避免硬件诡异时永久挂死。
     constexpr int kMaxWaitMs = 2000;

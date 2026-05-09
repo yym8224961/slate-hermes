@@ -162,7 +162,7 @@ void EpdSsd1683::LvglFlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t*
         self->last_flush_tick_ = xTaskGetTickCount();
         // flush_cb notify refresh_task。LVGL 整屏 invalidate 可能分多个 chunk
         // 多次调用 flush_cb,refresh_task 头部的 sliding debounce 把这些 notify
-        // 合并成一轮刷新——所以这里大胆 notify,不会出现"半成品 buffer 抢跑全刷"。
+        // 合并成一轮刷新——所以这里大胆 notify，不会出现「半成品 buffer 抢跑全刷」。
         task      = self->refresh_task_;
         do_notify = (task != nullptr);
     }
@@ -175,8 +175,8 @@ void EpdSsd1683::LvglFlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t*
 
 bool EpdSsd1683::IsRefreshPending() {
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-    // force_full_refresh_ 直到全刷完成才清，覆盖整个"main 调 RequestUrgentFullRefresh
-    // → LVGL 渲染 → flush_cb notify → refresh_task 全刷"的等待窗口。
+    // force_full_refresh_ 直到全刷完成才清，覆盖整个「main 调 RequestUrgentFullRefresh
+    // → LVGL 渲染 → flush_cb notify → refresh_task 全刷」的等待窗口。
     bool b = pending_ || urgent_refresh_ || force_full_refresh_ || refresh_in_progress_;
     xSemaphoreGive(dirty_mutex_);
     return b;
@@ -185,7 +185,7 @@ bool EpdSsd1683::IsRefreshPending() {
 void EpdSsd1683::RequestUrgentPartialRefresh() {
     // 设标志位 + notify,立即返回。不在这里等 LVGL,因为 flush_cb 也会 notify;
     // RefreshTaskLoop 头部的 sliding debounce(50ms 内有新 notify 就续 50ms,
-    // 最长 500ms)会自然吸收"ShowCar 后 LVGL 50ms 才 flush"这一段时间。
+    // 最长 500ms）会自然吸收「ShowCar 后 LVGL 50ms 才 flush」这一段时间。
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
     urgent_refresh_      = true;
     refresh_in_progress_ = true;

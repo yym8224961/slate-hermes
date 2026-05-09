@@ -2,20 +2,20 @@
 //
 // 所有「可输入 / 可选择」控件 (Input、Radix Select trigger、inline rename
 // input、textarea …) 共用同一套 affordance,保证用户在 paper / cream 背景
-// 上一眼能认出"这是个可交互区"。
+// 上一眼能认出「这是个可交互区」。
 //
 // 视觉契约 — 三段式,每一档都比上一档「更显著」一档:
 //   默认 → bg-cream-deep + 1px stone-light border + 全周 1px inset shadow
 //          (双重边视觉:远看是软细边,近看 ~1.5px,在 paper/cream 暖色底上
-//           稳稳浮出"这是输入区";关键是 inset shadow 用 spread=1px 0 0 0,
-//           四边对称,不是只压顶部那种"半边凹陷")
-//   hover → border 加深到 stone(暖棕),inset 同步加深,提示"可以点"
+//           稳稳浮出「这是输入区」；关键是 inset shadow 用 spread=1px 0 0 0,
+//           四边对称，不是只压顶部那种「半边凹陷」）
+//   hover → border 加深到 stone（暖棕），inset 同步加深，提示「可以点」
 //   focus → 清 inset shadow → 换 4px clay/15 外发光 ring + bg 升 paper
 //          (inset 让位给 outset ring,激活感最强;不能用 ring-inset 做默认
 //           态 — Tailwind v4 的 --tw-ring-inset 不会被 focus:ring-4 自动
 //           重置,会导致 focus 也是内描 4px 而非外发光)
 //
-// 不用 border-2 做"加厚"的原因:整页 form 一加粗就"块化",失去"案头"克制感;
+// 不用 border-2 做「加厚」的原因：整页 form 一加粗就「块化」，失去「案头」克制感；
 // 1px border + 1px inset 的复合边在远看仍是软细边,近看才看出是双层。
 //
 // 改动这里 = 同时改全站所有输入控件,不要在组件里另写 bg/border/ring/shadow。
@@ -40,7 +40,7 @@ export const inputCls = [
 
 // Radix Select trigger:在 fieldBaseCls 之上加 flex/justify-between + open
 // 状态(open 时 trigger 应像 focus 一样高亮 — 因为 :focus 这时已让位给
-// listbox,不写 data-[state=open] 的话 trigger 反而失焦看起来"未聚焦")
+// listbox，不写 data-[state=open] 的话 trigger 反而失焦看起来「未聚焦」）
 export const selectTriggerCls = [
   'w-full inline-flex items-center justify-between gap-2',
   'px-4 py-2.5',

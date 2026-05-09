@@ -63,7 +63,7 @@ void ChargeStatus::Tick(int64_t now_ms) {
     // 状态优先级(从高到低):
     //   1. 没电源 → kNoPower
     //   2. 检测到无电池(两线 ~1Hz 交替) → kNoBattery
-    //   3. CHRG_L 稳定低(明确"正在充电"信号) → kCharging
+    //   3. CHRG_L 稳定低（明确「正在充电」信号） → kCharging
     //      ← 这一条必须比 kFull 优先,否则:充电 IC 的 STDBY 是 open-drain,
     //      没装外部上拉时浮空读 1 是常态,会被误判 full_stable=true → kFull,
     //      表现为充电中显示满电图标而不是 BOLT。

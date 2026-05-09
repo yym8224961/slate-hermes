@@ -1,7 +1,7 @@
-// 组详情:metadata + 帧网格(拖拽排序 + 试听/编辑/删除)+ 顶部"新增帧"。
+// 组详情：metadata + 帧网格（拖拽排序 + 试听/编辑/删除）+ 顶部「新增帧」。
 //
-// dnd-kit reorder 通过 useDndOrder 复用;optimistic update 仍在本地处理,
-// 因为 server 接受的是"旧 idx 的新顺序",不是 etag 列表。
+// dnd-kit reorder 通过 useDndOrder 复用；optimistic update 仍在本地处理，
+// 因为 server 接受的是「旧 idx 的新顺序」，不是 etag 列表。
 
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
@@ -44,7 +44,7 @@ export function GroupDetail() {
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  // 帧排序需要"旧 idx 的新顺序"作为 server 入参,不能直接用 useDndOrder
+  // 帧排序需要「旧 idx 的新顺序」作为 server 入参，不能直接用 useDndOrder
   // 的纯 etag 列表 — 这里保留独立逻辑。
   function onDragEnd(e: DragEndEvent) {
     const { active, over } = e;
@@ -118,7 +118,7 @@ export function GroupDetail() {
 
       <GroupHeader group={group} KindIcon={KindIcon} onAddFrame={openCreate} />
 
-      {/* 不再有"帧"小标题(组名已是页面标题,重复),但保留波浪分割线。
+      {/* 不再有「帧」小标题（组名已是页面标题，重复），但保留波浪分割线。
           mt-5 与 Section 组件 header→wave 间距一致。 */}
       <div className="wave-divider mt-5" />
       <div className="mt-6 fade-up fade-up-1">

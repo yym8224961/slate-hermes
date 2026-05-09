@@ -9,8 +9,8 @@
 //
 // 需要分隔条:<SelectSeparator />
 //
-// 这个组件刻意不做"options[]"那种 declarative 数据驱动 — 因为 GroupSelector
-// 的"未选组"item 与正常 group items 之间需要一根分隔线,而 DitherControls
+// 这个组件刻意不做「options[]」那种 declarative 数据驱动 — 因为 GroupSelector
+// 的「未选组」item 与正常 group items 之间需要一根分隔线，而 DitherControls
 // 不需要。children 形式让两者复用 trigger 但保留各自结构自由度。
 
 import { type ReactNode } from 'react';

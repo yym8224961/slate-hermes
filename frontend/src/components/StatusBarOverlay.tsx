@@ -13,7 +13,7 @@ import { cn } from '../lib/cn';
 interface StatusBarOverlayProps {
   caption?: string | null;
   className?: string;
-  /** 编辑模式可打开:加红色虚线提示"安全区,主体别放这里" */
+  /** 编辑模式可打开：加红色虚线提示「安全区，主体别放这里」 */
   showSafeArea?: boolean;
 }
 

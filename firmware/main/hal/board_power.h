@@ -1,6 +1,6 @@
 #pragma once
 
-// 系统级电源管理。只管"系统的"两条 rail：
+// 系统级电源管理。只管「系统的」两条 rail：
 //   - VBAT 软锁存（GPIO17 拉低=关机的唯一手段）
 //   - AVDD_3V3 / Audio rail（GPIO42，关掉=I²C 死、ES8311/PA/MIC 失能）
 // EPD_PWR(GPIO6) 由 EpdSsd1683 自管；PA_CTRL(GPIO46) 由 esp_codec_dev 库通过

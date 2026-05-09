@@ -100,7 +100,7 @@ void SleepManager::EnterDeepSleep() {
     ESP_LOGW(kTag, "EnterDeepSleep: shutting down peripherals");
 
     // 0) 让上层(App)在进睡前最后更新一次 UI 状态 — 比如把状态栏 wifi 图标
-    //    改成"断开",免得屏上留个"已连接"的过期画面误导用户。
+    //    改成「断开」，免得屏上留个「已连接」的过期画面误导用户。
     if (pre_sleep_hook_) pre_sleep_hook_();
 
     // 1) 停后台 task,避免在 rail 关闭后还有 I²C / 网络写操作。

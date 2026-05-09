@@ -217,7 +217,7 @@ void AudioPlayer::TaskLoop() {
         if (!buf || len == 0) continue;
 
         // 分块写,每块检查 stop_flag_。中断时丢掉 DMA 残留(disable+enable)
-        // 防止下一段 PCM 接续旧片段产生"啵"声。
+        // 防止下一段 PCM 接续旧片段产生「啵」声。
         size_t off       = 0;
         bool   was_stopped = false;
         while (off < len) {

@@ -12,7 +12,7 @@ interface AudioPlayPreviewProps {
   /** 没 etag 表示无音频,组件返 null */
   etag: string | null;
   className?: string;
-  /** 标签:显示在按钮旁(可选,如 "试听") */
+  /** 标签：显示在按钮旁（可选，如「试听」） */
   label?: string;
 }
 

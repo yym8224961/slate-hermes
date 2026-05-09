@@ -1,4 +1,4 @@
-// Soft-craft input。所有"看上去是输入框"的样式集中在 lib/styles.ts 里
+// Soft-craft input。所有「看上去是输入框」的样式集中在 lib/styles.ts 里
 // (Select trigger / inline rename input / textarea 都共用),保证 affordance
 // 一致 — 改这里也别忘了同步那边。
 

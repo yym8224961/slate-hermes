@@ -542,7 +542,7 @@ function CreateGroupDialog({
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoFocus
-              placeholder="如:工程车系列"
+              placeholder="如:每日卡片"
             />
 
             <div>

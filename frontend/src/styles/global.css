@@ -16,7 +16,7 @@
  * 霞鹜文楷做主调中文,Fraunces+DM Sans 配英文。配色取自:奶油纸 +
  * 暖墨棕 + 砖红/陶土 + 鹅黄 accent + 苔绿(在线状态)。
  *
- * 形状:大圆角 14-22px,贴合"手账/便签/家庭"语境。比 editorial 的
+ * 形状：大圆角 14-22px，贴合「手账/便签/家庭」语境。比 editorial 的
  * 直角软,但不到 macOS 圆角那么柔。
  *
  * 字体故意避开 Inter / Roboto / Arial。中文用霞鹜文楷书写感强,
@@ -139,7 +139,7 @@ input[type="range"] {
   cursor: pointer;
 }
 
-/* danger 变体 — 用于"重启设备"这种破坏性卡片按钮。
+/* danger 变体 — 用于「重启设备」这种破坏性卡片按钮。
    hover 时染一抹砖红,而不是 cream-deep。语义上和主按钮的 danger variant 呼应。 */
 .craft-card-danger {
   background: var(--color-cream);
@@ -178,7 +178,7 @@ input[type="range"] {
 
 /* 手绘感波浪分割(替代死板的 hairline)。
    opacity 收到 0.4 — 一页里多个 Section 一起出现时,
-   0.7 会让整页显得"被切成条",视觉太响。 */
+   0.7 会让整页显得「被切成条」，视觉太响。 */
 .wave-divider {
   height: 8px;
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 8'><path d='M0 4 Q 5 0, 10 4 T 20 4 T 30 4 T 40 4' fill='none' stroke='%23b8a890' stroke-width='1.2'/></svg>");

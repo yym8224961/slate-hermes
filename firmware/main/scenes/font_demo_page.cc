@@ -10,8 +10,9 @@
 namespace {
 constexpr char kTag[] = "font_demo";
 
-// 测试文本 — 故意覆盖典型 UI 中文 + 数字 + 标点。子集字体只有 89 个字 + ASCII,
-// 出现的所有字都应该有字模。如果某字体显示豆腐块,说明它没收录,字体覆盖度低。
+// 测试文本 — 故意覆盖典型 UI 中文 + 数字 + 标点。所有字必须落在
+// tools/gen_fonts.sh 的 SYMS 字符集内,否则 FusionPixel 子集字体会出豆腐块。
+// 改这里的字 → 同步改 SYMS → 重跑 gen_fonts.sh 重生 FusionPixel_12.c。
 constexpr const char* kBody =
     "正在准备  工程车合集\n"
     "电量充电中  已接电源\n"

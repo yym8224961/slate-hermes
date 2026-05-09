@@ -107,7 +107,7 @@ static api::Telemetry BuildTelemetry(const SyncDeps& deps, const std::string& cu
     return tel;
 }
 
-// 拉某 group 的 manifest 并把缺的 frame 落盘。group_changed 表示是否真的有"内容更新"。
+// 拉某 group 的 manifest 并把缺的 frame 落盘。group_changed 表示是否真的有「内容更新」。
 void SyncService::SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag,
                                         bool& group_changed) {
     group_changed = false;

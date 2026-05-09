@@ -30,10 +30,10 @@ class SyncService {
     void Start(SyncDeps deps);
     void Stop();
 
-    // 立即触发一次 poll(设置页"立即同步"按钮用)
+    // 立即触发一次 poll（设置页「立即同步」按钮用）
     void TriggerNow();
 
-    // 通知"用户活动"(按键 / 切 frame)— 用于自适应轮询间隔。
+    // 通知「用户活动」（按键 / 切 frame）— 用于自适应轮询间隔。
     void MarkUserActive();
 
     // 设备主动 cycle 切组(scene 按键 callback 调)。

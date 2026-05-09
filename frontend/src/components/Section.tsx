@@ -1,5 +1,5 @@
-// Soft-craft 节标题:楷书大字中文 + 砖红 ▸ 装饰 + 副标楷体小字。
-// 没有 editorial 的"双线分隔",改成温柔的波浪线。响应式同上。
+// Soft-craft 节标题：楷书大字中文 + 砖红 ▸ 装饰 + 副标楷体小字。
+// 没有 editorial 的「双线分隔」，改成温柔的波浪线。响应式同上。
 
 import type { ReactNode } from 'react';
 import { cn } from '../lib/cn';

@@ -9,7 +9,7 @@
 //
 // 状态保留在本地以避免 React Query optimistic 更新与 dnd-kit 拍号混乱。
 //
-// items 变化(数据库刷新)时,如果"自己刚拖完",useEffect 会重新对齐 currentOrder。
+// items 变化（数据库刷新）时，如果「自己刚拖完」，useEffect 会重新对齐 currentOrder。
 
 import { useEffect, useState } from 'react';
 import { PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';

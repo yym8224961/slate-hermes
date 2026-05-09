@@ -1,8 +1,6 @@
 // Seed admin user for local development.
 // 用法: bun run --cwd backend prisma:seed
 // 幂等: 已存在的 admin user 跳过。
-//
-// M3 render service 复活后会回填 "工程车系列" 12 帧。
 
 import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
