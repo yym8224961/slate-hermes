@@ -29,9 +29,10 @@ ENV NODE_ENV=production \
     PORT=3001 \
     BLOB_DIR=/data/blobs
 
-# curl 仅用于 HEALTHCHECK
+# curl 用于 HEALTHCHECK;ffmpeg 用于音频转码(audio.service 把上传的任意音频
+# 转成 16k mono s16le PCM,frame 上传带音频必须有 ffmpeg)
 RUN apt-get update \
- && apt-get install -y --no-install-recommends curl \
+ && apt-get install -y --no-install-recommends curl ffmpeg \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app /app
