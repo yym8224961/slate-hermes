@@ -1,9 +1,10 @@
 #!/bin/sh
 set -e
 
-# prisma 默认从 cwd 读 prisma.config.ts + prisma/schema.prisma
+# 必须 cd 到 backend/ 再跑:Bun 1.3.x 的 tsconfig 发现按 cwd 而非源文件目录,
+# 从 /app 跑找不到 backend/tsconfig.json → experimentalDecorators 没启用 →
+# NestJS 装饰器走 TC39 stage-3 语义 → descriptor.value undefined 直接炸。
+# prisma 也是从 cwd 读 prisma.config.ts + prisma/schema.prisma,刚好同位置。
 cd /app/backend
 bunx prisma migrate deploy
-
-cd /app
-exec bun run backend/src/main.ts
+exec bun run src/main.ts

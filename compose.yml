@@ -1,20 +1,49 @@
-# VPS 上拉起 slate 用:
-#   cp backend/.env.example .env   # .env 放仓库根,不是 backend/
-#   编辑 .env 改 DATABASE_URL / JWT_SECRET / WEBHOOK_API_KEY
-#   docker compose pull && docker compose up -d
+# Slate 单机 docker compose 样例。开箱即用,自带 MySQL,适合自托管。
+# 生产部署用外部 MySQL 或反代时按需改造(去掉 mysql service,改 DATABASE_URL,加 traefik labels)。
+#
+# 首次启动:
+#   1. 把下面两个 <openssl rand -hex 32> 占位符换成真值
+#   2. docker compose up -d
+#   3. 浏览器访问 http://localhost:3001(默认 admin@example.com / admin123456,登录后改密)
 #
 # 升级:
 #   docker compose pull && docker compose up -d
 #
-# MySQL 不在 compose 里,按 README 直连内网 192.168.31.12:3306。
+# 持久化目录(compose 启动后会在 cwd 自动创建):
+#   ./slate/blobs/   frame image + audio,容器内 /data/blobs
+#   ./mysql/         MySQL datadir
+# 备份建议:每天 mysqldump + tar ./slate/blobs。
 
 services:
   slate:
     image: ghcr.io/qiujun8023/slate:latest
     container_name: slate
     restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
     ports:
       - "3001:3001"
-    env_file: .env
     volumes:
-      - ./blobs:/data/blobs
+      - ./slate:/data
+    environment:
+      - DATABASE_URL=mysql://slate:slate@mysql:3306/slate
+      - JWT_SECRET=<openssl rand -hex 32>
+      - WEBHOOK_API_KEY=<openssl rand -hex 32>
+
+  mysql:
+    image: mysql:8
+    container_name: slate-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: slate
+      MYSQL_USER: slate
+      MYSQL_PASSWORD: slate
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+    volumes:
+      - ./mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uslate", "-pslate"]
+      interval: 5s
+      timeout: 3s
+      retries: 12

@@ -37,24 +37,19 @@ async function bootstrap(): Promise<void> {
   if (existsSync(distRoot)) {
     app.useStaticAssets({ root: distRoot, wildcard: false });
 
-    // SPA fallback:启动时一次性读 index.html 缓存,NotFoundHandler 直接 send buffer。
-    // 不走 @fastify/static 的 reply.sendFile,避免 fastify 多版本下声明合并失效。
+    // SPA fallback:NestFastifyApp init 阶段已经自己 setNotFoundHandler 一次,
+    // fastify 同 prefix 不允许重复注册 → 改用 onSend hook 在响应发送前拦 404 改写。
+    // 启动时一次性读 index.html 缓存,免每次磁盘 IO。
+    // 带扩展名的资源(/favicon.ico 等)保持 404,避免 <img> 拿到 HTML 报损坏。
     const indexHtml = readFileSync(join(distRoot, 'index.html'));
-
     const fastify = app.getHttpAdapter().getInstance();
-    fastify.setNotFoundHandler((req, reply) => {
+    fastify.addHook('onSend', async (req, reply, payload) => {
+      if (reply.statusCode !== 404) return payload;
       const path = (req.url.split('?')[0] ?? '') as string;
-      if (path.startsWith('/api/') || path === '/healthz') {
-        void reply.status(404).send({ error: 'NotFound', message: `route ${path} not found` });
-        return;
-      }
-      // 带扩展名的静态资源未找到 → 真 404,不要兜底成 HTML(避免 image 损坏)
-      if (/\.[a-z0-9]+$/i.test(path)) {
-        void reply.status(404).send();
-        return;
-      }
-      // SPA 路由 → 返回 index.html 让前端 router 接管
-      void reply.type('text/html').send(indexHtml);
+      if (path.startsWith('/api/') || path === '/healthz') return payload;
+      if (/\.[a-z0-9]+$/i.test(path)) return payload;
+      void reply.code(200).type('text/html; charset=utf-8');
+      return indexHtml;
     });
   }
 
