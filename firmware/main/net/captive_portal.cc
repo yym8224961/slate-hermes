@@ -145,15 +145,23 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
         httpd_resp_send(req, R"({"success":true})", -1);
         // 启异步 task:延迟 2s 让浏览器收到 success 渲染 UI,然后通知上层
         // (App::OnFinished 内部 portal.Stop + esp_restart)。
+        // 栈 8KB:Stop 调链含 httpd_stop + esp_wifi_stop + esp_netif_destroy,
+        // 以及 esp_restart,4KB 偏紧。
         if (g_portal->on_finished_) {
-            xTaskCreate(
+            BaseType_t r = xTaskCreate(
                 [](void* arg) {
                     vTaskDelay(pdMS_TO_TICKS(2000));
                     auto* p = static_cast<CaptivePortal*>(arg);
                     if (p->on_finished_) p->on_finished_(true);
                     vTaskDelete(nullptr);
                 },
-                "portal_done", 4 * 1024, g_portal, 3, nullptr);
+                "portal_done", 8 * 1024, g_portal, 3, nullptr);
+            if (r != pdPASS) {
+                // 创建失败(堆紧张):同步触发 finished,避免 AP 永远不关。
+                // 缺点是浏览器看不到 success 页(连接随即断),但比 AP 一直开着好。
+                ESP_LOGE(kTag, "portal_done task create failed (heap?), firing inline");
+                g_portal->on_finished_(true);
+            }
         }
     } else {
         // 表单失败:回 {success:false, error:中文文案}。
