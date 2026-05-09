@@ -1,0 +1,88 @@
+// eink-frame-server v3 data model
+// 4 个 model: User / Device / Group / Frame
+// 字段顺序约定: scalar 字段最后两个固定为 createdAt + updatedAt; relation 紧随其后。
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+enum GroupKind {
+  static
+  dynamic
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String   @db.VarChar(255) // bcrypt hash
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  devices Device[] @relation("DeviceOwner")
+  groups  Group[]  @relation("GroupOwner")
+
+  @@map("users")
+}
+
+model Device {
+  id              String    @id @default(cuid())
+  mac             String    @unique @db.VarChar(17)
+  name            String?   @db.VarChar(64)
+  ownerUserId     String?   @map("owner_user_id")
+  sortOrder       Int       @default(0) @map("sort_order")
+  selectedGroupId String?   @map("selected_group_id")
+  lastSeenAt      DateTime? @map("last_seen_at")
+  batteryPct      Int?      @map("battery_pct")
+  rssiDbm         Int?      @map("rssi_dbm")
+  fwVersion       String?   @map("fw_version") @db.VarChar(32)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  owner         User?  @relation("DeviceOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  selectedGroup Group? @relation("DeviceSelectedGroup", fields: [selectedGroupId], references: [id], onDelete: SetNull)
+
+  @@index([ownerUserId, sortOrder])
+  @@index([selectedGroupId])
+  @@index([lastSeenAt])
+  @@map("devices")
+}
+
+model Group {
+  id          String    @id @default(cuid())
+  name        String    @db.VarChar(64)
+  etag        String    @db.VarChar(64)
+  kind        GroupKind @default(static)
+  ownerUserId String?   @map("owner_user_id")
+  sortOrder   Int       @default(0) @map("sort_order")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  owner            User?    @relation("GroupOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
+  frames           Frame[]
+  selectingDevices Device[] @relation("DeviceSelectedGroup")
+
+  @@index([ownerUserId, sortOrder])
+  @@map("groups")
+}
+
+model Frame {
+  id        String   @id @default(cuid())
+  groupId   String   @map("group_id")
+  sortOrder Int      @map("sort_order") // group 内的位置序号；与 Device/Group 的 sortOrder 同义
+  caption   String?  @db.VarChar(64)
+  imageEtag String   @map("image_etag") @db.VarChar(64)
+  audioEtag String?  @map("audio_etag") @db.VarChar(64)
+  imageSize Int      @map("image_size")
+  audioSize Int?     @map("audio_size")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+  @@unique([groupId, sortOrder])
+  @@map("frames")
+}

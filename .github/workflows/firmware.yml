@@ -1,0 +1,37 @@
+name: firmware
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'firmware/**'
+      - '.github/workflows/firmware.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: ESP-IDF build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: ESP-IDF build
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: "v5.5.2"
+          target: esp32s3
+          path: "firmware"
+          command: >-
+            idf.py build &&
+            idf.py merge-bin -o slate-full.bin &&
+            cp build/slate.bin build/slate-ota.bin
+
+      - name: upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: |
+            firmware/build/slate-full.bin
+            firmware/build/slate-ota.bin
+          if-no-files-found: error
+          retention-days: 14

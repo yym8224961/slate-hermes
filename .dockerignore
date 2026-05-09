@@ -1,0 +1,32 @@
+# 版本控制 / 编辑器 / AI
+.git
+.github
+.gitignore
+.vscode
+.idea
+.claude
+.qwen
+.gemini
+.venv
+.cache
+
+# 依赖与构建产物(builder stage 自己装 / 自己 build)
+**/node_modules
+**/dist
+**/build
+**/.cache
+**/*.tsbuildinfo
+
+# 固件 / 文档(不进 backend 镜像)
+firmware
+docs
+
+# 运行时数据
+backend/blobs
+
+# 本地环境变量与日志
+.env
+.env.*
+!**/.env.example
+**/*.log
+**/.DS_Store

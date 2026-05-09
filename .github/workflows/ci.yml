@@ -1,0 +1,111 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-format:
+    name: lint + format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run format:check
+      - run: bun run lint
+
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      # Prisma generate 仅读 schema.prisma 生成 client 类型,不连 DB,
+      # 但 schema validator 要 DATABASE_URL 存在(任意值即可)。
+      - name: prisma generate
+        run: bun run --cwd backend prisma:generate
+        env:
+          DATABASE_URL: mysql://ci:ci@127.0.0.1:3306/ci
+
+      - run: bun run typecheck
+        env:
+          DATABASE_URL: mysql://ci:ci@127.0.0.1:3306/ci
+          JWT_SECRET: ci_dummy_secret_long_enough_to_pass_validation
+          WEBHOOK_API_KEY: ci_dummy_webhook_api_key
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - name: prisma generate
+        run: bun run --cwd backend prisma:generate
+        env:
+          DATABASE_URL: mysql://ci:ci@127.0.0.1:3306/ci
+
+      - run: bun run --cwd backend test
+        env:
+          DATABASE_URL: mysql://ci:ci@127.0.0.1:3306/ci
+          JWT_SECRET: ci_dummy_secret_long_enough_to_pass_validation
+          WEBHOOK_API_KEY: ci_dummy_webhook_api_key
+
+  frontend-build:
+    name: frontend build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.bun/install/cache
+          key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
+          restore-keys: bun-${{ runner.os }}-
+
+      - run: bun install --frozen-lockfile
+
+      - run: bun run --cwd frontend build

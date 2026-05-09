@@ -1,0 +1,20 @@
+# VPS 上拉起 slate 用:
+#   cp backend/.env.example .env   # .env 放仓库根,不是 backend/
+#   编辑 .env 改 DATABASE_URL / JWT_SECRET / WEBHOOK_API_KEY
+#   docker compose pull && docker compose up -d
+#
+# 升级:
+#   docker compose pull && docker compose up -d
+#
+# MySQL 不在 compose 里,按 README 直连内网 192.168.31.12:3306。
+
+services:
+  slate:
+    image: ghcr.io/qiujun8023/slate:latest
+    container_name: slate
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    env_file: .env
+    volumes:
+      - ./blobs:/data/blobs

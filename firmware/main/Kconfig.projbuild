@@ -1,0 +1,53 @@
+menu "Slate Configuration"
+
+config SLATE_DEFAULT_SERVER_URL
+    string "Default server URL (shown in captive portal)"
+    default ""
+    help
+        Pre-fill value for the "服务端 URL" field in captive portal.
+        Leave empty for production builds. For local dev override via
+        menuconfig or sdkconfig.defaults (e.g. http://192.168.x.x:3001).
+
+config SLATE_AP_SSID_PREFIX
+    string "SoftAP SSID prefix (suffix is last 2 bytes of MAC)"
+    default "Slate"
+    help
+        AP SSID will be {prefix}-{XX}{YY} where XX:YY is last 2 bytes of MAC.
+
+config SLATE_DEFAULT_TIMEZONE
+    string "Default POSIX timezone string for SNTP"
+    default "CST-8"
+    help
+        Used by setenv("TZ", ...) after SNTP sync. CST-8 = China Standard Time.
+
+config SLATE_DEFAULT_POLL_INTERVAL_S
+    int "Default device poll interval (seconds)"
+    default 60
+    range 10 3600
+    help
+        Fallback if server doesn't include poll_interval_s in /state response.
+
+config SLATE_BOOT_LONGPRESS_RESET_MS
+    int "BOOT button long-press to clear NVS (ms)"
+    default 5000
+    range 2000 15000
+    help
+        阶段 2 起改成 5 击触发清 NVS,这个值仅作为 Button 库构造参数的兼容保留。
+
+config SLATE_IDLE_DEEP_SLEEP_MIN
+    int "Idle minutes before entering deep sleep"
+    default 5
+    range 1 60
+    help
+        没按键 + 不在充电时,N 分钟后进 deep sleep。BOOT/DOWN 键唤醒(GPIO 39 UP
+        键不是 RTC IO 不能 ext1 唤醒)。captive portal 期间禁用。
+
+config SLATE_LOG_PLAINTEXT_CRED
+    bool "Log WiFi password and full credentials in plaintext"
+    default n
+    help
+        ⚠ DEBUG ONLY. When enabled, captive portal /submit handler and
+        Wifi::TryConnect will write the WiFi password to UART log to help
+        diagnose connectivity issues. NEVER ship a build with this on.
+
+endmenu

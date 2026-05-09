@@ -1,0 +1,24 @@
+import { Injectable } from '@nestjs/common';
+import bcrypt from 'bcryptjs';
+import type { LoginRequestT, LoginResponseT } from 'shared';
+import { AuthError } from '../../common/errors';
+import { UsersService } from '../users/users.service';
+import { JwtTokenService } from './jwt-token.service';
+
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly users: UsersService,
+    private readonly tokens: JwtTokenService
+  ) {}
+
+  async login(input: LoginRequestT): Promise<LoginResponseT> {
+    const user = await this.users.findByEmail(input.email);
+    if (!user) throw new AuthError('invalid credentials');
+    const ok = await bcrypt.compare(input.password, user.password);
+    if (!ok) throw new AuthError('invalid credentials');
+
+    const token = this.tokens.sign({ sub: user.id, email: user.email });
+    return { token, user: { id: user.id, email: user.email } };
+  }
+}

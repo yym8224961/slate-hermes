@@ -1,0 +1,92 @@
+# 项目专用 ESP32-S3 (zectrix Note4),target 固化在这里,
+# 无需手动 idf.py set-target esp32s3。
+CONFIG_IDF_TARGET="esp32s3"
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# 应用版本（编译期注入）
+CONFIG_APP_PROJECT_VER_FROM_CONFIG=y
+CONFIG_APP_PROJECT_VER="0.1.0"
+
+# 关掉一些不用的服务，省 flash + 启动时间
+CONFIG_ESP_COREDUMP_ENABLE_TO_NONE=y
+CONFIG_ESP_TASK_WDT_INIT=n
+CONFIG_BOOTLOADER_WDT_ENABLE=n
+
+# C++ 启用 exceptions（需要 std::function 等）
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+CONFIG_COMPILER_CXX_RTTI=y
+
+# 日志
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
+
+# FreeRTOS
+CONFIG_FREERTOS_HZ=1000
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192   # 默认 3584 不够 LVGL 渲染调用栈
+
+# LVGL：简化 include 路径让字体源里的 #include "lvgl.h" 生效
+CONFIG_LV_LVGL_H_INCLUDE_SIMPLE=y
+CONFIG_LV_USE_LOG=y
+CONFIG_LV_LOG_LEVEL_WARN=y
+CONFIG_LV_USE_LABEL=y
+CONFIG_LV_USE_IMAGE=y
+CONFIG_LV_USE_FONT_PLACEHOLDER=y
+CONFIG_LV_FONT_DEFAULT_MONTSERRAT_14=y
+# M2.2-screensaver:屏保中央大时钟用 montserrat_48(LVGL 内置最大 ASCII 字体,~12KB)
+CONFIG_LV_FONT_MONTSERRAT_48=y
+CONFIG_LV_COLOR_DEPTH_16=y
+CONFIG_LV_COLOR_16_SWAP=n
+
+# ============================================================
+# ESP32-S3 (zectrix Note4) 硬件相关
+# ============================================================
+
+# Flash 16MB QIO（zectrix Note4 是 quad flash + octal psram，不是 octal flash）
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="16MB"
+CONFIG_ESPTOOLPY_OCT_FLASH=n
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASH_SAMPLE_MODE_STR=y
+CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
+CONFIG_ESPTOOLPY_FLASH_MODE_AUTO_DETECT=y
+
+# Octal PSRAM 8MB
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_TYPE_AUTO=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_BOOT_INIT=y
+CONFIG_SPIRAM_USE_MALLOC=y
+# M2.1 起需要联网,允许 WiFi/lwip 用 PSRAM
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
+# CPU
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# 功耗：动态调频允许进 light sleep
+CONFIG_PM_ENABLE=y
+CONFIG_PM_DFS_INIT_AUTO=y
+CONFIG_FREERTOS_USE_TICKLESS_IDLE=y
+
+# Chip rev
+CONFIG_ESP32S3_REV_MIN_0=y
+
+# ============================================================
+# M2.1 联网相关
+# ============================================================
+
+# WiFi/lwip 默认就能用,这里调几个尺寸
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048           # captive portal 接 multipart-ish 表单
+CONFIG_HTTPD_MAX_URI_LEN=512
+CONFIG_LWIP_MAX_SOCKETS=10                  # AP 时浏览器多 socket 同时连
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y             # TLS 握手内存动态分配,省 RAM
+
+# esp_http_client 启用 HTTPS
+CONFIG_ESP_TLS_USING_MBEDTLS=y
+
+# WiFi 软 AP + STA 共存（配网时设备自己挂着 AP,
+# 用户手机也连着设备 AP——配置完成切 STA）
+CONFIG_ESP_WIFI_SOFTAP_BEACON_MAX_LEN=752

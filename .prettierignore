@@ -1,0 +1,8 @@
+node_modules
+dist
+build
+.cache
+bun.lock
+*.md
+firmware/
+backend/prisma/*.db

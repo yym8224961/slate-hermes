@@ -1,0 +1,115 @@
+#include "settings_scene.h"
+
+#include <esp_log.h>
+#include <memory>
+
+#include "../app/event_bus.h"
+#include "../app/scene_stack.h"
+#include "../display/epd_ssd1683.h"
+#include "../ui/menu_list.h"
+#include "../ui/theme.h"
+#include "data_sync_page.h"
+#include "device_info_page.h"
+#include "factory_reset_page.h"
+#include "font_demo_page.h"
+#include "volume_page.h"
+
+namespace {
+constexpr char kTag[] = "settings";
+}
+
+SettingsScene::SettingsScene() = default;
+SettingsScene::~SettingsScene() = default;
+
+void SettingsScene::OnEnter(SceneContext& ctx) {
+    if (!ctx.epd->Lock(2000)) {
+        ESP_LOGW(kTag, "epd lock timeout in OnEnter");
+        return;
+    }
+
+    auto* screen = lv_screen_active();
+    root_ = lv_obj_create(screen);
+    lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES);
+    lv_obj_set_pos(root_, 0, 0);
+    lv_obj_set_style_bg_color(root_, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(root_, 0, 0);
+    lv_obj_set_style_border_width(root_, 0, 0);
+    lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
+
+    status_bar_ = std::make_unique<StatusBar>(root_);
+    status_bar_->SetCaption("设置");
+
+    std::vector<MenuList::Item> items = {
+        {"音量调节",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<VolumePage>()); }},
+        {"设备信息",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<DeviceInfoPage>()); }},
+        {"数据同步",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<DataSyncPage>()); }},
+        {"字体演示",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<FontDemoPage>()); }},
+        {"恢复出厂",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<FactoryResetPage>()); }},
+    };
+    menu_ = std::make_unique<MenuList>(root_, std::move(items), saved_cursor_);
+
+    // 首次填状态栏图标(wifi/电量)
+    if (status_bar_) {
+        if (ctx.wifi_connected && ctx.wifi_rssi) {
+            status_bar_->SetWifi(ctx.wifi_connected(), ctx.wifi_rssi());
+        }
+        if (ctx.read_charge) {
+            const auto snap = ctx.read_charge();
+            int pct = -1;
+            if (!snap.no_battery && ctx.read_battery) {
+                int mv = 0;
+                ctx.read_battery(&mv, &pct);
+            }
+            status_bar_->SetBattery(pct, snap.charging || snap.full);
+        }
+    }
+
+    lv_refr_now(NULL);
+    ctx.epd->Unlock();
+    ctx.epd->RequestUrgentFullRefresh();
+}
+
+void SettingsScene::OnExit(SceneContext& ctx) {
+    if (!ctx.epd->Lock(500)) return;
+    // push 子页时 OnExit 触发,记录光标位置 — 子页 pop 回来 OnEnter 恢复。
+    if (menu_) saved_cursor_ = menu_->Cursor();
+    menu_.reset();
+    status_bar_.reset();
+    if (root_) {
+        lv_obj_del(root_);
+        root_ = nullptr;
+    }
+    ctx.epd->Unlock();
+}
+
+void SettingsScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
+    switch (e.kind) {
+        case UiEventKind::kButtonShort: {
+            switch (e.u.button.btn) {
+                case ButtonId::kUp:    menu_->OnUp();   SyncRender(ctx, false); break;
+                case ButtonId::kDown:  menu_->OnDown(); SyncRender(ctx, false); break;
+                case ButtonId::kEnter: menu_->OnEnter(); break;  // RequestPush 由 callback 走,ApplyPending 处理
+            }
+            break;
+        }
+        case UiEventKind::kButtonLong: {
+            if (e.u.button.btn == ButtonId::kEnter) {
+                ESP_LOGI(kTag, "long Enter → pop back to Frame");
+                ctx.stack->RequestPop();
+            }
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+void SettingsScene::SyncRender(SceneContext& ctx, bool force_full) {
+    if (!ctx.epd) return;
+    if (!ctx.epd->Lock(500)) return;
+    lv_refr_now(NULL);
+    ctx.epd->Unlock();
+    if (force_full) ctx.epd->RequestUrgentFullRefresh();
+    else            ctx.epd->RequestUrgentPartialRefresh();
+}

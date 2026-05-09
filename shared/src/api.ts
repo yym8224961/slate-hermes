@@ -1,0 +1,55 @@
+// 顶层 API constants 和 Web 鉴权 schema。
+// 设备协议 schema 在 types/device.ts 和 types/frame.ts。
+
+import { z } from 'zod';
+
+// 单一前缀:Web、设备、外部 webhook 都挂在 /api/v1 下,鉴权按端点区分。
+export const API_VERSION = 'v1';
+export const API_PREFIX = '/api/v1';
+
+// EPD 物理像素（zectrix Note4 4.2"）
+export const FRAME_WIDTH = 400;
+export const FRAME_HEIGHT = 300;
+export const FRAME_BYTES = (FRAME_WIDTH * FRAME_HEIGHT) / 8; // 15000
+export const BW_THRESHOLD_DEFAULT = 128; // 后端 sharp pipeline 默认阈值（与固件 bw_threshold_=200 是两套独立通路，不联动）
+
+// 音频:16kHz mono 16-bit raw PCM
+export const AUDIO_SAMPLE_RATE = 16000;
+export const AUDIO_BITS_PER_SAMPLE = 16;
+export const AUDIO_CHANNELS = 1;
+
+// 设备身份 header(取代 path 里的 :mac)。
+export const DEVICE_MAC_HEADER = 'X-Device-Mac';
+
+export const LoginRequest = z.object({
+  email: z.email(),
+  password: z.string().min(8),
+});
+export type LoginRequestT = z.infer<typeof LoginRequest>;
+
+export const LoginResponse = z.object({
+  token: z.string(),
+  user: z.object({
+    id: z.string(),
+    email: z.email(),
+  }),
+});
+export type LoginResponseT = z.infer<typeof LoginResponse>;
+
+// envelope 包：所有错误响应统一字段。兼容字段 `error` 仍保留作为类型 code。
+export const ApiErrorEnvelope = z.object({
+  error: z.string(),
+  message: z.string(),
+  detail: z.unknown().optional(),
+  requestId: z.string().optional(),
+});
+export type ApiErrorEnvelopeT = z.infer<typeof ApiErrorEnvelope>;
+
+// 兼容别名：旧 frontend 仍可用 ApiError 名字。
+export const ApiError = ApiErrorEnvelope;
+export type ApiErrorT = ApiErrorEnvelopeT;
+
+// 通用 reorder body:把整集的 id 列表按新顺序提交。
+// groups 用 string[]、frames 用 number[],各自定义在 types/group.ts 和 types/frame.ts。
+export const ReorderRequest = <T extends z.ZodType<string | number>>(elem: T) =>
+  z.object({ order: z.array(elem).min(1) });
