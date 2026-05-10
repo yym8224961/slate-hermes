@@ -14,6 +14,8 @@ CREATE TABLE `users` (
 CREATE TABLE `devices` (
     `id` VARCHAR(191) NOT NULL,
     `mac` VARCHAR(17) NOT NULL,
+    `secret_hash` CHAR(64) NOT NULL,
+    `pair_code` CHAR(6) NOT NULL,
     `name` VARCHAR(64) NULL,
     `owner_user_id` VARCHAR(191) NULL,
     `sort_order` INTEGER NOT NULL DEFAULT 0,
@@ -26,6 +28,7 @@ CREATE TABLE `devices` (
     `updated_at` DATETIME(3) NOT NULL,
 
     UNIQUE INDEX `devices_mac_key`(`mac`),
+    UNIQUE INDEX `devices_pair_code_key`(`pair_code`),
     INDEX `devices_owner_user_id_sort_order_idx`(`owner_user_id`, `sort_order`),
     INDEX `devices_selected_group_id_idx`(`selected_group_id`),
     INDEX `devices_last_seen_at_idx`(`last_seen_at`),
