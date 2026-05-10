@@ -7,14 +7,14 @@
 
 import { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { ArrowRight, X, KeyRound } from 'lucide-react';
+import { ArrowRight, KeyRound } from 'lucide-react';
 import { useClaimByPairCode } from '../lib/queries';
 import { useToast } from './Toast';
 import { isValidPairCode, normalizePairCode } from '../lib/format';
 import { Input } from './Input';
 import { Button } from './Button';
 import { Spinner } from './Spinner';
-import { IconBlock } from './IconBlock';
+import { DialogHeader } from './DialogHeader';
 
 interface AddDeviceDialogProps {
   open: boolean;
@@ -32,20 +32,25 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
     setCode('');
   }
 
-  async function onSubmit(e: React.FormEvent) {
+  async function onSubmit(e: { preventDefault(): void }) {
     e.preventDefault();
     if (!codeValid) return;
     try {
-      await claim.mutateAsync({ code: normalizePairCode(code) });
-      toast.success('设备已绑定', '设备屏会自动切到「等待相册」');
+      const device = await claim.mutateAsync({ code: normalizePairCode(code) });
+      // 后端 claim 时若 owner 已有相册会自动绑第一个，无相册则后续 create 会反向绑；
+      // 这里只给出与实际后端行为一致的概要提示，不做额外引导（用户可在设备列表看进度）。
+      toast.success(
+        '设备已绑定',
+        device.selected_group_id ? '设备屏将开始同步相册' : '请创建一个相册，设备屏会自动同步'
+      );
       reset();
       onOpenChange(false);
     } catch (err) {
       const e = err as { response?: { status?: number; data?: { error?: string } } };
       if (e.response?.status === 404) {
-        toast.error('配对码无效', '请核对设备屏上的码,或在设备上长按 ENTER 工厂重置后重试');
+        toast.error('配对码无效', '请核对设备屏上的码，或在设备上长按 ENTER 工厂重置后重试。');
       } else if (e.response?.status === 403) {
-        toast.error('该设备已被其他账号绑定', '在设备上工厂重置后再试');
+        toast.error('该设备已被其他账号绑定', '在设备上工厂重置后再试。');
       } else {
         toast.error('绑定失败', e.response?.data?.error);
       }
@@ -61,29 +66,14 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-ink/30 backdrop-blur-[2px] z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-md bg-paper border border-line rounded-[20px] z-50 p-7 shadow-[0_24px_64px_rgba(61,40,23,0.16)]">
-          <div className="flex items-start justify-between gap-4 mb-6">
-            <div className="flex items-start gap-3 min-w-0">
-              <IconBlock tone="soft">
-                <KeyRound size={18} />
-              </IconBlock>
-              <div className="min-w-0">
-                <Dialog.Title className="font-kai text-[24px] leading-tight">添加设备</Dialog.Title>
-                <Dialog.Description className="font-kai text-[13px] text-stone mt-1 leading-relaxed">
-                  在设备屏上查看 6 位配对码,输入此处即绑定。
-                </Dialog.Description>
-              </div>
-            </div>
-            <Dialog.Close asChild>
-              <button
-                aria-label="关闭"
-                className="p-1.5 -m-1.5 text-stone hover:text-ink hover:bg-cream rounded-[10px]"
-              >
-                <X size={18} />
-              </button>
-            </Dialog.Close>
-          </div>
+        <Dialog.Overlay className="fixed inset-0 bg-ink/20 z-40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-md bg-paper border-2 border-ink z-50 p-7 shadow-[4px_4px_0_rgba(20,17,13,0.12)]">
+          <DialogHeader
+            icon={<KeyRound size={18} />}
+            title="添加设备"
+            description="在设备屏上查看 6 位配对码，输入此处即绑定。"
+            className="mb-6"
+          />
 
           <form onSubmit={onSubmit} className="space-y-5">
             <Input
@@ -95,7 +85,7 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
               autoComplete="off"
               spellCheck={false}
               maxLength={9}
-              hint={code && !codeValid ? undefined : '6 位字母+数字,大小写均可'}
+              hint={code && !codeValid ? undefined : '6 位字母+数字，大小写均可'}
               error={code && !codeValid ? '配对码格式不正确' : undefined}
               className="font-mono uppercase tracking-[0.2em] text-center"
             />

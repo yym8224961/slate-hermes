@@ -9,7 +9,7 @@
 // 本文件只剩状态管理 + 提交逻辑 + Dialog 框架。
 
 import { useState, useEffect, useRef } from 'react';
-import { ArrowUp, X, Frame } from 'lucide-react';
+import { ArrowUp, Frame } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { FRAME_WIDTH, FRAME_HEIGHT, BW_THRESHOLD_DEFAULT, DEFAULT_DITHER_MODE } from 'shared';
 import type { FrameSummaryT, DitherMode } from 'shared';
@@ -18,12 +18,11 @@ import { useToast } from './Toast';
 import { Input } from './Input';
 import { Button } from './Button';
 import { Spinner } from './Spinner';
-import { IconBlock } from './IconBlock';
+import { DialogHeader } from './DialogHeader';
 import { PreviewCanvas } from './frame-editor/PreviewCanvas';
 import { ImageDropzone } from './frame-editor/ImageDropzone';
 import { AudioDropzone } from './frame-editor/AudioDropzone';
 import { DitherControls } from './frame-editor/DitherControls';
-import { cn } from '../lib/cn';
 
 interface FrameEditorProps {
   open: boolean;
@@ -115,33 +114,14 @@ export function FrameEditor({ open, onOpenChange, gid, frame }: FrameEditorProps
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-ink/30 backdrop-blur-[2px] z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-5xl max-h-[calc(100vh-3rem)] flex flex-col bg-paper border border-line rounded-[20px] z-50 shadow-[0_24px_64px_rgba(61,40,23,0.16)]">
-          {/* 顶栏 — 与 AddDeviceDialog / CreateGroupDialog / DeviceModal 统一:
-              左 IconBlock + 标题/说明,右 close。 */}
-          <div className="flex items-start justify-between gap-4 px-6 sm:px-8 pt-6 pb-4 border-b border-line">
-            <div className="flex items-start gap-3 min-w-0">
-              <IconBlock tone="soft">
-                <Frame size={18} />
-              </IconBlock>
-              <div className="min-w-0">
-                <Dialog.Title className="font-kai text-[24px] sm:text-[26px] leading-tight">
-                  {isEdit ? `编辑第 ${frame!.sort_order} 帧` : '新建一帧'}
-                </Dialog.Title>
-                <Dialog.Description className="font-kai text-[13px] text-stone mt-1">
-                  {isEdit ? '改顺序请关闭后用拖拽。' : '追加至列尾,可拖拽改序。'}
-                </Dialog.Description>
-              </div>
-            </div>
-            <Dialog.Close asChild>
-              <button
-                aria-label="关闭"
-                className="p-2 -m-2 text-stone hover:text-ink hover:bg-cream rounded-[10px] flex-shrink-0"
-              >
-                <X size={20} />
-              </button>
-            </Dialog.Close>
-          </div>
+        <Dialog.Overlay className="fixed inset-0 bg-ink/20 z-40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-5xl max-h-[calc(100vh-3rem)] flex flex-col bg-paper border-2 border-ink z-50 shadow-[4px_4px_0_rgba(20,17,13,0.12)]">
+          <DialogHeader
+            icon={<Frame size={18} />}
+            title={isEdit ? `编辑第 ${frame!.sort_order} 帧` : '新建一帧'}
+            description={isEdit ? '改顺序请关闭后用拖拽。' : '追加至列尾，可拖拽改序。'}
+            className="px-6 sm:px-8 pt-5 pb-4 border-b border-ink"
+          />
 
           {/* 主体 */}
           <div className="flex-1 overflow-y-auto px-6 sm:px-8 py-6">
@@ -156,10 +136,7 @@ export function FrameEditor({ open, onOpenChange, gid, frame }: FrameEditorProps
                     <button
                       type="button"
                       onClick={() => setShowSafeArea((v) => !v)}
-                      className={cn(
-                        'font-sans text-[11px] transition-colors',
-                        showSafeArea ? 'text-clay hover:underline' : 'text-stone hover:text-clay'
-                      )}
+                      className="font-sans text-[11px] text-stone border-b border-stone hover:border-ink hover:text-ink transition-colors"
                     >
                       {showSafeArea ? '隐藏安全区' : '显示安全区'}
                     </button>
@@ -176,7 +153,7 @@ export function FrameEditor({ open, onOpenChange, gid, frame }: FrameEditorProps
                     offset={offset}
                     onOffsetChange={setOffset}
                   />
-                  <p className="font-kai text-[11px] text-stone-light mt-2 text-center">
+                  <p className="font-serif italic text-[11px] text-stone-light mt-2 text-center">
                     {imageFile
                       ? '拖拽定位 · 滑块缩放 · 顶部白条为设备状态栏'
                       : isEdit
@@ -191,12 +168,12 @@ export function FrameEditor({ open, onOpenChange, gid, frame }: FrameEditorProps
               {/* 控件:① 标题 ② 图(含裁剪/抖动/阈值) ③ 音频 */}
               <div className="order-1 lg:order-2 space-y-6">
                 <Input
-                  label="标题(选填,最多 64 字)"
+                  label="标题（选填，最多 64 字）"
                   type="text"
                   maxLength={64}
                   value={caption}
                   onChange={(e) => setCaption(e.target.value)}
-                  placeholder="如:挖掘机"
+                  placeholder="如：挖掘机"
                   autoFocus={!isEdit}
                 />
 
@@ -229,7 +206,7 @@ export function FrameEditor({ open, onOpenChange, gid, frame }: FrameEditorProps
           </div>
 
           {/* 底栏 */}
-          <div className="flex items-center justify-end gap-3 px-6 sm:px-8 py-4 border-t border-line">
+          <div className="flex items-center justify-end gap-3 px-6 sm:px-8 py-4 border-t border-ink">
             <Dialog.Close asChild>
               <Button variant="outline">取消</Button>
             </Dialog.Close>

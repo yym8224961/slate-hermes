@@ -61,17 +61,10 @@ export function Dashboard() {
   const navigate = useNavigate();
   const { did } = useParams();
 
-  // 当前打开 modal 的 deviceId(优先用 URL 参,否则用本地 state)
-  const [openDeviceId, setOpenDeviceId] = useState<string | null>(null);
-  useEffect(() => {
-    if (did) setOpenDeviceId(did);
-  }, [did]);
-  const openDevice = devices.data?.find((d) => d.id === openDeviceId);
+  const openDevice = devices.data?.find((d) => d.id === did);
 
-  // modal 关闭:既清本地,也把 URL 回正
   function closeDeviceModal() {
-    setOpenDeviceId(null);
-    if (did) navigate('/', { replace: true });
+    navigate('/', { replace: true });
   }
 
   // 添加设备弹窗
@@ -92,8 +85,8 @@ export function Dashboard() {
   return (
     <div>
       <header className="pb-2 fade-up">
-        <h1 className="font-kai text-[32px] sm:text-[40px] leading-[1.15] text-ink">
-          {greeting()},{greetName || '你好'}
+        <h1 className="font-serif text-[36px] sm:text-[48px] font-bold leading-[1.1] tracking-tight text-ink">
+          {greeting()}，<em className="not-italic">{greetName || '你好'}</em>
         </h1>
       </header>
 
@@ -122,7 +115,7 @@ export function Dashboard() {
                     key={d.id}
                     device={d}
                     groups={groups.data ?? []}
-                    onOpen={() => setOpenDeviceId(d.id)}
+                    onOpen={() => navigate(`/devices/${d.id}`)}
                   />
                 ))}
               </div>
@@ -132,7 +125,6 @@ export function Dashboard() {
           <EmptyState
             icon={<MonitorSmartphone size={26} />}
             title="尚无设备"
-            hint="输入 MAC 即可绑定到当前账号,设备未联网也能先添加。"
             action={
               <Button onClick={() => setAddOpen(true)} iconLeft={<Cpu size={16} />}>
                 添加第一台
@@ -210,14 +202,14 @@ function DeviceCard({
     e.preventDefault();
     e.stopPropagation();
     const ok = await confirm({
-      title: '解绑这台设备?',
-      description: `${device.name ?? device.mac} 将从你的账号移除。素材保留,设备屏会切回配对码状态。`,
+      title: '解绑这台设备？',
+      description: `${device.name ?? device.mac} 将从你的账号移除。素材保留，设备屏会切回配对码状态。`,
       destructive: true,
       confirmText: '解绑',
     });
     if (!ok) return;
     unbind.mutate(device.id, {
-      onSuccess: () => toast.success('已解绑', '设备屏会显示新配对码'),
+      onSuccess: () => toast.success('已解绑', '设备屏会显示新配对码。'),
       onError: () => toast.error('解绑失败'),
     });
   }
@@ -235,7 +227,7 @@ function DeviceCard({
       {/* 上半:整张可点弹 modal */}
       <button
         onClick={onOpen}
-        className="block w-full text-left px-5 pt-5 pb-4 sm:px-6 sm:pt-6 sm:pb-4 hover:bg-cream-deep/40 transition-colors"
+        className="block w-full text-left px-5 pt-5 pb-4 sm:px-6 sm:pt-6 sm:pb-4 hover:bg-cream transition-colors"
       >
         <div className="flex items-start gap-3">
           <IconBlock tone="soft">
@@ -243,7 +235,7 @@ function DeviceCard({
           </IconBlock>
           <div className="min-w-0 flex-1">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="font-kai text-[20px] leading-tight truncate">
+              <h3 className="font-serif text-[18px] font-bold leading-tight truncate tracking-tight">
                 {device.name ?? '未命名'}
               </h3>
               <span className="inline-flex items-center gap-1.5 text-[11px] text-stone flex-shrink-0">
@@ -258,8 +250,10 @@ function DeviceCard({
             </p>
 
             {/* 在播 + 帧数 — 在播组后面拼"· N 帧"显示组的体量 */}
-            <p className="font-kai text-[13px] mt-2 truncate">
-              <span className="text-stone-light mr-1.5">在播</span>
+            <p className="font-serif text-[13px] mt-2 truncate">
+              <span className="font-sans text-[9px] uppercase tracking-[0.18em] text-stone-light mr-1.5">
+                在播
+              </span>
               <span className={groupName ? 'text-stone' : 'text-stone-light italic'}>
                 {groupName ?? '未选组'}
               </span>
@@ -294,15 +288,15 @@ function DeviceCard({
         </div>
       </button>
 
-      {/* footer — 拖动 + 解绑,与 GroupCard footer 完全对称 */}
-      <div className="px-2 py-1.5 border-t border-line bg-paper/50 flex items-center min-h-[36px]">
+      {/* footer — 拖动 + 解绑 */}
+      <div className="px-2 py-1.5 border-t border-line flex items-center min-h-[34px]">
         <button
           type="button"
           {...attributes}
           {...listeners}
           aria-label="拖拽排序"
           title="拖拽排序"
-          className="p-1.5 text-stone-light hover:text-clay hover:bg-cream rounded-[8px] cursor-grab active:cursor-grabbing touch-none"
+          className="p-1.5 text-stone-light hover:text-ink hover:bg-cream transition-colors cursor-grab active:cursor-grabbing touch-none"
         >
           <GripVertical size={14} />
         </button>
@@ -315,7 +309,7 @@ function DeviceCard({
           disabled={unbind.isPending}
           aria-label="解绑"
           title="从账号解绑"
-          className="p-1.5 text-stone hover:text-clay hover:bg-cream rounded-[8px] disabled:opacity-50"
+          className="p-1.5 text-stone hover:text-clay hover:bg-cream transition-colors disabled:opacity-50"
         >
           <Trash2 size={14} />
         </button>
@@ -365,8 +359,8 @@ function GroupsSection() {
                   group={g}
                   onDelete={async () => {
                     const ok = await confirm({
-                      title: `删除「${g.name}」?`,
-                      description: `这一组连同 ${g.frame_count} 帧的图片与音频会全部删除,不可逆。`,
+                      title: `删除「${g.name}」？`,
+                      description: `这一组连同 ${g.frame_count} 帧的图片与音频会全部删除，不可逆。`,
                       destructive: true,
                       confirmText: '删除整组',
                     });
@@ -440,7 +434,7 @@ function GroupCardSortable({ group, onDelete }: { group: GroupSummaryT; onDelete
           kind 用 icon 区分(Layers=相册 / Webhook=看板),hover tooltip 给文字。 */}
       <Link
         to={`/groups/${group.id}`}
-        className="block flex-1 min-w-0 px-5 py-5 sm:px-6 sm:py-6 hover:bg-cream-deep/40 transition-colors"
+        className="block flex-1 min-w-0 px-5 py-5 sm:px-6 sm:py-6 hover:bg-cream transition-colors"
       >
         <div className="flex items-start gap-3.5">
           <IconBlock tone="soft" title={kindLabel} aria-label={kindLabel}>
@@ -448,30 +442,32 @@ function GroupCardSortable({ group, onDelete }: { group: GroupSummaryT; onDelete
           </IconBlock>
           <div className="min-w-0 flex-1 flex items-start justify-between gap-2">
             <div className="min-w-0">
-              <h3 className="font-kai text-[22px] leading-tight truncate">{group.name}</h3>
+              <h3 className="font-serif text-[20px] font-bold leading-tight truncate tracking-tight">
+                {group.name}
+              </h3>
               <p className="font-mono text-[11px] text-stone-light mt-1.5 truncate">
                 {formatBytes(group.total_bytes)} · {group.etag.slice(0, 12)}
               </p>
             </div>
             <div className="flex items-baseline gap-1 flex-shrink-0">
-              <span className="font-kai text-[26px] leading-none tabular-nums text-ink">
+              <span className="font-serif text-[28px] font-bold leading-none tabular-nums text-ink">
                 {group.frame_count}
               </span>
-              <span className="font-kai text-[13px] text-stone">帧</span>
+              <span className="font-sans text-[11px] text-stone">帧</span>
             </div>
           </div>
         </div>
       </Link>
 
-      {/* footer — 拖动 + 修改 + 删除,与 DeviceCard footer 对称 */}
-      <div className="px-2 py-1.5 border-t border-line bg-paper/50 flex items-center min-h-[36px]">
+      {/* footer — 拖动 + 删除 */}
+      <div className="px-2 py-1.5 border-t border-line flex items-center min-h-[34px]">
         <button
           type="button"
           {...attributes}
           {...listeners}
           aria-label="拖拽排序"
           title="拖拽排序"
-          className="p-1.5 text-stone-light hover:text-clay hover:bg-cream rounded-[8px] cursor-grab active:cursor-grabbing touch-none"
+          className="p-1.5 text-stone-light hover:text-ink hover:bg-cream transition-colors cursor-grab active:cursor-grabbing touch-none"
         >
           <GripVertical size={14} />
         </button>
@@ -487,7 +483,7 @@ function GroupCardSortable({ group, onDelete }: { group: GroupSummaryT; onDelete
           }}
           aria-label="删除"
           title="删除整组"
-          className="p-1.5 text-stone hover:text-clay hover:bg-cream rounded-[8px]"
+          className="p-1.5 text-stone hover:text-clay hover:bg-cream transition-colors"
         >
           <Trash2 size={14} />
         </button>
@@ -521,17 +517,18 @@ function CreateGroupDialog({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-ink/30 backdrop-blur-[2px] z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-md bg-paper border border-line rounded-[20px] z-50 p-7 shadow-[0_24px_64px_rgba(61,40,23,0.16)]">
-          {/* 与 AddDeviceDialog / DeviceModal / FrameEditor 对齐:左 IconBlock + 标题/说明 */}
+        <Dialog.Overlay className="fixed inset-0 bg-ink/20 z-40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-md bg-paper border-2 border-ink z-50 p-7 shadow-[4px_4px_0_rgba(20,17,13,0.12)]">
           <div className="flex items-start gap-3 mb-6">
             <IconBlock tone="soft">
               <FolderHeart size={18} />
             </IconBlock>
             <div className="min-w-0">
-              <Dialog.Title className="font-kai text-[24px] leading-tight">新建一组</Dialog.Title>
-              <Dialog.Description className="font-kai text-[13px] text-stone mt-1 leading-relaxed">
-                相册手动上传,看板由 webhook 推数据。
+              <Dialog.Title className="font-serif text-[22px] font-bold leading-tight">
+                新建一组
+              </Dialog.Title>
+              <Dialog.Description className="font-sans text-[13px] text-stone mt-1 leading-relaxed">
+                相册手动上传，看板由 webhook 推数据。
               </Dialog.Description>
             </div>
           </div>
@@ -542,12 +539,14 @@ function CreateGroupDialog({
               value={name}
               onChange={(e) => setName(e.target.value)}
               autoFocus
-              placeholder="如:每日卡片"
+              placeholder="如：每日卡片"
             />
 
             <div>
-              <p className="block font-sans text-[12px] text-stone mb-2 ml-0.5">类型</p>
-              <div className="grid grid-cols-2 gap-3">
+              <p className="block font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-2">
+                类型
+              </p>
+              <div className="grid grid-cols-2 gap-0 border border-ink">
                 {(['static', 'dynamic'] as const).map((k) => {
                   const active = kind === k;
                   const Icon = k === 'static' ? Layers : Webhook;
@@ -558,34 +557,22 @@ function CreateGroupDialog({
                       onClick={() => setKind(k)}
                       aria-pressed={active}
                       className={cn(
-                        'relative text-left px-4 py-3.5 rounded-[14px] border-2 transition-all',
-                        // 选中:浅砖红填充 + 砖红描边 + 砖红字 + 右上勾标。
-                        // 不用 bg-clay 实色 + paper 字 — 那个组合在 cream 页底上文字会消失。
+                        'relative text-left px-4 py-3.5 border-r border-ink last:border-r-0 transition-colors',
                         active
-                          ? 'bg-clay/10 border-clay text-clay shadow-[0_3px_10px_-2px_rgba(184,84,54,0.18)]'
-                          : 'bg-cream-deep/60 border-stone-light/40 text-stone hover:border-stone hover:text-ink hover:bg-cream-deep'
+                          ? 'bg-ink text-paper'
+                          : 'bg-paper text-stone hover:bg-cream-deep hover:text-ink'
                       )}
                     >
                       {active && (
-                        <span className="absolute top-2.5 right-2.5 inline-flex items-center justify-center w-5 h-5 rounded-full bg-clay text-paper">
-                          <Check size={12} strokeWidth={3} />
+                        <span className="absolute top-2.5 right-2.5">
+                          <Check size={11} strokeWidth={3} />
                         </span>
                       )}
-                      <Icon size={20} className={active ? 'text-clay' : 'text-stone-light'} />
-                      <p
-                        className={cn(
-                          'font-kai text-[16px] mt-2',
-                          active ? 'text-clay' : 'text-ink'
-                        )}
-                      >
+                      <Icon size={18} />
+                      <p className="font-serif text-[15px] font-medium mt-2">
                         {k === 'static' ? '静态相册' : '动态看板'}
                       </p>
-                      <p
-                        className={cn(
-                          'font-sans text-[11px] mt-1 leading-tight',
-                          active ? 'text-clay/75' : 'text-stone'
-                        )}
-                      >
+                      <p className="font-sans text-[11px] mt-1 leading-tight opacity-70">
                         {k === 'static' ? '手动上传图片/音频' : 'Webhook 渲染外部数据'}
                       </p>
                     </button>

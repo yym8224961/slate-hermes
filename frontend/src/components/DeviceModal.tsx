@@ -100,15 +100,15 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
 
   async function onUnbind() {
     const ok = await confirm({
-      title: '解绑这台设备?',
-      description: `${device.name ?? device.mac} 将从你的账号移除。素材保留,设备屏会切回配对码状态,可让新主人或自己重新输码绑回。`,
+      title: '解绑这台设备？',
+      description: `${device.name ?? device.mac} 将从你的账号移除。素材保留，设备屏会切回配对码状态，可让新主人或自己重新输码绑回。`,
       destructive: true,
       confirmText: '解绑',
     });
     if (!ok) return;
     unbind.mutate(device.id, {
       onSuccess: () => {
-        toast.success('已解绑', '设备屏会显示新配对码');
+        toast.success('已解绑', '设备屏会显示新配对码。');
         onOpenChange(false);
       },
       onError: () => toast.error('解绑失败'),
@@ -118,8 +118,8 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-ink/30 backdrop-blur-[2px] z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-xl max-h-[calc(100vh-3rem)] flex flex-col bg-paper border border-line rounded-[20px] z-50 shadow-[0_24px_64px_rgba(61,40,23,0.16)]">
+        <Dialog.Overlay className="fixed inset-0 bg-ink/20 z-40" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-xl max-h-[calc(100vh-3rem)] flex flex-col bg-paper border-2 border-ink z-50 shadow-[4px_4px_0_rgba(20,17,13,0.12)]">
           {/* 顶栏:状态点 + mac + 关闭 */}
           <div className="flex items-start justify-between gap-4 px-6 sm:px-7 pt-5 pb-3.5 border-b border-line">
             <div className="min-w-0">
@@ -147,11 +147,11 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
                     placeholder="未命名"
                     className={cn(
                       inputCls,
-                      'flex-1 min-w-0 !text-[26px] sm:!text-[28px] !font-kai leading-tight !py-1'
+                      'flex-1 min-w-0 !text-[24px] sm:!text-[26px] !font-serif !font-bold leading-tight'
                     )}
                   />
                 ) : (
-                  <Dialog.Title className="font-kai text-[26px] sm:text-[28px] leading-tight truncate">
+                  <Dialog.Title className="font-serif text-[24px] sm:text-[26px] font-bold leading-tight truncate">
                     {device.name ?? '未命名'}
                   </Dialog.Title>
                 )}
@@ -162,7 +162,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
                   }}
                   disabled={patch.isPending}
                   aria-label={editingName ? '保存名称' : '改名'}
-                  className="text-stone hover:text-clay disabled:opacity-50 transition-colors p-1.5 -m-1 rounded-[8px] hover:bg-cream"
+                  className="text-stone hover:text-ink disabled:opacity-50 transition-colors p-1.5 -m-1 hover:bg-cream"
                 >
                   {editingName ? <Check size={16} /> : <Pencil size={14} />}
                 </button>
@@ -171,7 +171,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
             <Dialog.Close asChild>
               <button
                 aria-label="关闭"
-                className="p-2 -m-2 text-stone hover:text-ink hover:bg-cream rounded-[10px] flex-shrink-0"
+                className="p-2 -m-2 text-stone hover:text-ink hover:bg-cream flex-shrink-0 transition-colors"
               >
                 <X size={20} />
               </button>
@@ -192,7 +192,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
                 onChange={changeGroup}
                 disabled={patch.isPending}
               />
-              <p className="font-kai text-[12px] text-stone-light mt-2">
+              <p className="font-serif text-[12px] italic text-stone-light mt-2">
                 切换后会立即向设备入队同步动作。
               </p>
             </section>
@@ -233,8 +233,8 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
               >
                 {unbind.isPending ? <Spinner /> : '从账号解绑'}
               </Button>
-              <p className="font-kai text-[11px] text-stone-light mt-2">
-                解绑后设备脱离你的账号,素材保留;重新添加可恢复。
+              <p className="font-serif text-[11px] italic text-stone-light mt-2">
+                解绑后设备脱离你的账号，素材保留；重新添加可恢复。
               </p>
             </section>
           </div>
@@ -266,7 +266,7 @@ function MetaCard({
     <div
       className={cn(
         'craft-card px-3.5 py-3 transition-opacity',
-        warn && 'border-clay/40 bg-clay/5',
+        warn && '!border-clay',
         stale && 'opacity-50'
       )}
     >
@@ -278,7 +278,7 @@ function MetaCard({
         className={cn(
           'mt-1 text-ink',
           warn && 'text-clay',
-          mono ? 'font-mono text-[12px] tabular-nums truncate' : 'font-kai text-[16px]'
+          mono ? 'font-mono text-[12px] tabular-nums truncate' : 'font-serif text-[16px]'
         )}
       >
         {value}
