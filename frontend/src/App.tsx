@@ -8,6 +8,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
 import { RequireAuth } from './components/RequireAuth';
 import { Login } from './routes/Login';
+import { Register } from './routes/Register';
 import { Dashboard } from './routes/Dashboard';
 import { GroupDetail } from './routes/GroupDetail';
 
@@ -15,6 +16,7 @@ export function App() {
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
+      <Route path="/register" element={<Register />} />
 
       <Route
         element={

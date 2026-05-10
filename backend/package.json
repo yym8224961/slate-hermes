@@ -15,7 +15,6 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
-    "create-user": "bun run prisma/create-user.ts",
     "test": "bun test",
     "test:e2e": "bun test test/e2e"
   },

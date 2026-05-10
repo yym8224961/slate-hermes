@@ -71,11 +71,12 @@ bun install
 cp backend/.env.example backend/.env       # 改 DATABASE_URL / JWT_SECRET / WEBHOOK_API_KEY
 bun run --cwd backend prisma:generate
 bun run --cwd backend prisma:migrate       # 第一次会创建 dev migration
-bun run --cwd backend create-user <email> <password>  # 创建用户
 
 bun run dev:backend                         # http://localhost:3001
 bun run dev:frontend                        # http://localhost:5173（proxy /api → :3001）
 ```
+
+首次启动后访问 `http://localhost:5173/register` 注册第一个账号。
 
 `.env` 必须放在 `backend/` 目录而非仓库根 —— Prisma CLI 与 Bun runtime 都从 cwd 读取。docker 部署不依赖此文件，配置直接内联在 `compose.yml` 的 `environment:`。
 
@@ -125,13 +126,7 @@ docker compose up -d
 docker compose pull && docker compose up -d
 ```
 
-容器启动 `entrypoint.sh` 自动执行 `prisma migrate deploy`，无需手动迁移。
-
-创建用户：
-
-```bash
-docker compose exec -w /app/backend slate bun run prisma/create-user.ts <email> <password>
-```
+容器启动 `entrypoint.sh` 自动执行 `prisma migrate deploy`，无需手动迁移。首次部署后访问站点 `/register` 创建第一个账号。
 
 持久化目录（compose 启动后在 cwd 自动创建）：
 

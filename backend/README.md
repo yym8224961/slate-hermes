@@ -30,8 +30,8 @@ src/
 │   ├── etag/               computeETag + respondWithEtag（304 策略）
 │   └── errors/             AppError 体系（NotFound / Forbidden / Validation / Conflict）
 └── modules/
-    ├── auth/               POST /sessions → JWT，GET /me
-    ├── users/              用户 CRUD（seed 用）
+    ├── auth/               POST /users 注册、POST /sessions 登录 → JWT、GET /me
+    ├── users/              用户注册（写库 + bcrypt hash）
     ├── devices/            两个 controller：protocol（/me/*）与 admin（/devices/*）
     ├── groups/             /groups CRUD + cycle（next/prev）+ setDeviceGroup
     ├── frames/             /groups/:gid/frames + manifest + multipart + render
@@ -40,8 +40,7 @@ src/
     └── health/             GET /healthz（不挂 v1 prefix，docker HEALTHCHECK 用）
 prisma/
 ├── schema.prisma           4 个 model：User / Device / Group / Frame
-├── migrations/             prisma migrate dev 自动管
-└── create-user.ts         创建用户（邮箱密码参数）
+└── migrations/             prisma migrate dev 自动管
 ```
 
 ## 数据模型（`prisma/schema.prisma`）
@@ -66,6 +65,7 @@ Frame   (groupId, sortOrder) unique 复合键
 ### 公开
 
 ```
+POST   /api/v1/users                  注册，body {email, password} → {token, user}
 POST   /api/v1/sessions               登录，body {email, password} → {token, user}
 GET    /healthz                       {status:'ok',ts}
 ```
@@ -197,10 +197,11 @@ bun install
 cp backend/.env.example backend/.env       # 改 DATABASE_URL / JWT_SECRET / WEBHOOK_API_KEY
 bun run --cwd backend prisma:generate
 bun run --cwd backend prisma:migrate       # 第一次会创建 dev migration
-bun run --cwd backend create-user <email> <password>  # 创建用户
 
 bun run dev:backend                         # http://localhost:3001
 ```
+
+第一个账号通过 frontend `/register` 页面注册，或直接 `curl -X POST http://localhost:3001/api/v1/users -H 'content-type: application/json' -d '{"email":"...","password":"..."}'`。
 
 验证：
 
@@ -218,14 +219,4 @@ bun run --cwd backend typecheck
 
 镜像构建在仓库根 `Dockerfile`（multi-stage：bun 装依赖 → prisma generate + vite build → 拷进精简 runner stage）。`entrypoint.sh` 进入 `/app/backend` 后跑 `prisma migrate deploy` 再启服务。frontend dist 由 `@fastify/static` 在同域托管，`/api/*` 走 NestJS。具体 docker compose 与 GHCR 流程见仓库根 README。
 
-### 创建用户
-
-本地开发：
-```bash
-bun run --cwd backend create-user <email> <password>
-```
-
-Docker 部署：
-```bash
-docker compose exec -w /app/backend slate bun run prisma/create-user.ts <email> <password>
-```
+部署后第一个账号通过站点 `/register` 注册即可，无需进容器手动建用户。

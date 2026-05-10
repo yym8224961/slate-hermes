@@ -1,4 +1,4 @@
-// 登录:左侧大色块 + 楷书欢迎语,右侧表单。响应式:移动端单卡片居中。
+// 注册:与 Login 同构的左右分栏布局,提交成功后服务端直接发 JWT,免二次登录。
 
 import { useState, type FormEvent } from 'react';
 import { Navigate, Link } from 'react-router-dom';
@@ -9,10 +9,11 @@ import { Spinner } from '../components/Spinner';
 import { IconBlock } from '../components/IconBlock';
 import { useAuth } from '../lib/auth';
 
-export function Login() {
-  const { token, login } = useAuth();
+export function Register() {
+  const { token, register } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -21,13 +22,21 @@ export function Login() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (password.length < 8) {
+      setError('密码至少 8 位');
+      return;
+    }
+    if (password !== confirm) {
+      setError('两次输入的密码不一致');
+      return;
+    }
     setLoading(true);
     try {
-      await login({ email, password });
+      await register({ email, password });
     } catch (err) {
       const env = (err as { response?: { data?: { message?: string; error?: string } } })?.response
         ?.data;
-      setError(env?.message ?? env?.error ?? '登录失败,请检查邮箱和密码');
+      setError(env?.message ?? env?.error ?? '注册失败,请稍后再试');
     } finally {
       setLoading(false);
     }
@@ -35,9 +44,7 @@ export function Login() {
 
   return (
     <div className="min-h-screen grid lg:grid-cols-[1.1fr_1fr] bg-paper">
-      {/* 左侧:暖色块 + 欢迎语(只在 lg+ 屏显示) */}
       <aside className="hidden lg:flex flex-col justify-between p-12 xl:p-16 bg-cream relative overflow-hidden">
-        {/* 装饰圆点 */}
         <div className="absolute -top-12 -right-12 w-72 h-72 rounded-full bg-clay/12 blur-2xl" />
         <div className="absolute bottom-20 -left-16 w-56 h-56 rounded-full bg-saffron/30 blur-3xl" />
 
@@ -50,10 +57,10 @@ export function Login() {
         <div className="relative fade-up">
           <p className="font-kai text-[20px] text-stone mb-4">Slate · 控制台</p>
           <h1 className="font-kai text-[64px] xl:text-[80px] leading-[1.1] text-ink tracking-tight">
-            登录
+            注册
           </h1>
           <p className="font-kai text-[18px] xl:text-[20px] text-stone mt-6 max-w-md leading-loose">
-            登录后管理墨笺与内容。
+            建一个账号,开始管理墨笺与内容。
           </p>
         </div>
 
@@ -62,12 +69,8 @@ export function Login() {
         </div>
       </aside>
 
-      {/* 右侧:表单。
-          移动端用 pb-32 给软键盘弹出后的"进入"按钮留滚动空间;
-          desktop 居中,所以 lg:py-12 lg:pb-12 重置回来。 */}
       <main className="flex items-start lg:items-center justify-center px-5 sm:px-8 pt-16 pb-32 lg:py-12">
         <form onSubmit={onSubmit} className="w-full max-w-sm fade-up fade-up-1">
-          {/* 移动端 logo */}
           <div className="lg:hidden mb-10 text-center">
             <IconBlock size="xl" tone="brand" className="font-kai text-[28px]">
               墨
@@ -76,8 +79,8 @@ export function Login() {
             <p className="font-kai text-[14px] text-stone mt-2">案头那块墨水屏</p>
           </div>
 
-          <h2 className="font-kai text-[32px] leading-tight">登录</h2>
-          <p className="font-sans text-[14px] text-stone mt-1">邮箱 + 密码。</p>
+          <h2 className="font-kai text-[32px] leading-tight">注册</h2>
+          <p className="font-sans text-[14px] text-stone mt-1">邮箱 + 密码,密码至少 8 位。</p>
 
           <div className="mt-8 space-y-5">
             <Input
@@ -88,7 +91,7 @@ export function Login() {
               autoFocus
               required
               autoComplete="email"
-              placeholder="admin@example.com"
+              placeholder="you@example.com"
             />
             <Input
               label="密码"
@@ -96,7 +99,17 @@ export function Login() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              autoComplete="current-password"
+              minLength={8}
+              autoComplete="new-password"
+            />
+            <Input
+              label="确认密码"
+              type="password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              required
+              minLength={8}
+              autoComplete="new-password"
               error={error ?? undefined}
             />
           </div>
@@ -109,14 +122,14 @@ export function Login() {
               disabled={loading}
               iconRight={<ArrowRight size={16} />}
             >
-              {loading ? <Spinner /> : '进入'}
+              {loading ? <Spinner /> : '创建账号'}
             </Button>
           </div>
 
           <p className="mt-6 text-center font-sans text-[13px] text-stone">
-            还没有账号?{' '}
-            <Link to="/register" className="text-ink underline-offset-4 hover:underline">
-              立即注册
+            已有账号?{' '}
+            <Link to="/login" className="text-ink underline-offset-4 hover:underline">
+              去登录
             </Link>
           </p>
         </form>

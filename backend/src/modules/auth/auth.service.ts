@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import bcrypt from 'bcryptjs';
-import type { LoginRequestT, LoginResponseT } from 'shared';
+import type { LoginRequestT, LoginResponseT, RegisterRequestT, RegisterResponseT } from 'shared';
 import { AuthError } from '../../common/errors';
 import { UsersService } from '../users/users.service';
 import { JwtTokenService } from './jwt-token.service';
@@ -20,5 +20,11 @@ export class AuthService {
 
     const token = this.tokens.sign({ sub: user.id, email: user.email });
     return { token, user: { id: user.id, email: user.email } };
+  }
+
+  async register(input: RegisterRequestT): Promise<RegisterResponseT> {
+    const user = await this.users.create(input.email, input.password);
+    const token = this.tokens.sign({ sub: user.id, email: user.email });
+    return { token, user };
   }
 }

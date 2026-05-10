@@ -1,13 +1,21 @@
 import { Body, Controller, Delete, Get, HttpCode, Post } from '@nestjs/common';
-import type { LoginResponseT } from 'shared';
+import type { LoginResponseT, RegisterResponseT } from 'shared';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser, type WebUserContext } from '../../common/decorators/current-user.decorator';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { RegisterDto } from './dto/register.dto';
 
 @Controller()
 export class AuthController {
   constructor(private readonly auth: AuthService) {}
+
+  @Public()
+  @Post('users')
+  @HttpCode(201)
+  async register(@Body() body: RegisterDto): Promise<RegisterResponseT> {
+    return this.auth.register(body);
+  }
 
   @Public()
   @Post('sessions')

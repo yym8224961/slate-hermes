@@ -5,12 +5,13 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { api, tokenStorage } from './api';
-import type { LoginRequestT, LoginResponseT } from 'shared';
+import type { LoginRequestT, LoginResponseT, RegisterRequestT, RegisterResponseT } from 'shared';
 
 interface AuthState {
   token: string | null;
   user: { id: string; email: string } | null;
   login: (creds: LoginRequestT) => Promise<void>;
+  register: (creds: RegisterRequestT) => Promise<void>;
   logout: () => void;
 }
 
@@ -52,6 +53,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [navigate]
   );
 
+  const register = useCallback(
+    async (creds: RegisterRequestT) => {
+      const { data } = await api.post<RegisterResponseT>('/api/v1/users', creds);
+      tokenStorage.set(data.token);
+      setToken(data.token);
+      setUser(data.user);
+      navigate('/', { replace: true });
+    },
+    [navigate]
+  );
+
   const logout = useCallback(() => {
     tokenStorage.clear();
     setToken(null);
@@ -59,7 +71,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     navigate('/login', { replace: true });
   }, [navigate]);
 
-  return <AuthCtx.Provider value={{ token, user, login, logout }}>{children}</AuthCtx.Provider>;
+  return (
+    <AuthCtx.Provider value={{ token, user, login, register, logout }}>{children}</AuthCtx.Provider>
+  );
 }
 
 export function useAuth() {

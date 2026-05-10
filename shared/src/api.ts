@@ -36,6 +36,13 @@ export const LoginResponse = z.object({
 });
 export type LoginResponseT = z.infer<typeof LoginResponse>;
 
+// 注册请求与响应复用 Login 形状（注册成功直接发 JWT，免二次登录）。
+export const RegisterRequest = LoginRequest;
+export type RegisterRequestT = z.infer<typeof RegisterRequest>;
+
+export const RegisterResponse = LoginResponse;
+export type RegisterResponseT = z.infer<typeof RegisterResponse>;
+
 // envelope 包：所有错误响应统一字段。兼容字段 `error` 仍保留作为类型 code。
 export const ApiErrorEnvelope = z.object({
   error: z.string(),
