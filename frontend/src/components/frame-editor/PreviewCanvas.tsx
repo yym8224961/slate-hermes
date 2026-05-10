@@ -168,8 +168,8 @@ export function PreviewCanvas({
   }, []);
 
   return (
-    <div className="bg-cream rounded-[16px] p-3">
-      <div className="relative rounded-[12px] overflow-hidden border border-line aspect-[4/3]">
+    <div className="bg-paper border border-ink p-1.5">
+      <div className="relative overflow-hidden border border-line aspect-[4/3]">
         <canvas
           ref={canvasRef}
           width={FRAME_WIDTH}

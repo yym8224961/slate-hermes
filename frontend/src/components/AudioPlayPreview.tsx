@@ -23,9 +23,10 @@ export function AudioPlayPreview({ gid, idx, etag, className, label }: AudioPlay
   const [playing, setPlaying] = useState(false);
   const ctxRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);
+  const playingRef = useRef(false);
 
   const play = useCallback(() => {
-    if (!audio.data) return;
+    if (!audio.data || playingRef.current) return;
     // 解析 16-bit signed LE PCM → Float32 [-1,1] AudioBuffer
     const pcm = new Int16Array(audio.data);
     const ctx = ctxRef.current ?? new AudioContext({ sampleRate: SAMPLE_RATE });
@@ -39,17 +40,20 @@ export function AudioPlayPreview({ gid, idx, etag, className, label }: AudioPlay
     src.buffer = buf;
     src.connect(ctx.destination);
     src.onended = () => {
+      playingRef.current = false;
       setPlaying(false);
       sourceRef.current = null;
     };
     src.start();
     sourceRef.current = src;
+    playingRef.current = true;
     setPlaying(true);
   }, [audio.data]);
 
   const stop = useCallback(() => {
     sourceRef.current?.stop();
     sourceRef.current = null;
+    playingRef.current = false;
     setPlaying(false);
   }, []);
 
@@ -69,7 +73,7 @@ export function AudioPlayPreview({ gid, idx, etag, className, label }: AudioPlay
       title={playing ? '停止' : '试听'}
       aria-label={playing ? '停止' : '试听'}
       className={cn(
-        'inline-flex items-center gap-1.5 px-2 py-1.5 rounded-[8px] text-stone hover:text-clay hover:bg-cream transition-colors disabled:opacity-50',
+        'inline-flex items-center gap-1.5 px-2 py-1.5 text-stone hover:text-ink hover:bg-cream transition-colors disabled:opacity-50',
         className
       )}
     >

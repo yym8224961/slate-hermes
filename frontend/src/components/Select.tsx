@@ -45,7 +45,7 @@ export function Select({
         <RS.Icon>
           {/* chevron 用 stone(暖棕)而非 stone-light:在 cream-deep 底上后者
               几乎被吃掉,失去"这是下拉框"的视觉暗示 */}
-          <ChevronDown size={14} className="text-stone" />
+          <ChevronDown size={14} className="text-ink" />
         </RS.Icon>
       </RS.Trigger>
       <RS.Portal>
@@ -73,7 +73,7 @@ export function SelectItem({ value, children, hint, className }: SelectItemProps
         <span className="ml-auto font-mono text-[11px] text-stone-light">{hint}</span>
       )}
       {/* 选中标记:右侧 check,与 hint 共存时排在 hint 之后 */}
-      <RS.ItemIndicator className="ml-1 text-clay">
+      <RS.ItemIndicator className="ml-1 text-ink">
         <Check size={13} strokeWidth={2.5} />
       </RS.ItemIndicator>
     </RS.Item>

@@ -1,6 +1,4 @@
-// Soft-craft input。所有「看上去是输入框」的样式集中在 lib/styles.ts 里
-// (Select trigger / inline rename input / textarea 都共用),保证 affordance
-// 一致 — 改这里也别忘了同步那边。
+// Mono Press input：下划线风格，label 用 mono uppercase。
 
 import { forwardRef, type InputHTMLAttributes } from 'react';
 import { inputCls } from '../lib/styles';
@@ -19,25 +17,19 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
   return (
     <label className="block">
       {label && (
-        <span className="block font-sans text-[13px] text-stone mb-1.5 ml-0.5">{label}</span>
+        <span className="block font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
+          {label}
+        </span>
       )}
       <input
         ref={ref}
-        className={cn(
-          inputCls,
-          // error 用实色 clay border + 微 clay-tinted bg,与默认态的"实色"
-          // 节奏一致(默认 stone-light 实 → error clay 实)
-          error && '!border-clay !bg-clay/[0.04] focus:!ring-clay/20',
-          className
-        )}
+        className={cn(inputCls, error && '!border-clay focus-visible:!outline-clay', className)}
         {...rest}
       />
       {hint && !error && (
-        <span className="block font-sans text-[12px] text-stone mt-1.5 ml-0.5">{hint}</span>
+        <span className="block font-sans text-[11px] text-stone mt-1.5">{hint}</span>
       )}
-      {error && (
-        <span className="block font-sans text-[12px] text-clay mt-1.5 ml-0.5">{error}</span>
-      )}
+      {error && <span className="block font-sans text-[11px] text-clay mt-1.5">{error}</span>}
     </label>
   );
 });

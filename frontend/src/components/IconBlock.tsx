@@ -1,19 +1,17 @@
-// 统一的 icon 容器原子。
+// Mono Press icon 容器：0px 圆角、墨线边框。
 //
-// 4 种尺寸 + 5 种语调,所有页 / 卡 / dialog 通过它出 icon 块。
+// 尺寸阶梯：
+//   sm  w-8  h-8    内嵌 / 列表小图标
+//   md  w-10 h-10   卡片 / section badge / dialog header
+//   lg  w-14 h-14   group 大标题
+//   xl  w-16 h-16   login/register 品牌块
 //
-// 尺寸阶梯:
-//   sm  w-8  h-8  rounded-[10px]   列表小图标 / 内嵌
-//   md  w-10 h-10 rounded-[12px]   卡片标准 (DeviceCard / GroupCard / Section badge / dialog header)
-//   lg  w-14 h-14 rounded-[16px]   备用
-//   xl  w-16 h-16 rounded-[18px]   GroupHeader 等强调位
-//
-// 语调:
-//   brand   bg-clay     text-paper            logo 唯一
-//   avatar  bg-saffron  text-ink (rounded-full)  用户头像唯一
-//   soft    bg-cream-deep text-clay           默认(卡片/header/dialog header)
-//   danger  bg-clay/15  text-clay             销毁性 / 警告
-//   muted   bg-cream    text-stone            empty state / 弱化
+// 语调：
+//   brand  bg-ink text-paper border-ink   logo 唯一
+//   soft   bg-paper text-ink border-ink   默认（卡片/header/dialog）
+//   danger bg-paper text-clay border-clay 销毁性/警告
+//   muted  bg-cream text-stone border-line 空状态/弱化
+//   avatar bg-ink text-paper border-ink    用户头像
 
 import type { ReactNode } from 'react';
 import { cn } from '../lib/cn';
@@ -22,18 +20,18 @@ type Size = 'sm' | 'md' | 'lg' | 'xl';
 type Tone = 'brand' | 'avatar' | 'soft' | 'danger' | 'muted';
 
 const SIZE: Record<Size, string> = {
-  sm: 'w-8 h-8 rounded-[10px]',
-  md: 'w-10 h-10 rounded-[12px]',
-  lg: 'w-14 h-14 rounded-[16px]',
-  xl: 'w-16 h-16 rounded-[18px]',
+  sm: 'w-8 h-8',
+  md: 'w-10 h-10',
+  lg: 'w-14 h-14',
+  xl: 'w-16 h-16',
 };
 
 const TONE: Record<Tone, string> = {
-  brand: 'bg-clay text-paper',
-  avatar: 'bg-ink text-paper !rounded-full',
-  soft: 'bg-cream-deep text-clay',
-  danger: 'bg-clay/15 text-clay',
-  muted: 'bg-cream text-stone',
+  brand: 'bg-ink text-paper border border-ink',
+  avatar: 'bg-ink text-paper border border-ink !rounded-full',
+  soft: 'bg-paper text-ink border border-ink',
+  danger: 'bg-paper text-clay border border-clay',
+  muted: 'bg-cream text-stone border border-line',
 };
 
 interface IconBlockProps {

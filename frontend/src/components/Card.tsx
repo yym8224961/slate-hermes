@@ -1,5 +1,4 @@
-// Soft-craft 卡片:奶米底 + 圆角 + hover 上浮 + 阴影。
-// 整卡可点(传 to/onClick),也可纯展示。
+// Mono Press 卡片：0 圆角 + 墨线 1px 边框。
 
 import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
@@ -10,7 +9,6 @@ interface CardProps {
   onClick?: () => void;
   children: ReactNode;
   className?: string;
-  /** 顶部右侧装饰(状态点/标签等) */
   ribbon?: ReactNode;
 }
 

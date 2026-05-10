@@ -73,7 +73,22 @@ export function GroupDetail() {
     );
   }
 
-  if (!gid) return null;
+  if (!gid) {
+    return (
+      <EmptyState
+        title="页面不存在"
+        hint="请从总览页进入具体内容组。"
+        action={
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1 text-[13px] text-stone border-b border-stone"
+          >
+            <ArrowLeft size={13} /> 返回总览
+          </Link>
+        }
+      />
+    );
+  }
   if (groups.isPending) {
     return (
       <div className="pt-16 text-center">
@@ -83,12 +98,17 @@ export function GroupDetail() {
   }
   if (!group) {
     return (
-      <div className="pt-16 text-center">
-        <p className="font-kai text-[18px] text-stone">这组内容不存在,或不属于你。</p>
-        <Link to="/" className="text-[13px] text-clay mt-3 inline-block hover:underline">
-          ← 返回总览
-        </Link>
-      </div>
+      <EmptyState
+        title="内容不存在或已被删除"
+        action={
+          <Link
+            to="/"
+            className="inline-flex items-center gap-1 text-[13px] text-stone border-b border-stone"
+          >
+            <ArrowLeft size={13} /> 返回总览
+          </Link>
+        }
+      />
     );
   }
 
@@ -110,7 +130,7 @@ export function GroupDetail() {
       <nav>
         <Link
           to="/"
-          className="inline-flex items-center gap-1.5 text-[13px] text-stone hover:text-clay"
+          className="inline-flex items-center gap-1.5 text-[11px] font-mono text-stone hover:text-ink tracking-[0.08em]"
         >
           <ArrowLeft size={14} /> 总览
         </Link>
@@ -118,9 +138,11 @@ export function GroupDetail() {
 
       <GroupHeader group={group} KindIcon={KindIcon} onAddFrame={openCreate} />
 
-      {/* 不再有「帧」小标题（组名已是页面标题，重复），但保留波浪分割线。
-          mt-5 与 Section 组件 header→wave 间距一致。 */}
-      <div className="wave-divider mt-5" />
+      {/* 双线分隔 */}
+      <div className="mt-5 flex flex-col gap-[3px]">
+        <div className="h-px bg-ink" />
+        <div className="h-0.5 bg-ink" />
+      </div>
       <div className="mt-6 fade-up fade-up-1">
         {frames.isPending ? (
           <Spinner label="加载中" />
@@ -231,11 +253,11 @@ function GroupHeader({
                 maxLength={64}
                 className={cn(
                   inputCls,
-                  'flex-1 min-w-0 !font-kai !text-[32px] sm:!text-[40px] leading-tight !py-1'
+                  'flex-1 min-w-0 !font-serif !font-bold !text-[32px] sm:!text-[40px] leading-tight'
                 )}
               />
             ) : (
-              <h1 className="font-kai text-[32px] sm:text-[40px] leading-tight truncate">
+              <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-tight truncate tracking-tight">
                 {group.name}
               </h1>
             )}
@@ -244,14 +266,14 @@ function GroupHeader({
               disabled={update.isPending}
               aria-label={editing ? '保存名称' : '改名'}
               title={editing ? '保存' : '改名'}
-              className="text-stone-light hover:text-clay disabled:opacity-50 transition-colors p-2 -m-1 rounded-[8px] hover:bg-cream flex-shrink-0"
+              className="text-stone-light hover:text-ink disabled:opacity-50 transition-colors p-2 -m-1 hover:bg-cream flex-shrink-0"
             >
               {editing ? <Check size={18} /> : <Pencil size={16} />}
             </button>
           </div>
 
           {/* meta 在标题下方 */}
-          <p className="font-kai text-[14px] text-stone mt-1.5">
+          <p className="font-serif italic text-[14px] text-stone mt-1.5">
             {kindLabel} · {group.frame_count} 帧
           </p>
         </div>

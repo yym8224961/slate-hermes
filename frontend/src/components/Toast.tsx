@@ -64,10 +64,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 function ToastBody({ item, onClose }: { item: ToastItem; onClose: () => void }) {
   const Icon = item.tone === 'success' ? CheckCircle2 : item.tone === 'error' ? AlertCircle : Info;
 
-  const tone = item.tone === 'error' ? 'bg-clay text-paper border-clay' : 'bg-paper border-line';
+  const tone =
+    item.tone === 'error' ? 'bg-ink text-paper border-ink' : 'bg-paper border-ink text-ink';
 
   const iconClass =
-    item.tone === 'error' ? 'text-paper' : item.tone === 'success' ? 'text-moss' : 'text-clay';
+    item.tone === 'error' ? 'text-paper' : item.tone === 'success' ? 'text-ink' : 'text-stone';
 
   return (
     <RT.Root
@@ -75,7 +76,7 @@ function ToastBody({ item, onClose }: { item: ToastItem; onClose: () => void }) 
         if (!o) onClose();
       }}
       className={cn(
-        'group flex items-start gap-3 px-4 py-3 rounded-[14px] border shadow-[0_12px_28px_rgba(61,40,23,0.16)]',
+        'group flex items-start gap-3 px-4 py-3 border-2 shadow-md',
         'data-[state=open]:animate-in data-[state=open]:slide-in-from-right-4',
         'data-[state=closed]:animate-out data-[state=closed]:fade-out',
         tone
@@ -83,7 +84,9 @@ function ToastBody({ item, onClose }: { item: ToastItem; onClose: () => void }) 
     >
       <Icon size={18} className={cn('mt-0.5 flex-shrink-0', iconClass)} />
       <div className="min-w-0 flex-1">
-        <RT.Title className="font-kai text-[15px] leading-snug">{item.message}</RT.Title>
+        <RT.Title className="font-serif text-[14px] font-medium leading-snug">
+          {item.message}
+        </RT.Title>
         {item.hint && (
           <RT.Description className="font-sans text-[12px] opacity-80 mt-1 leading-relaxed">
             {item.hint}

@@ -33,11 +33,11 @@ export function DitherControls({
           <div className="flex items-baseline justify-between mb-2 ml-0.5">
             <p className="font-sans text-[13px] text-stone">缩放</p>
             <div className="flex items-center gap-2">
-              <p className="font-mono text-[12px] text-clay tabular-nums">{scale.toFixed(1)}×</p>
+              <p className="font-mono text-[12px] text-ink tabular-nums">{scale.toFixed(1)}×</p>
               <button
                 type="button"
                 onClick={onResetCrop}
-                className="font-sans text-[11px] text-stone hover:text-clay transition-colors"
+                className="font-sans text-[11px] text-stone border-b border-stone hover:border-ink hover:text-ink transition-colors"
               >
                 重置
               </button>
@@ -51,7 +51,7 @@ export function DitherControls({
             value={scale}
             onChange={(e) => onScaleChange(Number(e.target.value))}
           />
-          <p className="font-kai text-[11px] text-stone-light mt-1.5">
+          <p className="font-serif italic text-[11px] text-stone-light mt-1.5">
             预览图可拖拽定位,滑块控制缩放。
           </p>
         </div>
@@ -69,7 +69,7 @@ export function DitherControls({
         >
           {DITHER_MODES.map((m) => (
             <SelectItem key={m} value={m}>
-              <span className="font-kai">{DITHER_INFO[m].label}</span>
+              <span className="font-serif">{DITHER_INFO[m].label}</span>
             </SelectItem>
           ))}
         </Select>
@@ -82,7 +82,7 @@ export function DitherControls({
         <div>
           <div className="flex items-baseline justify-between mb-2 ml-0.5">
             <p className="font-sans text-[13px] text-stone">阈值</p>
-            <p className="font-mono text-[12px] text-clay tabular-nums">
+            <p className="font-mono text-[12px] text-ink tabular-nums">
               {threshold}
               <span className="text-stone-light">/255</span>
             </p>
@@ -94,7 +94,7 @@ export function DitherControls({
             value={threshold}
             onChange={(e) => onThresholdChange(Number(e.target.value))}
           />
-          <p className="font-kai text-[11px] text-stone-light mt-1.5">
+          <p className="font-serif italic text-[11px] text-stone-light mt-1.5">
             简笔画 128;带细灰边的图试 180+。
           </p>
         </div>

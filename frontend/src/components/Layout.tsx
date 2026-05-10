@@ -1,9 +1,8 @@
-// 全局壳:logo + 用户菜单。无 tab(首页 = 总览,无需 nav)。
-// 「添加设备」按钮归 Dashboard 的设备 Section 管(与「新建组」对称)。
+// Mono Press 全局壳：masthead + 用户下拉。无 tab，只有 logo + dropdown。
 
 import { Link, Outlet } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
-import { ChevronDown, LogOut } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { useAuth } from '../lib/auth';
 import { IconBlock } from './IconBlock';
 
@@ -12,67 +11,58 @@ export function Layout() {
 
   return (
     <div className="min-h-screen flex flex-col bg-paper">
-      <header className="border-b border-line bg-paper/85 backdrop-blur-sm sticky top-0 z-30">
+      <header className="border-b border-ink bg-paper sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-5 sm:px-8 py-3.5 flex items-center justify-between gap-4">
           {/* logo */}
-          <Link to="/" className="flex items-center gap-3 group min-w-0">
-            <IconBlock
-              size="md"
-              tone="brand"
-              className="font-kai text-[20px] group-hover:rotate-[-4deg] transition-transform"
-            >
+          <Link to="/" className="flex items-center gap-3 min-w-0">
+            <IconBlock size="md" tone="brand" className="font-serif text-[18px] font-bold">
               墨
             </IconBlock>
             <div className="hidden sm:block min-w-0">
-              <p className="font-kai text-[19px] leading-none text-ink group-hover:text-clay transition-colors truncate">
+              <p className="font-serif text-[18px] font-bold leading-none text-ink tracking-tight truncate">
                 Slate
               </p>
-              <p className="font-kai text-[11px] text-stone-light leading-none mt-1 tracking-[0.04em] truncate">
+              <p className="font-sans text-[10px] text-stone leading-none mt-1 tracking-[0.2em] uppercase truncate">
                 案头那块墨水屏
               </p>
             </div>
           </Link>
 
-          {/* 右侧操作区 */}
-          <div className="flex items-center gap-2 sm:gap-3">
+          {/* 右侧用户下拉 */}
+          <div className="flex items-center gap-2">
             {user && (
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger asChild>
                   <button
                     aria-label="账号菜单"
-                    className="group inline-flex items-center gap-2 h-9 pl-1.5 pr-2 sm:pr-3 rounded-[11px] text-[13px] text-stone bg-cream hover:bg-cream-deep border border-line hover:border-stone-light transition-colors"
+                    className="group inline-flex items-center gap-2 h-9 pl-1.5 pr-3 text-[13px] text-stone border border-ink hover:bg-cream-deep transition-colors"
                   >
-                    {/* 头像:墨色底 + 纸色字。与 logo 的「墨」字形成红/黑双色相呼应,
-                        不抢 logo 主位。这里直接写而不复用 IconBlock — IconBlock
-                        的 sm 是 w-8 h-8,trigger 内还要塞 chevron+email,头像必须
-                        小一档(w-6) */}
-                    <span className="w-6 h-6 rounded-full bg-ink text-paper flex items-center justify-center font-sans text-[11px] font-medium">
+                    <span className="w-6 h-6 bg-ink text-paper flex items-center justify-center font-sans text-[11px] font-semibold">
                       {user.email.charAt(0).toUpperCase()}
                     </span>
-                    <span className="hidden md:inline font-sans max-w-[140px] truncate">
+                    <span className="hidden md:inline font-sans max-w-[140px] truncate text-ink">
                       {user.email.split('@')[0]}
                     </span>
-                    <ChevronDown
-                      size={12}
-                      className="text-stone-light group-hover:text-stone transition-colors"
-                    />
+                    <span className="font-mono text-[10px] text-stone">▾</span>
                   </button>
                 </DropdownMenu.Trigger>
                 <DropdownMenu.Portal>
                   <DropdownMenu.Content
                     align="end"
-                    sideOffset={8}
-                    className="min-w-[200px] bg-paper border border-line rounded-[14px] shadow-[0_12px_32px_rgba(61,40,23,0.12)] py-1.5 z-50"
+                    sideOffset={6}
+                    className="min-w-[200px] bg-paper border border-ink shadow-[0_8px_24px_rgba(20,17,13,0.14)] py-1 z-50"
                   >
-                    <div className="px-3 pt-1.5 pb-2 border-b border-line mb-1">
-                      <p className="text-[11px] text-stone-light">已登录</p>
-                      <p className="text-[13px] text-ink truncate">{user.email}</p>
+                    <div className="px-3 pt-2 pb-2.5 border-b border-line mb-1">
+                      <p className="text-[10px] text-stone uppercase tracking-[0.16em] font-mono">
+                        已登录
+                      </p>
+                      <p className="text-[13px] text-ink truncate font-sans mt-0.5">{user.email}</p>
                     </div>
                     <DropdownMenu.Item
                       onSelect={() => logout()}
-                      className="flex items-center gap-3 mx-1.5 px-3 py-2 text-[14px] text-clay rounded-[10px] cursor-pointer hover:bg-cream outline-none"
+                      className="flex items-center gap-3 mx-1 px-3 py-2 text-[13px] text-clay cursor-pointer hover:bg-cream outline-none"
                     >
-                      <LogOut size={15} />
+                      <LogOut size={14} />
                       退出登录
                     </DropdownMenu.Item>
                   </DropdownMenu.Content>
@@ -89,7 +79,7 @@ export function Layout() {
 
       <footer className="border-t border-line">
         <div className="max-w-6xl mx-auto px-5 sm:px-8 py-3.5 text-center sm:text-right">
-          <p className="font-mono text-[11px] text-stone-light tracking-[0.04em]">
+          <p className="font-mono text-[11px] text-stone tracking-[0.06em]">
             Slate · 1bpp · 400×300 · v0.1
           </p>
         </div>

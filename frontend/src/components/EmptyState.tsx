@@ -24,7 +24,7 @@ export function EmptyState({ title, hint, icon, action, className }: EmptyStateP
           </IconBlock>
         </div>
       )}
-      <p className="font-kai text-[20px] text-ink">{title}</p>
+      <p className="font-serif text-[18px] font-medium text-ink">{title}</p>
       {hint && (
         <p className="text-[14px] text-stone mt-2 max-w-md mx-auto leading-relaxed">{hint}</p>
       )}

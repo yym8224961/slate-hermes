@@ -1,55 +1,36 @@
 @import "tailwindcss";
 
-/* 霞鹜文楷 webfont 通过 jsdelivr 的第三方 stylesheet 加载,无法保证它
-   带 font-display: swap。这里覆写,避免上游 CDN 慢时首屏文字 block。 */
-@font-face {
-  font-family: "LXGW WenKai Screen";
-  font-display: swap;
-}
-@font-face {
-  font-family: "LXGW WenKai";
-  font-display: swap;
-}
-
-/* ─── Design tokens: soft-craft / 温柔工艺 ─────────────────────────────
+/* ─── Design tokens: Mono Press / 报刊编辑风格 ─────────────────────
  *
- * 霞鹜文楷做主调中文,Fraunces+DM Sans 配英文。配色取自:奶油纸 +
- * 暖墨棕 + 砖红/陶土 + 鹅黄 accent + 苔绿(在线状态)。
- *
- * 形状：大圆角 14-22px，贴合「手账/便签/家庭」语境。比 editorial 的
- * 直角软,但不到 macOS 圆角那么柔。
- *
- * 字体故意避开 Inter / Roboto / Arial。中文用霞鹜文楷书写感强,
- * 是这套设计的核心锚点。
+ * Noto Serif SC 做中英文标题锚点，IBM Plex Sans/Mono 做 UI 与技术细节。
+ * 配色：#f5f3ed 纸本，#14110d 墨色，#a8281c 砖红仅做警示/危险。
+ * 形态：0px 圆角、1–3px hairline 分割，无模糊、无阴影堆叠。
  */
 @theme {
   /* fonts */
-  --font-serif: "Fraunces", "LXGW WenKai Screen", "LXGW WenKai", "Kaiti SC", "STKaiti", serif;
-  --font-sans:  "DM Sans", "LXGW WenKai Screen", "LXGW WenKai", "PingFang SC", system-ui, sans-serif;
-  --font-kai:   "LXGW WenKai Screen", "LXGW WenKai", "Kaiti SC", "STKaiti", "Songti SC", serif;
-  --font-mono:  "JetBrains Mono", ui-monospace, "SF Mono", monospace;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", Georgia, serif;
+  --font-sans:  "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-kai:   "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", Georgia, serif; /* backward-compat alias */
+  --font-mono:  "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
 
-  /* warm cream + clay palette */
-  --color-paper:       #faf6ef; /* 奶油纸 */
-  --color-cream:       #f3ecdf; /* 浅奶米(卡片背景) */
-  --color-cream-deep:  #e9dec9; /* 深奶米(hover) */
-  --color-ink:         #3d2817; /* 暖墨棕(替代死黑) */
-  --color-stone:       #8b7156; /* 陶土棕(副标) */
-  --color-stone-light: #b8a890; /* 浅陶土(辅助) */
-  --color-clay:        #b85436; /* 砖红/陶土(主强调) */
-  --color-clay-soft:   #d68a6e; /* 浅砖红(hover) */
-  --color-saffron:     #e8b86d; /* 鹅黄(高亮/标签) */
-  --color-moss:        #6b8e4e; /* 苔绿(在线状态) */
-  --color-line:        #e2d8c4; /* 软分割线 */
+  /* mono press palette */
+  --color-paper:       #f5f3ed; /* 纸本底色 */
+  --color-cream:       #efebe1; /* 卡片二级背景 */
+  --color-cream-deep:  #e6e1d4; /* hover / 分组背景 */
+  --color-ink:         #14110d; /* 主色墨黑 */
+  --color-stone:       #6b665d; /* 次要文字(mute) */
+  --color-stone-light: #a39d92; /* 弱化文字(dim) */
+  --color-clay:        #a8281c; /* 砖红：仅用于危险/低电量/错误 */
+  --color-line:        #d8d2bf; /* 浅 hairline */
 
-  /* radius — 大圆角是这套设计的另一个锚 */
-  --radius-sm: 8px;
-  --radius-md: 14px;
-  --radius-lg: 22px;
-  --radius-xl: 28px;
+  /* radius — Mono Press 全部 0px */
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-xl: 0px;
 
   /* tracking */
-  --tracking-tight: -0.005em;
+  --tracking-tight: -0.015em;
   --tracking-soft:  0.02em;
 }
 
@@ -67,34 +48,39 @@ body {
 }
 * { box-sizing: border-box; }
 
-/* 楷书专用 class — 中文标题/装饰文案用这个 */
+/* Mono Press: 0px 圆角全局覆写 ─────────────────────
+   Tailwind 的 rounded- 工具类生成于 @layer utilities；
+   无层 CSS 的优先级高于任何 @layer，无需 !important。
+   排除 Radix UI 组件（下拉菜单、Select 弹层等）避免样式异常。 */
+*:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]):not([data-radix-dropdown-menu-content]):not([data-radix-tooltip-content]):not([data-radix-popover-content]),
+*::before:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]),
+*::after:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]) {
+  border-radius: 0;
+}
+
+/* 保留 font-kai 兼容别名 — 底层已指向 Noto Serif SC */
 .font-kai {
   font-family: var(--font-kai);
-  letter-spacing: var(--tracking-soft);
+  letter-spacing: var(--tracking-tight);
 }
-/* serif display — 英文标题或中英混排标题 */
 .font-serif {
   font-family: var(--font-serif);
-  font-feature-settings: "kern", "liga", "swsh";
   letter-spacing: var(--tracking-tight);
 }
 .font-mono, code, kbd, samp {
   font-feature-settings: "tnum";
-  font-weight: 300;
 }
 
 /* selection */
 ::selection {
-  background: var(--color-clay);
+  background: var(--color-ink);
   color: var(--color-paper);
 }
 
-/* focus:暖色 ring 替代死边框。
-   不设 border-radius — 让浏览器跟随元素自身的圆角(button/card 各不同),
-   全局写死 8px 反而和大圆角卡片不贴合。 */
+/* focus ring — ink 色细框，无 blur */
 :focus-visible {
-  outline: 2px solid var(--color-clay);
-  outline-offset: 3px;
+  outline: 2px solid var(--color-ink);
+  outline-offset: 2px;
 }
 
 /* form reset */
@@ -102,140 +88,120 @@ button, input, textarea, select {
   font: inherit;
   background: transparent;
   color: inherit;
-  border: none;
 }
-/* 所有非 disabled 的 button 默认手指 cursor — 浏览器原生 button 是
-   default cursor,不是 pointer,看起来不像可点。这里全局补上。 */
-button:not(:disabled) {
-  cursor: pointer;
-}
-button:disabled {
-  cursor: not-allowed;
-}
-/* a 标签默认有 pointer,但 react-router Link 渲染的 <a href> 也补一下保险 */
-a[href] {
-  cursor: pointer;
-}
-/* range slider 拖把 */
-input[type="range"] {
-  cursor: pointer;
-}
+button:not(:disabled) { cursor: pointer; }
+button:disabled       { cursor: not-allowed; }
+a[href]               { cursor: pointer; }
+input[type="range"]   { cursor: pointer; }
 
-/* ─── Soft-craft primitives ──────────────────────────────────────────── */
+/* ─── Mono Press primitives ──────────────────────────────────────── */
 
-/* 卡片基础 — 圆角 + 奶米底 + hover 浮起 */
+/* 卡片 — 0 圆角 + 纸本底 + 1px 墨线边框 */
 .craft-card {
-  background: var(--color-cream);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  transition: transform 220ms cubic-bezier(.2,.7,.2,1),
-              box-shadow 220ms ease,
-              background 220ms ease;
+  background: var(--color-paper);
+  border: 1px solid var(--color-ink);
+  display: flex;
+  flex-direction: column;
+  transition: background 150ms ease;
 }
 .craft-card[data-hoverable="true"]:hover {
-  background: var(--color-cream-deep);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px -4px rgba(61, 40, 23, 0.12);
+  background: var(--color-cream);
   cursor: pointer;
 }
-
-/* danger 变体 — 用于「重启设备」这种破坏性卡片按钮。
-   hover 时染一抹砖红,而不是 cream-deep。语义上和主按钮的 danger variant 呼应。 */
 .craft-card-danger {
-  background: var(--color-cream);
-  border: 1px solid var(--color-line);
-  border-radius: var(--radius-lg);
-  transition: transform 220ms cubic-bezier(.2,.7,.2,1),
-              box-shadow 220ms ease,
-              background 220ms ease,
-              border-color 220ms ease;
+  background: var(--color-paper);
+  border: 1px solid var(--color-ink);
   cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
 }
 .craft-card-danger:hover:not(:disabled) {
-  background: rgba(184, 84, 54, 0.08); /* clay 8% */
-  border-color: rgba(184, 84, 54, 0.30);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 16px -4px rgba(184, 84, 54, 0.16);
+  background: rgba(168, 40, 28, 0.06);
+  border-color: var(--color-clay);
 }
 
-/* 主按钮 — 砖红实心 */
-/* (具体实现走 component className,这里只放 token) */
+/* 状态方块：在线=实心墨，离线=空框，警告=实心砖红 */
+.dot { display: inline-block; width: 8px; height: 8px; }
+.dot-online  { background: var(--color-ink); border: 1.2px solid var(--color-ink); }
+.dot-offline { background: transparent; border: 1.2px solid var(--color-stone); opacity: 0.55; }
+.dot-warn    { background: var(--color-clay); border: 1.2px solid var(--color-clay); }
 
-/* 状态点 */
-.dot { display: inline-block; width: 9px; height: 9px; border-radius: 9999px; }
-.dot-online  { background: var(--color-moss); box-shadow: 0 0 0 3px rgba(107, 142, 78, 0.18); }
-.dot-offline { background: transparent; border: 1.5px solid var(--color-stone-light); }
-.dot-warn    { background: var(--color-clay); box-shadow: 0 0 0 3px rgba(184, 84, 54, 0.18); }
-
-/* small caps 装饰小标签 */
+/* small caps 标签 */
 .smallcaps {
   font-family: var(--font-sans);
-  font-variant-caps: all-small-caps;
-  letter-spacing: var(--tracking-soft);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
   color: var(--color-stone);
-  font-weight: 500;
 }
 
-/* 手绘感波浪分割(替代死板的 hairline)。
-   opacity 收到 0.4 — 一页里多个 Section 一起出现时,
-   0.7 会让整页显得「被切成条」，视觉太响。 */
+/* 双线分隔 — 替代原来的 wave-divider */
 .wave-divider {
-  height: 8px;
-  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 8'><path d='M0 4 Q 5 0, 10 4 T 20 4 T 30 4 T 40 4' fill='none' stroke='%23b8a890' stroke-width='1.2'/></svg>");
-  background-repeat: repeat-x;
-  background-size: 40px 8px;
-  opacity: 0.4;
+  height: auto;
+  background-image: none;
+  background-repeat: unset;
+  background-size: unset;
+  opacity: 1;
+  border: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.wave-divider::before {
+  content: '';
+  display: block;
+  height: 1px;
+  background: var(--color-ink);
+}
+.wave-divider::after {
+  content: '';
+  display: block;
+  height: 2px;
+  background: var(--color-ink);
 }
 
 /* 入场动画 */
 @keyframes fade-up {
-  from { opacity: 0; transform: translateY(10px); }
+  from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.fade-up { animation: fade-up 520ms cubic-bezier(.2,.7,.2,1) both; }
-.fade-up-1 { animation-delay: 80ms; }
-.fade-up-2 { animation-delay: 160ms; }
-.fade-up-3 { animation-delay: 240ms; }
-.fade-up-4 { animation-delay: 320ms; }
+.fade-up { animation: fade-up 400ms cubic-bezier(.2,.7,.2,1) both; }
+.fade-up-1 { animation-delay: 60ms; }
+.fade-up-2 { animation-delay: 120ms; }
+.fade-up-3 { animation-delay: 180ms; }
+.fade-up-4 { animation-delay: 240ms; }
 
-/* 心跳 loading(替代 spinner)— 砖红圆点呼吸 */
+/* loading 点 — ink 色 */
 @keyframes heartbeat {
-  0%, 100% { transform: scale(1);   opacity: 0.6; }
-  50%      { transform: scale(1.3); opacity: 1; }
+  0%, 100% { transform: scale(1);   opacity: 0.5; }
+  50%       { transform: scale(1.3); opacity: 1; }
 }
 .heart-dot {
   display: inline-block;
-  width: 8px; height: 8px; border-radius: 9999px;
-  background: var(--color-clay);
+  width: 7px; height: 7px;
+  background: var(--color-ink);
   margin: 0 2px;
   animation: heartbeat 1.4s ease-in-out infinite;
 }
 .heart-dot:nth-child(2) { animation-delay: 0.2s; }
 .heart-dot:nth-child(3) { animation-delay: 0.4s; }
 
-/* 范围滑块的奶油底 */
+/* range slider — ink thumb */
 input[type="range"] {
   -webkit-appearance: none;
   width: 100%;
-  height: 6px;
-  background: var(--color-cream-deep);
-  border-radius: 9999px;
+  height: 2px;
+  background: var(--color-line);
   outline: none;
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 18px; height: 18px;
-  border-radius: 9999px;
-  background: var(--color-clay);
+  width: 14px; height: 14px;
+  background: var(--color-ink);
   cursor: pointer;
-  box-shadow: 0 2px 6px rgba(184, 84, 54, 0.3);
-  transition: transform 150ms ease;
 }
-input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
 input[type="range"]::-moz-range-thumb {
-  width: 18px; height: 18px;
-  border-radius: 9999px;
-  background: var(--color-clay);
+  width: 14px; height: 14px;
+  background: var(--color-ink);
   border: none;
   cursor: pointer;
 }

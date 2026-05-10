@@ -1,12 +1,9 @@
-// 帧卡:1bpp 缩略图占满上半,下半 caption + 操作。
-//
-// 拖拽 handle 不再占用单独列,改为底部操作行的一项;dnd-kit
-// PointerSensor 的 distance:6 让点击不会误触发拖动。
+// Mono Press 帧卡：1bpp 缩略图 + caption + 操作行，0 圆角 ink 边框。
 
 import { useEffect, useRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Pencil, Trash2, Music, GripVertical } from 'lucide-react';
+import { Pencil, Trash2, GripVertical } from 'lucide-react';
 import { useFrameImage, useDeleteFrame } from '../lib/queries';
 import type { FrameSummaryT } from 'shared';
 import { Spinner } from './Spinner';
@@ -24,10 +21,12 @@ interface FrameCardProps {
 const FRAME_W = 400;
 const FRAME_H = 300;
 
-const C_WHITE: [number, number, number] = [0xfa, 0xf6, 0xef];
-const C_BLACK: [number, number, number] = [0x3d, 0x28, 0x17];
+// Mono Press 墨色 #14110d + 纸本 #f5f3ed
+const C_WHITE: [number, number, number] = [0xf5, 0xf3, 0xed];
+const C_BLACK: [number, number, number] = [0x14, 0x11, 0x0d];
 
 const imageDataCache = new Map<string, ImageData>();
+const MAX_CACHE_SIZE = 50;
 
 function buildFrameImageData(bytes: Uint8Array): ImageData {
   const data = new ImageData(FRAME_W, FRAME_H);
@@ -75,16 +74,20 @@ export function FrameCard({ gid, frame, onEdit }: FrameCardProps) {
     if (!data) {
       data = buildFrameImageData(bytes);
       imageDataCache.set(frame.image_etag, data);
+      if (imageDataCache.size > MAX_CACHE_SIZE) {
+        const firstKey = imageDataCache.keys().next().value;
+        if (firstKey) imageDataCache.delete(firstKey);
+      }
     }
     ctx.putImageData(data, 0, 0);
   }, [img.data, frame.image_etag]);
 
   async function onDelete() {
     const ok = await confirm({
-      title: `删除第 ${frame.sort_order} 帧?`,
+      title: `删除第 ${frame.sort_order} 帧？`,
       description: frame.caption
-        ? `「${frame.caption}」连同图${frame.audio_etag ? '与音频' : ''}一起删除,不可逆。`
-        : `这帧的图${frame.audio_etag ? '与音频' : ''}会删除,不可逆。`,
+        ? `「${frame.caption}」连同图${frame.audio_etag ? '与音频' : ''}一起删除，不可逆。`
+        : `这帧的图${frame.audio_etag ? '与音频' : ''}会删除，不可逆。`,
       destructive: true,
       confirmText: '删除',
     });
@@ -99,13 +102,10 @@ export function FrameCard({ gid, frame, onEdit }: FrameCardProps) {
     <div
       ref={setNodeRef}
       style={style}
-      className={cn(
-        'craft-card flex flex-col overflow-hidden',
-        isDragging && 'shadow-[0_16px_40px_rgba(61,40,23,0.25)] opacity-90'
-      )}
+      className={cn('craft-card flex flex-col overflow-hidden', isDragging && 'opacity-90')}
     >
-      {/* 缩略图 — 铺满上半部分 */}
-      <div className="aspect-[4/3] bg-cream-deep relative overflow-hidden">
+      {/* 缩略图 */}
+      <div className="aspect-[4/3] bg-cream relative overflow-hidden border-b border-ink">
         {img.isPending ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <Spinner />
@@ -125,22 +125,22 @@ export function FrameCard({ gid, frame, onEdit }: FrameCardProps) {
         )}
 
         {/* idx 角标 */}
-        <span className="absolute top-2 left-2 inline-flex items-center justify-center min-w-[28px] h-6 px-1.5 rounded-[6px] bg-paper/90 backdrop-blur-[1px] text-clay font-mono text-[11px] pointer-events-none">
+        <span className="absolute top-2 left-2 bg-paper border border-ink px-1.5 font-mono text-[10px] pointer-events-none">
           {String(frame.sort_order).padStart(2, '0')}
         </span>
 
         {frame.audio_etag && (
-          <span className="absolute top-2 right-2 inline-flex items-center justify-center w-6 h-6 rounded-full bg-paper/90 backdrop-blur-[1px] text-clay pointer-events-none">
-            <Music size={11} />
+          <span className="absolute top-2 right-2 bg-paper border border-ink text-ink px-1.5 font-mono text-[10px] pointer-events-none">
+            ♪
           </span>
         )}
       </div>
 
       {/* caption */}
-      <div className="px-4 pt-3 pb-2 flex-1 min-w-0">
+      <div className="px-3.5 pt-2.5 pb-2 flex-1 min-w-0">
         <p
           className={cn(
-            'font-kai text-[17px] truncate',
+            'font-serif text-[15px] truncate leading-snug',
             frame.caption ? 'text-ink' : 'text-stone-light italic'
           )}
         >
@@ -148,14 +148,14 @@ export function FrameCard({ gid, frame, onEdit }: FrameCardProps) {
         </p>
       </div>
 
-      {/* 操作行 — 拖拽 handle 在最左,后接试听 / 编辑 / 删除 */}
-      <div className="px-2 py-1.5 border-t border-line bg-paper/50 flex items-center gap-0.5">
+      {/* 操作行 */}
+      <div className="px-2 py-1.5 border-t border-line flex items-center gap-0.5">
         <button
           {...attributes}
           {...listeners}
           aria-label="拖拽排序"
           title="拖拽排序"
-          className="p-1.5 text-stone-light hover:text-clay hover:bg-cream rounded-[8px] cursor-grab active:cursor-grabbing touch-none"
+          className="p-1.5 text-stone-light hover:text-ink hover:bg-cream transition-colors cursor-grab active:cursor-grabbing touch-none"
         >
           <GripVertical size={14} />
         </button>
@@ -170,7 +170,7 @@ export function FrameCard({ gid, frame, onEdit }: FrameCardProps) {
           onClick={onEdit}
           aria-label="编辑"
           title="编辑"
-          className="p-1.5 text-stone hover:text-clay hover:bg-cream rounded-[8px]"
+          className="p-1.5 text-stone hover:text-ink hover:bg-cream transition-colors"
         >
           <Pencil size={14} />
         </button>
@@ -178,7 +178,7 @@ export function FrameCard({ gid, frame, onEdit }: FrameCardProps) {
           onClick={onDelete}
           aria-label="删除"
           title="删除"
-          className="p-1.5 text-stone hover:text-clay hover:bg-cream rounded-[8px]"
+          className="p-1.5 text-stone hover:text-clay hover:bg-cream transition-colors"
         >
           <Trash2 size={14} />
         </button>
