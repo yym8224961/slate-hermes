@@ -26,7 +26,7 @@ export function Login() {
     try {
       await login({ email, password });
     } catch (err) {
-      const data = (err as AxiosError)?.response?.data;
+      const data = (err as AxiosError<{ message?: string; error?: string }>)?.response?.data;
       setError(data?.message ?? data?.error ?? '登录失败，请检查邮箱和密码');
     } finally {
       setLoading(false);

@@ -39,7 +39,7 @@ export function Register() {
     try {
       await register({ email, password });
     } catch (err) {
-      const data = (err as AxiosError)?.response?.data;
+      const data = (err as AxiosError<{ message?: string; error?: string }>)?.response?.data;
       setError(data?.message ?? data?.error ?? '注册失败，请稍后再试');
     } finally {
       setLoading(false);
