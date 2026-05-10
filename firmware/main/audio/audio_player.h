@@ -43,14 +43,21 @@ class AudioPlayer {
     AudioPlayer() = default;
     static void TaskEntry(void* arg);
     void        TaskLoop();
+    // 第一次 Play 时同步打开 codec(lazy)。开机不 open 是为了消除 codec lib
+    // 的 enable→DAC start→PA on 时序在喇叭上的"啵"声。
+    bool        EnsureCodecOpen();
 
-    bool                          initialized_ = false;
-    i2s_chan_handle_t             tx_handle_   = nullptr;
-    const audio_codec_data_if_t*  data_if_     = nullptr;
-    const audio_codec_ctrl_if_t*  ctrl_if_     = nullptr;
-    const audio_codec_if_t*       codec_if_    = nullptr;
-    const audio_codec_gpio_if_t*  gpio_if_     = nullptr;
-    esp_codec_dev_handle_t        dev_         = nullptr;
+    bool                          initialized_  = false;
+    bool                          codec_opened_ = false;  // lazy 标志
+    // 是否已经播过至少一段 PCM。用于 TaskLoop 判断"切歌"场景需要先静音再写,
+    // 避免旧 PCM 末尾和新 PCM 开头波形跳变产生"啵"。Init 后第一段不算切歌。
+    bool                          codec_in_progress_ = false;
+    i2s_chan_handle_t             tx_handle_    = nullptr;
+    const audio_codec_data_if_t*  data_if_      = nullptr;
+    const audio_codec_ctrl_if_t*  ctrl_if_      = nullptr;
+    const audio_codec_if_t*       codec_if_     = nullptr;
+    const audio_codec_gpio_if_t*  gpio_if_      = nullptr;
+    esp_codec_dev_handle_t        dev_          = nullptr;
     int                  volume_      = 85;
 
     // 共享 PCM:Play 写入,task 读取并播。简单 swap,不做 ring buffer

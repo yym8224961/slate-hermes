@@ -44,9 +44,11 @@ static int64_t NowMs() {
 
 void Board::InitPower() {
     charge_ = std::make_unique<ChargeStatus>();
-    // 只接管系统级两条 rail:VBAT 软锁存(GPIO17) + AVDD_3V3 audio rail(GPIO42)。
-    // EPD_PWR(GPIO6) 由 EpdSsd1683 自管;PA_CTRL(GPIO46) 由 codec 库通过 pa_pin 自管。
-    power_ = std::make_unique<BoardPowerBsp>(AUDIO_PWR_PIN, VBAT_PWR_PIN);
+    // BoardPowerBsp 一次 gpio_config 把 audio rail / PA CTRL / VBAT 三个 pin 都
+    // 配 OUTPUT,PA CTRL(GPIO46) 在构造完成的瞬间被驱动 LOW。后面 PowerAudioOn
+    // 给 PA U5 通电时,CTRL 已稳定 LOW → 消除开机"啵"声(详见 board_power.cc)。
+    // EPD_PWR(GPIO6) 由 EpdSsd1683 自管。
+    power_ = std::make_unique<BoardPowerBsp>(AUDIO_PWR_PIN, AUDIO_CODEC_PA_PIN, VBAT_PWR_PIN);
     power_->VbatPowerOn();    // GPIO17=1,自锁电源
     power_->PowerAudioOn();   // GPIO42=1,AVDD_3V3 起来,I²C 上拉才有效
 

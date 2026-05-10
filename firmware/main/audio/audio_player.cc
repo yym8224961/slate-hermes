@@ -1,5 +1,6 @@
 #include "audio_player.h"
 
+#include <driver/gpio.h>
 #include <esp_codec_dev_defaults.h>
 #include <esp_log.h>
 
@@ -7,6 +8,7 @@
 #include <cstring>
 
 #include "config.h"
+#include "gpio_util.h"
 #include "i2c_bus_lock.h"
 #include "volume_store.h"
 
@@ -63,10 +65,10 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     std_cfg.gpio_cfg.dout          = static_cast<gpio_num_t>(AUDIO_I2S_GPIO_DOUT);
     std_cfg.gpio_cfg.din           = static_cast<gpio_num_t>(AUDIO_I2S_GPIO_DIN);
     ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &std_cfg));
-    // 不在这里 i2s_channel_enable —— 跟参考实现 Es8311AudioCodec::CreateDuplexChannels
-    // 对齐(esp32-eink/.../es8311_audio_codec.cc:164),让 esp_codec_dev_open 内部
-    // 自管 channel state。启动时 codec 库会先 i2s_channel_disable 一个 INIT 状态的
-    // channel 打一条 "channel has not been enabled yet" E 级 log,无害,接受。
+    // 不在这里 i2s_channel_enable:esp_codec_dev_open 内部会 enable channel,
+    // 早 enable 反而触发 codec lib 一条 "channel has not been enabled yet"
+    // E 级 log(它 enable 前会先尝试 disable 一个 INIT 状态的 channel),
+    // 无害但污染 log。
 
     // ── ES8311 codec 配置:仅 DAC 输出。ADC/MIC 路径不上电,省功耗 ──
     audio_codec_i2s_cfg_t i2s_data_cfg = {};
@@ -96,11 +98,18 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     gpio_if_ = audio_codec_new_gpio();
     assert(gpio_if_);
 
+    // PA pin 自管:codec lib 默认在 enable(true) 内 DAC start → pa_power(ENABLE)
+    // → set_mute(false),三步紧挨,DAC 还没稳到零 PA 就上电了 → 喇叭"啵"。
+    // 这里 pa_pin=-1 让 codec lib 完全不动 PA;EnsureCodecOpen 内自己控时序:
+    //   codec_dev_open(DAC start,但 PA 仍 LOW 不出声) → 等 100ms DAC 稳定 → 拉高 PA。
+    // PA pin 的 OUTPUT + LOW + hold_en 已由 BoardPowerBsp 在最早的 InitPower 阶段
+    // 完成,先于 PowerAudioOn 给 PA U5 通电 —— 这是消除开机"啵"声的根本时序点。
+
     es8311_codec_cfg_t es_cfg     = {};
     es_cfg.ctrl_if                = ctrl_if_;
     es_cfg.gpio_if                = gpio_if_;
     es_cfg.codec_mode             = ESP_CODEC_DEV_WORK_MODE_DAC;  // 只放音,不录
-    es_cfg.pa_pin                 = static_cast<gpio_num_t>(AUDIO_CODEC_PA_PIN);
+    es_cfg.pa_pin                 = -1;  // 自管(见上方注释)
     es_cfg.use_mclk               = true;
     es_cfg.hw_gain.pa_voltage     = 5.0;
     es_cfg.hw_gain.codec_dac_voltage = 3.3;
@@ -111,7 +120,12 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
         return false;
     }
 
-    // 创建 codec dev,EnableOutput
+    // 创建 codec dev handle,但不 open。Lazy 模式:第一次 Play 时才
+    // esp_codec_dev_open(codec lib 内部 DAC start;pa_pin=-1 所以不动 PA)。
+    // PA 由 EnsureCodecOpen 在 codec_dev_open + 100ms DAC 稳定窗后自管拉高,
+    // 此时 DAC bias 已收敛到 0,放大也听不到"啵"。
+    // 参考 zectrix-original/main/audio/codecs/es8311_audio_codec.cc 的 lazy
+    // UpdateDeviceState 模式。
     esp_codec_dev_cfg_t dev_cfg = {};
     dev_cfg.dev_type            = ESP_CODEC_DEV_TYPE_OUT;
     dev_cfg.codec_if            = codec_if_;
@@ -119,23 +133,8 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     dev_                        = esp_codec_dev_new(&dev_cfg);
     assert(dev_);
 
-    esp_codec_dev_sample_info_t fs = {};
-    fs.bits_per_sample             = 16;
-    fs.channel                     = 1;
-    fs.channel_mask                = 0;
-    fs.sample_rate                 = AUDIO_OUTPUT_SAMPLE_RATE;
-    fs.mclk_multiple               = 0;
-    // 用 NVS 里的音量初始化(用户设置过会保留),首次默认 vol::kDefault*10。
+    // 仅缓存音量,首次 Lazy open 后再 set 到 codec
     volume_ = vol::ToCodec(vol::Get());
-    {
-        ScopedI2cBusLock lock("AudioPlayer::open");
-        ESP_ERROR_CHECK(lock.status());
-        ESP_ERROR_CHECK(esp_codec_dev_open(dev_, &fs));
-        ESP_ERROR_CHECK(esp_codec_dev_set_out_vol(dev_, volume_));
-    }
-
-    // PA pin 由 codec lib 自管(es_cfg.pa_pin 已传):dev_open 时上电、close 时下电。
-    // 之前手动 gpio_hold_en 把 PA 钉成 1 会让将来 Stop()/省电下电失效,删掉。
 
     // 后台 task 等通知,有 PCM 时阻塞写
     shared_mutex_ = xSemaphoreCreateMutex();
@@ -143,7 +142,39 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     xTaskCreatePinnedToCore(&AudioPlayer::TaskEntry, "audio_play", 6 * 1024, this, 5, &task_, 1);
 
     initialized_ = true;
-    ESP_LOGI(kTag, "AudioPlayer ready, sample_rate=%d, vol=%d", AUDIO_OUTPUT_SAMPLE_RATE, volume_);
+    ESP_LOGI(kTag, "AudioPlayer ready (lazy), sample_rate=%d, vol=%d",
+             AUDIO_OUTPUT_SAMPLE_RATE, volume_);
+    return true;
+}
+
+bool AudioPlayer::EnsureCodecOpen() {
+    if (codec_opened_) return true;
+    esp_codec_dev_sample_info_t fs = {};
+    fs.bits_per_sample             = 16;
+    fs.channel                     = 1;
+    fs.channel_mask                = 0;
+    fs.sample_rate                 = AUDIO_OUTPUT_SAMPLE_RATE;
+    fs.mclk_multiple               = 0;
+    {
+        ScopedI2cBusLock lock("AudioPlayer::lazy_open");
+        if (lock.status() != ESP_OK) return false;
+        // PA 此时仍 LOW(BoardPowerBsp 构造已设 + hold_en),不出声。codec_dev_open
+        // 内 codec lib 会 DAC start + set_mute(false),但 pa_pin=-1 所以不动 PA。
+        if (esp_codec_dev_open(dev_, &fs) != ESP_OK) {
+            ESP_LOGE(kTag, "esp_codec_dev_open failed");
+            return false;
+        }
+        esp_codec_dev_set_out_vol(dev_, volume_);
+        // codec_opened_=true 必须在锁内,否则 SetVolume 在锁外释放后到这里之间
+        // 看到 codec_opened_=false 只缓存,不调 set_out_vol,音量同步丢失。
+        codec_opened_ = true;
+    }
+    // 等 DAC DC bias 稳定到零再上 PA,消除"啵"。100ms 是经验值:ES8311 上电
+    // 后前 ~50ms DC 输出有 mV 级跳动,稳定后再放大就听不到啵了。
+    vTaskDelay(pdMS_TO_TICKS(100));
+    // PA pin 在 BoardPowerBsp 构造时打了 hold_en,GpioWriteHold 内部包了
+    // hold_dis → set_level → hold_en 三段式,跟 Power*On/Off 用法一致。
+    GpioWriteHold(AUDIO_CODEC_PA_PIN, 1);
     return true;
 }
 
@@ -184,7 +215,8 @@ void AudioPlayer::SetVolume(int v) {
     if (v < 0) v = 0;
     if (v > 100) v = 100;
     volume_ = v;
-    if (dev_) {
+    // Codec 还没 lazy open 就只更新缓存,首次 open 时一并 set。
+    if (dev_ && codec_opened_) {
         ScopedI2cBusLock lock("AudioPlayer::SetVolume");
         if (lock.status() == ESP_OK) {
             esp_codec_dev_set_out_vol(dev_, volume_);
@@ -198,8 +230,8 @@ void AudioPlayer::TaskEntry(void* arg) {
 }
 
 void AudioPlayer::TaskLoop() {
-    // 256B/chunk = 8ms@16kHz mono16:stop_flag 检查粒度更细,切歌响应更及时,
-    // 残留 DMA 数据更短(配合 i2s_disable+enable 几乎听不到啵声)。
+    // 256B/chunk = 8ms@16kHz mono16:stop_flag 检查粒度更细,切歌响应更及时。
+    // 配合切歌前 set_out_vol(0) + 20ms delay 数字静音衔接,人耳基本听不到"啵"。
     constexpr size_t kChunk = 256;
     while (true) {
         // 等通知
@@ -216,28 +248,62 @@ void AudioPlayer::TaskLoop() {
 
         if (!buf || len == 0) continue;
 
-        // 分块写,每块检查 stop_flag_。中断时丢掉 DMA 残留(disable+enable)
-        // 防止下一段 PCM 接续旧片段产生「啵」声。
-        size_t off       = 0;
-        bool   was_stopped = false;
+        // 第一次播放才真正打开 codec(lazy)。Init 时不 open,目的是开机不出"啵"。
+        // EnsureCodecOpen 内做完整时序:open → 等 100ms DAC 稳定 → 拉高 PA。
+        if (!EnsureCodecOpen()) {
+            free(buf);
+            continue;
+        }
+
+        // 中断当前播放后,直接接续写新 PCM 会"啵":旧 PCM 最后样本和新 PCM 第一
+        // 样本之间 DC 跳变,被 PA 直接放大。先 set_out_vol(0) 数字静音,等 DAC
+        // 收敛再写新 PCM 同时恢复音量,衔接平滑。
+        // 旧实现 i2s_channel_disable+enable 想"清 DMA",但 disable 让 DAC 输入断,
+        // enable 重启又是一次跳变,自己引发"啵",反效果。
+        bool need_unmute_after = false;
+        if (codec_in_progress_) {
+            ScopedI2cBusLock lock("AudioPlayer::switch_mute");
+            if (lock.status() == ESP_OK) {
+                esp_codec_dev_set_out_vol(dev_, 0);
+            }
+            need_unmute_after = true;
+            // 20ms 让 DMA 把残留旧 PCM 在 0 vol 下播完(每帧 240 samples / 16kHz
+            // = 15ms,DMA 6 帧约 90ms 残留;20ms 不够清空但够 codec 数字音量
+            // 衰减生效,人耳基本听不到)。
+            vTaskDelay(pdMS_TO_TICKS(20));
+        }
+        codec_in_progress_ = true;
+
+        // 分块写,每块检查 stop_flag_(用户又切歌时立即跳出)。
+        size_t off = 0;
+        bool   wrote_first = false;
         while (off < len) {
             xSemaphoreTake(shared_mutex_, portMAX_DELAY);
             bool stop = stop_flag_;
             xSemaphoreGive(shared_mutex_);
-            if (stop) {
-                was_stopped = true;
-                break;
-            }
+            if (stop) break;
 
             size_t to_write = (len - off) > kChunk ? kChunk : (len - off);
             esp_codec_dev_write(dev_, const_cast<uint8_t*>(buf + off), to_write);
             off += to_write;
+
+            // 第一段 PCM 写下去之后再恢复音量:确保新 PCM 已经到达 DAC 才解 mute,
+            // 0 → volume_ 的爬坡跟新 PCM 起始波形混在一起,听感上没有"接通"感。
+            if (!wrote_first && need_unmute_after) {
+                ScopedI2cBusLock lock("AudioPlayer::switch_unmute");
+                if (lock.status() == ESP_OK) {
+                    esp_codec_dev_set_out_vol(dev_, volume_);
+                }
+                wrote_first = true;
+            }
         }
-        if (was_stopped && tx_handle_) {
-            // 丢弃 DMA 里已排队但未发出的 PCM。auto_clear_after_cb 会自动写零,
-            // 后续写新 PCM 时立即生效,不会接续旧片段。
-            i2s_channel_disable(tx_handle_);
-            i2s_channel_enable(tx_handle_);
+        // 兜底:走完整段都没解 mute(比如 PCM < kChunk 又被中断),下次进入
+        // 还会再次 set_out_vol(0)→delay→恢复,所以保持 codec_in_progress_=true。
+        if (need_unmute_after && !wrote_first) {
+            ScopedI2cBusLock lock("AudioPlayer::switch_unmute_fallback");
+            if (lock.status() == ESP_OK) {
+                esp_codec_dev_set_out_vol(dev_, volume_);
+            }
         }
 
         free(buf);
