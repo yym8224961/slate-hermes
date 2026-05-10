@@ -299,6 +299,8 @@ function GroupSelector({
   onChange: (v: string) => void;
   disabled: boolean;
 }) {
+  // 只有「当前确实未选」时才提供「未选组」item，避免用户主动把已在播的设备退回空状态。
+  const showNone = value === null;
   return (
     <Select
       value={value ?? '__none__'}
@@ -307,8 +309,8 @@ function GroupSelector({
       placeholder="未选组"
       aria-label="切换在播组"
     >
-      <SelectItem value="__none__">未选组</SelectItem>
-      {groups.length > 0 && <SelectSeparator />}
+      {showNone && <SelectItem value="__none__">未选组</SelectItem>}
+      {showNone && groups.length > 0 && <SelectSeparator />}
       {groups.map((g) => (
         <SelectItem key={g.id} value={g.id} hint={`${g.frame_count} 帧`}>
           <span className="font-kai">{g.name}</span>

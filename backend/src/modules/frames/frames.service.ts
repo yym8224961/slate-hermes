@@ -1,3 +1,4 @@
+import { createId } from '@paralleldrive/cuid2';
 import { Injectable, Logger } from '@nestjs/common';
 import type {
   FrameMutationResponseT,
@@ -39,6 +40,15 @@ function frameToSummary(f: FrameRow): FrameSummaryT {
   };
 }
 
+const FRAME_SELECT = {
+  sortOrder: true,
+  caption: true,
+  imageEtag: true,
+  audioEtag: true,
+  imageSize: true,
+  audioSize: true,
+} as const;
+
 @Injectable()
 export class FramesService {
   private readonly logger = new Logger(FramesService.name);
@@ -75,14 +85,7 @@ export class FramesService {
       include: {
         frames: {
           orderBy: { sortOrder: 'asc' },
-          select: {
-            sortOrder: true,
-            caption: true,
-            imageEtag: true,
-            audioEtag: true,
-            imageSize: true,
-            audioSize: true,
-          },
+          select: FRAME_SELECT,
         },
       },
     });
@@ -104,14 +107,7 @@ export class FramesService {
     const frames = await this.prisma.frame.findMany({
       where: { groupId: gid },
       orderBy: { sortOrder: 'asc' },
-      select: {
-        sortOrder: true,
-        caption: true,
-        imageEtag: true,
-        audioEtag: true,
-        imageSize: true,
-        audioSize: true,
-      },
+      select: FRAME_SELECT,
     });
     return frames.map(frameToSummary);
   }
@@ -124,14 +120,7 @@ export class FramesService {
     await this.assertReadable(gid, scope);
     const f = await this.prisma.frame.findUnique({
       where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
-      select: {
-        sortOrder: true,
-        caption: true,
-        imageEtag: true,
-        audioEtag: true,
-        imageSize: true,
-        audioSize: true,
-      },
+      select: FRAME_SELECT,
     });
     if (!f) throw new NotFoundError('frame not found');
     return frameToSummary(f);
@@ -145,10 +134,10 @@ export class FramesService {
     await this.assertReadable(gid, scope);
     const f = await this.prisma.frame.findUnique({
       where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
-      select: { imageEtag: true },
+      select: { id: true, imageEtag: true },
     });
     if (!f) throw new NotFoundError('frame not found');
-    const buf = await this.blob.read(gid, seq, 'image');
+    const buf = await this.blob.read(gid, f.id, 'image');
     if (!buf) throw new NotFoundError('image blob missing');
     return { data: buf, etag: f.imageEtag };
   }
@@ -161,12 +150,12 @@ export class FramesService {
     await this.assertReadable(gid, scope);
     const f = await this.prisma.frame.findUnique({
       where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
-      select: { audioEtag: true, audioSize: true },
+      select: { id: true, audioEtag: true, audioSize: true },
     });
     if (!f || !f.audioEtag || !f.audioSize) {
       throw new NotFoundError('audio not available');
     }
-    const buf = await this.blob.read(gid, seq, 'audio');
+    const buf = await this.blob.read(gid, f.id, 'audio');
     if (!buf) throw new NotFoundError('audio blob missing');
     return { data: buf, etag: f.audioEtag };
   }
@@ -188,7 +177,7 @@ export class FramesService {
       select: { sortOrder: true },
     });
     const seq = last ? last.sortOrder + 1 : 0;
-    return this.persistFrame(gid, seq, parsed, 'create');
+    return this.createFrameUpload(gid, seq, parsed);
   }
 
   async patchFrameMultipart(
@@ -198,8 +187,8 @@ export class FramesService {
     parsed: ParsedFrameUpload
   ): Promise<FrameMutationResponseT> {
     await this.groups.assertOwned(gid, ownerUserId);
-    await this.requireFrame(gid, seq);
-    return this.persistFrame(gid, seq, parsed, 'update');
+    const { id: frameId } = await this.requireFrame(gid, seq);
+    return this.updateFrameUpload(gid, seq, frameId, parsed);
   }
 
   async patchFrameCaption(
@@ -232,9 +221,11 @@ export class FramesService {
 
   async deleteFrame(gid: string, seq: number, ownerUserId: string): Promise<void> {
     await this.groups.assertOwned(gid, ownerUserId);
-    await this.requireFrame(gid, seq);
-    await this.blob.delete(gid, seq, 'image');
-    await this.blob.delete(gid, seq, 'audio');
+    const { id: frameId } = await this.requireFrame(gid, seq);
+    await Promise.all([
+      this.blob.delete(gid, frameId, 'image'),
+      this.blob.delete(gid, frameId, 'audio'),
+    ]);
     await this.prisma.frame.deleteMany({ where: { groupId: gid, sortOrder: seq } });
     await this.groups.recomputeGroupEtag(gid);
   }
@@ -245,8 +236,8 @@ export class FramesService {
     ownerUserId: string
   ): Promise<{ group_etag: string }> {
     await this.groups.assertOwned(gid, ownerUserId);
-    await this.requireFrame(gid, seq);
-    await this.blob.delete(gid, seq, 'audio');
+    const { id: frameId } = await this.requireFrame(gid, seq);
+    await this.blob.delete(gid, frameId, 'audio');
     await this.prisma.frame.update({
       where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
       data: { audioEtag: null, audioSize: null },
@@ -328,10 +319,17 @@ export class FramesService {
     this.render.validateFrameSize(rendered.data);
 
     const imageEtag = computeETag(rendered.data);
-    await this.blob.write(gid, seq, 'image', rendered.data);
+    const existing = await this.prisma.frame.findUnique({
+      where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
+      select: { id: true },
+    });
+    const frameId = existing?.id ?? createId();
+    // 先盘后库：blob.write 失败时 db 不留下指向不存在文件的 etag
+    await this.blob.write(gid, frameId, 'image', rendered.data);
     await this.prisma.frame.upsert({
       where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
       create: {
+        id: frameId,
         groupId: gid,
         sortOrder: seq,
         imageEtag,
@@ -354,82 +352,112 @@ export class FramesService {
 
   // ── 内部：完整 image/audio + caption 写入 + recompute etag ──
 
-  private async persistFrame(
-    gid: string,
-    seq: number,
-    parsed: ParsedFrameUpload,
-    mode: 'create' | 'update'
-  ): Promise<FrameMutationResponseT> {
-    let imageEtag: string | null = null;
-    let imageSize: number | null = null;
-    let imageBytes: Buffer | null = null;
+  /** 渲染上传中的 image/audio。无对应字段时返回 null。 */
+  private async renderUpload(parsed: ParsedFrameUpload): Promise<{
+    image: { bytes: Buffer; etag: string; size: number } | null;
+    audio: { bytes: Buffer; etag: string; size: number } | null;
+  }> {
+    let image: { bytes: Buffer; etag: string; size: number } | null = null;
     if (parsed.hasImage && parsed.imageBuf) {
       const rendered = await this.render.renderTo1bpp(parsed.imageBuf, {
         threshold: parsed.threshold,
         mode: parsed.mode,
       });
       this.render.validateFrameSize(rendered.data);
-      imageBytes = rendered.data;
-      imageEtag = computeETag(rendered.data);
-      imageSize = rendered.data.byteLength;
+      image = {
+        bytes: rendered.data,
+        etag: computeETag(rendered.data),
+        size: rendered.data.byteLength,
+      };
     }
 
-    let audioEtag: string | null = null;
-    let audioSize: number | null = null;
-    let audioBytes: Buffer | null = null;
+    let audio: { bytes: Buffer; etag: string; size: number } | null = null;
     if (parsed.hasAudio && parsed.audioBuf) {
-      audioBytes = await this.audio.transcodeAudio(parsed.audioBuf, 'upload');
-      audioEtag = computeETag(audioBytes);
-      audioSize = audioBytes.byteLength;
+      const bytes = await this.audio.transcodeAudio(parsed.audioBuf, 'upload');
+      audio = { bytes, etag: computeETag(bytes), size: bytes.byteLength };
     }
 
-    if (mode === 'create') {
-      if (!imageEtag || imageSize === null) {
-        throw new ValidationError('image required for create');
-      }
-      try {
-        await this.prisma.frame.create({
-          data: {
-            groupId: gid,
-            sortOrder: seq,
-            caption: parsed.hasCaption ? parsed.caption : null,
-            imageEtag,
-            imageSize,
-            audioEtag,
-            audioSize,
-          },
-        });
-      } catch (err) {
-        const code = (err as { code?: string }).code;
-        if (code === 'P2002') throw new ConflictError('frame sortOrder already exists');
-        throw err;
-      }
-    } else {
-      const data: Record<string, unknown> = {};
-      if (parsed.hasCaption) data.caption = parsed.caption;
-      if (imageEtag && imageSize !== null) {
-        data.imageEtag = imageEtag;
-        data.imageSize = imageSize;
-      }
-      if (audioEtag && audioSize !== null) {
-        data.audioEtag = audioEtag;
-        data.audioSize = audioSize;
-      }
-      if (Object.keys(data).length > 0) {
-        await this.prisma.frame.update({
-          where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
-          data,
-        });
-      }
+    return { image, audio };
+  }
+
+  /** 新建：先盘后库，db.create 失败回滚 blob。 */
+  private async createFrameUpload(
+    gid: string,
+    seq: number,
+    parsed: ParsedFrameUpload
+  ): Promise<FrameMutationResponseT> {
+    const { image, audio } = await this.renderUpload(parsed);
+    if (!image) throw new ValidationError('image required for create');
+
+    const newId = createId();
+    try {
+      await this.blob.write(gid, newId, 'image', image.bytes);
+      if (audio) await this.blob.write(gid, newId, 'audio', audio.bytes);
+      await this.prisma.frame.create({
+        data: {
+          id: newId,
+          groupId: gid,
+          sortOrder: seq,
+          caption: parsed.hasCaption ? parsed.caption : null,
+          imageEtag: image.etag,
+          imageSize: image.size,
+          audioEtag: audio?.etag ?? null,
+          audioSize: audio?.size ?? null,
+        },
+      });
+    } catch (err) {
+      await Promise.all([
+        this.blob.delete(gid, newId, 'image').catch(() => {}),
+        this.blob.delete(gid, newId, 'audio').catch(() => {}),
+      ]);
+      const code = (err as { code?: string }).code;
+      if (code === 'P2002') throw new ConflictError('frame sortOrder already exists');
+      throw err;
     }
 
-    if (imageBytes) await this.blob.write(gid, seq, 'image', imageBytes);
-    if (audioBytes) await this.blob.write(gid, seq, 'audio', audioBytes);
+    const group_etag = await this.groups.recomputeGroupEtag(gid);
+    return {
+      sort_order: seq,
+      image_etag: image.etag,
+      audio_etag: audio?.etag ?? null,
+      group_etag,
+    };
+  }
+
+  /** 更新：blob 覆盖写 + db.update。仅当 caption/image/audio 有变化时落库。 */
+  private async updateFrameUpload(
+    gid: string,
+    seq: number,
+    frameId: string,
+    parsed: ParsedFrameUpload
+  ): Promise<FrameMutationResponseT> {
+    const { image, audio } = await this.renderUpload(parsed);
+
+    if (image) await this.blob.write(gid, frameId, 'image', image.bytes);
+    if (audio) await this.blob.write(gid, frameId, 'audio', audio.bytes);
+
+    const data: Record<string, unknown> = {};
+    if (parsed.hasCaption) data.caption = parsed.caption;
+    if (image) {
+      data.imageEtag = image.etag;
+      data.imageSize = image.size;
+    }
+    if (audio) {
+      data.audioEtag = audio.etag;
+      data.audioSize = audio.size;
+    }
+    if (Object.keys(data).length > 0) {
+      await this.prisma.frame.update({
+        where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
+        data,
+      });
+    }
 
     const group_etag = await this.groups.recomputeGroupEtag(gid);
 
-    let finalImageEtag = imageEtag;
-    let finalAudioEtag = audioEtag;
+    // 未上传的字段读 db 当前值（前端依赖响应里的 etag 做缓存键）
+    let finalImageEtag = image?.etag ?? null;
+    let finalAudioEtag = audio?.etag ?? null;
     if (!finalImageEtag || !finalAudioEtag) {
       const cur = await this.prisma.frame.findUnique({
         where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
@@ -437,7 +465,7 @@ export class FramesService {
       });
       if (cur) {
         finalImageEtag ??= cur.imageEtag;
-        finalAudioEtag = cur.audioEtag;
+        finalAudioEtag ??= cur.audioEtag;
       }
     }
     return {
@@ -448,11 +476,12 @@ export class FramesService {
     };
   }
 
-  private async requireFrame(gid: string, seq: number): Promise<void> {
+  private async requireFrame(gid: string, seq: number): Promise<{ id: string }> {
     const f = await this.prisma.frame.findUnique({
       where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
-      select: { sortOrder: true },
+      select: { id: true },
     });
     if (!f) throw new NotFoundError('frame not found');
+    return f;
   }
 }

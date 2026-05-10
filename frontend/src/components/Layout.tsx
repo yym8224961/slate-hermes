@@ -11,7 +11,7 @@ export function Layout() {
 
   return (
     <div className="min-h-screen flex flex-col bg-paper">
-      <header className="border-b border-ink bg-paper sticky top-0 z-30">
+      <header className="border-b border-ink bg-paper">
         <div className="max-w-6xl mx-auto px-5 sm:px-8 py-3.5 flex items-center justify-between gap-4">
           {/* logo */}
           <Link to="/" className="flex items-center gap-3 min-w-0">

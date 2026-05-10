@@ -249,17 +249,20 @@ function DeviceCard({
               {device.id.slice(0, 12)}
             </p>
 
-            {/* 在播 + 帧数 — 在播组后面拼"· N 帧"显示组的体量 */}
-            <p className="font-serif text-[13px] mt-2 truncate">
+            {/* 在播 + 帧数 — 「在播」是 sans 标签；后面组名 + 帧数 同色 serif，视觉统一 */}
+            <p className="mt-2 truncate">
               <span className="font-sans text-[9px] uppercase tracking-[0.18em] text-stone-light mr-1.5">
                 在播
               </span>
-              <span className={groupName ? 'text-stone' : 'text-stone-light italic'}>
+              <span
+                className={cn(
+                  'font-serif text-[13px]',
+                  groupName ? 'text-stone' : 'text-stone-light italic'
+                )}
+              >
                 {groupName ?? '未选组'}
+                {groupName && playingFrames != null && ` · ${playingFrames} 帧`}
               </span>
-              {groupName && playingFrames != null && (
-                <span className="text-stone-light"> · {playingFrames} 帧</span>
-              )}
             </p>
 
             {/* 状态行 — 在线显示电量/信号/刚刚,离线只显示上次心跳 */}

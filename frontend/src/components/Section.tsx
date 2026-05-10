@@ -16,8 +16,8 @@ interface SectionProps {
 export function Section({ title, subtitle, badge, action, className, children }: SectionProps) {
   return (
     <section className={cn('mt-12 first:mt-8', className)}>
-      <header className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3 sm:gap-6">
-        <div className="min-w-0">
+      <header className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-3">
             {badge && <IconBlock tone="soft">{badge}</IconBlock>}
             <h2 className="font-serif text-[26px] sm:text-[30px] leading-[1.2] text-ink">

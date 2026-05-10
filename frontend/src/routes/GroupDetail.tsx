@@ -4,7 +4,7 @@
 // 因为 server 接受的是「旧 idx 的新顺序」，不是 etag 列表。
 
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Layers, Webhook, Frame, Pencil, Check } from 'lucide-react';
 import {
@@ -24,7 +24,6 @@ import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { IconBlock } from '../components/IconBlock';
 import { FrameCard } from '../components/FrameCard';
-import { FrameEditor } from '../components/FrameEditor';
 import { useToast } from '../components/Toast';
 import { inputCls } from '../lib/styles';
 import { cn } from '../lib/cn';
@@ -32,15 +31,13 @@ import { cn } from '../lib/cn';
 export function GroupDetail() {
   const { gid } = useParams();
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const groups = useGroups();
   const frames = useGroupFrames(gid);
   const reorder = useReorderFrames(gid ?? '');
   const toast = useToast();
 
   const group = groups.data?.find((g) => g.id === gid);
-
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [editingFrame, setEditingFrame] = useState<FT | null>(null);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -115,12 +112,10 @@ export function GroupDetail() {
   const KindIcon = group.kind === 'dynamic' ? Webhook : Layers;
 
   function openCreate() {
-    setEditingFrame(null);
-    setEditorOpen(true);
+    navigate(`/groups/${gid}/frames/new`);
   }
   function openEdit(f: FT) {
-    setEditingFrame(f);
-    setEditorOpen(true);
+    navigate(`/groups/${gid}/frames/${f.sort_order}/edit`);
   }
 
   const orderIds = (frames.data ?? []).map((f) => f.image_etag);
@@ -160,7 +155,7 @@ export function GroupDetail() {
           <EmptyState
             icon={<Frame size={26} />}
             title="尚无帧"
-            hint="点『新建一帧』上传第一张。设备配网后会自动拉到本地缓存。"
+            hint="点『新建一帧』上传第一张。"
             action={
               <Button onClick={openCreate} iconLeft={<Plus size={16} />}>
                 新建第一帧
@@ -169,16 +164,6 @@ export function GroupDetail() {
           />
         )}
       </div>
-
-      <FrameEditor
-        open={editorOpen}
-        onOpenChange={(o) => {
-          setEditorOpen(o);
-          if (!o) setEditingFrame(null);
-        }}
-        gid={gid}
-        frame={editingFrame ?? undefined}
-      />
     </div>
   );
 }

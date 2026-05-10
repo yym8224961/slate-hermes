@@ -248,16 +248,19 @@ export class GroupsService {
     const g = await this.prisma.group.findUnique({
       where: { id: gid },
       include: {
-        frames: { select: { sortOrder: true, audioEtag: true } },
+        frames: { select: { id: true, audioEtag: true } },
       },
     });
     if (!g || g.ownerUserId !== ownerUserId) {
       throw new NotFoundError('group not found');
     }
-    for (const f of g.frames) {
-      await this.blob.delete(gid, f.sortOrder, 'image');
-      if (f.audioEtag !== null) await this.blob.delete(gid, f.sortOrder, 'audio');
-    }
+    await Promise.all(
+      g.frames.flatMap((f) => {
+        const ops = [this.blob.delete(gid, f.id, 'image')];
+        if (f.audioEtag !== null) ops.push(this.blob.delete(gid, f.id, 'audio'));
+        return ops;
+      })
+    );
     await this.prisma.group.delete({ where: { id: gid } });
   }
 
