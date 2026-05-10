@@ -1,6 +1,5 @@
-// Seed admin user for local development.
-// 用法: bun run --cwd backend prisma:seed
-// 幂等: 已存在的 admin user 跳过。
+// 创建用户。
+// 用法: bun run prisma/create-user.ts <email> <password>
 
 import bcrypt from 'bcryptjs';
 import { PrismaClient } from '@prisma/client';
@@ -19,30 +18,29 @@ function makeAdapter(): PrismaMariaDb {
 }
 
 async function main(): Promise<void> {
+  const email = process.argv[2];
+  const password = process.argv[3];
+
+  if (!email || !password) {
+    throw new Error('用法: bun run prisma/create-user.ts <email> <password>');
+  }
+
   const prisma = new PrismaClient({ adapter: makeAdapter() });
   try {
-    const email = process.env.SEED_ADMIN_EMAIL ?? 'admin@example.com';
-    const password = process.env.SEED_ADMIN_PASSWORD ?? 'admin123456';
-
     const existing = await prisma.user.findUnique({ where: { email } });
     if (existing) {
-      console.log(`✓ admin user ${email} already exists`);
-      return;
+      throw new Error(`用户 ${email} 已存在`);
     }
     const hash = await bcrypt.hash(password, 10);
     await prisma.user.create({ data: { email, password: hash } });
-    console.log(`✓ created admin user: ${email}`);
-    console.log(
-      process.env.SEED_ADMIN_PASSWORD
-        ? '  (used SEED_ADMIN_PASSWORD env value)'
-        : '  ⚠ used DEFAULT password "admin123456" — change after first login or set SEED_ADMIN_PASSWORD'
-    );
+    console.log(`✓ 创建用户: ${email}`);
   } finally {
+    // 必须走 finally —— 用 process.exit 会跳过它,prisma 连接没干净关
     await prisma.$disconnect();
   }
 }
 
-main().catch((e) => {
-  console.error(e);
+main().catch((e: Error) => {
+  console.error(e.message);
   process.exit(1);
 });
