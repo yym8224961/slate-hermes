@@ -232,15 +232,23 @@ export class DevicesService {
         code: 'already_owned_by_other_user',
       });
     }
-    const [sortOrder, newPairCode] = await Promise.all([
+    const [sortOrder, newPairCode, ownerGroups] = await Promise.all([
       this.nextDeviceSortOrder(ownerUserId),
       this.generateUniquePairCode(),
+      this.groups.listOwnerGroups(ownerUserId),
     ]);
+    // owner 已有相册时,自动选第一个(按 sortOrder),省去 web 端「再去设备详情手动选」二次操作。
+    // owner 0 个相册时 selectedGroupId 保持 null,设备 splash 提示「请先创建相册」;
+    // 之后 owner 首次创建相册会触发 GroupsService.create 里的反向绑定,设备自动进 FrameScene。
+    const selectedGroupId = ownerGroups[0]?.id ?? null;
     const updated = await this.prisma.device.update({
       where: { id: device.id },
-      data: { ownerUserId, sortOrder, pairCode: newPairCode },
+      data: { ownerUserId, sortOrder, pairCode: newPairCode, selectedGroupId },
     });
-    this.logger.log(`device claimed by pair code: id=${device.id} owner=${ownerUserId}`);
+    this.logger.log(
+      `device claimed by pair code: id=${device.id} owner=${ownerUserId}` +
+        (selectedGroupId ? ` auto-bound to group ${selectedGroupId}` : ' (owner has no group yet)')
+    );
     return toSummary(updated);
   }
 

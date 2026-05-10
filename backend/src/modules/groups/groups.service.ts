@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { GroupSummaryT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -22,6 +22,8 @@ export interface CycleResult {
 
 @Injectable()
 export class GroupsService {
+  private readonly logger = new Logger(GroupsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly blob: BlobService
@@ -161,10 +163,18 @@ export class GroupsService {
     const groups = await this.prisma.group.findMany({
       where: { ownerUserId },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-      include: { _count: { select: { frames: true } } },
+      include: {
+        _count: { select: { frames: true } },
+        frames: { select: { imageSize: true, audioSize: true } },
+      },
     });
-    const sizeMap = await this.aggregateBytes(groups.map((g) => g.id));
-    return groups.map((g) => toSummary(g, sizeMap.get(g.id) ?? 0));
+    return groups.map((g) => {
+      const totalBytes = g.frames.reduce(
+        (sum, f) => sum + (f.imageSize ?? 0) + (f.audioSize ?? 0),
+        0
+      );
+      return toSummary(g, totalBytes);
+    });
   }
 
   async getOwned(gid: string, ownerUserId: string): Promise<GroupSummaryT> {
@@ -194,6 +204,21 @@ export class GroupsService {
       },
       include: { _count: { select: { frames: true } } },
     });
+    // 反向自动绑定:这是 owner 的第一个相册时,把所有 selectedGroupId=null 的已绑设备都指过来。
+    // 配合 claim 时的「已有相册则自动绑第一个」,新用户全程不需要再去设备详情手动「分配相册」。
+    // 仅在 count==1 时触发,避免后续创建相册时覆盖用户主动留空的设备。
+    const groupCount = await this.prisma.group.count({ where: { ownerUserId } });
+    if (groupCount === 1) {
+      const result = await this.prisma.device.updateMany({
+        where: { ownerUserId, selectedGroupId: null },
+        data: { selectedGroupId: created.id },
+      });
+      if (result.count > 0) {
+        this.logger.log(
+          `first group ${created.id} created → auto-bound ${result.count} pending device(s)`
+        );
+      }
+    }
     return toSummary(created, 0);
   }
 
