@@ -41,7 +41,7 @@ src/
 prisma/
 ├── schema.prisma           4 个 model：User / Device / Group / Frame
 ├── migrations/             prisma migrate dev 自动管
-└── seed.ts                 创建默认 admin@example.com / admin123456
+└── create-user.ts         创建用户（邮箱密码参数）
 ```
 
 ## 数据模型（`prisma/schema.prisma`）
@@ -197,7 +197,7 @@ bun install
 cp backend/.env.example backend/.env       # 改 DATABASE_URL / JWT_SECRET / WEBHOOK_API_KEY
 bun run --cwd backend prisma:generate
 bun run --cwd backend prisma:migrate       # 第一次会创建 dev migration
-bun run --cwd backend prisma:seed          # 默认管理员
+bun run --cwd backend create-user <email> <password>  # 创建用户
 
 bun run dev:backend                         # http://localhost:3001
 ```
@@ -217,3 +217,15 @@ bun run --cwd backend typecheck
 ## 部署
 
 镜像构建在仓库根 `Dockerfile`（multi-stage：bun 装依赖 → prisma generate + vite build → 拷进精简 runner stage）。`entrypoint.sh` 进入 `/app/backend` 后跑 `prisma migrate deploy` 再启服务。frontend dist 由 `@fastify/static` 在同域托管，`/api/*` 走 NestJS。具体 docker compose 与 GHCR 流程见仓库根 README。
+
+### 创建用户
+
+本地开发：
+```bash
+bun run --cwd backend create-user <email> <password>
+```
+
+Docker 部署：
+```bash
+docker compose exec -w /app/backend slate bun run prisma/create-user.ts <email> <password>
+```

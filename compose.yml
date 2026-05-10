@@ -4,7 +4,7 @@
 # 首次启动:
 #   1. 把下面两个 <openssl rand -hex 32> 占位符换成真值
 #   2. docker compose up -d
-#   3. 浏览器访问 http://localhost:3001(默认 admin@example.com / admin123456,登录后改密)
+#   3. 浏览器访问 http://localhost:3001（用 create-user 创建账号后登录）
 #
 # 升级:
 #   docker compose pull && docker compose up -d

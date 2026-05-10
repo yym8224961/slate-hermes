@@ -53,7 +53,7 @@ export function Login() {
             登录
           </h1>
           <p className="font-kai text-[18px] xl:text-[20px] text-stone mt-6 max-w-md leading-loose">
-            登录后管理写字板与内容。
+            登录后管理墨笺与内容。
           </p>
         </div>
 

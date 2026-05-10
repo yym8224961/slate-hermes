@@ -1,6 +1,6 @@
-# slate
+# slate · 墨笺
 
-E-ink 写字板 / 玩具 / 数据看板的三端项目。
+E-ink 相框 / 玩具 / 数据看板的三端项目。
 
 ## 三端
 
@@ -71,7 +71,7 @@ bun install
 cp backend/.env.example backend/.env       # 改 DATABASE_URL / JWT_SECRET / WEBHOOK_API_KEY
 bun run --cwd backend prisma:generate
 bun run --cwd backend prisma:migrate       # 第一次会创建 dev migration
-bun run --cwd backend prisma:seed          # 默认管理员 admin@example.com / admin123456
+bun run --cwd backend create-user <email> <password>  # 创建用户
 
 bun run dev:backend                         # http://localhost:3001
 bun run dev:frontend                        # http://localhost:5173（proxy /api → :3001）
@@ -126,6 +126,12 @@ docker compose pull && docker compose up -d
 ```
 
 容器启动 `entrypoint.sh` 自动执行 `prisma migrate deploy`，无需手动迁移。
+
+创建用户：
+
+```bash
+docker compose exec -w /app/backend slate bun run prisma/create-user.ts <email> <password>
+```
 
 持久化目录（compose 启动后在 cwd 自动创建）：
 
