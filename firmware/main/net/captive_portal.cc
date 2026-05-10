@@ -179,7 +179,7 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
 
 esp_err_t CaptivePortal::HandleDone(httpd_req_t* req) {
     httpd_resp_set_type(req, "text/plain; charset=utf-8");
-    httpd_resp_send(req, "已联网,可以关闭本页。", -1);
+    httpd_resp_send(req, "Connected. You can close this page.", -1);
     return ESP_OK;
 }
 
@@ -239,7 +239,7 @@ bool CaptivePortal::Start() {
     // + ESP_LOG(vfprintf 含 UTF-8 中文消耗大),会触发 LoadProhibited panic。
     cfg.stack_size       = 8192;
     if (httpd_start(&server_, &cfg) != ESP_OK) {
-        ESP_LOGE(kTag, "httpd_start failed");
+        ESP_LOGE(kTag, "HTTP server start failed");
         Wifi::Get().StopAp();
         return false;
     }
@@ -259,7 +259,7 @@ bool CaptivePortal::Start() {
     httpd_register_uri_handler(server_, &uri_catch);
 
     running_.store(true);
-    ESP_LOGI(kTag, "captive portal up: http://192.168.4.1/");
+    ESP_LOGI(kTag, "Captive portal up: http://192.168.4.1/");
     return true;
 }
 
@@ -273,7 +273,7 @@ void CaptivePortal::Stop() {
     Wifi::Get().StopAp();
     running_.store(false);
     g_portal = nullptr;
-    ESP_LOGI(kTag, "captive portal stopped");
+    ESP_LOGI(kTag, "Captive portal stopped");
 }
 
 void CaptivePortal::OnSubmit(SubmitCb cb) {

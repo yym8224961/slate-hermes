@@ -14,7 +14,7 @@
 #include "../ui/theme.h"
 
 namespace {
-constexpr char kTag[] = "vol_page";
+constexpr char kTag[] = "VolumePage";
 
 constexpr int kBarWidth  = 280;
 constexpr int kBarHeight = 24;
@@ -170,5 +170,5 @@ void VolumePage::PlayTestTone(SceneContext& ctx) {
     if (!ctx.audio) return;
     static std::vector<uint8_t> tone = MakeTestTone();
     ctx.audio->Play(tone.data(), tone.size());
-    ESP_LOGI(kTag, "play test tone level=%d codec=%d", level_, vol::ToCodec(level_));
+    ESP_LOGI(kTag, "Play test tone: level=%d codec=%d", level_, vol::ToCodec(level_));
 }

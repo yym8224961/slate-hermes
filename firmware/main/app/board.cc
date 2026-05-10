@@ -62,7 +62,7 @@ void Board::InitPower() {
         vTaskDelay(pdMS_TO_TICKS(10));
         waited += 10;
         if (waited >= kMaxWaitMs) {
-            ESP_LOGW(kTag, "down key not released after %dms, continuing", waited);
+            ESP_LOGW(kTag, "Down key not released after %dms, continuing", waited);
             break;
         }
     }
@@ -142,18 +142,18 @@ void Board::InitBatteryAdc() {
                                             .clk_src  = ADC_RTC_CLK_SRC_DEFAULT,
                                             .ulp_mode = ADC_ULP_MODE_DISABLE};
     if (adc_oneshot_new_unit(&init_cfg, &adc_handle_) != ESP_OK) {
-        ESP_LOGW(kTag, "adc_oneshot_new_unit failed");
+        ESP_LOGE(kTag, "ADC oneshot_new_unit failed");
         return;
     }
     adc_oneshot_chan_cfg_t ch = {.atten = ADC_ATTEN_DB_12, .bitwidth = ADC_BITWIDTH_12};
     if (adc_oneshot_config_channel(adc_handle_, ADC_CHANNEL_3, &ch) != ESP_OK) {
-        ESP_LOGW(kTag, "adc_oneshot_config_channel failed");
+        ESP_LOGE(kTag, "ADC oneshot_config_channel failed");
         return;
     }
     adc_cali_curve_fitting_config_t cali = {
         .unit_id = ADC_UNIT_1, .chan = ADC_CHANNEL_3, .atten = ADC_ATTEN_DB_12, .bitwidth = ADC_BITWIDTH_12};
     if (adc_cali_create_scheme_curve_fitting(&cali, &cali_handle_) != ESP_OK) {
-        ESP_LOGW(kTag, "adc_cali_create_scheme_curve_fitting failed");
+        ESP_LOGE(kTag, "ADC cali_create_scheme_curve_fitting failed");
         return;
     }
     adc_ready_.store(true);

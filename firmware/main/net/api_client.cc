@@ -63,7 +63,7 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
                       std::string* etag_out          = nullptr,
                       bool need_auth                 = true) {
     if (s_url.empty()) {
-        ESP_LOGW(kTag, "server url not set");
+        ESP_LOGW(kTag, "Server URL not set");
         return false;
     }
     std::string full = s_url;
@@ -101,7 +101,7 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
 
     esp_err_t err = esp_http_client_open(client, body_in.size());
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "open %s failed: %s", path.c_str(), esp_err_to_name(err));
+        ESP_LOGW(kTag, "Open %s failed: %s", path.c_str(), esp_err_to_name(err));
         esp_http_client_cleanup(client);
         return false;
     }
@@ -109,7 +109,7 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
     if (method == HTTP_METHOD_POST && !body_in.empty()) {
         int wn = esp_http_client_write(client, body_in.c_str(), body_in.size());
         if (wn != static_cast<int>(body_in.size())) {
-            ESP_LOGW(kTag, "write %s short: %d/%u", path.c_str(), wn, (unsigned)body_in.size());
+            ESP_LOGW(kTag, "Write %s short: %d/%u", path.c_str(), wn, (unsigned)body_in.size());
             esp_http_client_close(client);
             esp_http_client_cleanup(client);
             return false;
@@ -136,12 +136,12 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
 
     if (status == 304) return true;
     if (status == 401 && need_auth) {
-        ESP_LOGW(kTag, "%s → 401: secret invalid, triggering self-reset", path.c_str());
+        ESP_LOGW(kTag, "%s -> 401: secret invalid, triggering self-reset", path.c_str());
         if (s_unauth_cb) s_unauth_cb();
         return false;
     }
     if (status / 100 != 2) {
-        ESP_LOGW(kTag, "%s → HTTP %d", path.c_str(), status);
+        ESP_LOGW(kTag, "%s -> HTTP %d", path.c_str(), status);
         return false;
     }
     return true;
@@ -225,7 +225,7 @@ bool Register(RegisterResult& out) {
 
     cJSON* root = cJSON_Parse(resp.c_str());
     if (!root) {
-        ESP_LOGW(kTag, "register: invalid json response");
+        ESP_LOGW(kTag, "Register: invalid json response");
         return false;
     }
     auto get_str = [&](const char* k) -> std::string {
@@ -240,10 +240,10 @@ bool Register(RegisterResult& out) {
     cJSON_Delete(root);
 
     if (out.device_id.empty() || out.device_secret.empty() || out.pair_code.empty()) {
-        ESP_LOGW(kTag, "register: response missing required fields");
+        ESP_LOGW(kTag, "Register: response missing required fields");
         return false;
     }
-    ESP_LOGI(kTag, "registered: id=%s pair=%s reclaimed=%d",
+    ESP_LOGI(kTag, "Registered: id=%s pair=%s reclaimed=%d",
              out.device_id.c_str(), out.pair_code.c_str(), (int)out.reclaimed);
     return true;
 }

@@ -21,7 +21,7 @@ void Init() {
 
     setenv("TZ", CONFIG_SLATE_DEFAULT_TIMEZONE, 1);
     tzset();
-    ESP_LOGI(kTag, "SNTP started, TZ=%s", CONFIG_SLATE_DEFAULT_TIMEZONE);
+    ESP_LOGI(kTag, "SNTP started: TZ=%s", CONFIG_SLATE_DEFAULT_TIMEZONE);
 }
 
 bool TimeSynced() {

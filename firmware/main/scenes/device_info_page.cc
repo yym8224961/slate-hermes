@@ -15,7 +15,7 @@
 #include "../ui/theme.h"
 
 namespace {
-constexpr char kTag[] = "dev_info";
+constexpr char kTag[] = "DeviceInfo";
 
 const char* ChargeText(const ChargeStatus::Snapshot& s) {
     if (s.no_battery) return "无电池";

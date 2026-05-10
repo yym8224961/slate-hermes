@@ -11,7 +11,7 @@
 #include "../ui/theme.h"
 
 namespace {
-constexpr char kTag[] = "restart";
+constexpr char kTag[] = "Restart";
 }
 
 RestartDevicePage::RestartDevicePage()  = default;
@@ -83,12 +83,12 @@ void RestartDevicePage::OnExit(SceneContext& ctx) {
 
 void RestartDevicePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
     if (e.kind == UiEventKind::kButtonShort && e.u.button.btn == ButtonId::kEnter) {
-        ESP_LOGI(kTag, "short Enter → cancel, pop");
+        ESP_LOGI(kTag, "Short Enter -> cancel, pop");
         ctx.stack->RequestPop();
         return;
     }
     if (e.kind == UiEventKind::kButtonLong && e.u.button.btn == ButtonId::kEnter) {
-        ESP_LOGW(kTag, "long Enter → restart device");
+        ESP_LOGW(kTag, "Long Enter -> restart device");
         vTaskDelay(pdMS_TO_TICKS(200));
         esp_restart();
     }

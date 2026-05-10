@@ -22,7 +22,7 @@ DnsHijack::~DnsHijack() {
 void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
     if (running_.load()) Stop();
 
-    ESP_LOGI(kTag, "starting DNS hijack on UDP :%u → " IPSTR, port, IP2STR(&gateway));
+    ESP_LOGI(kTag, "Starting DNS hijack on UDP :%u -> " IPSTR, port, IP2STR(&gateway));
     gateway_ = gateway;
     port_    = port;
 
@@ -33,7 +33,7 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
-        ESP_LOGE(kTag, "socket failed: %d", errno);
+        ESP_LOGE(kTag, "Socket failed: %d", errno);
         return;
     }
 
@@ -43,7 +43,7 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
     addr.sin_port        = htons(port_);
 
     if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        ESP_LOGE(kTag, "bind :%u failed: %d", port_, errno);
+        ESP_LOGE(kTag, "Bind :%u failed: %d", port_, errno);
         close(sock);
         return;
     }
@@ -62,7 +62,7 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
 
 void DnsHijack::Stop() {
     if (!running_.exchange(false)) return;
-    ESP_LOGI(kTag, "stopping DNS hijack");
+    ESP_LOGI(kTag, "Stopping DNS hijack");
     int sock = fd_.exchange(-1);
     if (sock >= 0) {
         shutdown(sock, SHUT_RDWR);
@@ -88,7 +88,7 @@ void DnsHijack::Run() {
                                           reinterpret_cast<sockaddr*>(&client), &client_len);
         if (len < 0) {
             if (!running_.load()) break;
-            ESP_LOGE(kTag, "recvfrom failed: %d", errno);
+            ESP_LOGE(kTag, "Recvfrom failed: %d", errno);
             continue;
         }
         if (!running_.load()) break;

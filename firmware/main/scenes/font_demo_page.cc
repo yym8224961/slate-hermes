@@ -8,7 +8,7 @@
 #include "../ui/theme.h"
 
 namespace {
-constexpr char kTag[] = "font_demo";
+constexpr char kTag[] = "FontDemo";
 
 // 测试文本 — 故意覆盖典型 UI 中文 + 数字 + 标点。所有字必须落在
 // tools/gen_fonts.sh 的 SYMS 字符集内,否则 FusionPixel 子集字体会出豆腐块。
@@ -117,13 +117,13 @@ void FontDemoPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
                     idx_ = (idx_ - 1 + kFontCount) % kFontCount;
                     ApplyFont();
                     SyncRender(ctx, false);
-                    ESP_LOGI(kTag, "switch font idx=%d %s", idx_, kFonts[idx_].name);
+                    ESP_LOGI(kTag, "Switch font: idx=%d %s", idx_, kFonts[idx_].name);
                     break;
                 case ButtonId::kDown:
                     idx_ = (idx_ + 1) % kFontCount;
                     ApplyFont();
                     SyncRender(ctx, false);
-                    ESP_LOGI(kTag, "switch font idx=%d %s", idx_, kFonts[idx_].name);
+                    ESP_LOGI(kTag, "Switch font: idx=%d %s", idx_, kFonts[idx_].name);
                     break;
                 case ButtonId::kEnter:
                     // 短按确认 = 返回(避免误触发全刷,EPD 全刷需 5s)

@@ -16,7 +16,7 @@
 #include "event_bus.h"
 
 namespace {
-constexpr char kTag[] = "sleep";
+constexpr char kTag[] = "Sleep";
 
 // 30 分钟兜底定时器唤醒。**防变砖核心**:
 // 万一 EXT1 配置错 / 按键焊点松 / hold 失效,timer 也能把设备捞起来。
@@ -57,12 +57,12 @@ void SleepManager::Init(int idle_timeout_min) {
     idle_timeout_min_ = idle_timeout_min;
     last_active_ms_.store(esp_timer_get_time() / 1000);
     enabled_.store(true);
-    ESP_LOGI(kTag, "deep-sleep idle timeout = %d min", idle_timeout_min);
+    ESP_LOGI(kTag, "Deep sleep idle timeout: %d min", idle_timeout_min);
 }
 
 void SleepManager::Disable() {
     enabled_.store(false);
-    ESP_LOGI(kTag, "deep-sleep disabled");
+    ESP_LOGI(kTag, "Deep sleep disabled");
 }
 
 void SleepManager::OnEvent(const UiEvent& e) {
@@ -91,7 +91,7 @@ void SleepManager::Tick(int64_t now_ms) {
     const int64_t idle_ms      = now_ms - last_active_ms_.load();
     const int64_t threshold_ms = static_cast<int64_t>(idle_timeout_min_) * 60 * 1000;
     if (idle_ms < threshold_ms) return;
-    ESP_LOGW(kTag, "idle %lldms ≥ %lldms → entering deep sleep",
+    ESP_LOGW(kTag, "Idle %lldms >= %lldms -> entering deep sleep",
              (long long)idle_ms, (long long)threshold_ms);
     EnterDeepSleep();
 }
@@ -145,7 +145,7 @@ void SleepManager::EnterDeepSleep() {
     //    宁可白白醒一次也别让设备睡死收不回来。
     esp_sleep_enable_timer_wakeup(kFallbackTimerUs);
 
-    ESP_LOGW(kTag, "esp_deep_sleep_start (mask=0x%llx, timer=%llus)",
+    ESP_LOGW(kTag, "ESP deep_sleep_start (mask=0x%llx, timer=%llus)",
              (unsigned long long)kWakeupMask,
              (unsigned long long)(kFallbackTimerUs / 1000000ULL));
     esp_deep_sleep_start();

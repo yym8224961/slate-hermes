@@ -6,7 +6,7 @@
 #include "event_bus.h"
 
 namespace {
-constexpr char kTag[] = "tick";
+constexpr char kTag[] = "TimeTick";
 }
 
 void TimeTick::Start() {
@@ -18,7 +18,7 @@ void TimeTick::Start() {
     args.name                    = "time_tick";
     ESP_ERROR_CHECK(esp_timer_create(&args, &timer_));
     ESP_ERROR_CHECK(esp_timer_start_periodic(timer_, 1000 * 1000));  // 1s
-    ESP_LOGI(kTag, "time tick started");
+    ESP_LOGI(kTag, "Time tick started");
 }
 
 void TimeTick::Stop() {

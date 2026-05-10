@@ -16,7 +16,7 @@
 #include "settings_scene.h"
 
 namespace {
-constexpr char kTag[] = "splash";
+constexpr char kTag[] = "BootSplash";
 
 // SoftAP SSID 计算逻辑跟 captive_portal.cc HandleRoot 一致,保持一致避免文案
 // 跟实际 AP 名对不上。
@@ -48,7 +48,7 @@ BootSplashScene::State MapBootStage(BootStage s) {
 
 void BootSplashScene::OnEnter(SceneContext& ctx) {
     if (!ctx.epd->Lock(2000)) {
-        ESP_LOGW(kTag, "epd lock timeout in OnEnter");
+        ESP_LOGW(kTag, "EPD lock timeout in OnEnter");
         return;
     }
 
@@ -114,13 +114,13 @@ void BootSplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
     // 应急逃生:长按 ENTER push 设置页 — 即使同步未完成、网络断开,
     // 用户仍能调音量 / 看设备信息 / 重新配网 / 恢复出厂。
     if (e.kind == UiEventKind::kButtonLong && e.u.button.btn == ButtonId::kEnter) {
-        ESP_LOGI(kTag, "long Enter on splash → push Settings (emergency exit)");
+        ESP_LOGI(kTag, "Long Enter on splash -> push Settings (emergency exit)");
         ctx.stack->RequestPush(std::make_unique<SettingsScene>());
         return;
     }
 
     if (e.kind == UiEventKind::kGroupReady) {
-        ESP_LOGI(kTag, "GroupReady gid=%s frames=%d default=%d → switch to FrameScene",
+        ESP_LOGI(kTag, "GroupReady gid=%s frames=%d default=%d -> switch to FrameScene",
                  e.u.group.gid, e.u.group.frame_count, e.u.group.default_idx);
         ctx.stack->RequestReplace(std::make_unique<FrameScene>(
             e.u.group.gid, e.u.group.frame_count, e.u.group.default_idx));

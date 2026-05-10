@@ -17,7 +17,7 @@
 #include "settings_scene.h"
 
 namespace {
-constexpr char kTag[] = "frame";
+constexpr char kTag[] = "Frame";
 }
 
 FrameScene::FrameScene(const char* gid, int frame_count, int default_idx)
@@ -32,7 +32,7 @@ FrameScene::~FrameScene() = default;
 
 void FrameScene::OnEnter(SceneContext& ctx) {
     if (!ctx.epd->Lock(2000)) {
-        ESP_LOGW(kTag, "epd lock timeout in OnEnter");
+        ESP_LOGW(kTag, "EPD lock timeout in OnEnter");
         return;
     }
 
@@ -105,15 +105,15 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         case UiEventKind::kButtonLong: {
             switch (e.u.button.btn) {
                 case ButtonId::kUp:
-                    ESP_LOGI(kTag, "long Up → cycle group prev");
+                    ESP_LOGI(kTag, "Long Up -> cycle group prev");
                     SyncService::Get().CyclePrev();
                     break;
                 case ButtonId::kDown:
-                    ESP_LOGI(kTag, "long Down → cycle group next");
+                    ESP_LOGI(kTag, "Long Down -> cycle group next");
                     SyncService::Get().CycleNext();
                     break;
                 case ButtonId::kEnter:
-                    ESP_LOGI(kTag, "long Enter → push Settings");
+                    ESP_LOGI(kTag, "Long Enter -> push Settings");
                     ctx.stack->RequestPush(std::make_unique<SettingsScene>());
                     break;
             }
@@ -202,7 +202,7 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             // 避免设备继续展示已经无主的相册。BootSplashScene OnEnter 会读 NVS,
             // 配网凭据仍在 → 进 kInitializing,后续 sync_service poll 推
             // kAwaitingPair(载新 pair_code)切到配对码状态。
-            ESP_LOGW(kTag, "kUnbound (pair_code=%s) → back to BootSplashScene",
+            ESP_LOGW(kTag, "Unbound (pair_code=%s) -> back to BootSplashScene",
                      e.u.unbound.pair_code);
             ctx.stack->RequestReplace(std::make_unique<BootSplashScene>());
             break;
@@ -229,7 +229,7 @@ void FrameScene::RebindGroup(SceneContext& ctx, const char* gid, int frame_count
     frame_count_ = frame_count > 0 ? frame_count : 0;
     idx_         = (frame_count_ > 0 && default_idx >= 0 && default_idx < frame_count_) ? default_idx : 0;
     first_loaded_ = false;
-    ESP_LOGI(kTag, "rebind group gid=%s count=%d default=%d", gid_.c_str(), frame_count_, idx_);
+    ESP_LOGI(kTag, "Rebind group: gid=%s count=%d default=%d", gid_.c_str(), frame_count_, idx_);
 }
 
 void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full) {
@@ -271,7 +271,7 @@ void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full) {
     } else {
         ctx.epd->RequestUrgentPartialRefresh();
     }
-    ESP_LOGI(kTag, "LoadFrame %d caption=%s%s", idx, caption.c_str(), full ? " (full)" : "");
+    ESP_LOGI(kTag, "LoadFrame %d: caption=%s%s", idx, caption.c_str(), full ? " (full)" : "");
 
     // 若该 frame 配了 audio，立即播放（中断之前的播放）。
     std::vector<uint8_t> pcm;

@@ -3,7 +3,7 @@
 #include <esp_log.h>
 
 namespace {
-constexpr char  kTag[]    = "evt";
+constexpr char  kTag[]    = "Event";
 QueueHandle_t   s_queue   = nullptr;
 constexpr UBaseType_t kQueueLen = 32;
 }  // namespace
@@ -22,7 +22,7 @@ bool Post(const UiEvent& e, TickType_t timeout) {
         return false;
     }
     if (xQueueSendToBack(s_queue, &e, timeout) != pdTRUE) {
-        ESP_LOGW(kTag, "queue full, dropped kind=%d", static_cast<int>(e.kind));
+        ESP_LOGW(kTag, "Queue full, dropped kind=%d", static_cast<int>(e.kind));
         return false;
     }
     return true;

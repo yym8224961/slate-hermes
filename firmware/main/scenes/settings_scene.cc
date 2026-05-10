@@ -16,7 +16,7 @@
 #include "volume_page.h"
 
 namespace {
-constexpr char kTag[] = "settings";
+constexpr char kTag[] = "Settings";
 }
 
 SettingsScene::SettingsScene() = default;
@@ -24,7 +24,7 @@ SettingsScene::~SettingsScene() = default;
 
 void SettingsScene::OnEnter(SceneContext& ctx) {
     if (!ctx.epd->Lock(2000)) {
-        ESP_LOGW(kTag, "epd lock timeout in OnEnter");
+        ESP_LOGW(kTag, "EPD lock timeout in OnEnter");
         return;
     }
 
@@ -99,7 +99,7 @@ void SettingsScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         }
         case UiEventKind::kButtonLong: {
             if (e.u.button.btn == ButtonId::kEnter) {
-                ESP_LOGI(kTag, "long Enter → pop back to Frame");
+                ESP_LOGI(kTag, "Long Enter -> pop back to Frame");
                 ctx.stack->RequestPop();
             }
             break;

@@ -65,7 +65,7 @@ bool SaveSecret(const std::string& device_id, const std::string& device_secret) 
         ESP_LOGE(kTag, "SaveSecret: set/commit failed (e1=%d e2=%d ec=%d)", e1, e2, ec);
         return false;
     }
-    ESP_LOGI(kTag, "device_secret committed (id=%s)", device_id.c_str());
+    ESP_LOGI(kTag, "Device secret committed: id=%s", device_id.c_str());
     return true;
 }
 
@@ -76,7 +76,7 @@ void ClearSecret() {
     nvs_erase_key(h, "device_secret");
     nvs_commit(h);
     nvs_close(h);
-    ESP_LOGW(kTag, "device_secret cleared (will re-register on next boot)");
+    ESP_LOGW(kTag, "Device secret cleared (will re-register on next boot)");
 }
 
 std::string GetServerUrl() {
@@ -91,7 +91,7 @@ void Clear() {
     nvs_erase_all(h);
     nvs_commit(h);
     nvs_close(h);
-    ESP_LOGI(kTag, "credentials cleared");
+    ESP_LOGI(kTag, "Credentials cleared");
 }
 
 }  // namespace cred

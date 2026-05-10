@@ -52,7 +52,7 @@ void TryFireCombo() {
     if (g_combo.up_consumed && g_combo.down_consumed) return;  // 已触发过
     g_combo.up_consumed   = true;
     g_combo.down_consumed = true;
-    ESP_LOGI(kTag, "combo UP+DOWN → urgent full refresh");
+    ESP_LOGI(kTag, "Combo UP+DOWN -> urgent full refresh");
     if (auto* epd = Board::Get().epd()) epd->RequestUrgentFullRefresh();
 }
 
@@ -83,7 +83,7 @@ void EmitBootStage(BootStage stage, const char* ssid, const char* pair_code) {
 bool TryConnectAndSetup(cred::Credentials& c) {
     EmitBootStage(BootStage::kWifiConnecting, c.wifi_ssid.c_str(), nullptr);
     if (!Wifi::Get().Connect(c.wifi_ssid, c.wifi_pwd, 20000)) {
-        ESP_LOGW(kTag, "wifi STA connect failed");
+        ESP_LOGW(kTag, "WiFi STA connect failed");
         EmitBootStage(BootStage::kWifiFailed, nullptr, nullptr);
         return false;
     }
@@ -112,24 +112,24 @@ bool TryConnectAndSetup(cred::Credentials& c) {
         EmitBootStage(BootStage::kRegistering, nullptr, nullptr);
         api::RegisterResult rr;
         if (!api::Register(rr)) {
-            ESP_LOGW(kTag, "register failed (server unreachable?)");
+            ESP_LOGW(kTag, "Register failed (server unreachable?)");
             EmitBootStage(BootStage::kServerUnreachable, nullptr, nullptr);
             return false;
         }
         // SaveSecret 是 NVS 单独 commit;失败让设备 panic 重启避免半写状态。
         if (!cred::SaveSecret(rr.device_id, rr.device_secret)) {
-            ESP_LOGE(kTag, "fatal: SaveSecret failed, restarting");
+            ESP_LOGE(kTag, "Fatal: SaveSecret failed, restarting");
             esp_restart();
         }
         c.device_id     = rr.device_id;
         c.device_secret = rr.device_secret;
         api::SetSecret(rr.device_secret);
-        ESP_LOGI(kTag, "registered: id=%s pair=%s reclaimed=%d",
+        ESP_LOGI(kTag, "Registered: id=%s pair=%s reclaimed=%d",
                  rr.device_id.c_str(), rr.pair_code.c_str(), (int)rr.reclaimed);
         // splash 立即显示配对码 —— 用户看屏抄码是关键体验。bound 状态由后续 poll 决定。
         EmitBootStage(BootStage::kAwaitingPair, nullptr, rr.pair_code.c_str());
     } else {
-        ESP_LOGI(kTag, "have device_secret, skip register (id=%s)", c.device_id.c_str());
+        ESP_LOGI(kTag, "Have device_secret, skip register (id=%s)", c.device_id.c_str());
         // 不 emit kRegistering / kAwaitingPair,让 sync_service 第一轮 poll 拿到真实
         // bound/group 状态后再决定 splash 显示什么(已绑且有相册 → kGroupReady 切 FrameScene;
         // 已绑无相册 → kBound 切「等待相册」;远程被踢 → kUnbound 切「配对码」)。
@@ -162,7 +162,7 @@ void PostWakeupKeyEvent() {
     e.kind         = UiEventKind::kButtonShort;
     e.u.button.btn = btn;
     evt::Post(e);
-    ESP_LOGI(kTag, "wakeup by btn=%d → posted ButtonShort", static_cast<int>(btn));
+    ESP_LOGI(kTag, "Wakeup by btn=%d -> posted ButtonShort", static_cast<int>(btn));
 }
 
 void PostCachedGroupReadyIfAny() {
@@ -178,7 +178,7 @@ void PostCachedGroupReadyIfAny() {
     e.u.group.frame_count = frame_count;
     e.u.group.default_idx = 0;
     evt::Post(e);
-    ESP_LOGI(kTag, "cached GroupReady gid=%s count=%d", gid.c_str(), frame_count);
+    ESP_LOGI(kTag, "Cached GroupReady gid=%s count=%d", gid.c_str(), frame_count);
 }
 
 }  // namespace
@@ -254,7 +254,7 @@ void App::UiLoopTask() {
         // 401 self-reset:把擦 NVS + 重启放到 ui_loop 主线程做,避免在 HTTP 回调
         // 里直接 esp_restart 撕坏 socket 导致 mbedtls 内部 panic。
         if (e.kind == UiEventKind::kSecretInvalid) {
-            ESP_LOGW(kTag, "secret invalid → ClearSecret + restart");
+            ESP_LOGI(kTag, "Secret invalid -> clear + restart");
             cred::ClearSecret();
             vTaskDelay(pdMS_TO_TICKS(200));
             esp_restart();
@@ -356,11 +356,11 @@ void App::InitNetwork() {
 
     cred::Credentials creds;
     if (!cred::Load(creds)) {
-        ESP_LOGI(kTag, "no credentials → captive portal");
+        ESP_LOGI(kTag, "No credentials -> captive portal");
         StartPortal();
         return;
     }
-    ESP_LOGI(kTag, "found NVS credentials, ssid=%s have_secret=%d",
+    ESP_LOGI(kTag, "Found NVS credentials: ssid=%s have_secret=%d",
              creds.wifi_ssid.c_str(), (int)!creds.device_secret.empty());
     bool was_first_register = creds.device_secret.empty();
     if (TryConnectAndSetup(creds)) {
@@ -393,7 +393,7 @@ void App::InitNetwork() {
             PostWakeupKeyEvent();
         }
     } else {
-        ESP_LOGW(kTag, "fallback to captive portal");
+        ESP_LOGW(kTag, "Fallback to captive portal");
         StartPortal();
     }
 }
@@ -402,7 +402,7 @@ void App::StartPortal() {
     portal_ = std::make_unique<CaptivePortal>();
 
     portal_->OnSubmit([](const CaptivePortal::Submission& s, std::string& out_error) -> bool {
-        ESP_LOGI(kTag, "portal /submit ssid=%s", s.ssid.c_str());
+        ESP_LOGI(kTag, "Portal /submit: ssid=%s", s.ssid.c_str());
         std::string reason;
         if (!Wifi::Get().TryConnect(s.ssid, s.password, 10000, reason)) {
             out_error = reason;
@@ -416,13 +416,13 @@ void App::StartPortal() {
         // device_id/device_secret 留空:配网完成 esp_restart 后 InitNetwork 看到无 secret
         // → 走 register 流。设备命名留到 Web 端 PUT /devices/:id 完成绑定后再做。
         cred::Save(c);
-        ESP_LOGI(kTag, "credentials saved, will reboot soon");
+        ESP_LOGI(kTag, "Credentials saved, will reboot soon");
         return true;
     });
 
     portal_->OnFinished([this](bool success) {
         if (!success) return;
-        ESP_LOGW(kTag, "portal finished, stopping AP and rebooting in 500ms");
+        ESP_LOGI(kTag, "Portal finished, stopping AP and rebooting in 500ms");
         portal_->Stop();
         vTaskDelay(pdMS_TO_TICKS(500));
         esp_restart();
@@ -475,7 +475,7 @@ void App::FinalizePm() {
         .light_sleep_enable = false,
     };
     ESP_ERROR_CHECK(esp_pm_configure(&pm));
-    ESP_LOGI(kTag, "PM configured: 80-240MHz DFS (light sleep off)");
+    ESP_LOGI(kTag, "PM configured: 80-240MHz DFS, light sleep off");
 }
 
 void App::Init() {

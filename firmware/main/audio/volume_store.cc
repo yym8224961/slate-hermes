@@ -4,7 +4,7 @@
 #include <nvs.h>
 
 namespace {
-constexpr char kTag[] = "vol";
+constexpr char kTag[] = "Volume";
 constexpr char kNs[]  = "slate";
 constexpr char kKey[] = "volume";
 }  // namespace
@@ -26,7 +26,7 @@ void Set(int level) {
     if (level > kMax) level = kMax;
     nvs_handle_t h;
     if (nvs_open(kNs, NVS_READWRITE, &h) != ESP_OK) {
-        ESP_LOGW(kTag, "nvs_open failed");
+        ESP_LOGW(kTag, "NVS open failed");
         return;
     }
     nvs_set_i8(h, kKey, static_cast<int8_t>(level));

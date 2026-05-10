@@ -77,7 +77,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     i2s_data_cfg.rx_handle = nullptr;
     data_if_ = audio_codec_new_i2s_data(&i2s_data_cfg);
     if (!data_if_) {
-        ESP_LOGE(kTag, "audio_codec_new_i2s_data failed");
+        ESP_LOGE(kTag, "Audio codec new_i2s_data failed");
         return false;
     }
 
@@ -91,7 +91,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
         ctrl_if_ = audio_codec_new_i2c_ctrl(&i2c_cfg);
     }
     if (!ctrl_if_) {
-        ESP_LOGE(kTag, "audio_codec_new_i2c_ctrl failed");
+        ESP_LOGE(kTag, "Audio codec new_i2c_ctrl failed");
         return false;
     }
 
@@ -116,7 +116,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     es_cfg.pa_reverted            = false;
     codec_if_                     = es8311_codec_new(&es_cfg);
     if (!codec_if_) {
-        ESP_LOGE(kTag, "es8311_codec_new failed (I2C 通讯失败?)");
+        ESP_LOGE(kTag, "ES8311 codec_new failed (I2C error?)");
         return false;
     }
 
@@ -161,7 +161,7 @@ bool AudioPlayer::EnsureCodecOpen() {
         // PA 此时仍 LOW(BoardPowerBsp 构造已设 + hold_en),不出声。codec_dev_open
         // 内 codec lib 会 DAC start + set_mute(false),但 pa_pin=-1 所以不动 PA。
         if (esp_codec_dev_open(dev_, &fs) != ESP_OK) {
-            ESP_LOGE(kTag, "esp_codec_dev_open failed");
+            ESP_LOGE(kTag, "ESP codec_dev_open failed");
             return false;
         }
         esp_codec_dev_set_out_vol(dev_, volume_);

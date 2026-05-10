@@ -5,7 +5,7 @@
 #include "../display/epd_ssd1683.h"
 
 namespace {
-constexpr char kTag[]      = "frame_view";
+constexpr char kTag[]      = "FrameView";
 constexpr int  kStatusBarH = 28;
 constexpr int  kImgH       = FrameView::kHeight - kStatusBarH;  // 272
 constexpr int  kBpr        = FrameView::kWidth >> 3;            // 50
@@ -26,7 +26,7 @@ FrameView::FrameView(lv_obj_t* parent) {
 void FrameView::SetFrame(EpdSsd1683* epd, const std::vector<uint8_t>& raw) {
     if (!epd) return;
     if (raw.size() != kRawBytes) {
-        ESP_LOGW(kTag, "raw size %u != %d", static_cast<unsigned>(raw.size()), kRawBytes);
+        ESP_LOGW(kTag, "Raw size %u != %d", static_cast<unsigned>(raw.size()), kRawBytes);
         return;
     }
     // 跳过状态栏占用的顶部 28 行，直接写内容区（rows 28-299）。

@@ -49,7 +49,7 @@ void BoardPowerBsp::InitLed() {
     cfg.pull_down_en  = GPIO_PULLDOWN_DISABLE;
     ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_config(&cfg));
     GpioWriteHold(kLedPin, 1);
-    ESP_LOGI(kTag, "LED off (status bar 接管充电指示)");
+    ESP_LOGI(kTag, "LED off (status bar manages charging indicator)");
 }
 
 void BoardPowerBsp::PowerAudioOn()  { GpioWriteHold(audioPowerPin_, 1); }

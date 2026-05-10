@@ -99,7 +99,7 @@ void EpdSsd1683::Init() {
     prev_buffer_ = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
     tx_buf_      = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
     if (!buffer_ || !prev_buffer_ || !tx_buf_) {
-        ESP_LOGE(kTag, "failed to allocate framebuffers");
+        ESP_LOGE(kTag, "Failed to allocate framebuffers");
         return;
     }
     memset(buffer_, 0xFF, kBufferLen);
@@ -113,7 +113,7 @@ void EpdSsd1683::Init() {
     constexpr int kRender = kWidth * kHeight * 2;
     auto*         rb      = (uint8_t*)heap_caps_malloc(kRender, MALLOC_CAP_SPIRAM);
     if (!rb) {
-        ESP_LOGE(kTag, "failed to allocate render buffer");
+        ESP_LOGE(kTag, "Failed to allocate render buffer");
         return;
     }
     lv_display_set_buffers(lvgl_display_, rb, NULL, kRender, LV_DISPLAY_RENDER_MODE_PARTIAL);
@@ -125,7 +125,7 @@ void EpdSsd1683::Init() {
 
     dirty_mutex_ = xSemaphoreCreateMutex();
     if (!dirty_mutex_) {
-        ESP_LOGE(kTag, "failed to create dirty_mutex");
+        ESP_LOGE(kTag, "Failed to create dirty_mutex");
         return;
     }
     StartRefreshTask();
@@ -177,7 +177,7 @@ void EpdSsd1683::LvglFlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t*
         do_notify = (task != nullptr);
         // LVGL flush 高频,默认 ESP_LOGD 隐藏。需要诊断"残影 / partial 区不正确"
         // 时,串口跑一次 esp_log_level_set("Epd", ESP_LOG_DEBUG) 打开。
-        ESP_LOGD(kTag, "flush chunk=(%d,%d,%dx%d) accum_dirty=(%d,%d,%dx%d)",
+        ESP_LOGD(kTag, "Flush chunk=(%d,%d,%dx%d) accum_dirty=(%d,%d,%dx%d)",
                  r.x, r.y, r.w, r.h, u.x, u.y, u.w, u.h);
     }
 
@@ -204,7 +204,7 @@ void EpdSsd1683::RequestUrgentPartialRefresh() {
     urgent_refresh_      = true;
     refresh_in_progress_ = true;
     xSemaphoreGive(dirty_mutex_);
-    ESP_LOGI(kTag, "Request PARTIAL refresh");
+    ESP_LOGI(kTag, "Request partial refresh");
     if (refresh_task_)
         xTaskNotifyGive(refresh_task_);
 }
@@ -215,7 +215,7 @@ void EpdSsd1683::RequestUrgentFullRefresh() {
     force_full_refresh_  = true;
     refresh_in_progress_ = true;
     xSemaphoreGive(dirty_mutex_);
-    ESP_LOGI(kTag, "Request FULL refresh");
+    ESP_LOGI(kTag, "Request full refresh");
     if (refresh_task_)
         xTaskNotifyGive(refresh_task_);
 }
@@ -525,7 +525,7 @@ void EpdSsd1683::ReadBusy() {
     while (gpio_get_level(busy_) == 0) {
         vTaskDelay(pdMS_TO_TICKS(5));
         if ((esp_timer_get_time() / 1000) - start_ms > kBusyTimeoutMs) {
-            ESP_LOGE(kTag, "EPD BUSY stuck low > %lldms — restarting", kBusyTimeoutMs);
+            ESP_LOGE(kTag, "EPD BUSY stuck low > %lldms -> restarting", kBusyTimeoutMs);
             esp_restart();
         }
     }
@@ -611,7 +611,7 @@ void EpdSsd1683::ApplyTemperatureBoost() {
             booster = 232;
         cached_booster_    = booster;
         last_temp_read_ms_ = now_ms;
-        ESP_LOGI(kTag, "EPD temp reg=%u booster=%u (cached)", temp, booster);
+        ESP_LOGI(kTag, "EPD temp: reg=%u booster=%u (cached)", temp, booster);
     }
 
     EpdSendCommand(0xE0);

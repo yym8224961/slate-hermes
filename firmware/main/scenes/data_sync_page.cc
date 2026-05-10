@@ -10,7 +10,7 @@
 #include "../ui/theme.h"
 
 namespace {
-constexpr char kTag[] = "data_sync";
+constexpr char kTag[] = "DataSync";
 }
 
 DataSyncPage::DataSyncPage()  = default;
@@ -85,7 +85,7 @@ void DataSyncPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
 
         case UiEventKind::kButtonLong:
             if (e.u.button.btn == ButtonId::kEnter) {
-                ESP_LOGI(kTag, "long Enter → trigger sync now");
+                ESP_LOGI(kTag, "Long Enter -> trigger sync now");
                 SyncService::Get().TriggerNow();
                 SetStatus(ctx, "已发起同步,等待结果…");
                 SyncRender(ctx);

@@ -22,7 +22,7 @@ bool DirEnsure(const std::string& dir) {
     if (stat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) return true;
     if (mkdir(dir.c_str(), 0775) == 0) return true;
     if (errno == EEXIST) return true;
-    ESP_LOGW(kTag, "mkdir %s failed: %d", dir.c_str(), errno);
+    ESP_LOGW(kTag, "Mkdir %s failed: %d", dir.c_str(), errno);
     return false;
 }
 
@@ -32,19 +32,19 @@ bool WriteAll(const std::string& path, const void* data, size_t len) {
     const std::string tmp = path + ".tmp";
     FILE* f = fopen(tmp.c_str(), "wb");
     if (!f) {
-        ESP_LOGW(kTag, "open w %s failed: %d", tmp.c_str(), errno);
+        ESP_LOGW(kTag, "Open w %s failed: %d", tmp.c_str(), errno);
         return false;
     }
     size_t w     = fwrite(data, 1, len, f);
     int    cret  = fclose(f);  // flush 失败(磁盘满)在这里才暴露
     if (w != len || cret != 0) {
-        ESP_LOGW(kTag, "write %s short/flush failed (w=%u/%u close=%d)", tmp.c_str(),
+        ESP_LOGW(kTag, "Write %s short/flush failed (w=%u/%u close=%d)", tmp.c_str(),
                  (unsigned)w, (unsigned)len, cret);
         unlink(tmp.c_str());
         return false;
     }
     if (rename(tmp.c_str(), path.c_str()) != 0) {
-        ESP_LOGW(kTag, "rename %s → %s failed: %d", tmp.c_str(), path.c_str(), errno);
+        ESP_LOGW(kTag, "Rename %s -> %s failed: %d", tmp.c_str(), path.c_str(), errno);
         unlink(tmp.c_str());
         return false;
     }
@@ -60,7 +60,7 @@ bool ReadAll(const std::string& path, std::vector<uint8_t>& out) {
     }
     long len = ftell(f);
     if (len < 0) {
-        ESP_LOGW(kTag, "ftell %s failed: %d", path.c_str(), errno);
+        ESP_LOGW(kTag, "Ftell %s failed: %d", path.c_str(), errno);
         fclose(f);
         return false;
     }
@@ -116,12 +116,12 @@ bool Init() {
 
     esp_err_t err = esp_vfs_littlefs_register(&cfg);
     if (err != ESP_OK) {
-        ESP_LOGE(kTag, "littlefs mount failed: %s", esp_err_to_name(err));
+        ESP_LOGE(kTag, "Littlefs mount failed: %s", esp_err_to_name(err));
         return false;
     }
     size_t total = 0, used = 0;
     esp_littlefs_info(cfg.partition_label, &total, &used);
-    ESP_LOGI(kTag, "littlefs mounted at %s, %u/%u KB used",
+    ESP_LOGI(kTag, "Littlefs mounted at %s, %u/%u KB used",
              kRoot, (unsigned)(used / 1024), (unsigned)(total / 1024));
     DirEnsure(std::string(kRoot) + "/groups");
     return true;
@@ -133,11 +133,11 @@ bool FormatAll() {
     // unregister 失败一般是因为没 mount,format 仍可继续。
     esp_err_t err = esp_vfs_littlefs_unregister(kLabel);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGW(kTag, "littlefs unregister failed (continuing): %s", esp_err_to_name(err));
+        ESP_LOGW(kTag, "Littlefs unregister failed (continuing): %s", esp_err_to_name(err));
     }
     err = esp_littlefs_format(kLabel);
     if (err != ESP_OK) {
-        ESP_LOGE(kTag, "littlefs format failed: %s", esp_err_to_name(err));
+        ESP_LOGE(kTag, "Littlefs format failed: %s", esp_err_to_name(err));
         return false;
     }
     // 重新 mount,让进程后续仍能用 cache(factory_reset 通常紧接 esp_restart,
@@ -149,11 +149,11 @@ bool FormatAll() {
     cfg.dont_mount               = false;
     err = esp_vfs_littlefs_register(&cfg);
     if (err != ESP_OK) {
-        ESP_LOGE(kTag, "littlefs remount after format failed: %s", esp_err_to_name(err));
+        ESP_LOGE(kTag, "Littlefs remount after format failed: %s", esp_err_to_name(err));
         return false;
     }
     DirEnsure(std::string(kRoot) + "/groups");
-    ESP_LOGI(kTag, "littlefs formatted + remounted");
+    ESP_LOGI(kTag, "Littlefs formatted + remounted");
     return true;
 }
 

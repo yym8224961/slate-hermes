@@ -13,7 +13,7 @@
 #include "../ui/theme.h"
 
 namespace {
-constexpr char kTag[] = "factory";
+constexpr char kTag[] = "FactoryReset";
 }
 
 FactoryResetPage::FactoryResetPage()  = default;
@@ -88,12 +88,12 @@ void FactoryResetPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
     // 跟其他子页一致:短按确认 = 返回,长按确认 = 执行(危险动作)。
     // UP/DOWN 短按忽略(防误触)。
     if (e.kind == UiEventKind::kButtonShort && e.u.button.btn == ButtonId::kEnter) {
-        ESP_LOGI(kTag, "short Enter → cancel, pop");
+        ESP_LOGI(kTag, "Short Enter -> cancel, pop");
         ctx.stack->RequestPop();
         return;
     }
     if (e.kind == UiEventKind::kButtonLong && e.u.button.btn == ButtonId::kEnter) {
-        ESP_LOGW(kTag, "long Enter → factory reset: clear NVS + format littlefs + reboot");
+        ESP_LOGW(kTag, "Long Enter -> factory reset: clear NVS + format littlefs + reboot");
         // 顺序: NVS 清干净后 format LittleFS。两步任一失败都继续 esp_restart,
         // 防止用户卡在 settings 不知所措;下次启动 InitNetwork 会按当时状态决定下一步。
         cred::Clear();

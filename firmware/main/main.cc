@@ -3,11 +3,11 @@
 #include "app.h"
 
 namespace {
-constexpr char kTag[] = "main";
+constexpr char kTag[] = "Main";
 }
 
 extern "C" void app_main(void) {
-    ESP_LOGI(kTag, "===== slate firmware boot =====");
+    ESP_LOGI(kTag, "Firmware boot");
     static App app;
     app.Init();
     app.Run();

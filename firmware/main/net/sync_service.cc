@@ -37,14 +37,14 @@ void SyncService::Start(SyncDeps deps) {
     if (!event_group_) {
         event_group_ = xEventGroupCreate();
         if (!event_group_) {
-            ESP_LOGE(kTag, "failed to create event group");
+            ESP_LOGE(kTag, "Failed to create event group");
             return;
         }
     }
     running_.store(true);
     last_user_active_ms_.store(esp_timer_get_time() / 1000);
     xTaskCreatePinnedToCore(&TaskEntry, "slate_sync", 10 * 1024, this, 4, nullptr, 0);
-    ESP_LOGI(kTag, "sync service started");
+    ESP_LOGI(kTag, "Sync service started");
 }
 
 void SyncService::Stop() {
@@ -138,7 +138,7 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         return;
     }
     if (not_modified) {
-        ESP_LOGI(kTag, "manifest 304 not modified");
+        ESP_LOGI(kTag, "Manifest 304 not modified");
         const bool first_seen = (current_group_ != gid);
         current_group_ = gid;
         if (first_seen) {
@@ -158,7 +158,7 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
             bool                 nm = false;
             if (api::DownloadFrameImage(gid, f.seq, "", buf, nm)) {
                 cache::WriteFrameImage(gid, f.seq, buf, f.image_etag);
-                ESP_LOGI(kTag, "frame %d image cached (%u B)", f.seq, (unsigned)buf.size());
+                ESP_LOGI(kTag, "Frame %d image cached (%u B)", f.seq, (unsigned)buf.size());
             }
         }
         if (!f.audio_etag.empty() &&
@@ -219,13 +219,13 @@ void SyncService::SyncOnce() {
         UiEvent e{};
         if (state.bound) {
             e.kind = UiEventKind::kBound;
-            ESP_LOGI(kTag, "bound");
+            ESP_LOGI(kTag, "Bound");
         } else {
             e.kind = UiEventKind::kUnbound;
             std::strncpy(e.u.unbound.pair_code, state.pair_code.c_str(),
                          sizeof(e.u.unbound.pair_code) - 1);
             e.u.unbound.pair_code[sizeof(e.u.unbound.pair_code) - 1] = '\0';
-            ESP_LOGW(kTag, "unbound: pair_code=%s", state.pair_code.c_str());
+            ESP_LOGW(kTag, "Unbound: pair_code=%s", state.pair_code.c_str());
         }
         evt::Post(e, 0);
         was_bound_.store(state.bound);
@@ -284,11 +284,11 @@ void SyncService::DoCycle(const std::string& direction) {
 
     bool group_changed = false;
     if (state.has_group) {
-        ESP_LOGI(kTag, "cycled %s → %s (pos %d/%d)", direction.c_str(),
+        ESP_LOGI(kTag, "Cycled %s -> %s (pos %d/%d)", direction.c_str(),
                  state.group_id.c_str(), state.position_current, state.position_total);
         SyncManifestAndFrames(state.group_id, state.group_etag, group_changed);
     } else {
-        ESP_LOGI(kTag, "cycle %s: no groups available", direction.c_str());
+        ESP_LOGI(kTag, "Cycle %s: no groups available", direction.c_str());
         current_group_.clear();
     }
 

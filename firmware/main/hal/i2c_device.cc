@@ -35,10 +35,10 @@ esp_err_t I2cDevice::ResetBus(const char* reason) {
     if (!bus_lock.locked()) {
         return bus_lock.status();
     }
-    ESP_LOGW(kTag, "i2c bus reset: reason=%s addr=0x%02X", reason ? reason : "unknown",
+    ESP_LOGW(kTag, "I2C bus reset: reason=%s addr=0x%02X", reason ? reason : "unknown",
              static_cast<unsigned>(device_address_));
     esp_err_t ret = i2c_master_bus_reset(i2c_bus_);
-    ESP_LOGW(kTag, "i2c bus reset done: ret=%s", esp_err_to_name(ret));
+    ESP_LOGI(kTag, "I2C bus reset done: ret=%s", esp_err_to_name(ret));
     return ret;
 }
 
@@ -49,13 +49,13 @@ void I2cDevice::WriteReg(uint8_t reg, uint8_t value) {
     BoardI2cForcePowerOn();
     esp_err_t ret = i2c_master_transmit(i2c_device_, buffer, sizeof(buffer), kI2cTimeoutMs);
     if (ret == ESP_ERR_INVALID_STATE || ret == ESP_ERR_TIMEOUT) {
-        ESP_LOGW(kTag, "i2c write failed: addr=0x%02X reg=0x%02X val=0x%02X ret=%s",
+        ESP_LOGW(kTag, "I2C write failed: addr=0x%02X reg=0x%02X val=0x%02X ret=%s",
                  static_cast<unsigned>(device_address_), static_cast<unsigned>(reg), static_cast<unsigned>(value),
                  esp_err_to_name(ret));
         if (ResetBus("write_retry") == ESP_OK) {
             BoardI2cForcePowerOn();
             ret = i2c_master_transmit(i2c_device_, buffer, sizeof(buffer), kI2cTimeoutMs);
-            ESP_LOGW(kTag, "i2c write retry result: addr=0x%02X reg=0x%02X val=0x%02X ret=%s",
+            ESP_LOGW(kTag, "I2C write retry result: addr=0x%02X reg=0x%02X val=0x%02X ret=%s",
                      static_cast<unsigned>(device_address_), static_cast<unsigned>(reg), static_cast<unsigned>(value),
                      esp_err_to_name(ret));
         }
@@ -75,13 +75,13 @@ void I2cDevice::ReadRegs(uint8_t reg, uint8_t* buffer, size_t length) {
     BoardI2cForcePowerOn();
     esp_err_t ret = i2c_master_transmit_receive(i2c_device_, &reg, 1, buffer, length, 100);
     if (ret == ESP_ERR_INVALID_STATE) {
-        ESP_LOGW(kTag, "i2c read invalid_state: addr=0x%02X reg=0x%02X len=%u ret=%s",
+        ESP_LOGW(kTag, "I2C read invalid_state: addr=0x%02X reg=0x%02X len=%u ret=%s",
                  static_cast<unsigned>(device_address_), static_cast<unsigned>(reg), static_cast<unsigned>(length),
                  esp_err_to_name(ret));
         if (ResetBus("read_invalid_state") == ESP_OK) {
             BoardI2cForcePowerOn();
             ret = i2c_master_transmit_receive(i2c_device_, &reg, 1, buffer, length, 100);
-            ESP_LOGW(kTag, "i2c read retry result: addr=0x%02X reg=0x%02X len=%u ret=%s",
+            ESP_LOGW(kTag, "I2C read retry result: addr=0x%02X reg=0x%02X len=%u ret=%s",
                      static_cast<unsigned>(device_address_), static_cast<unsigned>(reg), static_cast<unsigned>(length),
                      esp_err_to_name(ret));
         }
