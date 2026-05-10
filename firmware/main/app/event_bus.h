@@ -26,9 +26,31 @@ enum class UiEventKind : uint8_t {
     kGroupReady,         // u.group
     kMinuteTick,
     kIdleTimeout,
+    // 启动阶段进度,由 app.cc TryConnectAndSetup 各步 emit;splash 用 stage 切文案。
+    kBootStage,          // u.boot_stage
+    // 设备从 unbound 翻 bound:Web 端用户输入了配对码。splash 切「等待相册」。
+    kBound,
+    // 设备从 bound 翻 unbound:Web 端主动解绑。任何场景需 RequestReplace 回 splash。
+    kUnbound,            // u.unbound { pair_code[8] }
+    // poll 收到 401:secret 失效,固件 self-reset 流(清 NVS secret + 重启)。
+    kSecretInvalid,
 };
 
 enum class ButtonId : uint8_t { kEnter = 0, kUp, kDown };
+
+// boot 阶段枚举;splash 用此切文案。顺序对应 splash 状态机典型路径。
+enum class BootStage : uint8_t {
+    kInitializing = 0,
+    kProvisioning,        // 无 cred,captive portal 模式
+    kWifiConnecting,      // 试连 STA(载荷带 ssid)
+    kWifiFailed,          // 试连超时/认证失败
+    kSntp,                // 等系统时间对齐
+    kRegistering,         // 调 /devices/register
+    kServerUnreachable,   // 服务器 30s 无响应
+    kAwaitingPair,        // 注册完毕,等待 Web 端 claim(载荷带 pair_code)
+    kAwaitingGroup,       // 已 bound,等待管理端分配相册
+    kNetError,            // 其它网络异常
+};
 
 struct UiEvent {
     UiEventKind kind;
@@ -50,6 +72,14 @@ struct UiEvent {
             int  frame_count;
             int  default_idx;
         }                                                  group;
+        struct {
+            BootStage stage;
+            char      ssid[33];      // kWifiConnecting 时设 STA SSID
+            char      pair_code[8];  // kAwaitingPair 时设 6 位 + nul
+        }                                                  boot_stage;
+        struct {
+            char pair_code[8];
+        }                                                  unbound;
         U() {}
     } u;
 

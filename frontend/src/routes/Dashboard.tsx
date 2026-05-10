@@ -211,13 +211,13 @@ function DeviceCard({
     e.stopPropagation();
     const ok = await confirm({
       title: '解绑这台设备?',
-      description: `${device.name ?? device.mac} 将从你的账号移除。素材保留,可重新添加。`,
+      description: `${device.name ?? device.mac} 将从你的账号移除。素材保留,设备屏会切回配对码状态。`,
       destructive: true,
       confirmText: '解绑',
     });
     if (!ok) return;
     unbind.mutate(device.id, {
-      onSuccess: () => toast.success('已解绑'),
+      onSuccess: () => toast.success('已解绑', '设备屏会显示新配对码'),
       onError: () => toast.error('解绑失败'),
     });
   }

@@ -191,22 +191,14 @@ ul.networks li.sel { background: var(--ink); color: var(--paper); }
       <h2>② SERVER</h2>
       <label>
         <span class="lbl">URL</span>
-        <input id="server_url" name="server_url" type="url" required value="{{SERVER_URL}}">
+        <input id="server_url" name="server_url" type="url" required
+               value="{{SERVER_URL}}"
+               placeholder="https://slate.your-domain.com 或 http://192.168.1.2:3001">
       </label>
       <p style="margin: 6px 0 0; font-size: 10px; letter-spacing: 0.05em; color: var(--ash);">
-        默认值已填,本地调试时改成 http://&lt;LAN-IP&gt;:3001 即可。
+        填运行 slate 后端的地址。本地局域网调试用 http://&lt;LAN-IP&gt;:3001 即可。
       </p>
     </section>
-
-    <details>
-      <summary>③ 高级</summary>
-      <section style="margin-top: 8px;">
-        <label>
-          <span class="lbl">DEVICE NAME</span>
-          <input id="device_name" name="device_name" type="text" maxlength="32" placeholder="客厅相框">
-        </label>
-      </section>
-    </details>
 
     <button type="submit" class="primary" id="btn">配网并连接 [⏎]</button>
   </form>
@@ -304,7 +296,6 @@ $('f').addEventListener('submit', async (e) => {
     ssid: $('ssid').value.trim(),
     password: $('password').value,
     server_url: $('server_url').value.trim(),
-    device_name: $('device_name').value.trim() || undefined,
   };
   if (!body.ssid) { setStatus('SSID 不能空', 'err'); return; }
   if (!body.server_url) { setStatus('服务端 URL 不能空', 'err'); return; }

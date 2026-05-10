@@ -1,9 +1,10 @@
 #pragma once
 
 // SoftAP captive portal:开机 NVS 无凭据时,设备开 AP "Slate-XXXX",
-// 手机连进来后浏览器打开 192.168.4.1 看到三段式表单(WiFi/服务端/高级)。
-// POST /submit 接 JSON {ssid, password, server_url, device_name?}
+// 手机连进来后浏览器打开 192.168.4.1 看到两段表单(WiFi/服务端)。
+// POST /submit 接 JSON {ssid, password, server_url}
 // → 写 NVS namespace "slate" → 切 STA 试连 → 成功后退 AP。
+// 设备名(name)不在配网阶段填,绑定后由 Web 端 PUT /devices/:id 设置。
 //
 // 用法:
 //   CaptivePortal portal;
@@ -25,7 +26,6 @@ class CaptivePortal {
         std::string ssid;
         std::string password;
         std::string server_url;
-        std::string device_name;
     };
 
     bool Start();   // 启 SoftAP + HTTP + DNS,立即返回

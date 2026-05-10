@@ -25,7 +25,9 @@ CONFIG_LOG_MAXIMUM_LEVEL_DEBUG=y
 
 # FreeRTOS
 CONFIG_FREERTOS_HZ=1000
-CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192   # 默认 3584 不够 LVGL 渲染调用栈
+# 默认 3584 不够 LVGL 渲染调用栈 + WiFi event 回调,会触发 stack overflow panic。
+# 注意:Kconfig 不支持行内注释,注释必须独占一行,否则覆盖会被 confgen 静默丢弃。
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
 # LVGL：简化 include 路径让字体源里的 #include "lvgl.h" 生效
 CONFIG_LV_LVGL_H_INCLUDE_SIMPLE=y
@@ -78,14 +80,24 @@ CONFIG_ESP32S3_REV_MIN_0=y
 # M2.1 联网相关
 # ============================================================
 
-# WiFi/lwip 默认就能用,这里调几个尺寸
-CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048           # captive portal 接 multipart-ish 表单
+# WiFi/lwip 默认就能用,这里调几个尺寸。
+# 注意:Kconfig 不支持行内注释。
+# captive portal 接 multipart-ish 表单
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=2048
 CONFIG_HTTPD_MAX_URI_LEN=512
-CONFIG_LWIP_MAX_SOCKETS=10                  # AP 时浏览器多 socket 同时连
-CONFIG_MBEDTLS_DYNAMIC_BUFFER=y             # TLS 握手内存动态分配,省 RAM
+# AP 时浏览器多 socket 同时连
+CONFIG_LWIP_MAX_SOCKETS=10
+# TLS 握手内存动态分配,省 RAM
+CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
 
-# esp_http_client 启用 HTTPS
+# esp_http_client + 内置 root CA bundle(api_client.cc 挂 esp_crt_bundle_attach 验证证书)
 CONFIG_ESP_TLS_USING_MBEDTLS=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+
+# 默认服务端 URL 留空。固件烧出去是一份,谁烧谁填:用户在 captive portal 表单里
+# 自己填实际地址(placeholder 已给示例)。本地开发可用 menuconfig 临时覆盖。
+CONFIG_SLATE_DEFAULT_SERVER_URL=""
 
 # WiFi 软 AP + STA 共存（配网时设备自己挂着 AP,
 # 用户手机也连着设备 AP——配置完成切 STA）

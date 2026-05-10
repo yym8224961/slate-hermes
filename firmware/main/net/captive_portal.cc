@@ -113,7 +113,6 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
     sub.ssid        = get("ssid");
     sub.password    = get("password");
     sub.server_url  = get("server_url");
-    sub.device_name = get("device_name");
     cJSON_Delete(root);
 
     // 明文凭据日志由 CONFIG_SLATE_LOG_PLAINTEXT_CRED 门控,详见 wifi.cc。

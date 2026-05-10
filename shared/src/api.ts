@@ -18,8 +18,9 @@ export const AUDIO_SAMPLE_RATE = 16000;
 export const AUDIO_BITS_PER_SAMPLE = 16;
 export const AUDIO_CHANNELS = 1;
 
-// 设备身份 header(取代 path 里的 :mac)。
-export const DEVICE_MAC_HEADER = 'X-Device-Mac';
+// 设备鉴权：注册流（POST /devices/register）无鉴权，body 里带 mac；
+// 后续受保护端点全部用标准 Authorization: Bearer <device_secret>。
+// secret 由注册响应一次性下发，固件 NVS 持久化；DB 只存 sha256(secret)。
 
 export const LoginRequest = z.object({
   email: z.email(),

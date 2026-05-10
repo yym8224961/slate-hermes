@@ -1,13 +1,13 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
 import jwt from 'jsonwebtoken';
-import { DEVICE_MAC_HEADER } from 'shared';
 import { AppConfig } from '../../infra/config/app.config';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AuthError } from '../errors';
 import { CURRENT_USER_KEY, type WebUserContext } from '../decorators/current-user.decorator';
 import { CURRENT_DEVICE_KEY, type DeviceContext } from '../decorators/current-device.decorator';
-import { readMac } from './device-auth.guard';
+import { readDeviceSecret } from './device-auth.guard';
 
 interface JwtPayload {
   sub: string;
@@ -31,11 +31,11 @@ export class JwtOrDeviceAuthGuard implements CanActivate {
 
     if (this.tryJwt(req)) return true;
     if (await this.tryDevice(req)) return true;
-    throw new AuthError(`provide JWT or ${DEVICE_MAC_HEADER}`);
+    throw new AuthError('provide JWT or device secret in Authorization: Bearer');
   }
 
   private tryJwt(req: FastifyRequest & { [CURRENT_USER_KEY]?: WebUserContext }): boolean {
-    const token = extractToken(req);
+    const token = extractBearer(req) ?? extractCookieToken(req);
     if (!token) return false;
     try {
       const payload = jwt.verify(token, this.config.jwtSecret) as JwtPayload;
@@ -50,10 +50,11 @@ export class JwtOrDeviceAuthGuard implements CanActivate {
   private async tryDevice(
     req: FastifyRequest & { [CURRENT_DEVICE_KEY]?: DeviceContext }
   ): Promise<boolean> {
-    const mac = readMac(req);
-    if (!mac) return false;
-    const d = await this.prisma.device.findUnique({
-      where: { mac },
+    const secret = readDeviceSecret(req);
+    if (!secret) return false;
+    const hash = createHash('sha256').update(secret).digest('hex');
+    const d = await this.prisma.device.findFirst({
+      where: { secretHash: hash },
       select: { id: true, mac: true },
     });
     if (!d) return false;
@@ -62,15 +63,17 @@ export class JwtOrDeviceAuthGuard implements CanActivate {
   }
 }
 
-function extractToken(req: FastifyRequest): string | null {
+function extractBearer(req: FastifyRequest): string | null {
   const auth = req.headers.authorization;
   if (auth && auth.toLowerCase().startsWith('bearer ')) {
     return auth.slice(7).trim();
   }
-  const raw = req.headers.cookie;
-  if (raw) {
-    const m = raw.match(/(?:^|;\s*)auth_token=([^;]+)/);
-    if (m) return decodeURIComponent(m[1]);
-  }
   return null;
+}
+
+function extractCookieToken(req: FastifyRequest): string | null {
+  const raw = req.headers.cookie;
+  if (!raw) return null;
+  const m = raw.match(/(?:^|;\s*)auth_token=([^;]+)/);
+  return m ? decodeURIComponent(m[1]) : null;
 }

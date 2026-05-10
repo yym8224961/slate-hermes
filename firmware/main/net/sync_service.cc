@@ -72,15 +72,9 @@ std::string SyncService::CurrentGroupId() const {
 }
 
 int SyncService::NextIntervalSec() const {
-    if (deps_.read_charge) {
-        const auto snap = deps_.read_charge();
-        if (snap.power_present) return 30;
-    }
-    const int64_t now_ms          = esp_timer_get_time() / 1000;
-    const int64_t since_active_ms = now_ms - last_user_active_ms_.load();
-    if (since_active_ms < 5LL * 60 * 1000) return CONFIG_SLATE_DEFAULT_POLL_INTERVAL_S;
-    if (since_active_ms < 30LL * 60 * 1000) return CONFIG_SLATE_DEFAULT_POLL_INTERVAL_S * 2;
-    return 300;
+    // 后端 state.poll_interval_s 是权威:unbound 期 5s,bound 期 30s,
+    // 后续可在 server 端按需调(例如低电量延长)。客户端只信值。
+    return last_poll_interval_s_.load();
 }
 
 void SyncService::PostGroupReady(const std::string& gid, int frame_count, int default_seq) {
@@ -201,6 +195,47 @@ void SyncService::SyncOnce() {
         evt::Post(e, 0);
         return;
     }
+
+    // 后端动态控制 poll 节奏:unbound 5s / bound 30s。
+    if (state.poll_interval_s > 0) {
+        last_poll_interval_s_.store(state.poll_interval_s);
+    }
+
+    // 1. bound 翻转:发独立事件让 splash / frame_scene 都能响应。
+    bool prev_bound = was_bound_.load();
+    if (state.bound != prev_bound) {
+        UiEvent e{};
+        if (state.bound) {
+            e.kind = UiEventKind::kBound;
+            ESP_LOGI(kTag, "bound");
+        } else {
+            e.kind = UiEventKind::kUnbound;
+            std::strncpy(e.u.unbound.pair_code, state.pair_code.c_str(),
+                         sizeof(e.u.unbound.pair_code) - 1);
+            e.u.unbound.pair_code[sizeof(e.u.unbound.pair_code) - 1] = '\0';
+            ESP_LOGW(kTag, "unbound: pair_code=%s", state.pair_code.c_str());
+        }
+        evt::Post(e, 0);
+        was_bound_.store(state.bound);
+    }
+
+    // 2. 当前态推 splash:让重启场景的 splash 也能直接拿到正确文案,无需依赖翻转。
+    //    (启动时 splash 会先看 kAwaitingPair/kAwaitingGroup 切到正确文案;
+    //     SyncManifestAndFrames 后续 emit kGroupReady 会 RequestReplace 到 FrameScene。)
+    UiEvent stage_evt{};
+    stage_evt.kind = UiEventKind::kBootStage;
+    stage_evt.u.boot_stage.ssid[0] = '\0';
+    stage_evt.u.boot_stage.pair_code[0] = '\0';
+    if (!state.bound) {
+        stage_evt.u.boot_stage.stage = BootStage::kAwaitingPair;
+        std::strncpy(stage_evt.u.boot_stage.pair_code, state.pair_code.c_str(),
+                     sizeof(stage_evt.u.boot_stage.pair_code) - 1);
+        evt::Post(stage_evt, 0);
+    } else if (!state.has_group) {
+        stage_evt.u.boot_stage.stage = BootStage::kAwaitingGroup;
+        evt::Post(stage_evt, 0);
+    }
+    // bound + has_group 不发 boot_stage,SyncManifestAndFrames 走 kGroupReady。
 
     bool group_changed = false;
     if (state.has_group) {

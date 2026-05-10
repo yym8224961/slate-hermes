@@ -60,4 +60,8 @@ class SyncService {
     EventGroupHandle_t    event_group_ = nullptr;
     mutable std::string   current_group_;
     std::atomic<int64_t>  last_user_active_ms_{0};
+    // 后端 state.poll_interval_s 决定的下一轮等待间隔(splash 期 5s / bound 后 30s)。
+    std::atomic<int>      last_poll_interval_s_{30};
+    // 跟踪 bound 翻转,只在变化时 emit kBound/kUnbound。
+    std::atomic<bool>     was_bound_{false};
 };

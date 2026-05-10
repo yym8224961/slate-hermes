@@ -12,6 +12,7 @@
 #include "../storage/cache.h"
 #include "../ui/frame_view.h"
 #include "../ui/status_bar.h"
+#include "boot_splash_scene.h"
 #include "settings_scene.h"
 
 namespace {
@@ -165,6 +166,16 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         }
         case UiEventKind::kMinuteTick: {
             RefreshStatusBarFromSensors(ctx);
+            break;
+        }
+        case UiEventKind::kUnbound: {
+            // Web 端主动解绑(或物理重置后被踢):立即切回 splash 显示新配对码,
+            // 避免设备继续展示已经无主的相册。BootSplashScene OnEnter 会读 NVS,
+            // 配网凭据仍在 → 进 kInitializing,后续 sync_service poll 推
+            // kAwaitingPair(载新 pair_code)切到配对码状态。
+            ESP_LOGW(kTag, "kUnbound (pair_code=%s) → back to BootSplashScene",
+                     e.u.unbound.pair_code);
+            ctx.stack->RequestReplace(std::make_unique<BootSplashScene>());
             break;
         }
         default:

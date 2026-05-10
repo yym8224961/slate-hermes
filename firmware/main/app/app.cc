@@ -30,6 +30,7 @@
 #include "../net/wifi.h"
 #include "../scenes/boot_splash_scene.h"
 #include "../storage/cache.h"
+#include "event_bus.h"
 
 namespace {
 constexpr char kTag[] = "App";
@@ -64,17 +65,74 @@ std::string MacString() {
     return buf;
 }
 
-bool TryConnectAndSetup(const cred::Credentials& c) {
+// 各 boot 阶段 emit 给 splash 用,空 ssid/pair_code 传 nullptr。
+void EmitBootStage(BootStage stage, const char* ssid, const char* pair_code) {
+    UiEvent e{};
+    e.kind                = UiEventKind::kBootStage;
+    e.u.boot_stage.stage  = stage;
+    if (ssid) std::snprintf(e.u.boot_stage.ssid, sizeof(e.u.boot_stage.ssid), "%s", ssid);
+    else      e.u.boot_stage.ssid[0] = 0;
+    if (pair_code) std::snprintf(e.u.boot_stage.pair_code, sizeof(e.u.boot_stage.pair_code), "%s", pair_code);
+    else           e.u.boot_stage.pair_code[0] = 0;
+    evt::Post(e);
+}
+
+// 联网 + 注册流程。c 是 in/out:首次 register 成功后会回填 device_id/device_secret,
+// 调用方据此判断是不是首次启动 (是 → 跳过 PostCachedGroupReadyIfAny,让 splash 显示
+// 「配对码」或「等待相册」,而不是先闪一下旧 cache 的 FrameScene)。
+bool TryConnectAndSetup(cred::Credentials& c) {
+    EmitBootStage(BootStage::kWifiConnecting, c.wifi_ssid.c_str(), nullptr);
     if (!Wifi::Get().Connect(c.wifi_ssid, c.wifi_pwd, 20000)) {
         ESP_LOGW(kTag, "wifi STA connect failed");
+        EmitBootStage(BootStage::kWifiFailed, nullptr, nullptr);
         return false;
     }
+
+    EmitBootStage(BootStage::kSntp, nullptr, nullptr);
     sntp::Init();
-    api::Init(c.server_url, MacString());
-    if (api::Register(c.device_name)) {
-        ESP_LOGI(kTag, "register ok");
+    api::Init(c.server_url, MacString(), c.device_secret);
+
+    // HTTPS 必须等系统时间对上才能校验证书。HTTP 这步没意义但也不亏。
+    // 上限 10s:超时则继续,Register 失败由 SyncService 后续 poll 接管重试。
+    constexpr int kSntpWaitMs = 10000;
+    int waited = 0;
+    while (!sntp::TimeSynced() && waited < kSntpWaitMs) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        waited += 200;
+    }
+    if (!sntp::TimeSynced()) {
+        ESP_LOGW(kTag, "SNTP not synced after %dms; HTTPS register may fail", kSntpWaitMs);
     } else {
-        ESP_LOGW(kTag, "register failed (server unreachable?) - poll 仍会重试");
+        ESP_LOGI(kTag, "SNTP synced in %dms", waited);
+    }
+
+    if (c.device_secret.empty()) {
+        // 首次启动 / 工厂重置后:NVS 没 secret,调 register 拿。
+        // 后端按 mac upsert + 重置(清旧主、轮换 secret/pair_code),"物理控制权 = 数字所有权"。
+        EmitBootStage(BootStage::kRegistering, nullptr, nullptr);
+        api::RegisterResult rr;
+        if (!api::Register(rr)) {
+            ESP_LOGW(kTag, "register failed (server unreachable?)");
+            EmitBootStage(BootStage::kServerUnreachable, nullptr, nullptr);
+            return false;
+        }
+        // SaveSecret 是 NVS 单独 commit;失败让设备 panic 重启避免半写状态。
+        if (!cred::SaveSecret(rr.device_id, rr.device_secret)) {
+            ESP_LOGE(kTag, "fatal: SaveSecret failed, restarting");
+            esp_restart();
+        }
+        c.device_id     = rr.device_id;
+        c.device_secret = rr.device_secret;
+        api::SetSecret(rr.device_secret);
+        ESP_LOGI(kTag, "registered: id=%s pair=%s reclaimed=%d",
+                 rr.device_id.c_str(), rr.pair_code.c_str(), (int)rr.reclaimed);
+        // splash 立即显示配对码 —— 用户看屏抄码是关键体验。bound 状态由后续 poll 决定。
+        EmitBootStage(BootStage::kAwaitingPair, nullptr, rr.pair_code.c_str());
+    } else {
+        ESP_LOGI(kTag, "have device_secret, skip register (id=%s)", c.device_id.c_str());
+        // 不 emit kRegistering / kAwaitingPair,让 sync_service 第一轮 poll 拿到真实
+        // bound/group 状态后再决定 splash 显示什么(已绑且有相册 → kGroupReady 切 FrameScene;
+        // 已绑无相册 → kBound 切「等待相册」;远程被踢 → kUnbound 切「配对码」)。
     }
     return true;
 }
@@ -193,6 +251,14 @@ void App::UiLoopTask() {
             sleep_mgr_.Tick(esp_timer_get_time() / 1000);
             continue;
         }
+        // 401 self-reset:把擦 NVS + 重启放到 ui_loop 主线程做,避免在 HTTP 回调
+        // 里直接 esp_restart 撕坏 socket 导致 mbedtls 内部 panic。
+        if (e.kind == UiEventKind::kSecretInvalid) {
+            ESP_LOGW(kTag, "secret invalid → ClearSecret + restart");
+            cred::ClearSecret();
+            vTaskDelay(pdMS_TO_TICKS(200));
+            esp_restart();
+        }
         scene_stack_.Dispatch(e);
         sleep_mgr_.OnEvent(e);
         scene_stack_.ApplyPending();
@@ -281,13 +347,22 @@ void App::StartTimeTick() {
 void App::InitNetwork() {
     Wifi::Get().Init();
 
+    // poll 收 401 → emit kSecretInvalid;UiLoop 拦下来在主线程清 NVS + esp_restart。
+    api::SetUnauthorizedHandler([]() {
+        UiEvent e{};
+        e.kind = UiEventKind::kSecretInvalid;
+        evt::Post(e);
+    });
+
     cred::Credentials creds;
     if (!cred::Load(creds)) {
         ESP_LOGI(kTag, "no credentials → captive portal");
         StartPortal();
         return;
     }
-    ESP_LOGI(kTag, "found NVS credentials, connecting to %s", creds.wifi_ssid.c_str());
+    ESP_LOGI(kTag, "found NVS credentials, ssid=%s have_secret=%d",
+             creds.wifi_ssid.c_str(), (int)!creds.device_secret.empty());
+    bool was_first_register = creds.device_secret.empty();
     if (TryConnectAndSetup(creds)) {
         // 连上 → 状态栏立即显示 wifi 图标
         PostWifiState(true, Wifi::Get().GetRssi());
@@ -307,12 +382,16 @@ void App::InitNetwork() {
         deps.current_frame_seq  = []() -> int { return 0; };  // 阶段 1：暂不上报具体 frame
         SyncService::Get().Start(std::move(deps));
 
-        // 如果 cache 已有上次的 group，立即 Post GroupReady 让 BootSplash 不必干等
-        // 第一次 sync 完成（特别是离线情况）。SyncService 后续也会 Post 新数据。
-        PostCachedGroupReadyIfAny();
-        // ext1 唤醒补一次 ButtonShort,让 FrameScene 进栈后立即翻页(用户期望)。
-        // 必须排在 GroupReady 之后,所以放在这。
-        PostWakeupKeyEvent();
+        // 首次注册(NVS 之前没 secret)的设备没有可信 cache:可能是新设备(没 cache)
+        // 或物理重置后(cache 是旧主人的相册,不该展示)。让 sync_service 第一轮 poll
+        // 决定 splash 显示「配对码」/「等待相册」/FrameScene。
+        // 重启场景(have_secret=true)才用 cache 跳过 splash 等待。
+        if (!was_first_register) {
+            PostCachedGroupReadyIfAny();
+            // ext1 唤醒补一次 ButtonShort,让 FrameScene 进栈后立即翻页(用户期望)。
+            // 必须排在 GroupReady 之后,所以放在这。
+            PostWakeupKeyEvent();
+        }
     } else {
         ESP_LOGW(kTag, "fallback to captive portal");
         StartPortal();
@@ -331,10 +410,11 @@ void App::StartPortal() {
             return false;
         }
         cred::Credentials c;
-        c.wifi_ssid   = s.ssid;
-        c.wifi_pwd    = s.password;
-        c.server_url  = s.server_url;
-        c.device_name = s.device_name;
+        c.wifi_ssid  = s.ssid;
+        c.wifi_pwd   = s.password;
+        c.server_url = s.server_url;
+        // device_id/device_secret 留空:配网完成 esp_restart 后 InitNetwork 看到无 secret
+        // → 走 register 流。设备命名留到 Web 端 PUT /devices/:id 完成绑定后再做。
         cred::Save(c);
         ESP_LOGI(kTag, "credentials saved, will reboot soon");
         return true;

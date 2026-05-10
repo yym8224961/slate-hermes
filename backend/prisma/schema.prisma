@@ -30,7 +30,12 @@ model User {
 
 model Device {
   id              String    @id @default(cuid())
+  // 设备身份指纹（eFuse MAC，重置时作为 Device 行的稳定锚点；不参与 HTTP 鉴权）
   mac             String    @unique @db.VarChar(17)
+  // sha256(device_secret) hex；secret 明文仅在 register 响应里返回一次，丢了只能工厂重置
+  secretHash      String    @map("secret_hash") @db.Char(64)
+  // 6 位 [A-Z0-9] 配对码；用户在 Web 端输入此码 claim 设备，解绑/物理重置时轮换
+  pairCode        String    @unique @map("pair_code") @db.Char(6)
   name            String?   @db.VarChar(64)
   ownerUserId     String?   @map("owner_user_id")
   sortOrder       Int       @default(0) @map("sort_order")

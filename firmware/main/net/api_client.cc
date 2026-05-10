@@ -1,6 +1,7 @@
 #include "api_client.h"
 
 #include <cJSON.h>
+#include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <esp_log.h>
 
@@ -8,19 +9,23 @@
 
 namespace {
 constexpr char kTag[] = "Api";
-constexpr char kDeviceMacHeader[] = "X-Device-Mac";
 }
 
 namespace api {
 
 static std::string s_url;
 static std::string s_mac;
+static std::string s_secret;
+static UnauthorizedCb s_unauth_cb;
 
-void Init(const std::string& url, const std::string& mac) {
-    s_url = url;
-    s_mac = mac;
+void Init(const std::string& url, const std::string& mac, const std::string& device_secret) {
+    s_url    = url;
+    s_mac    = mac;
+    s_secret = device_secret;
 }
 void SetServerUrl(const std::string& url) { s_url = url; }
+void SetSecret(const std::string& secret) { s_secret = secret; }
+void SetUnauthorizedHandler(UnauthorizedCb cb) { s_unauth_cb = std::move(cb); }
 
 namespace {
 
@@ -48,14 +53,15 @@ constexpr char kApiPrefix[] = "/api/v1";
 //   status_out          - HTTP 状态码(可空)
 //   if_none_match       - 非空时设 If-None-Match 头
 //   etag_out            - 响应头 ETag(可空,去引号)
-//   send_mac            - 默认 true:加 X-Device-Mac 头。POST /api/v1/devices(register)
-//                         不需要,设 false
+//   need_auth           - true:加 Authorization: Bearer s_secret。register 端点设 false。
+//
+// 401:仅对 need_auth=true 的请求触发 unauth_cb (注册路径无鉴权,401 没意义)。
 static bool DoRequest(const std::string& path, esp_http_client_method_t method,
                       const std::string& body_in, std::vector<uint8_t>& body_out,
                       int* status_out                = nullptr,
                       const std::string& if_none_match = "",
                       std::string* etag_out          = nullptr,
-                      bool send_mac                  = true) {
+                      bool need_auth                 = true) {
     if (s_url.empty()) {
         ESP_LOGW(kTag, "server url not set");
         return false;
@@ -69,13 +75,21 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
     cfg.method                    = method;
     cfg.timeout_ms                = 8000;
     cfg.disable_auto_redirect     = false;
-    cfg.crt_bundle_attach         = nullptr;
+    // 挂 IDF 内置 root CA bundle:HTTPS 必备(否则 TLS 握手无 CA 校验失败)。
+    // 注意调用方需要确保系统时间已对时(SNTP),否则证书 NotBefore/NotAfter 校验过不去。
+    cfg.crt_bundle_attach         = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) return false;
 
-    if (send_mac && !s_mac.empty()) {
-        esp_http_client_set_header(client, kDeviceMacHeader, s_mac.c_str());
+    if (need_auth) {
+        if (s_secret.empty()) {
+            ESP_LOGW(kTag, "%s: need_auth but secret empty", path.c_str());
+            esp_http_client_cleanup(client);
+            return false;
+        }
+        std::string bearer = "Bearer " + s_secret;
+        esp_http_client_set_header(client, "Authorization", bearer.c_str());
     }
     if (method == HTTP_METHOD_POST && !body_in.empty()) {
         esp_http_client_set_header(client, "Content-Type", "application/json");
@@ -121,6 +135,11 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
     esp_http_client_cleanup(client);
 
     if (status == 304) return true;
+    if (status == 401 && need_auth) {
+        ESP_LOGW(kTag, "%s → 401: secret invalid, triggering self-reset", path.c_str());
+        if (s_unauth_cb) s_unauth_cb();
+        return false;
+    }
     if (status / 100 != 2) {
         ESP_LOGW(kTag, "%s → HTTP %d", path.c_str(), status);
         return false;
@@ -130,9 +149,9 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
 
 static bool DoRequestJson(const std::string& path, esp_http_client_method_t method,
                           const std::string& body_in, std::string& body_out_str,
-                          bool send_mac = true) {
+                          bool need_auth = true) {
     std::vector<uint8_t> bytes;
-    bool                 ok = DoRequest(path, method, body_in, bytes, nullptr, "", nullptr, send_mac);
+    bool                 ok = DoRequest(path, method, body_in, bytes, nullptr, "", nullptr, need_auth);
     body_out_str.assign(bytes.begin(), bytes.end());
     return ok;
 }
@@ -152,11 +171,18 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
         cJSON* v = cJSON_GetObjectItemCaseSensitive(obj, k);
         return cJSON_IsNumber(v) ? v->valueint : def;
     };
+    auto get_bool = [](cJSON* obj, const char* k, bool def) -> bool {
+        cJSON* v = cJSON_GetObjectItemCaseSensitive(obj, k);
+        if (cJSON_IsBool(v)) return cJSON_IsTrue(v);
+        return def;
+    };
 
     cJSON* dev = cJSON_GetObjectItemCaseSensitive(root, "device");
     if (cJSON_IsObject(dev)) {
         out.device_id   = get_str(dev, "id");
         out.device_name = get_str(dev, "name");
+        out.bound       = get_bool(dev, "bound", false);
+        out.pair_code   = get_str(dev, "pair_code");
         out.server_time = get_str(dev, "server_time");
     }
 
@@ -186,17 +212,40 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
 }  // namespace
 
 // ─── 设备协议端点 ────────────────────────────────────────────────
-bool Register(const std::string& name) {
+bool Register(RegisterResult& out) {
     cJSON* j = cJSON_CreateObject();
     cJSON_AddStringToObject(j, "mac", s_mac.c_str());
-    if (!name.empty()) cJSON_AddStringToObject(j, "name", name.c_str());
     char* body = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     std::string resp;
-    std::string path = std::string(kApiPrefix) + "/devices";
-    bool ok = DoRequestJson(path, HTTP_METHOD_POST, body, resp, /*send_mac=*/false);
+    std::string path = std::string(kApiPrefix) + "/devices/register";
+    bool ok = DoRequestJson(path, HTTP_METHOD_POST, body, resp, /*need_auth=*/false);
     cJSON_free(body);
-    return ok;
+    if (!ok) return false;
+
+    cJSON* root = cJSON_Parse(resp.c_str());
+    if (!root) {
+        ESP_LOGW(kTag, "register: invalid json response");
+        return false;
+    }
+    auto get_str = [&](const char* k) -> std::string {
+        cJSON* v = cJSON_GetObjectItemCaseSensitive(root, k);
+        return (cJSON_IsString(v) && v->valuestring) ? v->valuestring : "";
+    };
+    out.device_id     = get_str("device_id");
+    out.device_secret = get_str("device_secret");
+    out.pair_code     = get_str("pair_code");
+    cJSON* rcl        = cJSON_GetObjectItemCaseSensitive(root, "reclaimed");
+    out.reclaimed     = cJSON_IsTrue(rcl);
+    cJSON_Delete(root);
+
+    if (out.device_id.empty() || out.device_secret.empty() || out.pair_code.empty()) {
+        ESP_LOGW(kTag, "register: response missing required fields");
+        return false;
+    }
+    ESP_LOGI(kTag, "registered: id=%s pair=%s reclaimed=%d",
+             out.device_id.c_str(), out.pair_code.c_str(), (int)out.reclaimed);
+    return true;
 }
 
 bool Poll(const Telemetry& tel, DeviceState& out) {
@@ -259,9 +308,8 @@ bool GetManifest(const std::string& group_id, const std::string& if_none_match,
     std::vector<uint8_t> bytes;
     int                  status   = 0;
     std::string          etag_out;
-    // dual-auth 端点:带 X-Device-Mac 让 server 走设备身份。
     bool ok = DoRequest(path, HTTP_METHOD_GET, "", bytes, &status, if_none_match, &etag_out,
-                        /*send_mac=*/true);
+                        /*need_auth=*/true);
     if (!ok) return false;
     if (status == 304) {
         not_modified = true;
@@ -308,9 +356,8 @@ static bool DownloadBinary(const std::string& path, const std::string& if_none_m
                            std::vector<uint8_t>& out, bool& not_modified) {
     not_modified  = false;
     int  status   = 0;
-    // dual-auth 资源端点:带 X-Device-Mac 走设备身份。
     bool ok       = DoRequest(path, HTTP_METHOD_GET, "", out, &status, if_none_match, nullptr,
-                              /*send_mac=*/true);
+                              /*need_auth=*/true);
     if (!ok) return false;
     if (status == 304) {
         not_modified = true;

@@ -1,19 +1,16 @@
-// 按 MAC 添加设备(多用户场景下唯一入口)。
+// 按设备屏上的 6 位配对码绑定设备。
 //
-// MAC 输入支持空格/横杠/冒号/纯 hex 等任何形式,提交时规范化为
-// AA:BB:CC:DD:EE:FF 大写。
+// 流程：用户拿到一台已经联网但未绑定的 Slate 设备 → 设备屏上显示配对码 →
+// 用户在此对话框输入 → 后端找到 device、把 owner 设为当前用户、轮换 pair_code。
 //
-// 三种结果(均由 server 决定):
-//   ① 设备未注册   → 创建占位记录, owner=me, 设备首次联网自动归属
-//   ② 设备无主     → 直接绑定
-//   ③ 设备属他人   → 服务端 403,toast 提示
+// 命名留到绑定后在设备列表 PATCH name。
 
 import { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { ArrowRight, X, Cpu } from 'lucide-react';
-import { useClaimByMac } from '../lib/queries';
+import { ArrowRight, X, KeyRound } from 'lucide-react';
+import { useClaimByPairCode } from '../lib/queries';
 import { useToast } from './Toast';
-import { isValidMac, normalizeMac } from '../lib/format';
+import { isValidPairCode, normalizePairCode } from '../lib/format';
 import { Input } from './Input';
 import { Button } from './Button';
 import { Spinner } from './Spinner';
@@ -25,35 +22,32 @@ interface AddDeviceDialogProps {
 }
 
 export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
-  const [mac, setMac] = useState('');
-  const [name, setName] = useState('');
-  const claim = useClaimByMac();
+  const [code, setCode] = useState('');
+  const claim = useClaimByPairCode();
   const toast = useToast();
 
-  const macValid = isValidMac(mac);
+  const codeValid = isValidPairCode(code);
 
   function reset() {
-    setMac('');
-    setName('');
+    setCode('');
   }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!macValid) return;
+    if (!codeValid) return;
     try {
-      await claim.mutateAsync({
-        mac: normalizeMac(mac),
-        name: name.trim() || undefined,
-      });
-      toast.success('设备已添加', '设备首次联网会自动归属于你');
+      await claim.mutateAsync({ code: normalizePairCode(code) });
+      toast.success('设备已绑定', '设备屏会自动切到「等待相册」');
       reset();
       onOpenChange(false);
     } catch (err) {
       const e = err as { response?: { status?: number; data?: { error?: string } } };
-      if (e.response?.status === 403) {
-        toast.error('该 MAC 已被其他用户绑定');
+      if (e.response?.status === 404) {
+        toast.error('配对码无效', '请核对设备屏上的码,或在设备上长按 ENTER 工厂重置后重试');
+      } else if (e.response?.status === 403) {
+        toast.error('该设备已被其他账号绑定', '在设备上工厂重置后再试');
       } else {
-        toast.error('添加失败', e.response?.data?.error);
+        toast.error('绑定失败', e.response?.data?.error);
       }
     }
   }
@@ -72,12 +66,12 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
           <div className="flex items-start justify-between gap-4 mb-6">
             <div className="flex items-start gap-3 min-w-0">
               <IconBlock tone="soft">
-                <Cpu size={18} />
+                <KeyRound size={18} />
               </IconBlock>
               <div className="min-w-0">
                 <Dialog.Title className="font-kai text-[24px] leading-tight">添加设备</Dialog.Title>
                 <Dialog.Description className="font-kai text-[13px] text-stone mt-1 leading-relaxed">
-                  输入设备 MAC 即绑定到当前账号。设备未联网也可先添加。
+                  在设备屏上查看 6 位配对码,输入此处即绑定。
                 </Dialog.Description>
               </div>
             </div>
@@ -93,23 +87,17 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
 
           <form onSubmit={onSubmit} className="space-y-5">
             <Input
-              label="MAC 地址"
-              value={mac}
-              onChange={(e) => setMac(e.target.value)}
-              placeholder="AA:BB:CC:DD:EE:FF"
+              label="配对码"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="K7M9X2"
               autoFocus
               autoComplete="off"
               spellCheck={false}
-              hint={mac && !macValid ? undefined : '冒号/横杠/空格皆可,会自动规范'}
-              error={mac && !macValid ? 'MAC 格式不正确' : undefined}
-              className="font-mono"
-            />
-            <Input
-              label="备注名(选填)"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="如:客厅"
-              maxLength={64}
+              maxLength={9}
+              hint={code && !codeValid ? undefined : '6 位字母+数字,大小写均可'}
+              error={code && !codeValid ? '配对码格式不正确' : undefined}
+              className="font-mono uppercase tracking-[0.2em] text-center"
             />
 
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -120,10 +108,10 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
               </Dialog.Close>
               <Button
                 type="submit"
-                disabled={!macValid || claim.isPending}
+                disabled={!codeValid || claim.isPending}
                 iconRight={claim.isPending ? undefined : <ArrowRight size={14} />}
               >
-                {claim.isPending ? <Spinner /> : '添加'}
+                {claim.isPending ? <Spinner /> : '绑定'}
               </Button>
             </div>
           </form>

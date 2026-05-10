@@ -10,7 +10,7 @@ import type {
   UpdateGroupRequestT,
   ReorderGroupsRequestT,
   PatchDeviceRequestT,
-  ClaimByMacRequestT,
+  ClaimByPairCodeRequestT,
   ReorderDevicesRequestT,
   FrameSummaryT,
   PatchFrameRequestT,
@@ -43,12 +43,12 @@ export function useDevices() {
   });
 }
 
-// 按 MAC 添加设备。多用户场景:输入 MAC 即认领,设备未注册时预绑定。
-export function useClaimByMac() {
+// 按设备屏上显示的 6 位配对码绑定设备。设备必须已联网注册(屏上能看到码)。
+export function useClaimByPairCode() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: ClaimByMacRequestT) => {
-      const { data } = await api.post<DeviceSummaryT>(`${V1}/devices/claim-by-mac`, body);
+    mutationFn: async (body: ClaimByPairCodeRequestT) => {
+      const { data } = await api.post<DeviceSummaryT>(`${V1}/devices/claim-by-pair-code`, body);
       return data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['devices'] }),
@@ -66,12 +66,13 @@ export function useReorderDevices() {
   });
 }
 
-// 解绑设备(把 owner 置 null)。素材在后端保留。
+// 解绑设备(把 owner 置 null + 轮换 pair_code)。设备本身的 device_secret 不变,
+// 设备会通过 poll 拿到 owner=null + 新 pair_code,主动切回 splash 显示新码。
 export function useUnbindDevice() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (deviceId: string) => {
-      await api.delete(`${V1}/devices/${deviceId}`);
+      await api.delete(`${V1}/devices/${deviceId}/binding`);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['devices'] }),
   });

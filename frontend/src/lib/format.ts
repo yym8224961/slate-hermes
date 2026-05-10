@@ -53,6 +53,17 @@ export function macTail(mac: string, n = 5): string {
   return mac.replace(/:/g, '').slice(-n);
 }
 
+// 配对码规范化:去空格、横线，统一大写。设备屏上是 6 位 [A-Z2-9](后端避了
+// 0/O/1/I/L),用户输入时应该不会撞到这些字符,但 normalize 宽松点容错。
+export function normalizePairCode(input: string): string {
+  return input.replace(/[\s-]/g, '').toUpperCase();
+}
+
+const PAIR_CODE_REGEX = /^[A-Z0-9]{6}$/;
+export function isValidPairCode(input: string): boolean {
+  return PAIR_CODE_REGEX.test(normalizePairCode(input));
+}
+
 export function deviceStatus(d: DeviceSummaryT): {
   online: boolean;
   lowBattery: boolean;

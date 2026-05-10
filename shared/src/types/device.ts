@@ -5,6 +5,13 @@ export const MacAddress = z
   .regex(/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/, 'invalid MAC address')
   .transform((s) => s.toUpperCase().replace(/-/g, ':'));
 
+// 6 位 [A-Z0-9] 配对码；后端 register 时生成，用户在 Web 端输入此码 claim 设备。
+// 接受小写输入但落库统一大写，避免视觉混淆。
+export const PairCode = z
+  .string()
+  .regex(/^[A-Za-z0-9]{6}$/, 'invalid pair code')
+  .transform((s) => s.toUpperCase());
+
 // poll 响应里的 group 子对象。null = 还没选组。
 export const DeviceStateGroup = z.object({
   id: z.string(),
@@ -20,11 +27,14 @@ export const DeviceStateGroup = z.object({
 export type DeviceStateGroupT = z.infer<typeof DeviceStateGroup>;
 
 // poll 响应（无 reboot/action 队列）。
+// bound = owner_user_id != null。pair_code 仅在 unbound 时返回（已绑定不需要）。
 export const DeviceState = z.object({
   device: z.object({
     id: z.string(),
     mac: z.string(),
     name: z.string().nullable(),
+    bound: z.boolean(),
+    pair_code: z.string().nullable(),
     server_time: z.string().datetime(),
   }),
   group: DeviceStateGroup.nullable(),
@@ -58,17 +68,22 @@ export type SelectGroupByDeviceRequestT = z.infer<typeof SelectGroupByDeviceRequ
 export const CycleDirection = z.enum(['next', 'prev']);
 export type CycleDirectionT = z.infer<typeof CycleDirection>;
 
-// 注册端点：首次/重启都调，幂等。
+// 注册端点：仅在固件 NVS 没有 device_secret 时调用（首次或物理重置后）。
+// 同 mac 二次调用一律走 reset 路径（清 owner、轮换 secret + pair_code）。
+// name 由 Web 端 claim 完成后通过 PUT /devices/:id 设置，注册阶段不带。
 export const RegisterDeviceRequest = z.object({
   mac: MacAddress,
-  name: z.string().min(1).max(64).optional(),
 });
 export type RegisterDeviceRequestT = z.infer<typeof RegisterDeviceRequest>;
 
 export const RegisterDeviceResponse = z.object({
   device_id: z.string(),
   mac: z.string(),
-  reclaimed: z.boolean().optional(),
+  // 64 字符 hex（sha256 摘要长度），固件 NVS 持久化后用作 Authorization: Bearer。
+  device_secret: z.string().regex(/^[0-9a-f]{64}$/),
+  pair_code: z.string().length(6),
+  // true 表示后端发现 mac 已注册，按"物理重置即转移"语义清掉了上一任主人。
+  reclaimed: z.boolean(),
   server_time: z.string().datetime(),
 });
 export type RegisterDeviceResponseT = z.infer<typeof RegisterDeviceResponse>;
@@ -79,11 +94,11 @@ export const PatchDeviceRequest = z.object({
 });
 export type PatchDeviceRequestT = z.infer<typeof PatchDeviceRequest>;
 
-export const ClaimByMacRequest = z.object({
-  mac: MacAddress,
-  name: z.string().min(1).max(64).optional(),
+// 用户在 Web 端输入设备屏上的 6 位配对码完成绑定。
+export const ClaimByPairCodeRequest = z.object({
+  code: PairCode,
 });
-export type ClaimByMacRequestT = z.infer<typeof ClaimByMacRequest>;
+export type ClaimByPairCodeRequestT = z.infer<typeof ClaimByPairCodeRequest>;
 
 export const ReorderDevicesRequest = z.object({
   order: z.array(z.string()).min(1),
