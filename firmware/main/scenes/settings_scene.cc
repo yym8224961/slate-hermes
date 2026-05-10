@@ -67,7 +67,9 @@ void SettingsScene::OnEnter(SceneContext& ctx) {
 
     lv_refr_now(NULL);
     ctx.epd->Unlock();
-    ctx.epd->RequestUrgentFullRefresh();
+    // 子页 OnEnter 走 partial:UI ↔ UI 切换 diff 小,EPD 自己看 diff>=30% 兜底升 full。
+    // 从 frame 进来 diff 必然 >30% 自动 full;settings ↔ 子页之间 partial 即可。
+    ctx.epd->RequestUrgentPartialRefresh();
 }
 
 void SettingsScene::OnExit(SceneContext& ctx) {
@@ -87,8 +89,8 @@ void SettingsScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
     switch (e.kind) {
         case UiEventKind::kButtonShort: {
             switch (e.u.button.btn) {
-                case ButtonId::kUp:    menu_->OnUp();   SyncRender(ctx, false); break;
-                case ButtonId::kDown:  menu_->OnDown(); SyncRender(ctx, false); break;
+                case ButtonId::kUp:    menu_->OnUp();   SyncRender(ctx); break;
+                case ButtonId::kDown:  menu_->OnDown(); SyncRender(ctx); break;
                 case ButtonId::kEnter: menu_->OnEnter(); break;  // RequestPush 由 callback 走,ApplyPending 处理
             }
             break;
@@ -105,11 +107,11 @@ void SettingsScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
     }
 }
 
-void SettingsScene::SyncRender(SceneContext& ctx, bool force_full) {
+void SettingsScene::SyncRender(SceneContext& ctx) {
     if (!ctx.epd) return;
     if (!ctx.epd->Lock(500)) return;
     lv_refr_now(NULL);
     ctx.epd->Unlock();
-    if (force_full) ctx.epd->RequestUrgentFullRefresh();
-    else            ctx.epd->RequestUrgentPartialRefresh();
+    // 菜单上下移动 diff 小,EPD 看 diff 自决,累计 8 次自动 full 兜底清残影
+    ctx.epd->RequestUrgentPartialRefresh();
 }

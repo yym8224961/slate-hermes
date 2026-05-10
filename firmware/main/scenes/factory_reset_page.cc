@@ -69,7 +69,8 @@ void FactoryResetPage::OnEnter(SceneContext& ctx) {
 
     lv_refr_now(NULL);
     ctx.epd->Unlock();
-    ctx.epd->RequestUrgentFullRefresh();
+    // OnEnter 走 partial:UI ↔ UI 切换 diff 小,EPD 看 diff>=30% 兜底升 full。
+    ctx.epd->RequestUrgentPartialRefresh();
 }
 
 void FactoryResetPage::OnExit(SceneContext& ctx) {

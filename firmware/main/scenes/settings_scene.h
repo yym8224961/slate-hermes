@@ -27,7 +27,7 @@ class SettingsScene : public Scene {
     lv_obj_t* Root() override { return root_; }
 
    private:
-    void SyncRender(SceneContext& ctx, bool force_full);
+    void SyncRender(SceneContext& ctx);
 
     lv_obj_t*                  root_         = nullptr;
     std::unique_ptr<StatusBar> status_bar_;

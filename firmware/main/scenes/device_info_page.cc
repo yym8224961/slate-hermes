@@ -68,11 +68,12 @@ void DeviceInfoPage::OnEnter(SceneContext& ctx) {
     lv_label_set_long_mode(info_, LV_LABEL_LONG_WRAP);
     lv_obj_set_pos(info_, 24, 12);  // 相对 scroll_area_,顶部留 12px
 
-    Refresh(ctx);
+    (void)Refresh(ctx);
 
     lv_refr_now(NULL);
     ctx.epd->Unlock();
-    ctx.epd->RequestUrgentFullRefresh();
+    // OnEnter 走 partial:UI ↔ UI 切换 diff 小,EPD 看 diff>=30% 兜底升 full。
+    ctx.epd->RequestUrgentPartialRefresh();
 }
 
 void DeviceInfoPage::OnExit(SceneContext& ctx) {
@@ -105,9 +106,10 @@ void DeviceInfoPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
         case UiEventKind::kBatteryUpdated:
         case UiEventKind::kWifiStateChanged:
         case UiEventKind::kMinuteTick:
-            // 信息发生变化时刷新本页内容。
-            Refresh(ctx);
-            SyncRender(ctx);
+            // 内容真变了才 partial,避免一小时 60 次 MinuteTick 都触发刷新
+            if (Refresh(ctx)) {
+                SyncRender(ctx);
+            }
             break;
         default:
             break;
@@ -128,8 +130,8 @@ void DeviceInfoPage::ScrollBy(SceneContext& ctx, int dy_view) {
     SyncRender(ctx);
 }
 
-void DeviceInfoPage::Refresh(SceneContext& ctx) {
-    if (!info_) return;
+bool DeviceInfoPage::Refresh(SceneContext& ctx) {
+    if (!info_) return false;
 
     // 同时更新状态栏(让 wifi/电量图标也跟随当前实际状态)
     if (status_bar_) {
@@ -147,19 +149,23 @@ void DeviceInfoPage::Refresh(SceneContext& ctx) {
         }
     }
 
-    // 收集运行时数据
-    const bool   wifi_on = ctx.wifi_connected ? ctx.wifi_connected() : false;
-    const int    rssi    = ctx.wifi_rssi      ? ctx.wifi_rssi()      : 0;
-    std::string  ip      = Wifi::Get().GetIp();
+    // 收集运行时数据。浮动值粗化颗粒,跟 DRAM/PSRAM 一起保护 last_text_ 缓存:
+    //   RSSI 1-2 dBm 抖动 → 颗粒 5 dBm
+    //   battery mV 几 mV 抖动 → 颗粒 50 mV
+    // C++11 起整数除法对负数向 0 取整,RSSI 负值 quantize 仍正确。
+    const bool        wifi_on  = ctx.wifi_connected ? ctx.wifi_connected() : false;
+    const int         rssi_raw = ctx.wifi_rssi      ? ctx.wifi_rssi()      : 0;
+    const int         rssi     = (rssi_raw / 5) * 5;
+    const std::string ip       = Wifi::Get().GetIp();
     cred::Credentials c;
     cred::Load(c);
 
-    int battery_mv = 0, battery_pct = -1;
-    if (ctx.read_battery) ctx.read_battery(&battery_mv, &battery_pct);
+    int battery_mv_raw = 0, battery_pct = -1;
+    if (ctx.read_battery) ctx.read_battery(&battery_mv_raw, &battery_pct);
+    const int battery_mv = (battery_mv_raw / 50) * 50;
 
     ChargeStatus::Snapshot charge{};
     if (ctx.read_charge) charge = ctx.read_charge();
-    (void)c;
 
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
@@ -167,15 +173,26 @@ void DeviceInfoPage::Refresh(SceneContext& ctx) {
     std::snprintf(mac_str, sizeof(mac_str), "%02X:%02X:%02X:%02X:%02X:%02X",
                   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
-    // 内存:DRAM 堆(MALLOC_CAP_INTERNAL) + PSRAM 堆(MALLOC_CAP_SPIRAM)
-    const size_t dram_free  = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    const size_t dram_total = heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
-    const size_t psram_free  = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-    const size_t psram_total = heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+    // 内存:DRAM 堆(MALLOC_CAP_INTERNAL) + PSRAM 堆(MALLOC_CAP_SPIRAM)。
+    // 颗粒粗化是为了保护 last_text_ 缓存:DRAM free 实际秒级抖动几 KB,
+    // 1 KB 颗粒会让 buf 几乎每次都不同,缓存命中率为零 → MinuteTick / 充电 /
+    // 电量事件每次都触发 partial 刷,EPD 累计 8 次自动 full 闪屏。
+    //   DRAM:KB 单位,颗粒 10 KB(total ~330 KB,数字直观)
+    //   PSRAM:MB 单位,颗粒 1 MB(total 8 MB,KB 数字太长)
+    //   存储:KB 单位,颗粒 100 KB(LittleFS 写入慢,本来就稳)
+    auto round_kb_10  = [](size_t bytes) -> size_t { return (bytes / 1024 / 10) * 10; };
+    auto round_kb_100 = [](size_t bytes) -> size_t { return (bytes / 1024 / 100) * 100; };
+    auto to_mb        = [](size_t bytes) -> size_t { return bytes / (1024 * 1024); };
+    const size_t dram_free_kb   = round_kb_10(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    const size_t dram_total_kb  = round_kb_10(heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+    const size_t psram_free_mb  = to_mb(heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    const size_t psram_total_mb = to_mb(heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
 
     // 存储:LittleFS partition label "storage"(跟 cache::Init 一致)
     size_t fs_total = 0, fs_used = 0;
     esp_littlefs_info("storage", &fs_total, &fs_used);
+    const size_t fs_used_kb  = round_kb_100(fs_used);
+    const size_t fs_total_kb = round_kb_100(fs_total);
 
     char buf[1024];
     std::snprintf(buf, sizeof(buf),
@@ -200,16 +217,20 @@ void DeviceInfoPage::Refresh(SceneContext& ctx) {
                   battery_pct < 0 ? 0 : battery_pct,
                   battery_mv,
                   ChargeText(charge),
-                  static_cast<unsigned>(dram_free / 1024),
-                  static_cast<unsigned>(dram_total / 1024),
-                  static_cast<unsigned>(psram_free / (1024 * 1024)),
-                  static_cast<unsigned>(psram_total / (1024 * 1024)),
-                  static_cast<unsigned>(fs_used / 1024),
-                  static_cast<unsigned>(fs_total / 1024),
+                  static_cast<unsigned>(dram_free_kb),
+                  static_cast<unsigned>(dram_total_kb),
+                  static_cast<unsigned>(psram_free_mb),
+                  static_cast<unsigned>(psram_total_mb),
+                  static_cast<unsigned>(fs_used_kb),
+                  static_cast<unsigned>(fs_total_kb),
                   mac_str,
                   CONFIG_APP_PROJECT_VER,
                   c.server_url.empty() ? "-" : c.server_url.c_str());
+    // 内容跟上次完全相同就不更新 LVGL,直接告诉调用方"无需刷"
+    if (last_text_ == buf) return false;
+    last_text_.assign(buf);
     lv_label_set_text(info_, buf);
+    return true;
 }
 
 void DeviceInfoPage::SyncRender(SceneContext& ctx) {

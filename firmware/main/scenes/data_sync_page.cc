@@ -61,7 +61,8 @@ void DataSyncPage::OnEnter(SceneContext& ctx) {
 
     lv_refr_now(NULL);
     ctx.epd->Unlock();
-    ctx.epd->RequestUrgentFullRefresh();
+    // OnEnter 走 partial:UI ↔ UI 切换 diff 小,EPD 看 diff>=30% 兜底升 full。
+    ctx.epd->RequestUrgentPartialRefresh();
 }
 
 void DataSyncPage::OnExit(SceneContext& ctx) {
@@ -97,9 +98,18 @@ void DataSyncPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
             break;
 
         case UiEventKind::kSyncProgress: {
+            // 节流:current 不变 / 距上次 < 500ms 都跳过。否则连续几十帧的
+            // 进度更新会让 EPD 累计 8 次 partial 自动升 full → 5s 闪屏循环。
+            const uint8_t    cur = e.u.progress.current;
+            const TickType_t now = xTaskGetTickCount();
+            if (cur == last_progress_current_) break;
+            if ((now - last_progress_tick_) < pdMS_TO_TICKS(500)) break;
+            last_progress_current_ = cur;
+            last_progress_tick_    = now;
+
             char buf[32];
             std::snprintf(buf, sizeof(buf), "下载中  %u / %u",
-                          static_cast<unsigned>(e.u.progress.current),
+                          static_cast<unsigned>(cur),
                           static_cast<unsigned>(e.u.progress.total));
             SetStatus(ctx, buf);
             SyncRender(ctx);

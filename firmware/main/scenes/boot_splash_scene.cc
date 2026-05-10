@@ -71,9 +71,17 @@ void BootSplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         return;
     }
     if (e.kind == UiEventKind::kSyncProgress && label_) {
+        // 节流:current 不变 / 距上次 < 500ms 都跳过
+        const uint8_t    cur = e.u.progress.current;
+        const TickType_t now = xTaskGetTickCount();
+        if (cur == last_progress_current_) return;
+        if ((now - last_progress_tick_) < pdMS_TO_TICKS(500)) return;
+        last_progress_current_ = cur;
+        last_progress_tick_    = now;
+
         char buf[64];
         std::snprintf(buf, sizeof(buf), "正在准备\n%u / %u",
-                      e.u.progress.current, e.u.progress.total);
+                      cur, e.u.progress.total);
         if (ctx.epd && ctx.epd->Lock(500)) {
             lv_label_set_text(label_, buf);
             lv_obj_align(label_, LV_ALIGN_CENTER, 0, 0);
