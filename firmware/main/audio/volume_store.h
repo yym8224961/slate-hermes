@@ -9,8 +9,8 @@ namespace vol {
 constexpr int kDefault = 6;
 constexpr int kMax     = 10;
 
-int  Get();           // 0..10,首次读返回 kDefault
-void Set(int level);  // clamp 到 [0,10] 后写 NVS
+int  Get();               // 0..10,首次读返回 kDefault
+void Set(int level);      // clamp 到 [0,10] 后写 NVS
 int  ToCodec(int level);  // level * 10,给 esp_codec_dev_set_out_vol 用
 
 }  // namespace vol

@@ -219,17 +219,19 @@ void BootSplashScene::Render(SceneContext& ctx) {
             std::snprintf(buf, sizeof(buf), "注册设备中…");
             break;
         case State::kServerUnreachable:
-            std::snprintf(buf, sizeof(buf), "服务器无响应\n稍后重试…");
+            std::snprintf(buf, sizeof(buf), "服务器无响应,稍后重试…");
             break;
         case State::kAwaitingPair:
-            std::snprintf(buf, sizeof(buf), "在管理端「添加设备」\n输入此码:");
+            std::snprintf(buf, sizeof(buf), "在管理端【添加设备】中输入:");
             show_code = true;
             break;
         case State::kAwaitingGroup:
-            std::snprintf(buf, sizeof(buf), "已绑定\n\n等待管理端\n将本设备加入相册");
+            // 后端 claim 已自动绑「第一个相册」、create 第一个相册也会反向绑;
+            // 走到这里 = owner 一个相册都没有,直接告诉用户去创建。
+            std::snprintf(buf, sizeof(buf), "已绑定\n\n请在管理端创建相册");
             break;
         case State::kNetError:
-            std::snprintf(buf, sizeof(buf), "网络异常\n稍后自动重试…");
+            std::snprintf(buf, sizeof(buf), "网络异常,稍后自动重试…");
             break;
         case State::kSyncProgress:
             std::snprintf(buf, sizeof(buf), "正在准备\n%u / %u",

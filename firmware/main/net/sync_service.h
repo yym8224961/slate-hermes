@@ -17,10 +17,10 @@
 #include "../hal/charge_status.h"
 
 struct SyncDeps {
-    std::function<bool(int* mv, int* pct)> read_battery;
-    std::function<int()>                   read_rssi;
+    std::function<bool(int* mv, int* pct)>  read_battery;
+    std::function<int()>                    read_rssi;
     std::function<ChargeStatus::Snapshot()> read_charge;
-    std::function<int()>                   current_frame_seq;
+    std::function<int()>                    current_frame_seq;
 };
 
 class SyncService {
@@ -51,17 +51,16 @@ class SyncService {
     int         NextIntervalSec() const;
     void        SyncOnce();
     void        DoCycle(const std::string& direction);
-    void        SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag,
-                                      bool& group_changed);
-    void        PostGroupReady(const std::string& gid, int frame_count, int default_seq);
+    void        SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, bool& group_changed);
+    void        PostGroupReady(const std::string& gid, int frame_count, int default_seq, bool content_changed);
 
-    SyncDeps              deps_;
-    std::atomic<bool>     running_{false};
-    EventGroupHandle_t    event_group_ = nullptr;
-    mutable std::string   current_group_;
-    std::atomic<int64_t>  last_user_active_ms_{0};
+    SyncDeps             deps_;
+    std::atomic<bool>    running_{false};
+    EventGroupHandle_t   event_group_ = nullptr;
+    mutable std::string  current_group_;
+    std::atomic<int64_t> last_user_active_ms_{0};
     // 后端 state.poll_interval_s 决定的下一轮等待间隔(splash 期 5s / bound 后 30s)。
-    std::atomic<int>      last_poll_interval_s_{30};
+    std::atomic<int> last_poll_interval_s_{30};
     // 跟踪 bound 翻转,只在变化时 emit kBound/kUnbound。
-    std::atomic<bool>     was_bound_{false};
+    std::atomic<bool> was_bound_{false};
 };

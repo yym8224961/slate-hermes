@@ -28,6 +28,11 @@ class EpdSsd1683 {
     void RequestUrgentPartialRefresh();  // partial(~1s 残影)
     void RequestUrgentFullRefresh();     // full(~5s 干净)
 
+    // 直接把 1bpp 原始数据写入 framebuffer，绕过 LVGL 管线。
+    // bit=1=白，bit=0=黑（与服务端下发格式一致，无需反转）。
+    // 调用后自动 notify refresh_task；调用方再发 RequestUrgentXxxRefresh 设 urgent 标志。
+    void WriteRaw1bpp(int x, int y, int w, int h, const uint8_t* data, size_t len);
+
     bool Lock(int timeout_ms = 0);
     void Unlock();
 
@@ -55,29 +60,29 @@ class EpdSsd1683 {
     struct Rect {
         int x = 0, y = 0, w = 0, h = 0;
     };
-    Rect       dirty_;
-    bool       pending_             = false;
-    bool       urgent_refresh_      = false;
-    bool       force_full_refresh_  = false;
-    bool       prev_buffer_synced_  = false;
-    bool       refresh_in_progress_ = false;
-    TickType_t last_sample_tick_    = 0;
-    TickType_t last_flush_tick_     = 0;  // LVGL 最后一次 flush_cb 的时刻,用于等待静默
-    int        sample_interval_ms_  = 300;
-    int        partial_since_full_  = 0;  // 累积多少次 partial 后强制 full 清残影
+    Rect                 dirty_;
+    bool                 pending_                  = false;
+    bool                 urgent_refresh_           = false;
+    bool                 force_full_refresh_       = false;
+    bool                 prev_buffer_synced_       = false;
+    bool                 refresh_in_progress_      = false;
+    TickType_t           last_sample_tick_         = 0;
+    TickType_t           last_flush_tick_          = 0;  // LVGL 最后一次 flush_cb 的时刻,用于等待静默
+    int                  sample_interval_ms_       = 300;
+    int                  partial_since_full_       = 0;  // 累积多少次 partial 后强制 full 清残影
     static constexpr int kPartialBeforeFullCleanup = 8;
 
     void        StartRefreshTask();
     static void RefreshTaskEntry(void* arg);
     void        RefreshTaskLoop();
 
-    void    SpiPortInit();    // 发送模式（DI 当 MOSI，40MHz）
-    void    SpiPortRxInit();  // 接收模式（DI 反向当 MISO，8MHz）—— 读温度寄存器
-    void    SpiGpioInit();
-    void    EpdInit();
-    void    EpdDisplayFull();
-    void    EpdDisplayPartial();
-    void    EpdTurnOnDisplay();
+    void SpiPortInit();    // 发送模式（DI 当 MOSI，40MHz）
+    void SpiPortRxInit();  // 接收模式（DI 反向当 MISO，8MHz）—— 读温度寄存器
+    void SpiGpioInit();
+    void EpdInit();
+    void EpdDisplayFull();
+    void EpdDisplayPartial();
+    void EpdTurnOnDisplay();
     // 读屏内温度寄存器(0x40)→映射 5 档 booster 写 0xE0/0xE6,Full/Partial 共用。
     // 60s 内重复刷新会复用上次温度避免每次 5-10ms 切换 SPI 模式开销。
     void    ApplyTemperatureBoost();
@@ -88,7 +93,7 @@ class EpdSsd1683 {
     uint8_t EpdRecvData();  // 切到 RX 模式读 1 字节,读完切回 TX
     void    WriteBytes(const uint8_t* buf, int len);
     void    ReadBusy();
-    void    EpdPowerOn();   // 主动管 EPD_PWR_PIN(含 hold_dis/set/hold_en)
+    void    EpdPowerOn();  // 主动管 EPD_PWR_PIN(含 hold_dis/set/hold_en)
     void    EpdPowerOff();
 
     // pin 缓存（来自 hal/config.h）

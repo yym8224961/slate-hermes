@@ -15,25 +15,26 @@ namespace cache {
 
 bool Init();  // mount LittleFS,partition label "storage"
 
+// 清空所有缓存(图片 / 音频 / manifest / state):unmount → format → remount。
+// 用在 factory reset 流程,典型路径是 cred::Clear() 之后立即调,然后 esp_restart。
+bool FormatAll();
+
 // state.json
 bool ReadStateMeta(std::string& selected_group_id, std::string& last_etag);
 bool WriteStateMeta(const std::string& selected_group_id, const std::string& etag);
 
 // manifest.json:存当前组的 etag + frame 数量,server 同步时更新
-bool WriteManifest(const std::string& gid, const std::string& group_etag,
-                   int frame_count, int default_frame_idx);
+bool WriteManifest(const std::string& gid, const std::string& group_etag, int frame_count, int default_frame_idx);
 bool ReadManifestFrameCount(const std::string& gid, int& out);
 
 // frame image:返回 etag 命中时 true(无需重拉)
 bool FrameImageExists(const std::string& gid, int idx, const std::string& expected_etag);
-bool WriteFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes,
-                     const std::string& etag);
+bool WriteFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag);
 bool ReadFrameImage(const std::string& gid, int idx, std::vector<uint8_t>& out);
 
 // frame audio
 bool FrameAudioExists(const std::string& gid, int idx, const std::string& expected_etag);
-bool WriteFrameAudio(const std::string& gid, int idx, const std::vector<uint8_t>& bytes,
-                     const std::string& etag);
+bool WriteFrameAudio(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag);
 bool ReadFrameAudio(const std::string& gid, int idx, std::vector<uint8_t>& out);
 
 // frame caption(中文标题,UTF-8 单行)。空字符串 = 没 caption。

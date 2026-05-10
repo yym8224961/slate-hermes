@@ -13,6 +13,6 @@ class TimeTick {
    private:
     static void TickCb(void* arg);
 
-    esp_timer_handle_t timer_      = nullptr;
+    esp_timer_handle_t timer_       = nullptr;
     int                last_minute_ = -1;
 };

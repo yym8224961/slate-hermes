@@ -12,6 +12,7 @@
 #include "../storage/cache.h"
 #include "../ui/frame_view.h"
 #include "../ui/status_bar.h"
+#include "../ui/theme.h"
 #include "boot_splash_scene.h"
 #include "settings_scene.h"
 
@@ -48,6 +49,19 @@ void FrameScene::OnEnter(SceneContext& ctx) {
     // FrameView 全屏（400×300）；StatusBar 浮在最上 28px 白底盖一部分。
     // 后创建在上：StatusBar 在 FrameView 之上。
     frame_view_ = std::make_unique<FrameView>(root_);
+
+    // 空相册提示：居中文案,frame_view 之上 / status_bar 之下。
+    empty_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(empty_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_color(empty_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(empty_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_style_text_line_space(empty_label_, 8, 0);
+    lv_label_set_long_mode(empty_label_, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(empty_label_, LV_HOR_RES - 32);
+    lv_label_set_text(empty_label_, "相册暂无图片\n\n请在管理端为本相册添加图片");
+    lv_obj_align(empty_label_, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(empty_label_, LV_OBJ_FLAG_HIDDEN);
+
     status_bar_ = std::make_unique<StatusBar>(root_);
 
     ctx.epd->Unlock();
@@ -55,11 +69,13 @@ void FrameScene::OnEnter(SceneContext& ctx) {
     // 首次状态栏数据（caption 由 LoadFrame 内填）
     RefreshStatusBarFromSensors(ctx);
 
+    ApplyEmptyState();
+
     // 加载第一帧（force_full：清屏底色 + 第一帧的转换需要 full 一次）
     if (!gid_.empty() && frame_count_ > 0) {
         LoadFrame(ctx, idx_, /*force_full*/ true);
     } else {
-        // 空 group：留状态栏 + 白底，触发一次 full 让 splash 转过来。
+        // 空 group：留状态栏 + 白底 + 空相册提示，触发一次 full 让 splash 转过来。
         SyncRender(ctx, /*force_full*/ true);
     }
 }
@@ -70,7 +86,8 @@ void FrameScene::OnExit(SceneContext& ctx) {
     status_bar_.reset();
     if (root_) {
         lv_obj_del(root_);
-        root_ = nullptr;
+        root_        = nullptr;
+        empty_label_ = nullptr;
     }
     ctx.epd->Unlock();
 }
@@ -151,16 +168,28 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         }
         case UiEventKind::kGroupReady: {
             if (e.u.group.gid[0] == '\0') break;
-            if (gid_ != e.u.group.gid) {
+            const bool same_group     = (gid_ == e.u.group.gid);
+            const bool content_changed = e.u.group.content_changed;
+            // 同 group 且服务端确认无变化(fast-path/304):屏幕已经是最新,不刷新省电。
+            // 仍同步一下 frame_count_(理论上不变,保险),不动 idx_/不重绘。
+            if (same_group && !content_changed) {
+                frame_count_ = e.u.group.frame_count > 0 ? e.u.group.frame_count : 0;
+                if (frame_count_ > 0 && (idx_ < 0 || idx_ >= frame_count_)) idx_ = 0;
+                break;
+            }
+            if (!same_group) {
                 RebindGroup(ctx, e.u.group.gid, e.u.group.frame_count, e.u.group.default_idx);
+            } else {
+                // 同 group 但内容真变了(新增/修改/删除帧):sync_service 已把变化的 frame
+                // 重写入 cache,这里必须强制刷新当前帧,否则屏幕会停留在旧图。
+                frame_count_ = e.u.group.frame_count > 0 ? e.u.group.frame_count : 0;
+                if (frame_count_ > 0 && (idx_ < 0 || idx_ >= frame_count_)) idx_ = 0;
+            }
+            ApplyEmptyState();
+            if (frame_count_ > 0) {
                 LoadFrame(ctx, idx_, /*force_full*/ true);
-            } else if (e.u.group.frame_count != frame_count_) {
-                // 同 group 但 frame 数变了（增量）— 仅更新计数。
-                frame_count_ = e.u.group.frame_count;
-                if (idx_ >= frame_count_) {
-                    idx_ = 0;
-                    LoadFrame(ctx, idx_, /*force_full*/ false);
-                }
+            } else {
+                SyncRender(ctx, /*force_full*/ true);
             }
             break;
         }
@@ -220,18 +249,20 @@ void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full) {
         ESP_LOGW(kTag, "LoadFrame %d: epd lock timeout", idx);
         return;
     }
-    if (frame_view_) {
-        frame_view_->SetFrame(raw);
-    }
     if (status_bar_) {
         status_bar_->SetCaption(caption);
     }
     cached_caption_ = caption;  // 保存当前 caption,sync 失败/进度显示后用来恢复
-    // 同步渲染：在持锁状态下立即跑 LVGL render + flush_cb，把新图写进 EPD buffer。
-    // 不同步走 LVGL 异步渲染常在 RefreshTask 50ms debounce 之后才完成，
-    // 拿到旧 buffer Diff=0 直接 continue，表现为按键没反应。
+    // 先把状态栏渲染进 buffer，再写图像：LVGL 只渲染脏区域，不会覆盖后续
+    // WriteRaw1bpp 写入的内容区。若顺序颠倒，lv_refr_now 会把状态栏区以外的
+    // 旧像素写入 buffer，覆盖刚写入的帧数据。
     lv_refr_now(NULL);
     ctx.epd->Unlock();
+
+    // 图像直接写入 EPD framebuffer，绕过 LVGL I1→RGB565→1bpp 往返转换。
+    if (frame_view_) {
+        frame_view_->SetFrame(ctx.epd, raw);
+    }
 
     const bool full = force_full || !first_loaded_;
     first_loaded_   = true;
@@ -267,6 +298,23 @@ void FrameScene::RefreshStatusBarFromSensors(SceneContext& ctx) {
     }
 
     if (changed) SyncRender(ctx, /*force_full*/ false);
+}
+
+void FrameScene::ApplyEmptyState() {
+    const bool empty = (frame_count_ <= 0);
+    if (frame_view_) {
+        if (empty) frame_view_->Hide();
+        else       frame_view_->Show();
+    }
+    if (empty_label_) {
+        if (empty) lv_obj_clear_flag(empty_label_, LV_OBJ_FLAG_HIDDEN);
+        else       lv_obj_add_flag(empty_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (empty && status_bar_) {
+        // 避免上一组的标题残留在状态栏。
+        status_bar_->SetCaption("");
+        cached_caption_.clear();
+    }
 }
 
 void FrameScene::SyncRender(SceneContext& ctx, bool force_full) {

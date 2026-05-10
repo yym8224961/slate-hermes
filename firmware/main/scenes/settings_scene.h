@@ -20,16 +20,20 @@ class SettingsScene : public Scene {
     // sizeof(MenuList) 失败。
     ~SettingsScene() override;
 
-    const char* Name() const override { return "Settings"; }
-    void OnEnter(SceneContext& ctx) override;
-    void OnExit (SceneContext& ctx) override;
-    void OnEvent(SceneContext& ctx, const UiEvent& e) override;
-    lv_obj_t* Root() override { return root_; }
+    const char* Name() const override {
+        return "Settings";
+    }
+    void      OnEnter(SceneContext& ctx) override;
+    void      OnExit(SceneContext& ctx) override;
+    void      OnEvent(SceneContext& ctx, const UiEvent& e) override;
+    lv_obj_t* Root() override {
+        return root_;
+    }
 
    private:
     void SyncRender(SceneContext& ctx);
 
-    lv_obj_t*                  root_         = nullptr;
+    lv_obj_t*                  root_ = nullptr;
     std::unique_ptr<StatusBar> status_bar_;
     std::unique_ptr<MenuList>  menu_;
     int                        saved_cursor_ = 0;  // 子页 pop 回来时恢复光标位置

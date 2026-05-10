@@ -14,11 +14,15 @@ class DeviceInfoPage : public Scene {
     DeviceInfoPage();
     ~DeviceInfoPage() override;
 
-    const char* Name() const override { return "DeviceInfo"; }
-    void OnEnter(SceneContext& ctx) override;
-    void OnExit (SceneContext& ctx) override;
-    void OnEvent(SceneContext& ctx, const UiEvent& e) override;
-    lv_obj_t* Root() override { return root_; }
+    const char* Name() const override {
+        return "DeviceInfo";
+    }
+    void      OnEnter(SceneContext& ctx) override;
+    void      OnExit(SceneContext& ctx) override;
+    void      OnEvent(SceneContext& ctx, const UiEvent& e) override;
+    lv_obj_t* Root() override {
+        return root_;
+    }
 
    private:
     // returns true if 文本内容真的变了(用于跳过无意义 partial 刷)
@@ -26,9 +30,9 @@ class DeviceInfoPage : public Scene {
     void SyncRender(SceneContext& ctx);
     void ScrollBy(SceneContext& ctx, int dy);
 
-    lv_obj_t*                  root_           = nullptr;
-    lv_obj_t*                  scroll_area_    = nullptr;  // 可滚动容器,UP/DOWN 翻
-    lv_obj_t*                  info_           = nullptr;  // 内容 label,在 scroll_area 内
+    lv_obj_t*                  root_        = nullptr;
+    lv_obj_t*                  scroll_area_ = nullptr;  // 可滚动容器,UP/DOWN 翻
+    lv_obj_t*                  info_        = nullptr;  // 内容 label,在 scroll_area 内
     std::unique_ptr<StatusBar> status_bar_;
 
     // 缓存上次拼好的整段文本。MinuteTick / Charge / Battery / Wifi 事件触发

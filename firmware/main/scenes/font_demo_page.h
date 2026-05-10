@@ -15,20 +15,24 @@ class FontDemoPage : public Scene {
     FontDemoPage();
     ~FontDemoPage() override;
 
-    const char* Name() const override { return "FontDemo"; }
-    void OnEnter(SceneContext& ctx) override;
-    void OnExit (SceneContext& ctx) override;
-    void OnEvent(SceneContext& ctx, const UiEvent& e) override;
-    lv_obj_t* Root() override { return root_; }
+    const char* Name() const override {
+        return "FontDemo";
+    }
+    void      OnEnter(SceneContext& ctx) override;
+    void      OnExit(SceneContext& ctx) override;
+    void      OnEvent(SceneContext& ctx, const UiEvent& e) override;
+    lv_obj_t* Root() override {
+        return root_;
+    }
 
    private:
     void ApplyFont();
     void SyncRender(SceneContext& ctx, bool force_full = false);
 
-    lv_obj_t*                  root_      = nullptr;
-    lv_obj_t*                  name_lbl_  = nullptr;  // 当前字体名(用思源)
-    lv_obj_t*                  body_lbl_  = nullptr;  // 测试文本(用演示字体)
-    lv_obj_t*                  hint_lbl_  = nullptr;  // 底部操作提示(用思源)
-    int                        idx_       = 0;        // 当前字体索引
+    lv_obj_t*                  root_     = nullptr;
+    lv_obj_t*                  name_lbl_ = nullptr;  // 当前字体名(用思源)
+    lv_obj_t*                  body_lbl_ = nullptr;  // 测试文本(用演示字体)
+    lv_obj_t*                  hint_lbl_ = nullptr;  // 底部操作提示(用思源)
+    int                        idx_      = 0;        // 当前字体索引
     std::unique_ptr<StatusBar> status_bar_;
 };

@@ -98,7 +98,10 @@ void EpdSsd1683::Init() {
     buffer_      = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
     prev_buffer_ = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
     tx_buf_      = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
-    assert(buffer_ && prev_buffer_ && tx_buf_);
+    if (!buffer_ || !prev_buffer_ || !tx_buf_) {
+        ESP_LOGE(kTag, "failed to allocate framebuffers");
+        return;
+    }
     memset(buffer_, 0xFF, kBufferLen);
     memset(prev_buffer_, 0xFF, kBufferLen);
     memset(tx_buf_, 0xFF, kBufferLen);
@@ -109,7 +112,10 @@ void EpdSsd1683::Init() {
 
     constexpr int kRender = kWidth * kHeight * 2;
     auto*         rb      = (uint8_t*)heap_caps_malloc(kRender, MALLOC_CAP_SPIRAM);
-    assert(rb);
+    if (!rb) {
+        ESP_LOGE(kTag, "failed to allocate render buffer");
+        return;
+    }
     lv_display_set_buffers(lvgl_display_, rb, NULL, kRender, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     EpdInit();
@@ -118,6 +124,10 @@ void EpdSsd1683::Init() {
     prev_buffer_synced_ = true;
 
     dirty_mutex_ = xSemaphoreCreateMutex();
+    if (!dirty_mutex_) {
+        ESP_LOGE(kTag, "failed to create dirty_mutex");
+        return;
+    }
     StartRefreshTask();
 
     lvgl_port_unlock();
@@ -165,6 +175,10 @@ void EpdSsd1683::LvglFlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t*
         // 合并成一轮刷新——所以这里大胆 notify，不会出现「半成品 buffer 抢跑全刷」。
         task      = self->refresh_task_;
         do_notify = (task != nullptr);
+        // LVGL flush 高频,默认 ESP_LOGD 隐藏。需要诊断"残影 / partial 区不正确"
+        // 时,串口跑一次 esp_log_level_set("Epd", ESP_LOG_DEBUG) 打开。
+        ESP_LOGD(kTag, "flush chunk=(%d,%d,%dx%d) accum_dirty=(%d,%d,%dx%d)",
+                 r.x, r.y, r.w, r.h, u.x, u.y, u.w, u.h);
     }
 
     xSemaphoreGive(self->dirty_mutex_);
@@ -190,6 +204,7 @@ void EpdSsd1683::RequestUrgentPartialRefresh() {
     urgent_refresh_      = true;
     refresh_in_progress_ = true;
     xSemaphoreGive(dirty_mutex_);
+    ESP_LOGI(kTag, "Request PARTIAL refresh");
     if (refresh_task_)
         xTaskNotifyGive(refresh_task_);
 }
@@ -200,8 +215,46 @@ void EpdSsd1683::RequestUrgentFullRefresh() {
     force_full_refresh_  = true;
     refresh_in_progress_ = true;
     xSemaphoreGive(dirty_mutex_);
+    ESP_LOGI(kTag, "Request FULL refresh");
     if (refresh_task_)
         xTaskNotifyGive(refresh_task_);
+}
+
+void EpdSsd1683::WriteRaw1bpp(int x, int y, int w, int h, const uint8_t* data, size_t len) {
+    if (!data || w <= 0 || h <= 0) return;
+    const int src_bpr = (w + 7) >> 3;
+    if (len < static_cast<size_t>(src_bpr * h)) return;
+    const int dst_bpr = (kWidth + 7) >> 3;  // 50
+    xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+    if (x == 0 && w == kWidth) {
+        for (int row = 0; row < h; row++) {
+            int dy = y + row;
+            if (dy < 0 || dy >= kHeight) continue;
+            memcpy(buffer_ + dy * dst_bpr, data + row * src_bpr, src_bpr);
+        }
+    } else {
+        for (int row = 0; row < h; row++) {
+            int dy = y + row;
+            if (dy < 0 || dy >= kHeight) continue;
+            const uint8_t* src_row = data + row * src_bpr;
+            for (int col = 0; col < w; col++) {
+                int dx = x + col;
+                if (dx < 0 || dx >= kWidth) continue;
+                bool white = (src_row[col >> 3] >> (7 - (col & 7))) & 1;
+                SetPx1(buffer_, kWidth, dx, dy, white);
+            }
+        }
+    }
+    R r = Clamp(AlignX8({x, y, w, h}), kWidth, kHeight);
+    if (Area(r) > 0) {
+        R cur            = {dirty_.x, dirty_.y, dirty_.w, dirty_.h};
+        R u              = Union(cur, r);
+        dirty_           = {u.x, u.y, u.w, u.h};
+        pending_         = true;
+        last_flush_tick_ = xTaskGetTickCount();
+        if (refresh_task_) xTaskNotifyGive(refresh_task_);
+    }
+    xSemaphoreGive(dirty_mutex_);
 }
 
 namespace {
@@ -219,10 +272,22 @@ DiffR Diff(const uint8_t* a, const uint8_t* b, size_t n) {
     r.ratio = (float)r.bits / (n * 8);
     return r;
 }
+
+// 取整 framebuffer 的轻量指纹用于诊断:不是密码学 hash,只要"内容变了 hash 就变"
+// 且能 log 一行看出来即可。从 SPIRAM 读 ~150B 跳采样,代价 < 100us。
+uint32_t Hash16(const uint8_t* p, size_t n) {
+    uint32_t     h    = 2166136261u;
+    const size_t step = n / 96;  // 96 个采样点散布全 buffer
+    for (size_t i = 0; i < n; i += (step ? step : 1)) {
+        h ^= p[i];
+        h *= 16777619u;
+    }
+    return h;
+}
 }  // namespace
 
 void EpdSsd1683::StartRefreshTask() {
-    xTaskCreatePinnedToCore(RefreshTaskEntry, "epd_refresh", 4096, this, 3, &refresh_task_, 1);
+    xTaskCreatePinnedToCore(RefreshTaskEntry, "epd_refresh", 8192, this, 3, &refresh_task_, 1);
 }
 void EpdSsd1683::RefreshTaskEntry(void* arg) {
     static_cast<EpdSsd1683*>(arg)->RefreshTaskLoop();
@@ -260,6 +325,8 @@ void EpdSsd1683::RefreshTaskLoop() {
         urgent_refresh_     = false;
         bool force_full     = force_full_refresh_;
         force_full_refresh_ = false;
+        // 保存被 read-and-clear 的 dirty 区域用于本轮日志
+        R prev_dirty = {dirty_.x, dirty_.y, dirty_.w, dirty_.h};
         if (pending_) {
             pending_ = false;
             dirty_   = {0, 0, 0, 0};
@@ -302,16 +369,36 @@ void EpdSsd1683::RefreshTaskLoop() {
                        || !prev_buffer_synced_
                        || d.ratio >= kForceFullDiffRatio;
 
+        // 决策原因细分,方便定位"为啥这轮选了 full / partial"。
+        const char* full_cause =
+            force_full                                          ? "force_full"
+            : (partial_since_full_ >= kPartialBeforeFullCleanup) ? "partial_count_overflow"
+            : (!prev_buffer_synced_)                             ? "prev_not_synced"
+            : (d.ratio >= kForceFullDiffRatio)                   ? "diff_over_30pct"
+                                                                 : "n/a";
+
         if (do_full) {
-            ESP_LOGI(kTag, "EPD FULL refresh (force_full=%d, partial_count=%d, diff=%.1f%% → 0)",
-                     force_full ? 1 : 0, partial_since_full_, d.ratio * 100.0f);
+            ESP_LOGI(kTag,
+                     "EPD FULL refresh: cause=%s force_full=%d partial_count=%d/%d "
+                     "prev_synced=%d diff=%zu bits (%.2f%%) dirty=(%d,%d,%dx%d) "
+                     "buf_hash=%08lx prev_hash=%08lx",
+                     full_cause, force_full ? 1 : 0, partial_since_full_,
+                     kPartialBeforeFullCleanup, prev_buffer_synced_ ? 1 : 0, d.bits,
+                     d.ratio * 100.0f, prev_dirty.x, prev_dirty.y, prev_dirty.w, prev_dirty.h,
+                     (unsigned long)Hash16(tx_buf_, kBufferLen),
+                     (unsigned long)Hash16(prev_buffer_, kBufferLen));
             EpdInit();
             EpdDisplayFull();
             partial_since_full_ = 0;
         } else {
             partial_since_full_++;
-            ESP_LOGI(kTag, "EPD PARTIAL refresh (count=%d/%d)",
-                     partial_since_full_, kPartialBeforeFullCleanup);
+            ESP_LOGI(kTag,
+                     "EPD PARTIAL refresh: count=%d/%d diff=%zu bits (%.2f%%) "
+                     "dirty=(%d,%d,%dx%d) buf_hash=%08lx prev_hash=%08lx",
+                     partial_since_full_, kPartialBeforeFullCleanup, d.bits, d.ratio * 100.0f,
+                     prev_dirty.x, prev_dirty.y, prev_dirty.w, prev_dirty.h,
+                     (unsigned long)Hash16(tx_buf_, kBufferLen),
+                     (unsigned long)Hash16(prev_buffer_, kBufferLen));
             // 跟参考实现对齐:每次 PARTIAL 也先做完整 EpdInit(含 PowerOn + RESET +
             // 重发初始化命令),跟末尾 EpdTurnOnDisplay 内的 EpdPowerOff 配对。
             // 之前为了省 ~40ms 让 partial → partial 不重 init,但 EpdTurnOnDisplay

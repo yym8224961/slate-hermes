@@ -31,20 +31,24 @@ class BootSplashScene : public Scene {
         kSyncProgress,
     };
 
-    const char* Name() const override { return "BootSplash"; }
-    void OnEnter(SceneContext& ctx) override;
-    void OnExit (SceneContext& ctx) override;
-    void OnEvent(SceneContext& ctx, const UiEvent& e) override;
-    lv_obj_t* Root() override { return root_; }
+    const char* Name() const override {
+        return "BootSplash";
+    }
+    void      OnEnter(SceneContext& ctx) override;
+    void      OnExit(SceneContext& ctx) override;
+    void      OnEvent(SceneContext& ctx, const UiEvent& e) override;
+    lv_obj_t* Root() override {
+        return root_;
+    }
 
    private:
     void Render(SceneContext& ctx);
 
-    State    state_ = State::kInitializing;
-    char     ssid_[33] = {0};
-    char     pair_code_[8] = {0};
-    uint8_t  progress_cur_   = 0;
-    uint8_t  progress_total_ = 0;
+    State   state_          = State::kInitializing;
+    char    ssid_[33]       = {0};
+    char    pair_code_[8]   = {0};
+    uint8_t progress_cur_   = 0;
+    uint8_t progress_total_ = 0;
 
     lv_obj_t* root_       = nullptr;
     lv_obj_t* text_label_ = nullptr;  // 主文案(中文,SourceHanSansSC)

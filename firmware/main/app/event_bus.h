@@ -15,23 +15,23 @@
 #include <cstdint>
 
 enum class UiEventKind : uint8_t {
-    kButtonShort,        // u.button.btn
-    kButtonLong,         // u.button.btn
-    kChargeChanged,      // u.charge
-    kBatteryUpdated,     // u.battery
-    kWifiStateChanged,   // u.wifi
+    kButtonShort,       // u.button.btn
+    kButtonLong,        // u.button.btn
+    kChargeChanged,     // u.charge
+    kBatteryUpdated,    // u.battery
+    kWifiStateChanged,  // u.wifi
     kSyncStarted,
-    kSyncProgress,       // u.progress { current, total }  帧级下载进度
-    kSyncFinished,       // u.sync
-    kGroupReady,         // u.group
+    kSyncProgress,  // u.progress { current, total }  帧级下载进度
+    kSyncFinished,  // u.sync
+    kGroupReady,    // u.group
     kMinuteTick,
     kIdleTimeout,
     // 启动阶段进度,由 app.cc TryConnectAndSetup 各步 emit;splash 用 stage 切文案。
-    kBootStage,          // u.boot_stage
+    kBootStage,  // u.boot_stage
     // 设备从 unbound 翻 bound:Web 端用户输入了配对码。splash 切「等待相册」。
     kBound,
     // 设备从 bound 翻 unbound:Web 端主动解绑。任何场景需 RequestReplace 回 splash。
-    kUnbound,            // u.unbound { pair_code[8] }
+    kUnbound,  // u.unbound { pair_code[8] }
     // poll 收到 401:secret 失效,固件 self-reset 流(清 NVS secret + 重启)。
     kSecretInvalid,
 };
@@ -41,49 +41,68 @@ enum class ButtonId : uint8_t { kEnter = 0, kUp, kDown };
 // boot 阶段枚举;splash 用此切文案。顺序对应 splash 状态机典型路径。
 enum class BootStage : uint8_t {
     kInitializing = 0,
-    kProvisioning,        // 无 cred,captive portal 模式
-    kWifiConnecting,      // 试连 STA(载荷带 ssid)
-    kWifiFailed,          // 试连超时/认证失败
-    kSntp,                // 等系统时间对齐
-    kRegistering,         // 调 /devices/register
-    kServerUnreachable,   // 服务器 30s 无响应
-    kAwaitingPair,        // 注册完毕,等待 Web 端 claim(载荷带 pair_code)
-    kAwaitingGroup,       // 已 bound,等待管理端分配相册
-    kNetError,            // 其它网络异常
+    kProvisioning,       // 无 cred,captive portal 模式
+    kWifiConnecting,     // 试连 STA(载荷带 ssid)
+    kWifiFailed,         // 试连超时/认证失败
+    kSntp,               // 等系统时间对齐
+    kRegistering,        // 调 /devices/register
+    kServerUnreachable,  // 服务器 30s 无响应
+    kAwaitingPair,       // 注册完毕,等待 Web 端 claim(载荷带 pair_code)
+    kAwaitingGroup,      // 已 bound,等待管理端分配相册
+    kNetError,           // 其它网络异常
 };
 
 struct UiEvent {
     UiEventKind kind;
     union U {
-        struct { ButtonId btn; }                          button;
         struct {
-            uint8_t state;        // ChargeStatus::State
+            ButtonId btn;
+        } button;
+        struct {
+            uint8_t state;  // ChargeStatus::State
             bool    present;
             bool    charging;
             bool    full;
             bool    no_battery;
-        }                                                  charge;
-        struct { int mv; int pct; }                       battery;
-        struct { bool connected; int rssi; }              wifi;
-        struct { bool ok; bool group_changed; }           sync;
-        struct { uint8_t current; uint8_t total; }        progress;
+        } charge;
+        struct {
+            int mv;
+            int pct;
+        } battery;
+        struct {
+            bool connected;
+            int  rssi;
+        } wifi;
+        struct {
+            bool ok;
+            bool group_changed;
+        } sync;
+        struct {
+            uint8_t current;
+            uint8_t total;
+        } progress;
         struct {
             char gid[32];
             int  frame_count;
             int  default_idx;
-        }                                                  group;
+            // true = 本轮 sync 真下载了新 frame(内容变化);false = fast-path/304,只是确认状态。
+            // FrameScene 用它决定是否触发 EPD full refresh,避免 30s 心跳每轮都闪屏。
+            bool content_changed;
+        } group;
         struct {
             BootStage stage;
             char      ssid[33];      // kWifiConnecting 时设 STA SSID
             char      pair_code[8];  // kAwaitingPair 时设 6 位 + nul
-        }                                                  boot_stage;
+        } boot_stage;
         struct {
             char pair_code[8];
-        }                                                  unbound;
-        U() {}
+        } unbound;
+        U() {
+        }
     } u;
 
-    UiEvent() : kind(UiEventKind::kMinuteTick), u() {}
+    UiEvent() : kind(UiEventKind::kMinuteTick), u() {
+    }
 };
 
 namespace evt {

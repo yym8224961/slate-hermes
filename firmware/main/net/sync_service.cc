@@ -36,11 +36,14 @@ void SyncService::Start(SyncDeps deps) {
     deps_ = std::move(deps);
     if (!event_group_) {
         event_group_ = xEventGroupCreate();
-        configASSERT(event_group_);
+        if (!event_group_) {
+            ESP_LOGE(kTag, "failed to create event group");
+            return;
+        }
     }
     running_.store(true);
     last_user_active_ms_.store(esp_timer_get_time() / 1000);
-    xTaskCreatePinnedToCore(&TaskEntry, "slate_sync", 6 * 1024, this, 4, nullptr, 0);
+    xTaskCreatePinnedToCore(&TaskEntry, "slate_sync", 10 * 1024, this, 4, nullptr, 0);
     ESP_LOGI(kTag, "sync service started");
 }
 
@@ -77,13 +80,15 @@ int SyncService::NextIntervalSec() const {
     return last_poll_interval_s_.load();
 }
 
-void SyncService::PostGroupReady(const std::string& gid, int frame_count, int default_seq) {
+void SyncService::PostGroupReady(const std::string& gid, int frame_count, int default_seq,
+                                 bool content_changed) {
     UiEvent e{};
     e.kind = UiEventKind::kGroupReady;
     std::strncpy(e.u.group.gid, gid.c_str(), sizeof(e.u.group.gid) - 1);
     e.u.group.gid[sizeof(e.u.group.gid) - 1] = '\0';
-    e.u.group.frame_count = frame_count;
-    e.u.group.default_idx = default_seq;
+    e.u.group.frame_count    = frame_count;
+    e.u.group.default_idx    = default_seq;
+    e.u.group.content_changed = content_changed;
     evt::Post(e);
 }
 
@@ -116,7 +121,8 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
             current_group_ = gid;
             int frame_count = 0;
             cache::ReadManifestFrameCount(gid, frame_count);
-            PostGroupReady(gid, frame_count, 0);
+            // 内容没变,只是 splash → frame_scene 首次切换需要 hint;不刷屏。
+            PostGroupReady(gid, frame_count, 0, /*content_changed=*/false);
         }
         return;
     }
@@ -133,10 +139,14 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     }
     if (not_modified) {
         ESP_LOGI(kTag, "manifest 304 not modified");
+        const bool first_seen = (current_group_ != gid);
         current_group_ = gid;
-        int frame_count = 0;
-        cache::ReadManifestFrameCount(gid, frame_count);
-        PostGroupReady(gid, frame_count, 0);
+        if (first_seen) {
+            int frame_count = 0;
+            cache::ReadManifestFrameCount(gid, frame_count);
+            // 服务端确认 manifest 没变,cache 也是最新的;不刷屏。
+            PostGroupReady(gid, frame_count, 0, /*content_changed=*/false);
+        }
         return;
     }
 
@@ -173,7 +183,9 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     cache::WriteStateMeta(gid, mf.group_etag);
     current_group_  = gid;
     group_changed   = true;
-    PostGroupReady(gid, static_cast<int>(mf.frames.size()), mf.default_frame_seq);
+    // 真有内容变化(新增/修改/删除帧),让 FrameScene 重读当前帧并触发 EPD 刷新。
+    PostGroupReady(gid, static_cast<int>(mf.frames.size()), mf.default_frame_seq,
+                   /*content_changed=*/true);
 }
 
 void SyncService::SyncOnce() {

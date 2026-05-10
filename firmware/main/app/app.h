@@ -40,9 +40,9 @@ class App {
     static void UiLoopEntry(void* arg);
     void        UiLoopTask();
 
-    SceneStack                       scene_stack_;
-    SleepManager                     sleep_mgr_;
-    TimeTick                         time_tick_;
-    std::unique_ptr<CaptivePortal>   portal_;
-    bool                             ui_loop_running_ = false;
+    SceneStack                     scene_stack_;
+    SleepManager                   sleep_mgr_;
+    TimeTick                       time_tick_;
+    std::unique_ptr<CaptivePortal> portal_;
+    bool                           ui_loop_running_ = false;
 };

@@ -27,12 +27,12 @@ struct DeviceState {
     // 设备信息
     std::string device_id;
     std::string device_name;
-    bool        bound = false;        // owner_user_id != null
-    std::string pair_code;             // unbound 时由后端下发,bound 时为空
+    bool        bound = false;  // owner_user_id != null
+    std::string pair_code;      // unbound 时由后端下发,bound 时为空
     std::string server_time;
 
     // group:为空(has_group=false)表示当前未选组
-    bool        has_group         = false;
+    bool        has_group = false;
     std::string group_id;
     std::string group_etag;
     int         frame_count       = 0;
@@ -42,18 +42,18 @@ struct DeviceState {
     int         position_total    = 0;
 
     // 轮询节奏(后端动态:splash 期 5s,bound 后 30s)
-    int         poll_interval_s   = 60;
+    int poll_interval_s = 60;
 };
 
 struct RegisterResult {
     std::string device_id;
     std::string device_secret;  // 64 字符 hex,调用方负责立刻 cred::SaveSecret()
-    std::string pair_code;       // 6 位 [A-Z2-9]
+    std::string pair_code;      // 6 位 [A-Z2-9]
     bool        reclaimed = false;
 };
 
 struct FrameMeta {
-    int         seq;            // group 内位置序号(JSON key: sort_order)
+    int         seq;  // group 内位置序号(JSON key: sort_order)
     std::string caption;
     std::string image_etag;
     std::string audio_etag;
@@ -70,8 +70,8 @@ struct Manifest {
 
 // poll 携带的 telemetry。值为 < 0 / 空字符串 表示不上报该字段(server 不覆盖原值)。
 struct Telemetry {
-    int         battery_pct       = -1;
-    int         rssi_dbm          = 0;     // 0 = 不上报
+    int         battery_pct = -1;
+    int         rssi_dbm    = 0;  // 0 = 不上报
     std::string fw_version;
     std::string current_group;
     int         current_frame_seq = 0;
@@ -102,8 +102,7 @@ bool SelectGroup(const std::string& gid, DeviceState& out);
 
 // 拉 manifest。if_none_match 非空 → 服务器若 etag 一致回 304,
 // 此时 not_modified=true、out 不动、函数 return true。
-bool GetManifest(const std::string& group_id, const std::string& if_none_match,
-                 Manifest& out, bool& not_modified);
+bool GetManifest(const std::string& group_id, const std::string& if_none_match, Manifest& out, bool& not_modified);
 
 // 拉 frame binary,语义同上。seq 即 manifest.frames[i].seq。
 bool DownloadFrameImage(const std::string& group_id, int seq, const std::string& if_none_match,

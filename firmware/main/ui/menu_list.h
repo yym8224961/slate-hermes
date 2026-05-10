@@ -13,7 +13,7 @@
 class MenuList {
    public:
     struct Item {
-        std::string          title;
+        std::string           title;
         std::function<void()> on_enter;  // ENTER 短按触发
     };
 
@@ -23,15 +23,19 @@ class MenuList {
     void OnDown();   // 光标下移(wrap)
     void OnEnter();  // 触发当前项
 
-    int  Cursor() const { return cursor_; }
-    lv_obj_t* root() { return root_; }
+    int Cursor() const {
+        return cursor_;
+    }
+    lv_obj_t* root() {
+        return root_;
+    }
 
    private:
     void Redraw();
 
     std::vector<Item>      items_;
-    int                    cursor_  = 0;
-    lv_obj_t*              root_    = nullptr;
+    int                    cursor_ = 0;
+    lv_obj_t*              root_   = nullptr;
     std::vector<lv_obj_t*> labels_;
     std::vector<lv_obj_t*> cursor_bars_;
 };

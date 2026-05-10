@@ -12,6 +12,7 @@
 #include "device_info_page.h"
 #include "factory_reset_page.h"
 #include "font_demo_page.h"
+#include "restart_device_page.h"
 #include "volume_page.h"
 
 namespace {
@@ -45,6 +46,7 @@ void SettingsScene::OnEnter(SceneContext& ctx) {
         {"设备信息",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<DeviceInfoPage>()); }},
         {"数据同步",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<DataSyncPage>()); }},
         {"字体演示",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<FontDemoPage>()); }},
+        {"重启设备",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<RestartDevicePage>()); }},
         {"恢复出厂",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<FactoryResetPage>()); }},
     };
     menu_ = std::make_unique<MenuList>(root_, std::move(items), saved_cursor_);

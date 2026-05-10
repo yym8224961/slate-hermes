@@ -1,11 +1,11 @@
 #pragma once
 
-#include <atomic>
 #include <driver/i2c_master.h>
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_oneshot.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
+#include <atomic>
 #include <memory>
 
 class BoardPowerBsp;

@@ -23,11 +23,15 @@ class FrameScene : public Scene {
     FrameScene(const char* gid, int frame_count, int default_idx);
     ~FrameScene() override;
 
-    const char* Name() const override { return "Frame"; }
-    void OnEnter(SceneContext& ctx) override;
-    void OnExit (SceneContext& ctx) override;
-    void OnEvent(SceneContext& ctx, const UiEvent& e) override;
-    lv_obj_t* Root() override { return root_; }
+    const char* Name() const override {
+        return "Frame";
+    }
+    void      OnEnter(SceneContext& ctx) override;
+    void      OnExit(SceneContext& ctx) override;
+    void      OnEvent(SceneContext& ctx, const UiEvent& e) override;
+    lv_obj_t* Root() override {
+        return root_;
+    }
 
    private:
     void LoadFrame(SceneContext& ctx, int idx, bool force_full);
@@ -35,6 +39,8 @@ class FrameScene : public Scene {
     void PrevFrame(SceneContext& ctx);
     void RebindGroup(SceneContext& ctx, const char* gid, int frame_count, int default_idx);
     void RefreshStatusBarFromSensors(SceneContext& ctx);
+    // 根据 frame_count_ 切换「空相册提示」与 frame_view 的可见性。
+    void ApplyEmptyState();
     // 持锁同步渲染 + 触发 partial/full refresh。改 status_bar 后必调,
     // 否则 LVGL 异步路径常在 RefreshTask 50ms debounce 之后才 flush,
     // refresh_task 拿到 prev=cur Diff=0 直接跳过,表现为图标不刷新。
@@ -46,7 +52,8 @@ class FrameScene : public Scene {
     bool        first_loaded_ = false;
     std::string cached_caption_;  // 当前 frame 的 caption,SyncProgress 临时占用 caption 区后用来恢复
 
-    lv_obj_t*                  root_       = nullptr;
+    lv_obj_t*                  root_        = nullptr;
+    lv_obj_t*                  empty_label_ = nullptr;  // frame_count_<=0 时显示「相册暂无图片」
     std::unique_ptr<FrameView> frame_view_;
     std::unique_ptr<StatusBar> status_bar_;
 };

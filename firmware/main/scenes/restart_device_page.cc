@@ -1,4 +1,4 @@
-#include "factory_reset_page.h"
+#include "restart_device_page.h"
 
 #include <esp_log.h>
 #include <esp_system.h>
@@ -8,22 +8,20 @@
 #include "../app/event_bus.h"
 #include "../app/scene_stack.h"
 #include "../display/epd_ssd1683.h"
-#include "../net/cred_store.h"
-#include "../storage/cache.h"
 #include "../ui/theme.h"
 
 namespace {
-constexpr char kTag[] = "factory";
+constexpr char kTag[] = "restart";
 }
 
-FactoryResetPage::FactoryResetPage()  = default;
-FactoryResetPage::~FactoryResetPage() = default;
+RestartDevicePage::RestartDevicePage()  = default;
+RestartDevicePage::~RestartDevicePage() = default;
 
-void FactoryResetPage::OnEnter(SceneContext& ctx) {
+void RestartDevicePage::OnEnter(SceneContext& ctx) {
     if (!ctx.epd->Lock(2000)) return;
 
     auto* screen = lv_screen_active();
-    root_ = lv_obj_create(screen);
+    root_        = lv_obj_create(screen);
     lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES);
     lv_obj_set_pos(root_, 0, 0);
     lv_obj_set_style_bg_color(root_, lv_color_white(), 0);
@@ -33,13 +31,13 @@ void FactoryResetPage::OnEnter(SceneContext& ctx) {
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
 
     status_bar_ = std::make_unique<StatusBar>(root_);
-    status_bar_->SetCaption("恢复出厂");
+    status_bar_->SetCaption("重启设备");
     if (ctx.wifi_connected && ctx.wifi_rssi) {
         status_bar_->SetWifi(ctx.wifi_connected(), ctx.wifi_rssi());
     }
     if (ctx.read_charge) {
         const auto snap = ctx.read_charge();
-        int pct = -1;
+        int        pct  = -1;
         if (!snap.no_battery && ctx.read_battery) {
             int mv = 0;
             ctx.read_battery(&mv, &pct);
@@ -55,10 +53,10 @@ void FactoryResetPage::OnEnter(SceneContext& ctx) {
     lv_obj_set_width(warn, LV_HOR_RES - 64);
     lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
     lv_label_set_text(warn,
-        "确认要恢复出厂吗?\n\n"
-        "WiFi 配置 + 设备绑定\n"
-        "+ 所有图片缓存 全部清除\n"
-        "重启后进入配网模式");
+                      "确认要重启设备吗?\n\n"
+                      "WiFi 配置和已下载\n"
+                      "的图片缓存都保留\n"
+                      "重启完成后自动恢复");
     lv_obj_align(warn, LV_ALIGN_CENTER, 0, -8);
 
     auto* hint = lv_label_create(root_);
@@ -70,11 +68,10 @@ void FactoryResetPage::OnEnter(SceneContext& ctx) {
 
     lv_refr_now(NULL);
     ctx.epd->Unlock();
-    // OnEnter 走 partial:UI ↔ UI 切换 diff 小,EPD 看 diff>=30% 兜底升 full。
     ctx.epd->RequestUrgentPartialRefresh();
 }
 
-void FactoryResetPage::OnExit(SceneContext& ctx) {
+void RestartDevicePage::OnExit(SceneContext& ctx) {
     if (!ctx.epd->Lock(500)) return;
     status_bar_.reset();
     if (root_) {
@@ -84,20 +81,14 @@ void FactoryResetPage::OnExit(SceneContext& ctx) {
     ctx.epd->Unlock();
 }
 
-void FactoryResetPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
-    // 跟其他子页一致:短按确认 = 返回,长按确认 = 执行(危险动作)。
-    // UP/DOWN 短按忽略(防误触)。
+void RestartDevicePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
     if (e.kind == UiEventKind::kButtonShort && e.u.button.btn == ButtonId::kEnter) {
         ESP_LOGI(kTag, "short Enter → cancel, pop");
         ctx.stack->RequestPop();
         return;
     }
     if (e.kind == UiEventKind::kButtonLong && e.u.button.btn == ButtonId::kEnter) {
-        ESP_LOGW(kTag, "long Enter → factory reset: clear NVS + format littlefs + reboot");
-        // 顺序: NVS 清干净后 format LittleFS。两步任一失败都继续 esp_restart,
-        // 防止用户卡在 settings 不知所措;下次启动 InitNetwork 会按当时状态决定下一步。
-        cred::Clear();
-        cache::FormatAll();
+        ESP_LOGW(kTag, "long Enter → restart device");
         vTaskDelay(pdMS_TO_TICKS(200));
         esp_restart();
     }

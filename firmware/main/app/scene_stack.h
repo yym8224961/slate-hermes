@@ -13,16 +13,24 @@ class SceneStack {
    public:
     SceneStack() = default;
 
-    void SetContext(const SceneContext& ctx) { ctx_ = ctx; }
-    SceneContext& Context() { return ctx_; }
+    void SetContext(const SceneContext& ctx) {
+        ctx_ = ctx;
+    }
+    SceneContext& Context() {
+        return ctx_;
+    }
 
     // 同步切换（仅 ui_loop 调）
-    void Push   (std::unique_ptr<Scene> s);
-    void Pop    ();
+    void Push(std::unique_ptr<Scene> s);
+    void Pop();
     void Replace(std::unique_ptr<Scene> s);
 
-    Scene* Top() const { return stack_.empty() ? nullptr : stack_.back().get(); }
-    bool   Empty() const { return stack_.empty(); }
+    Scene* Top() const {
+        return stack_.empty() ? nullptr : stack_.back().get();
+    }
+    bool Empty() const {
+        return stack_.empty();
+    }
 
     // 给 Scene::OnEvent 内用的 deferred 切换。Apply 时 ui_loop 取出执行。
     void RequestPush(std::unique_ptr<Scene> s);
@@ -39,8 +47,8 @@ class SceneStack {
    private:
     enum class PendingKind { kNone, kPush, kPop, kReplace };
 
-    SceneContext                         ctx_;
-    std::vector<std::unique_ptr<Scene>>  stack_;
-    PendingKind                          pending_kind_ = PendingKind::kNone;
-    std::unique_ptr<Scene>               pending_scene_;
+    SceneContext                        ctx_;
+    std::vector<std::unique_ptr<Scene>> stack_;
+    PendingKind                         pending_kind_ = PendingKind::kNone;
+    std::unique_ptr<Scene>              pending_scene_;
 };

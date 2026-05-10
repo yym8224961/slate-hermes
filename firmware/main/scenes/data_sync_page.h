@@ -19,19 +19,23 @@ class DataSyncPage : public Scene {
     DataSyncPage();
     ~DataSyncPage() override;
 
-    const char* Name() const override { return "DataSync"; }
-    void OnEnter(SceneContext& ctx) override;
-    void OnExit (SceneContext& ctx) override;
-    void OnEvent(SceneContext& ctx, const UiEvent& e) override;
-    lv_obj_t* Root() override { return root_; }
+    const char* Name() const override {
+        return "DataSync";
+    }
+    void      OnEnter(SceneContext& ctx) override;
+    void      OnExit(SceneContext& ctx) override;
+    void      OnEvent(SceneContext& ctx, const UiEvent& e) override;
+    lv_obj_t* Root() override {
+        return root_;
+    }
 
    private:
     void SetStatus(SceneContext& ctx, const std::string& text);
     void SyncRender(SceneContext& ctx);
 
-    lv_obj_t*                  root_         = nullptr;
-    lv_obj_t*                  status_lbl_   = nullptr;  // 中央大字状态
-    lv_obj_t*                  hint_lbl_     = nullptr;  // 底部按键提示
+    lv_obj_t*                  root_       = nullptr;
+    lv_obj_t*                  status_lbl_ = nullptr;  // 中央大字状态
+    lv_obj_t*                  hint_lbl_   = nullptr;  // 底部按键提示
     std::unique_ptr<StatusBar> status_bar_;
 
     // 进度节流:避免下载几十帧时每帧都触发 partial 刷,EPD 8 次累计就闪屏。

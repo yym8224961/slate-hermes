@@ -25,8 +25,8 @@
 #define DOWN_BUTTON_GPIO GPIO_NUM_18  // 与 VBAT_PWR_GPIO 复用:开机时电源键 = 下键
 
 // ── Charge IC ──────────────────────────────────────────────────
-#define CHARGE_DETECT_GPIO       GPIO_NUM_2
-#define CHARGE_FULL_GPIO         GPIO_NUM_1
+#define CHARGE_DETECT_GPIO           GPIO_NUM_2
+#define CHARGE_FULL_GPIO             GPIO_NUM_1
 #define CHARGE_DETECT_CHARGING_LEVEL 0  // 0=低有效充电,1=高有效
 
 // ── EPD (SSD1683) ──────────────────────────────────────────────

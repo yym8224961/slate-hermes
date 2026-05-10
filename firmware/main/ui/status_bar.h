@@ -21,11 +21,11 @@ class StatusBar {
     void Hide();
 
    private:
-    lv_obj_t* root_           = nullptr;
-    lv_obj_t* wifi_label_     = nullptr;
-    lv_obj_t* battery_label_  = nullptr;
+    lv_obj_t* root_            = nullptr;
+    lv_obj_t* wifi_label_      = nullptr;
+    lv_obj_t* battery_label_   = nullptr;
     lv_obj_t* battery_pct_lbl_ = nullptr;  // 电池图标左侧的百分比文字
-    lv_obj_t* caption_label_  = nullptr;
+    lv_obj_t* caption_label_   = nullptr;
 
     const char* shown_wifi_    = nullptr;
     const char* shown_battery_ = nullptr;

@@ -127,6 +127,36 @@ bool Init() {
     return true;
 }
 
+bool FormatAll() {
+    constexpr char kLabel[] = "storage";
+    ESP_LOGW(kTag, "FormatAll: erasing all littlefs cache");
+    // unregister 失败一般是因为没 mount,format 仍可继续。
+    esp_err_t err = esp_vfs_littlefs_unregister(kLabel);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(kTag, "littlefs unregister failed (continuing): %s", esp_err_to_name(err));
+    }
+    err = esp_littlefs_format(kLabel);
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "littlefs format failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    // 重新 mount,让进程后续仍能用 cache(factory_reset 通常紧接 esp_restart,
+    // 但 remount 让本函数语义独立 — 不依赖调用方一定重启)。
+    esp_vfs_littlefs_conf_t cfg = {};
+    cfg.base_path                = kRoot;
+    cfg.partition_label          = kLabel;
+    cfg.format_if_mount_failed   = true;
+    cfg.dont_mount               = false;
+    err = esp_vfs_littlefs_register(&cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "littlefs remount after format failed: %s", esp_err_to_name(err));
+        return false;
+    }
+    DirEnsure(std::string(kRoot) + "/groups");
+    ESP_LOGI(kTag, "littlefs formatted + remounted");
+    return true;
+}
+
 bool ReadStateMeta(std::string& selected_group_id, std::string& last_etag) {
     std::vector<uint8_t> buf;
     if (!ReadAll(std::string(kRoot) + "/state.json", buf)) return false;

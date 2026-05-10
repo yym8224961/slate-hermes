@@ -23,7 +23,9 @@ class SleepManager {
 
     // 进睡前最后一刻调用,App 在这里 dispatch wifi 断开事件让状态栏更新,
     // 然后 EnterDeepSleep 内部立刻 RequestUrgentFullRefresh 把「诚实」画面留在屏上。
-    void SetPreSleepHook(PreSleepHook hook) { pre_sleep_hook_ = std::move(hook); }
+    void SetPreSleepHook(PreSleepHook hook) {
+        pre_sleep_hook_ = std::move(hook);
+    }
 
     void OnEvent(const UiEvent& e);
     void Tick(int64_t now_ms);

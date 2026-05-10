@@ -29,6 +29,6 @@ class BoardPowerBsp {
 
    private:
     const int audioPowerPin_;
-    const int audioAmpPin_;       // PA CTRL,构造时锁定 LOW
+    const int audioAmpPin_;  // PA CTRL,构造时锁定 LOW
     const int vbatPowerPin_;
 };

@@ -28,7 +28,7 @@ class CaptivePortal {
         std::string server_url;
     };
 
-    bool Start();   // 启 SoftAP + HTTP + DNS,立即返回
+    bool Start();  // 启 SoftAP + HTTP + DNS,立即返回
     void Stop();
 
     // 用户提交配网信息时的回调。回调内做"试连验证"(wifi.TryConnect),
@@ -43,7 +43,9 @@ class CaptivePortal {
     void OnSubmit(SubmitCb cb);
     void OnFinished(FinishedCb cb);
 
-    bool Running() const { return running_.load(); }
+    bool Running() const {
+        return running_.load();
+    }
 
    private:
     std::atomic<bool> running_{false};

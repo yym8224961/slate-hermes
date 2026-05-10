@@ -4,7 +4,7 @@
 
 namespace sntp {
 
-void Init();              // 启动 SNTP,设默认 timezone (Kconfig CST-8)
-bool TimeSynced();        // 是否已成功同步过(time(nullptr) > 2020 年视为成功)
+void Init();        // 启动 SNTP,设默认 timezone (Kconfig CST-8)
+bool TimeSynced();  // 是否已成功同步过(time(nullptr) > 2020 年视为成功)
 
 }  // namespace sntp

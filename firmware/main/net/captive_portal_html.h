@@ -1,8 +1,9 @@
 #pragma once
 
-// 嵌入式 HTML:用户连了 SoftAP "Slate-XXXX" 后浏览器看到这个页面。
-// 没有外网,字体只能用 system monospace fallback,配色样式纯 CSS 自定义。
-// 占位 {{SERVER_URL}} 和 {{AP_SSID}} 在运行时由 captive_portal.cc 替换。
+// 嵌入式 HTML — Slate · Mono Press 风格重设计版
+// 用户连了 SoftAP "Slate-XXXX" 后浏览器看到此页。无外网访问,只能用系统字体回退。
+// 保持与原版完全一致的接口:GET /scan、POST /submit、占位 {{SERVER_URL}} 与 {{AP_SSID}}。
+// 仅样式与排版重设计,字段、状态、交互、提示文案均不变。
 
 namespace slate {
 
@@ -11,137 +12,236 @@ constexpr const char* kCaptivePortalHtml = R"HTML(<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>SLATE 配网</title>
+<title>Slate · 配网</title>
 <style>
 :root {
-  --ink: #0F0F0E;
-  --paper: #F5F2EC;
-  --rust: #7C2D12;
-  --ash: #A6A09A;
+  --ink:   #14110d;
+  --paper: #f5f3ed;
+  --band:  #ebe7dd;
+  --line:  #d8d2c4;
+  --mute:  #6b665d;
+  --dim:   #a39d92;
+  --red:   #a8281c;
 }
 * { box-sizing: border-box; }
 html, body {
   margin: 0; padding: 0;
   background: var(--paper);
   color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family: "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
-.wrap { max-width: 540px; margin: 0 auto; padding: 24px 16px 64px; }
-.head { padding: 12px 0 8px; border-bottom: 1px solid var(--ink); }
-.brand { font-size: 22px; font-weight: 700; letter-spacing: 0.05em; }
-.sub { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ash); margin-top: 4px; }
-.tick {
-  height: 8px;
-  background-image: repeating-linear-gradient(to right, var(--ink) 0, var(--ink) 1px, transparent 1px, transparent 8px);
-  margin-top: 8px;
+.serif { font-family: "Songti SC", "STSong", "Source Han Serif SC", Georgia, serif; }
+.mono  { font-family: ui-monospace, "IBM Plex Mono", "JetBrains Mono", SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+
+.wrap { max-width: 560px; margin: 0 auto; padding: 28px 20px 64px; }
+
+/* Masthead */
+.masthead { padding-bottom: 8px; }
+.kicker {
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-family: ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--mute);
 }
+.brand {
+  font-family: "Songti SC", "STSong", "Source Han Serif SC", Georgia, serif;
+  font-size: 48px; font-weight: 900;
+  letter-spacing: -0.02em;
+  margin: 6px 0 4px;
+  line-height: 1;
+}
+.brand-dot { color: var(--ink); }
+.tag {
+  font-family: "Songti SC", "STSong", "Source Han Serif SC", Georgia, serif;
+  font-style: italic;
+  font-size: 16px;
+  color: var(--mute);
+  margin: 0 0 10px;
+}
+.rule       { height: 1px; background: var(--ink); }
+.rule-thick { height: 3px; background: var(--ink); margin-top: 3px; }
+
+/* Section */
 section {
-  margin-top: 24px;
+  margin-top: 32px;
+}
+section .sechead {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--ink);
+  margin-bottom: 14px;
+}
+section .sechead .num {
+  font-family: "Songti SC", "STSong", Georgia, serif;
+  font-weight: 700; font-size: 13px; letter-spacing: 0.02em;
+  flex: 0 0 auto;
+}
+section .sechead h2 {
+  font-family: "Songti SC", "STSong", "Source Han Serif SC", Georgia, serif;
+  font-size: 22px; font-weight: 700; letter-spacing: -0.01em;
+  margin: 0; flex: 1;
+}
+section .sechead .eyebrow {
+  font-family: ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--mute);
+  flex: 0 0 auto;
+}
+
+/* Networks list */
+ul.networks {
+  list-style: none; margin: 0; padding: 0;
   border: 1px solid var(--ink);
-  padding: 16px;
+  max-height: 220px; overflow-y: auto;
+  background: var(--paper);
 }
-section h2 {
-  margin: 0 0 12px;
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  font-weight: 700;
+ul.networks li {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
 }
-section h2::before { content: "━━ "; }
-section h2::after  { content: " ━━"; }
+ul.networks li:last-child { border-bottom: 0; }
+ul.networks li .ssid {
+  font-family: "Songti SC", "STSong", Georgia, serif;
+  font-size: 15px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+ul.networks li .ssid .open {
+  font-family: ui-monospace, monospace;
+  font-size: 9px; letter-spacing: 0.18em; color: var(--mute);
+  margin-left: 6px;
+}
+ul.networks li .meta {
+  font-family: ui-monospace, monospace;
+  font-size: 11px; color: var(--mute);
+  flex: 0 0 auto;
+  display: flex; gap: 8px; align-items: baseline;
+}
+ul.networks li .bars { color: var(--ink); }
+ul.networks li:hover { background: var(--band); }
+ul.networks li.sel   { background: var(--ink); color: var(--paper); }
+ul.networks li.sel .ssid .open,
+ul.networks li.sel .meta,
+ul.networks li.sel .bars { color: var(--paper); }
+ul.networks .placeholder { cursor: default; color: var(--mute); }
+ul.networks .placeholder:hover { background: var(--paper); }
+
+/* Inputs */
 label {
   display: block;
-  margin-top: 12px;
+  margin-top: 16px;
 }
 label .lbl {
   display: block;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ash);
+  font-family: ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--mute);
   margin-bottom: 4px;
 }
 input[type=text],
 input[type=password],
-input[type=url],
-select {
+input[type=url] {
   width: 100%;
-  padding: 10px 12px;
-  background: var(--paper);
+  padding: 8px 0 6px;
+  background: transparent;
   color: var(--ink);
-  font: inherit;
-  border: 1px solid var(--ink);
-  border-radius: 2px;
+  font-family: "Songti SC", "STSong", "Source Han Serif SC", Georgia, serif;
+  font-size: 20px;
+  border: 0;
+  border-bottom: 2px solid var(--ink);
+  border-radius: 0;
   outline: none;
+  -webkit-appearance: none;
 }
-input:focus, select:focus { border-width: 2px; padding: 9px 11px; }
-details { margin-top: 16px; }
-summary {
-  cursor: pointer;
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ash);
-  user-select: none;
+input::placeholder {
+  color: var(--dim);
+  font-style: italic;
+  font-size: 16px;
 }
-summary:hover { color: var(--ink); }
+input:focus { border-bottom-color: var(--ink); }
+.hint {
+  margin: 6px 0 0;
+  font-family: "Songti SC", "STSong", Georgia, serif;
+  font-style: italic;
+  font-size: 12px; color: var(--mute);
+  line-height: 1.5;
+}
+
+/* Submit / button */
 button.primary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 12px 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  width: 100%;
+  margin-top: 28px;
+  padding: 0 22px;
+  height: 56px;
   background: var(--ink);
   color: var(--paper);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-family: "IBM Plex Sans", Helvetica, Arial, sans-serif;
+  font-size: 13px; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase;
   border: 1px solid var(--ink);
-  border-radius: 2px;
+  border-radius: 0;
   cursor: pointer;
-  width: 100%;
-  margin-top: 24px;
 }
-button.primary:disabled { opacity: 0.4; cursor: not-allowed; }
+button.primary:disabled { opacity: 0.45; cursor: not-allowed; }
 button.primary:hover:not(:disabled) { background: var(--paper); color: var(--ink); }
-.row { display: flex; gap: 8px; align-items: stretch; }
-.row > * { flex: 1; }
-.row > .grow0 { flex: 0; }
-.btn-secondary {
-  padding: 10px 12px;
-  background: var(--paper);
-  color: var(--ink);
-  font: inherit;
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  border: 1px solid var(--ink);
-  border-radius: 2px;
-  cursor: pointer;
-}
-.btn-secondary:hover { background: var(--ink); color: var(--paper); }
+button.primary .arrow { font-family: ui-monospace, monospace; font-size: 16px; letter-spacing: 0; }
+
+/* Status */
 .status {
-  margin-top: 16px;
-  padding: 12px;
-  border: 1px solid;
+  margin-top: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--mute);
+  font-family: ui-monospace, monospace;
   font-size: 12px;
+  background: var(--paper);
 }
-.status.info { border-color: var(--ash); color: var(--ash); }
-.status.ok { border-color: var(--ink); color: var(--ink); }
-.status.err { border-color: var(--rust); color: var(--rust); }
-.foot {
-  margin-top: 32px;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--ash);
-  text-align: center;
+.status.info { border-color: var(--mute); color: var(--mute); }
+.status.ok   { border-color: var(--ink);  color: var(--ink); }
+.status.err  { border-color: var(--red);  color: var(--red); }
+.status.err::before { content: "[ERROR] "; }
+.status.info::before { content: "[…] "; }
+.status.ok::before  { content: "[OK] "; }
+
+/* Success block (after submit) */
+.success {
+  margin-top: 28px;
+  border: 2px solid var(--ink);
+  padding: 28px 24px;
 }
+.success .ok-eyebrow {
+  font-family: ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--mute);
+  margin: 0 0 8px;
+}
+.success h3 {
+  font-family: "Songti SC", "STSong", "Source Han Serif SC", Georgia, serif;
+  font-size: 32px; font-weight: 700; letter-spacing: -0.02em;
+  margin: 0 0 14px;
+  line-height: 1.05;
+}
+.success p {
+  margin: 0 0 10px;
+  font-size: 14px;
+  line-height: 1.6;
+}
+.success p strong {
+  font-family: "Songti SC", "STSong", Georgia, serif;
+  font-weight: 700;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 1px;
+}
+.success .cd {
+  margin-top: 14px;
+  font-family: ui-monospace, monospace;
+  font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--mute);
+}
+.success .cd #cd {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* Spinner */
 @keyframes spin {
   0%   { content: "[ / ]"; }
   25%  { content: "[ - ]"; }
@@ -150,62 +250,78 @@ button.primary:hover:not(:disabled) { background: var(--paper); color: var(--ink
   100% { content: "[ / ]"; }
 }
 .spin::before { content: "[ / ]"; animation: spin 480ms steps(4) infinite; }
-ul.networks { list-style: none; margin: 8px 0 0; padding: 0; max-height: 220px; overflow-y: auto; border: 1px solid var(--ash); }
-ul.networks li {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--ash);
-  cursor: pointer;
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
+
+/* Footer */
+.foot {
+  margin-top: 40px;
+  padding-top: 14px;
+  border-top: 1px solid var(--ink);
+  display: flex; justify-content: space-between; align-items: baseline;
+  font-family: ui-monospace, monospace;
+  font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--mute);
 }
-ul.networks li:last-child { border-bottom: 0; }
-ul.networks li:hover { background: var(--ink); color: var(--paper); }
-ul.networks li.sel { background: var(--ink); color: var(--paper); }
-.bars { font-family: ui-monospace, monospace; }
 </style>
 </head>
 <body>
 <div class="wrap">
-  <header class="head">
-    <div class="brand">[SLATE]</div>
-    <div class="sub">━━ DEVICE CONFIGURATION · {{AP_SSID}} ━━</div>
-    <div class="tick"></div>
+  <header class="masthead">
+    <div class="kicker">
+      <span>第 〇 卷 · 配 网 portal</span>
+      <span>{{AP_SSID}}</span>
+    </div>
+    <h1 class="brand">Slate<span class="brand-dot">.</span></h1>
+    <p class="tag">案头那一块墨水屏，先递上凭证。</p>
+    <div class="rule"></div>
+    <div class="rule-thick"></div>
   </header>
 
   <form id="f">
     <section>
-      <h2>① WIFI</h2>
-      <ul id="nets" class="networks"><li><span>扫描中...</span><span class="spin"></span></li></ul>
+      <header class="sechead">
+        <span class="num serif">I.</span>
+        <h2>无线网络</h2>
+        <span class="eyebrow">wifi</span>
+      </header>
+      <ul id="nets" class="networks">
+        <li class="placeholder"><span class="ssid">扫描中</span><span class="meta"><span class="spin"></span></span></li>
+      </ul>
       <label>
-        <span class="lbl">SSID</span>
-        <input id="ssid" name="ssid" type="text" required maxlength="32" placeholder="点上方列表自动填入,或手动输入">
+        <span class="lbl">ssid</span>
+        <input id="ssid" name="ssid" type="text" required maxlength="32" placeholder="点上方列表自动填入，或手动输入">
       </label>
       <label>
-        <span class="lbl">PASSWORD</span>
+        <span class="lbl">password</span>
         <input id="password" name="password" type="password" maxlength="64" placeholder="开放网络留空即可">
       </label>
     </section>
 
     <section>
-      <h2>② SERVER</h2>
+      <header class="sechead">
+        <span class="num serif">II.</span>
+        <h2>服务地址</h2>
+        <span class="eyebrow">server</span>
+      </header>
       <label>
-        <span class="lbl">URL</span>
+        <span class="lbl">url</span>
         <input id="server_url" name="server_url" type="url" required
                value="{{SERVER_URL}}"
-               placeholder="https://slate.your-domain.com 或 http://192.168.1.2:3001">
+               placeholder="https://slate.your-domain.com">
       </label>
-      <p style="margin: 6px 0 0; font-size: 10px; letter-spacing: 0.05em; color: var(--ash);">
-        填运行 slate 后端的地址。本地局域网调试用 http://&lt;LAN-IP&gt;:3001 即可。
-      </p>
+      <p class="hint">填运行 slate 后端的地址。本地调试用 http://&lt;LAN-IP&gt;:3001 即可。</p>
     </section>
 
-    <button type="submit" class="primary" id="btn">配网并连接 [⏎]</button>
+    <button type="submit" class="primary" id="btn">
+      <span>配网并连接</span>
+      <span class="arrow">⏎ →</span>
+    </button>
   </form>
 
   <div id="status"></div>
 
-  <p class="foot">SLATE / v0.1.0 · 192.168.4.1</p>
+  <footer class="foot">
+    <span>slate · v0.1.0</span>
+    <span>192.168.4.1</span>
+  </footer>
 </div>
 
 <script>
@@ -233,16 +349,30 @@ async function scan() {
     const ul = $('nets');
     ul.innerHTML = '';
     if (!list.length) {
-      ul.innerHTML = '<li><span>未扫到网络</span><span></span></li>';
+      ul.innerHTML = '<li class="placeholder"><span class="ssid">未扫到网络</span><span class="meta">—</span></li>';
       return;
     }
     for (const ap of list) {
       const li = document.createElement('li');
       const left = document.createElement('span');
-      left.textContent = ap.ssid + (ap.authmode === 0 ? ' [OPEN]' : '');
+      left.className = 'ssid';
+      const ssidText = document.createTextNode(ap.ssid);
+      left.appendChild(ssidText);
+      if (ap.authmode === 0) {
+        const open = document.createElement('span');
+        open.className = 'open';
+        open.textContent = 'open';
+        left.appendChild(open);
+      }
       const right = document.createElement('span');
-      right.className = 'bars';
-      right.textContent = rssiBars(ap.rssi) + ' ' + ap.rssi;
+      right.className = 'meta';
+      const bars = document.createElement('span');
+      bars.className = 'bars';
+      bars.textContent = rssiBars(ap.rssi);
+      const dbm = document.createElement('span');
+      dbm.textContent = ap.rssi + 'dBm';
+      right.appendChild(bars);
+      right.appendChild(dbm);
       li.appendChild(left);
       li.appendChild(right);
       li.addEventListener('click', () => {
@@ -253,7 +383,7 @@ async function scan() {
       ul.appendChild(li);
     }
   } catch (e) {
-    $('nets').innerHTML = '<li><span>扫描失败 · 重试中</span><span></span></li>';
+    $('nets').innerHTML = '<li class="placeholder"><span class="ssid">扫描失败 · 重试中</span><span class="meta"><span class="spin"></span></span></li>';
   } finally {
     scanning = false;
   }
@@ -262,25 +392,38 @@ scan();
 const scanTimer = setInterval(scan, 5000);
 
 function showSuccess(ssid) {
-  // 隐藏 form 与扫描区,显示大块 success 提示 + 倒计时
   document.querySelector('form').style.display = 'none';
   status.style.display = 'none';
   const wrap = document.querySelector('.wrap');
   const box = document.createElement('section');
-  box.style.borderColor = 'var(--ink)';
-  box.style.borderWidth = '2px';
-  box.style.padding = '24px';
-  box.style.marginTop = '24px';
-  box.innerHTML =
-    '<h2 style="font-size:20px;letter-spacing:0;text-transform:none;margin:0 0 16px;">' +
-    '✓ 配网成功</h2>' +
-    '<p style="margin:0 0 12px;font-size:14px;line-height:1.6;">' +
-    '设备将连接到 <strong>' + ssid + '</strong> 并自动重启。</p>' +
-    '<p style="margin:0 0 12px;font-size:14px;line-height:1.6;">' +
-    '设备屏幕也会显示"配网成功"和重启倒计时。</p>' +
-    '<p style="margin:0;font-size:12px;color:var(--ash);">' +
-    '本页将在 <span id="cd">5</span> 秒后失联,可直接关闭。</p>';
-  wrap.appendChild(box);
+  box.className = 'success';
+  const eyebrow = document.createElement('p');
+  eyebrow.className = 'ok-eyebrow';
+  eyebrow.textContent = '✓ 配 网 成 功 · paired';
+  const h3 = document.createElement('h3');
+  h3.textContent = '设备即将自启。';
+  const p1 = document.createElement('p');
+  p1.textContent = '设备将连接到 ';
+  const strong = document.createElement('strong');
+  strong.textContent = ssid;
+  p1.appendChild(strong);
+  p1.appendChild(document.createTextNode('，并在数秒内自动重启。'));
+  const p2 = document.createElement('p');
+  p2.textContent = '设备屏幕也会同步显示「配网成功」与重启倒计时。';
+  const p3 = document.createElement('p');
+  p3.className = 'cd';
+  p3.textContent = '本页将在 ';
+  const cdSpan = document.createElement('span');
+  cdSpan.id = 'cd';
+  cdSpan.textContent = '5';
+  p3.appendChild(cdSpan);
+  p3.appendChild(document.createTextNode(' 秒后失联，可直接关闭。'));
+  box.appendChild(eyebrow);
+  box.appendChild(h3);
+  box.appendChild(p1);
+  box.appendChild(p2);
+  box.appendChild(p3);
+  wrap.insertBefore(box, document.querySelector('.foot'));
   let n = 5;
   const t = setInterval(() => {
     n--;
@@ -300,7 +443,7 @@ $('f').addEventListener('submit', async (e) => {
   if (!body.ssid) { setStatus('SSID 不能空', 'err'); return; }
   if (!body.server_url) { setStatus('服务端 URL 不能空', 'err'); return; }
   $('btn').disabled = true;
-  setStatus('正在试连 ' + body.ssid + ' …(最多 10 秒)', 'info');
+  setStatus('正在试连 ' + body.ssid + ' …（最多 10 秒）', 'info');
   try {
     const r = await fetch('/submit', {
       method: 'POST',
@@ -309,14 +452,14 @@ $('f').addEventListener('submit', async (e) => {
     });
     const data = await r.json();
     if (!r.ok || !data.success) {
-      setStatus('[ERROR] ' + (data.error || ('HTTP ' + r.status)) + ' · 请改密码后重试', 'err');
+      setStatus((data.error || ('HTTP ' + r.status)) + ' · 请改密码后重试', 'err');
       $('btn').disabled = false;
       return;
     }
     clearInterval(scanTimer);
     showSuccess(body.ssid);
   } catch (err) {
-    setStatus('[ERROR] 网络错误: ' + (err && err.message || '未知') + ' · 请重试', 'err');
+    setStatus('网络错误: ' + (err && err.message || '未知') + ' · 请重试', 'err');
     $('btn').disabled = false;
   }
 });
