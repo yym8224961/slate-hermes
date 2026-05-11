@@ -20,6 +20,6 @@
       "shared/*": ["../shared/src/*"]
     }
   },
-  "include": ["src/**/*", "test/**/*", "../shared/src/**/*"],
+  "include": ["src/**/*", "test/**/*", "scripts/**/*", "../shared/src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

@@ -13,7 +13,7 @@ jobs:
     name: ESP-IDF build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: ESP-IDF build
         uses: espressif/esp-idf-ci-action@v1
@@ -27,7 +27,7 @@ jobs:
             cp build/slate.bin build/slate-ota.bin
 
       - name: upload firmware
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: firmware
           path: |

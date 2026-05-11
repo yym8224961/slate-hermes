@@ -19,7 +19,7 @@ COPY shared ./shared
 RUN bun run --cwd frontend build
 
 # ---------- runner ----------
-FROM oven/bun:1-slim AS runner
+FROM oven/bun:1-alpine AS runner
 
 WORKDIR /app
 
@@ -27,11 +27,9 @@ ENV NODE_ENV=production \
     PORT=3001 \
     BLOB_DIR=/data/blobs
 
-# curl 用于 HEALTHCHECK;ffmpeg 用于音频转码(audio.service 把上传的任意音频
-# 转成 16k mono s16le PCM,frame 上传带音频必须有 ffmpeg)
-RUN apt-get update \
- && apt-get install -y --no-install-recommends curl ffmpeg \
- && rm -rf /var/lib/apt/lists/*
+# ffmpeg 用于音频转码(audio.service 把上传的任意音频转成 16k mono s16le PCM)
+# HEALTHCHECK 复用 alpine 自带的 busybox wget,无需额外装包
+RUN apk add --no-cache ffmpeg
 
 # === 按变更频率从低到高分层,客户端 docker pull 增量最小 ===
 
@@ -67,14 +65,16 @@ COPY backend/src ./backend/src
 COPY entrypoint.sh ./
 RUN chmod +x /app/entrypoint.sh
 
-RUN useradd --system --no-create-home --shell /usr/sbin/nologin appuser \
- && chown -R appuser:appuser /app
+# alpine 的 adduser 来自 busybox,只支持短选项;显式 addgroup 以保证 chown 命中正确 group
+RUN addgroup -S appuser \
+ && adduser -S -H -s /sbin/nologin -G appuser appuser
+# chown 仅限需要写入的目录;其余层用 COPY --chown 在构建时设置
 USER appuser
 
 VOLUME ["/data/blobs"]
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD curl -fsS "http://localhost:${PORT}/healthz" || exit 1
+  CMD wget --spider -q "http://localhost:${PORT}/healthz" || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]

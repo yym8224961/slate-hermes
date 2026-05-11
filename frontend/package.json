@@ -26,7 +26,8 @@
     "react-dom": "^19.0.0",
     "react-dropzone": "^15.0.0",
     "react-router-dom": "^7.1.0",
-    "shared": "workspace:*"
+    "shared": "workspace:*",
+    "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

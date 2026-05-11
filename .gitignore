@@ -19,7 +19,6 @@ build/
 # === 编辑器 / AI 工具 ===
 .idea/
 .vscode/
-.qwen/
 .claude/
 .gemini/
 *.swp
