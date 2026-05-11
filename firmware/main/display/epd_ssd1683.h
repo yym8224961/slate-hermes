@@ -11,7 +11,7 @@
 #include <functional>
 
 // SSD1683 类驱动 4.2" 黑白 EPD（400×300，1bpp）+ LVGL 集成。
-// SPI 写帧 + 异步 refresh_task（300ms 节流，防过频刷新损伤 EPD）+ LVGL flush_cb
+// SPI 写帧 + 异步 refresh_task（300 ms 节流，防过频刷新损伤 EPD）+ LVGL flush_cb
 // 阈值化 RGB565→1bpp。RequestUrgentFullRefresh() 立即触发全帧刷新。
 class EpdSsd1683 {
    public:
@@ -76,15 +76,15 @@ class EpdSsd1683 {
     static void RefreshTaskEntry(void* arg);
     void        RefreshTaskLoop();
 
-    void SpiPortInit();    // 发送模式（DI 当 MOSI，40MHz）
-    void SpiPortRxInit();  // 接收模式（DI 反向当 MISO，8MHz）—— 读温度寄存器
+    void SpiPortInit();    // 发送模式（DI 当 MOSI，40 MHz）
+    void SpiPortRxInit();  // 接收模式（DI 反向当 MISO，8 MHz）—— 读温度寄存器
     void SpiGpioInit();
     void EpdInit();
     void EpdDisplayFull();
     void EpdDisplayPartial();
     void EpdTurnOnDisplay();
     // 读屏内温度寄存器(0x40)→映射 5 档 booster 写 0xE0/0xE6,Full/Partial 共用。
-    // 60s 内重复刷新会复用上次温度避免每次 5-10ms 切换 SPI 模式开销。
+    // 60 s 内重复刷新会复用上次温度避免每次 5~10 ms 切换 SPI 模式开销。
     void    ApplyTemperatureBoost();
     int64_t last_temp_read_ms_ = 0;
     uint8_t cached_booster_    = 0;

@@ -43,11 +43,14 @@ bool Load(Credentials& out) {
 bool Save(const Credentials& c) {
     nvs_handle_t h;
     if (nvs_open(kNs, NVS_READWRITE, &h) != ESP_OK) return false;
-    nvs_set_str(h, "wifi_ssid", c.wifi_ssid.c_str());
-    nvs_set_str(h, "wifi_pwd", c.wifi_pwd.c_str());
-    nvs_set_str(h, "server_url", c.server_url.c_str());
-    esp_err_t e = nvs_commit(h);
+    esp_err_t e = nvs_set_str(h, "wifi_ssid", c.wifi_ssid.c_str());
+    if (e == ESP_OK) e = nvs_set_str(h, "wifi_pwd", c.wifi_pwd.c_str());
+    if (e == ESP_OK) e = nvs_set_str(h, "server_url", c.server_url.c_str());
+    if (e == ESP_OK) e = nvs_commit(h);
     nvs_close(h);
+    if (e != ESP_OK) {
+        ESP_LOGE(kTag, "Save: failed (%s)", esp_err_to_name(e));
+    }
     return e == ESP_OK;
 }
 

@@ -26,7 +26,7 @@ export class JwtTokenService {
     try {
       return jwt.verify(token, this.config.jwtSecret) as JwtPayload;
     } catch {
-      throw new AuthError('missing or invalid token');
+      throw new AuthError('令牌无效或已过期');
     }
   }
 }

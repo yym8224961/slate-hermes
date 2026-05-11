@@ -1,6 +1,6 @@
 // 帧编辑器 — create + edit 共用同一套 form，作为独立页面渲染。
 //
-// 拆分:
+// 拆分：
 //   PreviewCanvas   — 1bpp 预览 + 拖拽/缩放交互
 //   ImageDropzone   — 选图(可选)
 //   AudioDropzone   — 选音频 + 删除已有音频

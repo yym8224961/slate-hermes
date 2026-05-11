@@ -1,10 +1,10 @@
 // 模拟设备端状态栏 overlay，叠在 frame 预览顶部。
 //
-// 设备实际渲染规则:Frame 是 400×300,设备会在顶部叠加 24px 白底状态栏
-// (左 WiFi 图标 / 中 caption / 右电量图标)。这层 overlay 1:1 显示给作者看,
+// 设备实际渲染规则：Frame 是 400×300，设备会在顶部叠加 24px 白底状态栏
+// （左 Wi-Fi 图标 / 中 caption / 右电量图标）。这层 overlay 1:1 显示给作者看，
 // 上传时就能预判主体会不会被盖住。
 //
-// 8% 高 = 24/300 frame 高度比例。容器要 relative + overflow-hidden,
+// 8% 高 = 24/300 frame 高度比例。容器要 relative + overflow-hidden，
 // 自身 absolute top/left/right。pointer-events-none 不拦截下方点击。
 
 import { Wifi, BatteryFull } from 'lucide-react';
@@ -31,7 +31,7 @@ export function StatusBarOverlay({ caption, className, showSafeArea }: StatusBar
         aria-hidden="true"
       >
         <Wifi size={14} className="text-ink shrink-0" />
-        <span className="font-kai text-ink truncate text-[10px] sm:text-[11px] md:text-[12px] flex-1 text-center">
+        <span className="font-serif text-ink truncate text-[10px] sm:text-[11px] md:text-[12px] flex-1 text-center">
           {caption || ' '}
         </span>
         <BatteryFull size={14} className="text-ink shrink-0" />

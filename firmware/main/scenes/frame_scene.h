@@ -8,7 +8,7 @@
 //   ChargeChanged / BatteryUpdated / WifiStateChanged → 更新状态栏
 //   GroupReady                  → 如 gid 变了，重新 Rebind + LoadFrame default
 //   SyncStarted/Finished        → 状态栏同步图标
-//   MinuteTick                  → 重读 wifi/battery 喂状态栏
+//   MinuteTick                  → 重读 Wi-Fi/battery 喂状态栏
 
 #include <memory>
 #include <string>
@@ -42,7 +42,7 @@ class FrameScene : public Scene {
     // 根据 frame_count_ 切换「空相册提示」与 frame_view 的可见性。
     void ApplyEmptyState();
     // 持锁同步渲染 + 触发 partial/full refresh。改 status_bar 后必调,
-    // 否则 LVGL 异步路径常在 RefreshTask 50ms debounce 之后才 flush,
+    // 否则 LVGL 异步路径常在 RefreshTask 50 ms debounce 之后才 flush，
     // refresh_task 拿到 prev=cur Diff=0 直接跳过,表现为图标不刷新。
     void SyncRender(SceneContext& ctx, bool force_full);
 

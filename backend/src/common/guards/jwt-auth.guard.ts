@@ -36,15 +36,15 @@ export class JwtAuthGuard implements CanActivate {
     >();
 
     const token = extractToken(req);
-    if (!token) throw new AuthError('missing or invalid token');
+    if (!token) throw new AuthError('未登录或登录已过期');
 
     let payload: JwtPayload;
     try {
       payload = jwt.verify(token, this.config.jwtSecret) as JwtPayload;
     } catch {
-      throw new AuthError('missing or invalid token');
+      throw new AuthError('未登录或登录已过期');
     }
-    if (!payload?.sub) throw new AuthError('missing or invalid token');
+    if (!payload?.sub) throw new AuthError('未登录或登录已过期');
 
     req[CURRENT_USER_KEY] = {
       userId: payload.sub,

@@ -50,7 +50,7 @@ export class GroupsService {
         },
       },
     });
-    if (!group) throw new NotFoundError(`group ${groupId} not found`);
+    if (!group) throw new NotFoundError(`相册 ${groupId} 不存在`);
 
     const parts = [
       group.name,
@@ -83,14 +83,14 @@ export class GroupsService {
       where: { id: deviceId },
       select: { ownerUserId: true },
     });
-    if (!device) throw new NotFoundError(`device ${deviceId} not found`);
+    if (!device) throw new NotFoundError(`设备 ${deviceId} 不存在`);
 
     const group = await this.prisma.group.findUnique({
       where: { id: gid },
       select: { ownerUserId: true },
     });
     if (!group || group.ownerUserId !== device.ownerUserId) {
-      throw new ForbiddenError('group not in same owner scope', {
+      throw new ForbiddenError('所选相册不属于该设备的拥有者', {
         code: 'group_not_in_scope',
       });
     }
@@ -106,7 +106,7 @@ export class GroupsService {
       where: { id: deviceId },
       select: { ownerUserId: true, selectedGroupId: true },
     });
-    if (!device) throw new NotFoundError(`device ${deviceId} not found`);
+    if (!device) throw new NotFoundError(`设备 ${deviceId} 不存在`);
 
     const groups = await this.listOwnerGroups(device.ownerUserId);
     if (groups.length === 0) return emptyCycle();
@@ -141,7 +141,7 @@ export class GroupsService {
       where: { id: deviceId },
       select: { ownerUserId: true, selectedGroupId: true },
     });
-    if (!device) throw new NotFoundError(`device ${deviceId} not found`);
+    if (!device) throw new NotFoundError(`设备 ${deviceId} 不存在`);
     if (!device.selectedGroupId) return emptyCycle();
 
     const groups = await this.listOwnerGroups(device.ownerUserId);
@@ -183,7 +183,7 @@ export class GroupsService {
       include: { _count: { select: { frames: true } } },
     });
     if (!g || g.ownerUserId !== ownerUserId) {
-      throw new NotFoundError('group not found');
+      throw new NotFoundError('相册不存在');
     }
     const sizeMap = await this.aggregateBytes([gid]);
     return toSummary(g, sizeMap.get(gid) ?? 0);
@@ -200,9 +200,9 @@ export class GroupsService {
       },
       include: { _count: { select: { frames: true } } },
     });
-    // 反向自动绑定:这是 owner 的第一个相册时,把所有 selectedGroupId=null 的已绑设备都指过来。
-    // 配合 claim 时的「已有相册则自动绑第一个」,新用户全程不需要再去设备详情手动「分配相册」。
-    // 仅在 count==1 时触发,避免后续创建相册时覆盖用户主动留空的设备。
+    // 反向自动绑定：这是 owner 的第一个相册时，把所有 selectedGroupId=null 的已绑设备都指过来。
+    // 配合 claim 时的「已有相册则自动绑第一个」，新用户全程不需要再去设备详情手动「分配相册」。
+    // 仅在 count==1 时触发，避免后续创建相册时覆盖用户主动留空的设备。
     const groupCount = await this.prisma.group.count({ where: { ownerUserId } });
     if (groupCount === 1) {
       const result = await this.prisma.device.updateMany({
@@ -228,7 +228,7 @@ export class GroupsService {
       select: { ownerUserId: true, name: true },
     });
     if (!g || g.ownerUserId !== ownerUserId) {
-      throw new NotFoundError('group not found');
+      throw new NotFoundError('相册不存在');
     }
     const data: { name?: string; sortOrder?: number } = {};
     if (body.name !== undefined) data.name = body.name;
@@ -248,7 +248,7 @@ export class GroupsService {
       },
     });
     if (!g || g.ownerUserId !== ownerUserId) {
-      throw new NotFoundError('group not found');
+      throw new NotFoundError('相册不存在');
     }
     await Promise.all(
       g.frames.flatMap((f) => {
@@ -281,7 +281,7 @@ export class GroupsService {
       orderSet.size !== order.length ||
       !order.every((id) => ownedSet.has(id))
     ) {
-      throw new ValidationError('order must list every owned group exactly once', {
+      throw new ValidationError('排序列表须包含所有相册且不重复', {
         code: 'order_mismatch',
       });
     }
@@ -320,7 +320,7 @@ export class GroupsService {
       select: { ownerUserId: true },
     });
     if (!g || g.ownerUserId !== ownerUserId) {
-      throw new NotFoundError('group not found');
+      throw new NotFoundError('相册不存在');
     }
   }
 }

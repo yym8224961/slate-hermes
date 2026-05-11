@@ -1,3 +1,5 @@
+// 对话框通用标题区：图标块 + 标题/副标题 + 关闭按钮。
+
 import type { ReactNode } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { X } from 'lucide-react';

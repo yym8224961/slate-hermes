@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { AppConfig } from '../../infra/config/app.config';
 
@@ -34,7 +34,7 @@ export class RenderCacheService {
     return createHash('sha1').update(raw).digest('hex');
   }
 
-  /** {BLOB_DIR}/render-cache/{key0..2}/{key}.bin —— 两层 hex 前缀避免单目录爆 inode */
+  /** {BLOB_DIR}/render-cache/{key0..2}/{key}.bin —— 两层 hex 前缀避免单目录爆 inode。 */
   path(key: string): string {
     return join(this.config.blobDir, 'render-cache', key.slice(0, 2), `${key}.bin`);
   }
@@ -95,7 +95,7 @@ export class RenderCacheService {
     } catch {
       return { removed: 0 };
     }
-    const { readdir, unlink } = await import('node:fs/promises');
+
     for (const prefix of await readdir(root)) {
       const dir = join(root, prefix);
       for (const file of await readdir(dir).catch(() => [])) {

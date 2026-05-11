@@ -14,9 +14,9 @@ export class AuthService {
 
   async login(input: LoginRequestT): Promise<LoginResponseT> {
     const user = await this.users.findByIdentifier(input.identifier);
-    if (!user) throw new AuthError('invalid credentials');
+    if (!user) throw new AuthError('账号或密码错误');
     const ok = await bcrypt.compare(input.password, user.password);
-    if (!ok) throw new AuthError('invalid credentials');
+    if (!ok) throw new AuthError('账号或密码错误');
 
     const token = this.tokens.sign({
       sub: user.id,

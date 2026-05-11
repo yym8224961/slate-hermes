@@ -1,3 +1,5 @@
+// 内容组卡片：可拖拽排序 + 帧数展示 + 底部操作行。
+
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Layers, Trash2, GripVertical } from 'lucide-react';

@@ -229,8 +229,8 @@ void App::InitSceneStack() {
 
 void App::StartUiLoop() {
     ui_loop_running_ = true;
-    // ui_loop 8KB：与 home_worker 一致；LVGL render+flush_cb 调用栈装得下，
-    // esp_timer task / button cb task 装不下（栈 3584）。
+    // ui_loop 8 KB：与 home_worker 一致；LVGL render+flush_cb 调用栈装得下，
+    // esp_timer task / button cb task 装不下（栈 3584 B）。
     BaseType_t ok = xTaskCreatePinnedToCore(&App::UiLoopEntry, "ui_loop",
                                             8 * 1024, this, 5, nullptr, 0);
     configASSERT(ok == pdPASS);
@@ -467,7 +467,7 @@ void App::StartSleep() {
 
 void App::FinalizePm() {
     // light_sleep_enable=false：USB CDC/JTAG 在用时 ESP32-S3 不允许 CPU power down，
-    // sleep_cpu_configure 会打 E 级 log。DFS（80-240MHz）仍开，空闲时降频省电。
+    // sleep_cpu_configure 会打 E 级 log。DFS（80~240 MHz）仍开，空闲时降频省电。
     // 阶段 4 进 deep sleep 替代 light sleep。
     esp_pm_config_t pm = {
         .max_freq_mhz       = 240,

@@ -3,13 +3,14 @@
 #include <esp_log.h>
 
 #include "../display/epd_ssd1683.h"
+#include "theme.h"
 
 namespace {
 constexpr char kTag[]      = "FrameView";
-constexpr int  kStatusBarH = 28;
-constexpr int  kImgH       = FrameView::kHeight - kStatusBarH;  // 272
+constexpr int  kStatusBarH = theme::kStatusBarHeight;
+constexpr int  kImgH       = FrameView::kHeight - kStatusBarH;  // 276
 constexpr int  kBpr        = FrameView::kWidth >> 3;            // 50
-constexpr int  kImgBytes   = kImgH * kBpr;                      // 13600
+constexpr int  kImgBytes   = kImgH * kBpr;                      // 13800
 }  // namespace
 
 FrameView::FrameView(lv_obj_t* parent) {
@@ -29,7 +30,7 @@ void FrameView::SetFrame(EpdSsd1683* epd, const std::vector<uint8_t>& raw) {
         ESP_LOGW(kTag, "Raw size %u != %d", static_cast<unsigned>(raw.size()), kRawBytes);
         return;
     }
-    // 跳过状态栏占用的顶部 28 行，直接写内容区（rows 28-299）。
+    // 跳过状态栏占用的顶部 kStatusBarH 行，直接写内容区（rows kStatusBarH..299）。
     epd->WriteRaw1bpp(0, kStatusBarH, kWidth, kImgH,
                       raw.data() + kStatusBarH * kBpr, kImgBytes);
 }

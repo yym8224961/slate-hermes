@@ -48,12 +48,12 @@ export class UsersService {
     password: string
   ): Promise<{ id: string; email: string; username: string | null }> {
     const existing = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
-    if (existing) throw new ConflictError('email already registered');
+    if (existing) throw new ConflictError('该邮箱已被注册');
     const existingUsername = await this.prisma.user.findUnique({
       where: { username },
       select: { id: true },
     });
-    if (existingUsername) throw new ConflictError('username already taken');
+    if (existingUsername) throw new ConflictError('该用户名已被占用');
     const hash = await bcrypt.hash(password, 10);
     return this.prisma.user.create({
       data: { email, username, password: hash },

@@ -158,7 +158,7 @@ void BootSplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             need_render = true;
         }
     } else if (e.kind == UiEventKind::kSyncProgress) {
-        // 节流:current 不变 / 距上次 < 500ms 都跳过
+        // 节流：current 不变 / 距上次 < 500 ms 都跳过
         const uint8_t    cur = e.u.progress.current;
         const TickType_t now = xTaskGetTickCount();
         if (cur == last_progress_current_) return;
@@ -200,8 +200,8 @@ void BootSplashScene::Render(SceneContext& ctx) {
             FormatApSsid(ap_ssid, sizeof(ap_ssid));
             std::snprintf(buf, sizeof(buf),
                           "配网模式\n\n"
-                          "请连接 WiFi:\n%s\n\n"
-                          "浏览器打开:\nhttp://192.168.4.1",
+                          "请连接 Wi-Fi：\n%s\n\n"
+                          "浏览器打开：\nhttp://192.168.4.1",
                           ap_ssid);
             break;
         }

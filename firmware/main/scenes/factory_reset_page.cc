@@ -55,9 +55,9 @@ void FactoryResetPage::OnEnter(SceneContext& ctx) {
     lv_obj_set_width(warn, LV_HOR_RES - 64);
     lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
     lv_label_set_text(warn,
-        "确认要恢复出厂吗?\n\n"
-        "WiFi 配置 + 设备绑定\n"
-        "+ 所有图片缓存 全部清除\n"
+        "确认要恢复出厂吗？\n\n"
+        "Wi-Fi 配置、设备绑定\n"
+        "及所有图片缓存将全部清除\n"
         "重启后进入配网模式");
     lv_obj_align(warn, LV_ALIGN_CENTER, 0, -8);
 

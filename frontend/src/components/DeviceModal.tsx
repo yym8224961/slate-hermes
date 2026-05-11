@@ -115,7 +115,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
       <Dialog.Portal>
         <Dialog.Overlay className={dialogOverlayCls} />
         <Dialog.Content className={dialogContentWideCls}>
-          {/* 顶栏:状态点 + mac + 关闭 */}
+          {/* 顶栏：状态点 + mac + 关闭 */}
           <div className="flex items-center justify-between gap-4 px-6 sm:px-7 pt-5 pb-3.5 border-b border-line">
             <div className="min-w-0">
               <p className="inline-flex items-center gap-2 text-[12px] text-stone">
@@ -186,7 +186,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
               </p>
             </section>
 
-            {/* metadata 网格 — 离线时电量/信号灰显(数据已过期) */}
+            {/* metadata 网格 — 离线时电量/信号灰显（数据已过期） */}
             <section>
               <h3 className="font-sans text-[12px] uppercase tracking-wide text-stone mb-2">
                 状态
@@ -248,7 +248,7 @@ function MetaCard({
   mono?: boolean;
   warn?: boolean;
   hint?: string;
-  /** 数据已过期(设备离线),整卡灰显 */
+  /** 数据已过期（设备离线），整卡灰显 */
   stale?: boolean;
 }) {
   return (
@@ -302,7 +302,7 @@ function GroupSelector({
       {showNone && groups.length > 0 && <SelectSeparator />}
       {groups.map((g) => (
         <SelectItem key={g.id} value={g.id} hint={`${g.frame_count} 帧`}>
-          <span className="font-kai">{g.name}</span>
+          <span className="font-serif">{g.name}</span>
         </SelectItem>
       ))}
     </Select>

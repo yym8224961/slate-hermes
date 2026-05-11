@@ -22,7 +22,7 @@ BoardPowerBsp::BoardPowerBsp(int audioPowerPin, int audioAmpPin, int vbatPowerPi
     // mode=OUTPUT level=0 立即生效,PA CTRL 稳是 LOW。后面 PowerAudioOn 拉高
     // GPIO42 给 PA U5 通电,CTRL 已经稳定 LOW,PA 不会放大 ES8311 默认 DC bias。
     // 这是消除开机"啵"声的关键时序点。AudioPlayer 后续负责在 codec dev open
-    // + DAC 稳定 100ms 后再拉高 PA(出声)。
+    // + DAC 稳定 100 ms 后再拉高 PA（出声）。
     gpio_config_t cfg = {};
     cfg.intr_type     = GPIO_INTR_DISABLE;
     cfg.mode          = GPIO_MODE_OUTPUT;

@@ -35,7 +35,7 @@ Button::Button(gpio_num_t gpio_num, bool active_high, uint16_t long_press_time, 
 }
 
 Button::~Button() {
-    if (button_handle_ != NULL) {
+    if (button_handle_ != nullptr) {
         iot_button_delete(button_handle_);
     }
 }

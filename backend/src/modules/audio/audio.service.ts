@@ -37,14 +37,13 @@ export class AudioService {
     return this.ffmpegAvailable;
   }
 
-  async transcodeAudio(inputBuffer: Buffer, originalName: string): Promise<Buffer> {
+  async transcodeAudio(inputBuffer: Buffer): Promise<Buffer> {
     if (!(await this.checkFfmpegAvailable())) {
-      throw new AudioTranscodeError('ffmpeg not available', 'FFMPEG_NOT_FOUND');
+      throw new AudioTranscodeError('音频处理服务不可用', 'FFMPEG_NOT_FOUND');
     }
 
     const tmpId = randomUUID();
-    const ext = originalName.split('.').pop()?.toLowerCase() ?? 'bin';
-    const inputPath = join(tmpdir(), `audio_input_${tmpId}.${ext}`);
+    const inputPath = join(tmpdir(), `audio_input_${tmpId}.bin`);
     const outputPath = join(tmpdir(), `audio_output_${tmpId}.pcm`);
 
     try {
@@ -73,18 +72,15 @@ export class AudioService {
 
       const outputBuffer = await readFile(outputPath);
       if (outputBuffer.length === 0) {
-        throw new AudioTranscodeError('transcode produced empty output', 'EMPTY_OUTPUT');
+        throw new AudioTranscodeError('音频转码失败：输出为空', 'EMPTY_OUTPUT');
       }
       if (outputBuffer.length > MAX_OUTPUT_BYTES) {
-        throw new AudioTranscodeError('output exceeds maximum size', 'OUTPUT_TOO_LARGE');
+        throw new AudioTranscodeError('音频时长超出限制', 'OUTPUT_TOO_LARGE');
       }
       return outputBuffer;
     } catch (err) {
       if (err instanceof AudioTranscodeError) throw err;
-      throw new AudioTranscodeError(
-        `transcode failed: ${err instanceof Error ? err.message : String(err)}`,
-        'TRANSCODE_FAILED'
-      );
+      throw new AudioTranscodeError('音频转码失败', 'TRANSCODE_FAILED');
     } finally {
       await unlink(inputPath).catch(() => {});
       await unlink(outputPath).catch(() => {});

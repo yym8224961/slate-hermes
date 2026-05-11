@@ -31,7 +31,7 @@ export class DeviceAuthGuard implements CanActivate {
 }
 
 // 从 Authorization: Bearer <token> 中提取 device_secret。
-// device_secret 必须是 64 字符 hex（registerOrReset 的明文格式），不是 hex 直接 reject —— 这条
+// device_secret 必须是 64 字符 hex（registerOrReset 的明文格式），不是 hex 直接 reject ——这条
 // 也保证 JwtOrDeviceAuthGuard 里 jwt 和 device 两条路径不会互相误识别（jwt 是三段 base64，
 // 含点；hex 不含点）。
 export function readDeviceSecret(req: FastifyRequest): string | null {

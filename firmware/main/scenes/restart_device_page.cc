@@ -53,8 +53,8 @@ void RestartDevicePage::OnEnter(SceneContext& ctx) {
     lv_obj_set_width(warn, LV_HOR_RES - 64);
     lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
     lv_label_set_text(warn,
-                      "确认要重启设备吗?\n\n"
-                      "WiFi 配置和已下载\n"
+                      "确认要重启设备吗？\n\n"
+                      "Wi-Fi 配置和已下载\n"
                       "的图片缓存都保留\n"
                       "重启完成后自动恢复");
     lv_obj_align(warn, LV_ALIGN_CENTER, 0, -8);

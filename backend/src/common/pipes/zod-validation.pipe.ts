@@ -11,7 +11,7 @@ export class ZodValidationPipe implements PipeTransform {
       return schema.parse(value);
     } catch (err) {
       if (err instanceof ZodError) {
-        throw new ValidationError('request validation failed', { issues: err.issues });
+        throw new ValidationError('请求参数验证失败', { issues: err.issues });
       }
       throw err;
     }

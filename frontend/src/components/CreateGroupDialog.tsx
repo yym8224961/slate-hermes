@@ -1,3 +1,5 @@
+// 新建组对话框—输入组名后回调 onCreate。
+
 import { useEffect, useState } from 'react';
 import { FolderHeart, ArrowRight } from 'lucide-react';
 import * as Dialog from '@radix-ui/react-dialog';

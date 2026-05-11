@@ -1,6 +1,6 @@
 #pragma once
 
-// WiFi 单例:STA 与 SoftAP 模式互斥,内部按需创建/销毁 netif。
+// Wi-Fi 单例：STA 与 SoftAP 模式互斥，内部按需创建/销毁 netif。
 // 设计参考 xiaozhi-esp32 的 wifi-connect 组件:
 //   - cfg.nvs_enable=false 禁用 ESP-IDF wifi 内置的 NVS 持久化,防止
 //     mode/config 残留在 NVS 让重启后状态错乱

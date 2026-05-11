@@ -58,7 +58,7 @@ void SettingsScene::OnEnter(SceneContext& ctx) {
     };
     menu_ = std::make_unique<MenuList>(root_, std::move(items), saved_cursor_);
 
-    // 首次填状态栏图标(wifi/电量)
+    // 首次填状态栏图标（Wi-Fi/电量）
     if (status_bar_) {
         if (ctx.wifi_connected && ctx.wifi_rssi) {
             status_bar_->SetWifi(ctx.wifi_connected(), ctx.wifi_rssi());

@@ -18,12 +18,12 @@
 namespace {
 constexpr char kTag[] = "Sleep";
 
-// 30 分钟兜底定时器唤醒。**防变砖核心**:
-// 万一 EXT1 配置错 / 按键焊点松 / hold 失效,timer 也能把设备捞起来。
+// 30 分钟兜底定时器唤醒。**防变砖核心**：
+// 万一 EXT1 配置错 / 按键焊点松 / hold 失效，timer 也能把设备捞起来。
 // 与参考实现 esp32-eink/.../zectrix-s3-epaper-4.2.cc:288 一致。
 constexpr uint64_t kFallbackTimerUs = 30ULL * 60 * 1000 * 1000;
 
-// 进 deep sleep 前等 EPD 刷新结束的最大时长。EPD 全刷 2-4s。
+// 进 deep sleep 前等 EPD 刷新结束的最大时长。EPD 全刷 2~4 s。
 constexpr int kEpdFlushTimeoutMs = 4000;
 
 // 把单个 GPIO 配成 RTC 数字输入 + 上拉 + hold,适合做 EXT1 ANY_LOW 唤醒源。
@@ -135,8 +135,8 @@ void SleepManager::EnterDeepSleep() {
     SyncService::Get().Stop();
     AudioPlayer::Get().Stop();
 
-    // 2) 强制 EPD 全屏刷一次 + 等传输完成。EPD 刷新 2-4s,中途断电会卡半截画面。
-    //    deadline 兜底,极端情况(屏挂)最多等 4s。
+    // 2) 强制 EPD 全屏刷一次 + 等传输完成。EPD 刷新 2~4 s，中途断电会卡半截画面。
+    //    deadline 兜底，极端情况（屏挂）最多等 4 s。
     if (auto* epd = Board::Get().epd()) {
         epd->RequestUrgentFullRefresh();
         const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kEpdFlushTimeoutMs);

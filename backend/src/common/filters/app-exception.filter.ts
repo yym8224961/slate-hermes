@@ -46,7 +46,7 @@ export class AppExceptionFilter implements ExceptionFilter {
     if (exception instanceof AppError) return exception;
 
     if (exception instanceof ZodError) {
-      return new ValidationError('request validation failed', {
+      return new ValidationError('请求参数验证失败', {
         issues: exception.issues,
       });
     }
@@ -82,6 +82,6 @@ export class AppExceptionFilter implements ExceptionFilter {
     if (exception instanceof Error) {
       return new InternalError(exception.message);
     }
-    return new InternalError('unknown error');
+    return new InternalError('服务器内部错误');
   }
 }

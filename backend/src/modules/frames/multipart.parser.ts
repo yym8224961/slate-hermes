@@ -20,7 +20,9 @@ const MODES = DITHER_MODES as readonly string[];
 export class MultipartParser {
   async parseFrame(req: FastifyRequest): Promise<ParsedFrameUpload> {
     if (!req.isMultipart()) {
-      throw new ValidationError('expected multipart/form-data', { code: 'not_multipart' });
+      throw new ValidationError('请求格式错误，请使用 multipart/form-data', {
+        code: 'not_multipart',
+      });
     }
     const result: ParsedFrameUpload = {
       hasImage: false,

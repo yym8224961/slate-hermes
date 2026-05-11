@@ -28,7 +28,7 @@ AudioPlayer& AudioPlayer::Get() {
 bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     if (initialized_) return true;
 
-    // ── I2S0 master TX-only 16kHz mono 16-bit。本类只播音不录音,
+    // ── I2S0 master TX-only 16 kHz mono 16-bit。本类只播音不录音，
     // 不分配 rx_handle 节省 DMA descriptor。
     i2s_chan_config_t chan_cfg = {};
     chan_cfg.id                = I2S_NUM_0;
@@ -101,7 +101,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     // PA pin 自管:codec lib 默认在 enable(true) 内 DAC start → pa_power(ENABLE)
     // → set_mute(false),三步紧挨,DAC 还没稳到零 PA 就上电了 → 喇叭"啵"。
     // 这里 pa_pin=-1 让 codec lib 完全不动 PA;EnsureCodecOpen 内自己控时序:
-    //   codec_dev_open(DAC start,但 PA 仍 LOW 不出声) → 等 100ms DAC 稳定 → 拉高 PA。
+    //   codec_dev_open（DAC start，但 PA 仍 LOW 不出声）→ 等 100 ms DAC 稳定 → 拉高 PA。
     // PA pin 的 OUTPUT + LOW + hold_en 已由 BoardPowerBsp 在最早的 InitPower 阶段
     // 完成,先于 PowerAudioOn 给 PA U5 通电 —— 这是消除开机"啵"声的根本时序点。
 
@@ -122,7 +122,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
 
     // 创建 codec dev handle,但不 open。Lazy 模式:第一次 Play 时才
     // esp_codec_dev_open(codec lib 内部 DAC start;pa_pin=-1 所以不动 PA)。
-    // PA 由 EnsureCodecOpen 在 codec_dev_open + 100ms DAC 稳定窗后自管拉高,
+    // PA 由 EnsureCodecOpen 在 codec_dev_open + 100 ms DAC 稳定窗后自管拉高，
     // 此时 DAC bias 已收敛到 0,放大也听不到"啵"。
     // 参考 zectrix-original/main/audio/codecs/es8311_audio_codec.cc 的 lazy
     // UpdateDeviceState 模式。
@@ -169,8 +169,8 @@ bool AudioPlayer::EnsureCodecOpen() {
         // 看到 codec_opened_=false 只缓存,不调 set_out_vol,音量同步丢失。
         codec_opened_ = true;
     }
-    // 等 DAC DC bias 稳定到零再上 PA,消除"啵"。100ms 是经验值:ES8311 上电
-    // 后前 ~50ms DC 输出有 mV 级跳动,稳定后再放大就听不到啵了。
+    // 等 DAC DC bias 稳定到零再上 PA，消除「啵」。100 ms 是经验值：ES8311 上电
+    // 后前 ~50 ms DC 输出有 mV 级跳动，稳定后再放大就听不到啵了。
     vTaskDelay(pdMS_TO_TICKS(100));
     // PA pin 在 BoardPowerBsp 构造时打了 hold_en,GpioWriteHold 内部包了
     // hold_dis → set_level → hold_en 三段式,跟 Power*On/Off 用法一致。
@@ -230,8 +230,8 @@ void AudioPlayer::TaskEntry(void* arg) {
 }
 
 void AudioPlayer::TaskLoop() {
-    // 256B/chunk = 8ms@16kHz mono16:stop_flag 检查粒度更细,切歌响应更及时。
-    // 配合切歌前 set_out_vol(0) + 20ms delay 数字静音衔接,人耳基本听不到"啵"。
+    // 256 B/chunk = 8 ms@16 kHz mono16：stop_flag 检查粒度更细，切歌响应更及时。
+    // 配合切歌前 set_out_vol(0) + 20 ms 数字静音衔接，人耳基本听不到“啵”。
     constexpr size_t kChunk = 256;
     while (true) {
         // 等通知
@@ -249,17 +249,17 @@ void AudioPlayer::TaskLoop() {
         if (!buf || len == 0) continue;
 
         // 第一次播放才真正打开 codec(lazy)。Init 时不 open,目的是开机不出"啵"。
-        // EnsureCodecOpen 内做完整时序:open → 等 100ms DAC 稳定 → 拉高 PA。
+        // EnsureCodecOpen 内做完整时序：open → 等 100 ms DAC 稳定 → 拉高 PA。
         if (!EnsureCodecOpen()) {
             free(buf);
             continue;
         }
 
-        // 中断当前播放后,直接接续写新 PCM 会"啵":旧 PCM 最后样本和新 PCM 第一
-        // 样本之间 DC 跳变,被 PA 直接放大。先 set_out_vol(0) 数字静音,等 DAC
-        // 收敛再写新 PCM 同时恢复音量,衔接平滑。
-        // 旧实现 i2s_channel_disable+enable 想"清 DMA",但 disable 让 DAC 输入断,
-        // enable 重启又是一次跳变,自己引发"啵",反效果。
+        // 中断当前播放后，直接接续写新 PCM 会“啵”：旧 PCM 最后样本和新 PCM 第一
+        // 样本之间 DC 跳变，被 PA 直接放大。先 set_out_vol(0) 数字静音，等 DAC
+        // 收敛再写新 PCM 同时恢复音量，衔接平滑。
+        // 旧实现 i2s_channel_disable+enable 想“清 DMA”，但 disable 让 DAC 输入断，
+        // enable 重启又是一次跳变，自己引发“啵”，反效果。
         bool need_unmute_after = false;
         if (codec_in_progress_) {
             ScopedI2cBusLock lock("AudioPlayer::switch_mute");
@@ -267,8 +267,8 @@ void AudioPlayer::TaskLoop() {
                 esp_codec_dev_set_out_vol(dev_, 0);
             }
             need_unmute_after = true;
-            // 20ms 让 DMA 把残留旧 PCM 在 0 vol 下播完(每帧 240 samples / 16kHz
-            // = 15ms,DMA 6 帧约 90ms 残留;20ms 不够清空但够 codec 数字音量
+            // 20 ms 让 DMA 把残留旧 PCM 在 0 vol 下播完（每帧 240 samples / 16 kHz
+            // = 15 ms，DMA 6 帧约 90 ms 残留；20 ms 不够清空但够 codec 数字音量
             // 衰减生效,人耳基本听不到)。
             vTaskDelay(pdMS_TO_TICKS(20));
         }

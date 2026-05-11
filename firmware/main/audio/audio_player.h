@@ -3,7 +3,7 @@
 // I2S + ES8311 audio playback。单例,异步播放:Play(buf, samples) 替换共享
 // PCM buf + notify task,task 内 esp_codec_dev_write 阻塞写一段后释放。
 //
-// 服务端约定:16kHz mono 16-bit raw PCM(.pcm 二进制)。
+// 服务端约定：16 kHz mono 16-bit raw PCM（.pcm 二进制）。
 // 数据来源:cache::ReadFrameAudio(gid, idx, vec<uint8_t>) 读 LittleFS。
 // frame 切换时调 Play() 中断当前播放,立即播新 PCM。
 //
@@ -29,8 +29,8 @@ class AudioPlayer {
     // 失败返回 false(I2C 通讯失败/codec 未识别等)。
     bool Init(i2c_master_bus_handle_t i2c_bus);
 
-    // 异步播放:替换共享 PCM,通知 task 立即播。中断当前播放(若有)。
-    // pcm = 16kHz mono 16-bit signed,len_bytes 必须是偶数。
+    // 异步播放：替换共享 PCM，通知 task 立即播。中断当前播放（若有）。
+    // pcm = 16 kHz mono 16-bit signed，len_bytes 必须是偶数。
     void Play(const uint8_t* pcm_bytes, size_t len_bytes);
 
     // 停止当前播放(若有);保持 codec 通电,下次 Play 立即可用。

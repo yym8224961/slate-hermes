@@ -1,9 +1,9 @@
 // 总览 — 设备 + 内容都在此处。
 //
-// /devices/:did 作为 deep link:命中时自动打开对应 DeviceModal,
+// /devices/:did 作为 deep link：命中时自动打开对应 DeviceModal，
 //   关闭后用 navigate('/') 回到无参数 URL。
 //
-// 设备点卡 → 弹 modal(无 URL 跳转,留在列表上下文)
+// 设备点卡 → 弹 modal（无 URL 跳转，留在列表上下文）
 // 组点卡   → /groups/:gid 进帧管理
 
 import { useState } from 'react';

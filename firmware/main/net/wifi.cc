@@ -526,7 +526,7 @@ void Wifi::DoSlowScanReconnect() {
     scan_cfg.show_hidden        = true;    // 隐藏 SSID 也扫,允许用户配过隐藏 wifi
     scan_cfg.scan_type          = WIFI_SCAN_TYPE_ACTIVE;
     scan_cfg.scan_time.active.min = 0;
-    scan_cfg.scan_time.active.max = 120;   // 120ms × 13 信道 ≈ 1.6s,够快又能扫全
+    scan_cfg.scan_time.active.max = 120;   // 120 ms × 13 信道 ≈ 1.6 s，够快又能扫全
 
     esp_err_t err = esp_wifi_scan_start(&scan_cfg, false /* async */);
     if (err != ESP_OK) {

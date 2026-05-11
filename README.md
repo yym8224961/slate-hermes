@@ -1,65 +1,77 @@
-# slate · 墨笺
+# Slate · 墨笺
 
-E-ink 相框 / 玩具 / 数据看板的三端项目。
+开源的 e-ink 相框 / 玩具 / 数据看板。三端构成：
 
-## 三端
+- **firmware** — ESP32-S3 固件，4.2 英寸黑白墨水屏 + 单声道喇叭 + 4 颗按键 + 单节锂电池
+- **backend** — Bun + NestJS（Fastify）+ Prisma + MySQL，API 与 1bpp 渲染管线
+- **frontend** — React 19 + Vite + Tailwind v4 + Radix + dnd-kit + TanStack Query，Web 管理端
+
+## 仓库结构
 
 ```
 slate/
-├── firmware/    ESP-IDF 工程，设备固件（ESP32-S3，4.2" 黑白 EPD）
-├── backend/     Bun + NestJS（Fastify）+ Prisma + MySQL，API 与 1bpp 渲染管线
-├── frontend/    React 19 + Vite + Tailwind v4 + Radix + dnd-kit + TanStack，管理后台
-└── shared/      Zod schema 与 1bpp dither 纯函数，前后端共用
+├── firmware/    ESP-IDF 5.5.x 工程（独立构建系统）
+├── backend/     ┐
+├── frontend/    ├ Bun monorepo（根 package.json 的 workspaces）
+├── shared/      ┘ 前后端共用的 zod schema 与 1bpp 纯函数
+├── compose.yml  单机 docker 部署样例（自带 MySQL）
+├── Dockerfile   生产镜像：backend + frontend dist 同一镜像
+└── entrypoint.sh 启动脚本：先 prisma migrate deploy 再起服务
 ```
 
-`firmware/` 是独立 ESP-IDF 工程；`backend/ + frontend/ + shared/` 是 Bun monorepo（根 `package.json` 的 `workspaces`）。两套构建系统并存互不干扰。
-
-各端的详细文档在各自目录的 `README.md`：
+各端详细文档：
 
 | 端 | 文档 |
 |---|---|
-| 设备固件与硬件参考（pinout / 电源 / EPD / 音频 / RTC / NFC） | [`firmware/README.md`](firmware/README.md) |
-| 服务端架构、API、数据模型、渲染管线、鉴权 | [`backend/README.md`](backend/README.md) |
-| 前端设计语言、路由、组件、TanStack Query 用法 | [`frontend/README.md`](frontend/README.md) |
-| 共享 zod schema、6 种 dither 算法、预处理管线 | [`shared/README.md`](shared/README.md) |
+| 设备固件、硬件参考 | [firmware/README.md](firmware/README.md) |
+| 服务端架构、API、鉴权 | [backend/README.md](backend/README.md) |
+| Web 管理端、设计系统 | [frontend/README.md](frontend/README.md) |
+| 前后端共用的 zod schema 与 dither | [shared/README.md](shared/README.md) |
 
-## 通信总览
+## 工作流总览
 
 ```
 开机
- └─► 若 NVS 无凭据 → SoftAP captive portal「Slate-XXXX」配 WiFi 与服务端 URL
- └─► STA → SNTP 对时 → POST /api/v1/devices（register，幂等）
- └─► SyncService 周期 POST /api/v1/me/poll
-        ├ 上报 telemetry（battery / rssi / fw_version / current_group / current_frame_seq）
-        └ 拿 DeviceState{device, group:{etag, frame_count, ...}}
+ └─ NVS 无凭据 → SoftAP captive portal「Slate-XXXX」配 Wi-Fi 与服务端 URL
+ └─ STA → SNTP 对时 → POST /api/v1/devices/register（无鉴权）
+                     ← 一次性下发 device_secret + pair_code
+ └─ NVS 写 device_secret（明文，固件唯一持有）
+ └─ SyncService 周期 POST /api/v1/me/poll（Authorization: Bearer <device_secret>）
+       ├ 上报 telemetry（battery / rssi / fw_version / current_group / current_frame_seq）
+       └ 拿 DeviceState{device, group:{etag, frame_count, ...}}
 
-内容变更
- └─► group_etag 变 → GET /manifest（If-None-Match，命中 304 多数零流量）
-                  → 增量拉缺失的 frames/:seq/image + .pcm 写 LittleFS
+设备绑定
+ └─ 屏幕显示 pair_code（6 位 [A-Z2-9]）
+ └─ 用户在 Web 端输入 pair_code → 后端 claim → 立即轮换 pair_code（防截图复用）
+
+内容下发
+ └─ group_etag 变 → GET /manifest（If-None-Match，命中 304 零流量）
+                 → 增量拉缺失的 frames/:seq/image + .pcm 写 LittleFS
 
 按键翻页
- └─► FrameScene 本地命中 cache → EPD partial refresh + I2S DMA 同步播音
+ └─ FrameScene 本地命中 cache → EPD partial refresh + I²S DMA 同步播音
 
-Web 推送
- └─► 前端「切组」→ PATCH /api/v1/devices/:id（selected_group_id）
-                → 设备下次 poll 看到 group 变了 → 重拉 manifest → 切显示
-
-外部 webhook
- └─► POST /api/v1/groups/:gid/frames/:seq/render（JWT）
-        body {source: 'png_base64'|'markdown'|'html', content, mode?, threshold?}
+Web 推送切组
+ └─ 前端 PATCH /api/v1/devices/:id（selected_group_id）
+        → 设备下次 poll 看到 group 变了 → 重拉 manifest → 切显示
 ```
 
-API 全部挂在 `/api/v1` 下，`/healthz` 不带前缀。鉴权按端点区分（JWT / `X-Device-Mac` / dual-auth），完整矩阵见 [`backend/README.md`](backend/README.md)。
+所有 HTTP 端点挂在 `/api/v1` 下，`/healthz` 不带前缀。鉴权矩阵见 [backend/README.md](backend/README.md#鉴权矩阵)。
 
 ## 本地开发
 
-需要 Bun ≥ 1.3 与一个可达的 MySQL 8 实例。最简起一个本地 MySQL：
+依赖：
+
+- Bun ≥ 1.3
+- MySQL 8
+- ESP-IDF v5.5.x
+
+最简起一个本地 MySQL：
 
 ```bash
 docker run -d --name slate-mysql -p 3306:3306 \
   -e MYSQL_DATABASE=slate \
-  -e MYSQL_USER=slate \
-  -e MYSQL_PASSWORD=slate \
+  -e MYSQL_USER=slate -e MYSQL_PASSWORD=slate \
   -e MYSQL_RANDOM_ROOT_PASSWORD=yes \
   mysql:8
 ```
@@ -70,7 +82,7 @@ docker run -d --name slate-mysql -p 3306:3306 \
 bun install
 cp backend/.env.example backend/.env       # 改 DATABASE_URL / JWT_SECRET
 bun run --cwd backend prisma:generate
-bun run --cwd backend prisma:migrate       # 第一次会创建 dev migration
+bun run --cwd backend prisma:migrate       # 首次会创建 dev migration
 
 bun run dev:backend                         # http://localhost:3001
 bun run dev:frontend                        # http://localhost:5173（proxy /api → :3001）
@@ -78,7 +90,7 @@ bun run dev:frontend                        # http://localhost:5173（proxy /api
 
 首次启动后访问 `http://localhost:5173/register` 注册第一个账号。
 
-`.env` 必须放在 `backend/` 目录而非仓库根 —— Prisma CLI 与 Bun runtime 都从 cwd 读取。docker 部署不依赖此文件，配置直接内联在 `compose.yml` 的 `environment:`。
+> `.env` 必须放在 `backend/` 目录而非仓库根 —— Prisma CLI 与 Bun runtime 都从 cwd 读取。docker 部署不依赖此文件，所有配置内联在 `compose.yml`。
 
 ### 固件
 
@@ -88,61 +100,74 @@ idf.py -C firmware build
 idf.py -C firmware -p <serial> flash monitor
 ```
 
-target 已固化在 `firmware/sdkconfig.defaults`。
+target 已固化在 `firmware/sdkconfig.defaults`，无需 `set-target`。
 
-## 全仓 lint / typecheck / test
+## 校验
 
 ```bash
 bun run format:check
-bun run lint                                # frontend + backend，eslint --max-warnings 0
-bun run typecheck                           # frontend + backend，tsc --noEmit
-bun run --cwd backend test
-bun run --cwd frontend build
+bun run lint                                # ESLint，零 warning
+bun run typecheck                           # tsc --noEmit
+bun run --cwd backend test                  # render pipeline 单测
+bun run --cwd frontend build                # 出 dist
 ```
 
-## 部署（docker）
+## 部署
 
-backend 与 frontend 打到**单镜像**里（同域 serve，frontend dist 由 `@fastify/static` 托管，`/api/v1/*` 走 NestJS）。仓库根 `compose.yml` 是开箱即用样例（自带 MySQL）；生产部署若用外部 MySQL 或反代，可在此基础上改造。
+backend 与 frontend 打到**单镜像**：frontend dist 由 `@fastify/static` 同域托管，`/api/v1/*` 走 NestJS。镜像走 GHCR 公有源（`ghcr.io/qiujun8023/slate:latest`），无需登录即可 pull。
 
-镜像走 GHCR，公有镜像无需登录即可 pull：
+部署不需要 clone 整个仓库，只要一个 `compose.yml` 就够了。
 
-```
-ghcr.io/qiujun8023/slate:latest
-```
-
-首次部署：
+### 首次部署
 
 ```bash
-git clone <repo-url>
-cd slate
-$EDITOR compose.yml                         # 把 JWT_SECRET 占位符
-                                            # 换成 openssl rand -hex 32 生成的真值
+# 1. 拿 compose 样例（自带 MySQL）
+curl -fLO https://raw.githubusercontent.com/qiujun8023/slate/master/compose.yml
+
+# 2. 生成两条 secret，填进 compose.yml
+openssl rand -hex 32                        # → 替换 JWT_SECRET 占位符
+openssl rand -hex 32                        # → 替换 MYSQL_PASSWORD 占位符
+                                            # MySQL 密码改了同时改 3 处：
+                                            #   - MYSQL_PASSWORD
+                                            #   - DATABASE_URL 里 slate:slate 的第二个 slate
+                                            #   - healthcheck 的 -pslate
+
+# 3. 创建数据目录并授权给容器用户（uid/gid 1000:1000）
+mkdir -p slate/blobs mysql
+sudo chown -R 1000:1000 slate
+
+# 4. 启动
 docker compose up -d
 ```
 
-升级（master 推 commit → GHCR 自动重建 → 服务器手动拉）：
+容器 `entrypoint.sh` 会自动跑 `prisma migrate deploy`，首次启动即建表。
+
+### 验证 + 创建账号
+
+```bash
+curl -fsS http://localhost:3001/healthz     # {"status":"ok","ts":"..."}
+```
+
+健康后浏览器访问 `http://<host>:3001/register` 注册第一个账号。
+
+### 数据持久化
+
+| 主机路径 | 容器路径 | 内容 | 备份 |
+|---|---|---|---|
+| `./slate/blobs/` | `/data/blobs/` | frame image + audio | `tar` |
+| `./mysql/` | `/var/lib/mysql/` | MySQL datadir | `mysqldump` |
+
+建议每天定时 `mysqldump + tar ./slate/blobs`。
+
+### 升级
+
+master 推 commit → GHCR 自动重建 → 服务器手动拉：
 
 ```bash
 docker compose pull && docker compose up -d
 ```
 
-容器启动 `entrypoint.sh` 自动执行 `prisma migrate deploy`，无需手动迁移。首次部署后访问站点 `/register` 创建第一个账号。
-
-持久化目录（compose 启动后在 cwd 自动创建）：
-
-| 主机路径 | 容器路径 | 说明 |
-|---|---|---|
-| `./slate/blobs/` | `/data/blobs/` | frame image 与 audio |
-| `./mysql/` | `/var/lib/mysql/` | MySQL datadir |
-
-容器以 uid/gid **1000:1000**（`bun` 用户）运行，挂载目录需提前授权：
-
-```bash
-mkdir -p ./slate/blobs
-chown -R 1000:1000 ./slate/blobs
-```
-
-建议每天 `mysqldump + tar ./slate/blobs` 备份。
+镜像 tag：`latest`（= master 最新）、`master`、`sha-<short>`（按 commit 锁定）。
 
 ## CI
 
@@ -150,8 +175,10 @@ chown -R 1000:1000 ./slate/blobs
 
 | 工作流 | 触发 | 内容 |
 |---|---|---|
-| `ci.yml` | PR / push to master | lint-format / typecheck / backend test / frontend build 四个并行 job |
-| `firmware.yml` | push to master 且 `firmware/**` 变化 | ESP-IDF 构建后 upload `slate-full.bin` 与 `slate-ota.bin` artifact |
-| `docker.yml` | push to master | buildx 多架构（amd64 + arm64）→ push GHCR，标签 `master` / `latest` / `sha-<short>` |
+| `ci.yml` | PR / push to master | lint + format / typecheck / backend test / frontend build 四 job 并行 |
+| `firmware.yml` | push to master 且 `firmware/**` 变化 | ESP-IDF v5.5.2 构建 → 上传 `slate-full.bin` 与 `slate-ota.bin` artifact |
+| `docker.yml` | push to master | buildx 多架构（linux/amd64 + linux/arm64）→ push GHCR，tag `master` / `latest` / `sha-<short>` |
 
-镜像构建用仓库根 `Dockerfile`（multi-stage：bun 装依赖 → prisma generate + vite build → 拷进精简 runner stage），entrypoint 是 `entrypoint.sh`（先 migrate 再启服务）。
+## 贡献
+
+欢迎 issue 与 PR，详见 [CONTRIBUTING.md](CONTRIBUTING.md)。

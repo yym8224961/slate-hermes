@@ -1,3 +1,5 @@
+// 帧编辑页面—将路由参数解析后传入 FrameEditor，create / edit 两种模式共用。
+
 import { useParams, useNavigate } from 'react-router-dom';
 import { useGroupFrames } from '../lib/queries';
 import { FrameEditor } from '../components/FrameEditor';

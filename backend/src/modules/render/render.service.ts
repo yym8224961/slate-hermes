@@ -56,10 +56,10 @@ export class RenderService {
     const letterbox = options.letterbox ?? true;
 
     if (W % 8 !== 0) {
-      throw new ValidationError(`width must be multiple of 8, got ${W}`);
+      throw new ValidationError(`图宽必须是 8 的倍数，当前为 ${W}`);
     }
     if (W <= 0 || H <= 0) {
-      throw new ValidationError(`invalid size ${W}x${H}`);
+      throw new ValidationError(`图片尺寸非法：${W}x${H}`);
     }
 
     const sourceEtag = computeETag(input);
@@ -81,7 +81,7 @@ export class RenderService {
 
   validateFrameSize(buf: Buffer): void {
     if (buf.length !== FRAME_BYTES) {
-      throw new ValidationError(`frame size mismatch: got ${buf.length}, expected ${FRAME_BYTES}`);
+      throw new ValidationError(`帧大小不匹配：当前 ${buf.length} 字节，期望 ${FRAME_BYTES} 字节`);
     }
   }
 }
@@ -108,7 +108,7 @@ async function runSharpPipeline(
     .toBuffer({ resolveWithObject: true });
 
   if (rawGray.length !== o.W * o.H) {
-    throw new ValidationError(`unexpected raw length ${rawGray.length}, expected ${o.W * o.H}`);
+    throw new ValidationError(`图片解码异常：当前 ${rawGray.length} 字节，期望 ${o.W * o.H} 字节`);
   }
   let gray: Uint8Array = new Uint8Array(rawGray.buffer, rawGray.byteOffset, rawGray.byteLength);
   if (o.doAutoInvert) gray = autoInvert(gray, o.W, o.H);

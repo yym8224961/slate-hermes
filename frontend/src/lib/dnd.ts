@@ -7,7 +7,7 @@
 //     (newOrder) => mutate({ order: newOrder }),
 //   );
 //
-// 状态保留在本地以避免 React Query optimistic 更新与 dnd-kit 拍号混乱。
+// 状态保留在本地以避免 React Query optimistic 更新与 dnd-kit 时序混乱。
 //
 // items 变化（数据库刷新）时，如果「自己刚拖完」，useEffect 会重新对齐 currentOrder。
 
@@ -26,7 +26,7 @@ export function useDndOrder<T>(
 
   useEffect(() => {
     if (items) setCurrentOrder(items.map(getId));
-    // getId 由调用方稳定提供
+    // getId 由调用方稳定提供。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items]);
 

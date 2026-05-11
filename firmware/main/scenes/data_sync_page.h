@@ -39,7 +39,7 @@ class DataSyncPage : public Scene {
     std::unique_ptr<StatusBar> status_bar_;
 
     // 进度节流:避免下载几十帧时每帧都触发 partial 刷,EPD 8 次累计就闪屏。
-    // current 不变跳过;500ms 内不重复刷。kSyncFinished 不走节流,必须立即更新。
+    // current 不变跳过；500 ms 内不重复刷。kSyncFinished 不走节流，必须立即更新。
     uint8_t    last_progress_current_ = 0xFF;  // 跟 event_bus 中 progress.current 同类型
     TickType_t last_progress_tick_    = 0;
 };

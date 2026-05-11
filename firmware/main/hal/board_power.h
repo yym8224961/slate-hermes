@@ -9,7 +9,7 @@
 // 为什么 PA pin 也归这里管:audio rail 一通电 PA U5 就吃电,如果此时 PA CTRL
 // 浮空可能被读为 HIGH → PA 放大 ES8311 默认 DC bias → 喇叭"啵"。所以 PA pin
 // 必须跟 audio rail 在同一构造里 init,确保 PowerAudioOn 时 CTRL 已稳是 LOW。
-// 后续由 AudioPlayer::EnsureCodecOpen 在 100ms DAC 稳定窗后再拉高出声。
+// 后续由 AudioPlayer::EnsureCodecOpen 在 100 ms DAC 稳定窗后再拉高出声。
 //
 // LED(GPIO3):阶段 1 起不再走充电状态闪烁(屏保取消 → 改由状态栏指示)。
 // 这里只在 InitLed() 把 GPIO3 配成 OUTPUT 并熄灭,之后不再驱动。

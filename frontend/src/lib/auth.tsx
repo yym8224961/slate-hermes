@@ -1,6 +1,6 @@
 /* eslint-disable react-refresh/only-export-components */
-// JWT 登录态管理。app 启动时如果 localStorage 有 token,自动 GET /me 回填 user
-// (否则 Layout 等组件读 ctx.user 永远是 null,刷新后看不到登出菜单)。
+// JWT 登录态管理。App 启动时如果 localStorage 有 token，自动 GET /me 回填 user
+// （否则 Layout 等组件读 ctx.user 永远是 null，刷新后看不到登出菜单）。
 
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';

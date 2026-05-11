@@ -1,6 +1,6 @@
 #pragma once
 
-// 音量子页:0-10 级,UP/DOWN 调,ENTER 短按播 200ms 测试音,ENTER 长按 pop。
+// 音量子页：0~10 级，UP/DOWN 调，ENTER 短按播 200 ms 测试音，ENTER 长按 pop。
 
 #include <memory>
 

@@ -142,10 +142,10 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
     httpd_resp_set_hdr(req, "Connection", "close");
     if (ok) {
         httpd_resp_send(req, R"({"success":true})", -1);
-        // 启异步 task:延迟 2s 让浏览器收到 success 渲染 UI,然后通知上层
-        // (App::OnFinished 内部 portal.Stop + esp_restart)。
-        // 栈 8KB:Stop 调链含 httpd_stop + esp_wifi_stop + esp_netif_destroy,
-        // 以及 esp_restart,4KB 偏紧。
+        // 启异步 task：延迟 2 s 让浏览器收到 success 渲染 UI，然后通知上层
+        // （App::OnFinished 内部 portal.Stop + esp_restart）。
+        // 栈 8 KB：Stop 调链含 httpd_stop + esp_wifi_stop + esp_netif_destroy，
+        // 以及 esp_restart，4 KB 偏紧。
         if (g_portal->on_finished_) {
             BaseType_t r = xTaskCreate(
                 [](void* arg) {
@@ -235,8 +235,8 @@ bool CaptivePortal::Start() {
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.max_uri_handlers = 8;
     cfg.uri_match_fn     = httpd_uri_match_wildcard;
-    // 默认 4KB 栈不够:HandleSubmit 里调 Wifi::TryConnect(阻塞等 event)
-    // + ESP_LOG(vfprintf 含 UTF-8 中文消耗大),会触发 LoadProhibited panic。
+    // 默认 4 KB 栈不够：HandleSubmit 里调 Wifi::TryConnect（阻塞等 event）
+    // + ESP_LOG（vfprintf 含 UTF-8 中文消耗大），会触发 LoadProhibited panic。
     cfg.stack_size       = 8192;
     if (httpd_start(&server_, &cfg) != ESP_OK) {
         ESP_LOGE(kTag, "HTTP server start failed");

@@ -13,6 +13,8 @@ interface JwtPayload {
   sub: string;
   email: string;
   username: string;
+  iat?: number;
+  exp?: number;
 }
 
 @Injectable()
@@ -32,7 +34,7 @@ export class JwtOrDeviceAuthGuard implements CanActivate {
 
     if (this.tryJwt(req)) return true;
     if (await this.tryDevice(req)) return true;
-    throw new AuthError('provide JWT or device secret in Authorization: Bearer');
+    throw new AuthError('未登录或登录已过期');
   }
 
   private tryJwt(req: FastifyRequest & { [CURRENT_USER_KEY]?: WebUserContext }): boolean {

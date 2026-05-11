@@ -79,7 +79,7 @@ export function DitherControls({
             </button>
           ))}
         </div>
-        <p className="font-kai text-[11px] text-stone-light mt-1.5">
+        <p className="font-serif text-[11px] text-stone-light mt-1.5">
           线稿用「线稿 · 纯黑白」;照片用「照片 · 推荐」。
         </p>
       </div>

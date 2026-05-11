@@ -98,7 +98,7 @@ void DataSyncPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
             break;
 
         case UiEventKind::kSyncProgress: {
-            // 节流:current 不变 / 距上次 < 500ms 都跳过。否则连续几十帧的
+            // 节流：current 不变 / 距上次 < 500 ms 都跳过。否则连续几十帧的
             // 进度更新会让 EPD 累计 8 次 partial 自动升 full → 5s 闪屏循环。
             const uint8_t    cur = e.u.progress.current;
             const TickType_t now = xTaskGetTickCount();

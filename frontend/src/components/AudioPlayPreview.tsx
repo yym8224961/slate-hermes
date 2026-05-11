@@ -1,5 +1,5 @@
-// 音频播放预览。server 给的是 raw PCM(16kHz mono 16-bit signed),浏览器
-// 不能直接 <audio src> 播,要用 WebAudio 把 PCM 包成 AudioBuffer 播放。
+// 音频播放预览。server 给的是 raw PCM（16kHz mono 16-bit signed），浏览器
+// 不能直接 <audio src> 播，要用 WebAudio 把 PCM 包成 AudioBuffer 播放。
 
 import { useState, useRef, useCallback } from 'react';
 import { Play, Pause } from 'lucide-react';

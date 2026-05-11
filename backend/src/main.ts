@@ -27,16 +27,16 @@ async function bootstrap(): Promise<void> {
     exclude: [{ path: 'healthz', method: RequestMethod.GET }],
   });
 
-  // 单镜像生产部署 serve frontend dist;dev 模式 dist 不存在则跳过(走 vite dev server)。
-  // backend/src/main.ts → ../../frontend/dist,runtime 镜像里同位置 (/app/backend/src)。
+  // 单镜像生产部署 serve frontend dist；dev 模式 dist 不存在则跳过（走 vite dev server）。
+  // backend/src/main.ts → ../../frontend/dist，runtime 镜像里同位置（/app/backend/src）。
   const distRoot = join(import.meta.dir, '..', '..', 'frontend', 'dist');
   if (existsSync(distRoot)) {
     app.useStaticAssets({ root: distRoot, wildcard: false });
 
-    // SPA fallback:NestFastifyApp init 阶段已经自己 setNotFoundHandler 一次,
+    // SPA fallback：NestFastifyApp init 阶段已经自己 setNotFoundHandler 一次，
     // fastify 同 prefix 不允许重复注册 → 改用 onSend hook 在响应发送前拦 404 改写。
-    // 启动时一次性读 index.html 缓存,免每次磁盘 IO。
-    // 带扩展名的资源(/favicon.ico 等)保持 404,避免 <img> 拿到 HTML 报损坏。
+    // 启动时一次性读 index.html 缓存，免每次磁盘 IO。
+    // 带扩展名的资源（/favicon.ico 等）保持 404，避免 <img> 拿到 HTML 报损坏。
     const indexHtml = readFileSync(join(distRoot, 'index.html'));
     const fastify = app.getHttpAdapter().getInstance();
     fastify.addHook('onSend', async (req, reply, payload) => {

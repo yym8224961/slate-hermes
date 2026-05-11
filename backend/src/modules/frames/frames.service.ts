@@ -58,9 +58,9 @@ export class FramesService {
       where: { id: gid },
       select: { ownerUserId: true },
     });
-    if (!g) throw new NotFoundError('group not found');
+    if (!g) throw new NotFoundError('相册不存在');
     if (scope.userId !== undefined && g.ownerUserId !== scope.userId) {
-      throw new NotFoundError('group not found');
+      throw new NotFoundError('相册不存在');
     }
     // device 不做 group owner 比对（内网信任模型）
   }
@@ -79,7 +79,7 @@ export class FramesService {
         },
       },
     });
-    if (!group) throw new NotFoundError('group not found');
+    if (!group) throw new NotFoundError('相册不存在');
     return {
       group_id: group.id,
       group_etag: group.etag,
@@ -112,7 +112,7 @@ export class FramesService {
       where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
       select: FRAME_SELECT,
     });
-    if (!f) throw new NotFoundError('frame not found');
+    if (!f) throw new NotFoundError('帧不存在');
     return frameToSummary(f);
   }
 
@@ -126,9 +126,9 @@ export class FramesService {
       where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
       select: { id: true, imageEtag: true },
     });
-    if (!f) throw new NotFoundError('frame not found');
+    if (!f) throw new NotFoundError('帧不存在');
     const buf = await this.blob.read(gid, f.id, 'image');
-    if (!buf) throw new NotFoundError('image blob missing');
+    if (!buf) throw new NotFoundError('图片文件丢失');
     return { data: buf, etag: f.imageEtag };
   }
 
@@ -143,10 +143,10 @@ export class FramesService {
       select: { id: true, audioEtag: true, audioSize: true },
     });
     if (!f || !f.audioEtag || !f.audioSize) {
-      throw new NotFoundError('audio not available');
+      throw new NotFoundError('该帧没有音频');
     }
     const buf = await this.blob.read(gid, f.id, 'audio');
-    if (!buf) throw new NotFoundError('audio blob missing');
+    if (!buf) throw new NotFoundError('音频文件丢失');
     return { data: buf, etag: f.audioEtag };
   }
 
@@ -159,7 +159,7 @@ export class FramesService {
   ): Promise<FrameMutationResponseT> {
     await this.groups.assertOwned(gid, ownerUserId);
     if (!parsed.hasImage) {
-      throw new ValidationError('image required', { code: 'image_required' });
+      throw new ValidationError('请上传图片', { code: 'image_required' });
     }
     const last = await this.prisma.frame.findFirst({
       where: { groupId: gid },
@@ -190,7 +190,7 @@ export class FramesService {
     await this.groups.assertOwned(gid, ownerUserId);
     await this.requireFrame(gid, seq);
     if (caption === undefined) {
-      throw new ValidationError('nothing to patch', { code: 'nothing_to_patch' });
+      throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
     }
     await this.prisma.frame.update({
       where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
@@ -255,7 +255,7 @@ export class FramesService {
       orderSet.size !== order.length ||
       !order.every((s) => allSeq.has(s))
     ) {
-      throw new ValidationError('order must list every existing sort_order exactly once', {
+      throw new ValidationError('排序列表须包含所有帧序号且不重复', {
         code: 'order_mismatch',
       });
     }
@@ -301,7 +301,7 @@ export class FramesService {
 
     let audio: { bytes: Buffer; etag: string; size: number } | null = null;
     if (parsed.hasAudio && parsed.audioBuf) {
-      const bytes = await this.audio.transcodeAudio(parsed.audioBuf, 'upload');
+      const bytes = await this.audio.transcodeAudio(parsed.audioBuf);
       audio = { bytes, etag: computeETag(bytes), size: bytes.byteLength };
     }
 
@@ -315,7 +315,7 @@ export class FramesService {
     parsed: ParsedFrameUpload
   ): Promise<FrameMutationResponseT> {
     const { image, audio } = await this.renderUpload(parsed);
-    if (!image) throw new ValidationError('image required for create');
+    if (!image) throw new ValidationError('创建帧时必须上传图片');
 
     const newId = createId();
     try {
@@ -339,7 +339,7 @@ export class FramesService {
         this.blob.delete(gid, newId, 'audio').catch(() => {}),
       ]);
       const code = (err as { code?: string }).code;
-      if (code === 'P2002') throw new ConflictError('frame sortOrder already exists');
+      if (code === 'P2002') throw new ConflictError('帧序号已存在');
       throw err;
     }
 
@@ -422,7 +422,7 @@ export class FramesService {
       where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
       select: { id: true },
     });
-    if (!f) throw new NotFoundError('frame not found');
+    if (!f) throw new NotFoundError('帧不存在');
     return f;
   }
 }

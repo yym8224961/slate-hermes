@@ -4,7 +4,7 @@
 //   Storage → Board → Audio → EventBus → SceneStack → ui_loop task →
 //   Inputs(按键/充电→EventBus) → TimeTick → Network → SleepManager → PM
 //
-// Run() 等同 vTaskDelete(NULL)：把 main task 的 8KB 栈让出来，
+// Run() 等同 vTaskDelete(NULL)：把 main task 的 8 KB 栈让出来，
 // 由各后台 task（ui_loop / sync / charge_tick / audio / epd_refresh）继续跑。
 
 #include <memory>

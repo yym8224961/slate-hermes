@@ -1,4 +1,4 @@
-// 帧预览 canvas — 三种来源:
+// 帧预览 canvas — 三种来源：
 //   1. 用户选了新图 → 跑 dither + threshold 渲染(与 server 同算法)
 //   2. edit 模式且未传新图 → 直接画 server 上的 1bpp blob
 //   3. create 模式且未传图 → 空 paper 底

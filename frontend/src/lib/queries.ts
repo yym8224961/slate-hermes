@@ -66,8 +66,8 @@ export function useReorderDevices() {
   });
 }
 
-// 解绑设备(把 owner 置 null + 轮换 pair_code)。设备本身的 device_secret 不变,
-// 设备会通过 poll 拿到 owner=null + 新 pair_code,主动切回 splash 显示新码。
+// 解绑设备（把 owner 置 null + 轮换 pair_code）。设备本身的 device_secret 不变，
+// 设备会通过 poll 拿到 owner=null + 新 pair_code，主动切回 splash 显示新码。
 export function useUnbindDevice() {
   const qc = useQueryClient();
   return useMutation({
@@ -78,7 +78,7 @@ export function useUnbindDevice() {
   });
 }
 
-// PATCH device:统一改 name / selected_group_id 的入口。
+// PATCH device：统一改 name / selected_group_id 的入口。
 export function usePatchDevice(deviceId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -155,7 +155,7 @@ export function useGroupFrames(gid: string | undefined) {
   });
 }
 
-// 创建新帧:multipart, image 必填,自动 append 到末尾。
+// 创建新帧：multipart，image 必填，自动 append 到末尾。
 export function useCreateFrame(gid: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -172,7 +172,7 @@ export function useCreateFrame(gid: string) {
   });
 }
 
-// PATCH 单帧:multipart 改 image/audio,或 JSON 只改 caption。
+// PATCH 单帧：multipart 改 image/audio，或 JSON 只改 caption。
 export function useUpdateFrame(gid: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -204,7 +204,7 @@ export function useDeleteFrame(gid: string) {
   });
 }
 
-// 拉某帧的 1bpp binary。queryKey 带 etag,etag 变化(=内容变化)自动重拉。
+// 拉某帧的 1bpp binary。queryKey 带 etag，etag 变化（=内容变化）自动重拉。
 export function useFrameImage(gid: string, seq: number, etag: string) {
   return useQuery({
     queryKey: ['frame-image', gid, seq, etag],
@@ -233,7 +233,7 @@ export function usePatchFrame(gid: string) {
   });
 }
 
-// 拉某帧的 PCM binary。queryKey 带 etag,etag 变化(=内容变化)自动重拉。
+// 拉某帧的 PCM binary。queryKey 带 etag，etag 变化（=内容变化）自动重拉。
 export function useFrameAudio(gid: string, seq: number, etag: string | null) {
   return useQuery({
     queryKey: ['frame-audio', gid, seq, etag],

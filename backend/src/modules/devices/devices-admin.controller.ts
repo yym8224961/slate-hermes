@@ -67,8 +67,8 @@ export class DevicesAdminController {
     await this.devices.patchDevice(id, user.userId, body);
   }
 
-  // /:id/binding 命名表达"解绑(把设备从当前 owner 移除)"而非"删除设备记录"。
-  // 设备记录本身不删,仍按 mac 在 DB 里;新主人用新 pair_code 即可重新 claim。
+  // /:id/binding 命名表达「解绑（把设备从当前 owner 移除）」而非「删除设备记录」。
+  // 设备记录本身不删，仍按 mac 在 DB 里；新主人用新 pair_code 即可重新 claim。
   @Delete(':id/binding')
   @HttpCode(204)
   async unbind(@CurrentUser() user: WebUserContext, @Param('id') id: string): Promise<void> {

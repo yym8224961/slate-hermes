@@ -1,87 +1,140 @@
-# slate / frontend
+# Slate / Frontend
 
-React 19 + Vite 8 + Tailwind v4 + Radix + dnd-kit + TanStack Query 的管理后台。登录后管理「设备 ↔ 内容组（group）↔ 帧（frame）」三级关系，并把图 / 音 / caption 推到 backend，由 backend 转给设备。
+Web 管理端：登录后管理「设备 ↔ 相册 ↔ 帧」三级关系，把图 / 音 / caption 推到 backend，由 backend 转给设备。
 
-## 设计语言：soft-craft
+## 技术栈
 
-家庭手账与便签纸的视觉语言，不是 fintech 风也不是工业控制台风。
+| 层 | 选型 |
+|---|---|
+| 框架 | React 19 + React Router v7 |
+| 构建 | Vite 8 |
+| 样式 | Tailwind v4（`@theme` token） |
+| 组件原语 | Radix UI（Dialog / DropdownMenu / Select / Toast） |
+| 拖拽 | dnd-kit（core + sortable + utilities） |
+| 数据 | TanStack Query 5 + axios |
+| 图标 | lucide-react |
+| 上传 | react-dropzone |
 
-- **字体**：中文 [霞鹜文楷屏幕版](https://github.com/lxgw/LxgwWenkaiScreen)（jsdelivr CDN），英文 [Fraunces](https://fonts.google.com/specimen/Fraunces) display + [DM Sans](https://fonts.google.com/specimen/DM+Sans) 正文，等宽 JetBrains Mono。不用 Inter / Roboto / Helvetica。
-- **配色**：奶油纸 `#faf6ef` + 暖墨棕 `#3d2817` + 砖红 `#b85436` + 鹅黄 `#e8b86d` + 苔绿 `#6b8e4e`（在线状态）。不用蓝 / 紫，不用灰阶。
-- **形状**：大圆角（14 / 22 / 28 px）、暖色软边框 `#e2d8c4`、hover 微浮（`translateY(-2px)` + soft shadow）。
-- **装饰**：手绘感波浪分割（`.wave-divider` SVG repeat-x）替代 hairline；心跳点 loading（`.heart-dot`）替代 spinner；中文标题用 `.font-kai` 楷书。
+## 设计系统 Mono Press
 
-完整 token 在 `src/styles/global.css` 的 `@theme` 区，由 Tailwind v4 直接读。
+报刊编辑风格：宋体做标题与中文锚点，Plex Sans/Mono 做 UI 与技术细节，零圆角、薄发丝线分割。
+
+完整 token 在 `src/styles/global.css` 的 `@theme` 区。
+
+### 字体
+
+| token | 栈 | 用途 |
+|---|---|---|
+| `--font-serif` | Noto Serif SC → Source Han Serif SC → Songti SC → STSong → Georgia | 中英文标题；正文锚点 |
+| `--font-sans` | IBM Plex Sans → Helvetica Neue → Helvetica → Arial | UI 默认 |
+| `--font-mono` | IBM Plex Mono → JetBrains Mono → ui-monospace | 代码 / 数字 |
+
+### 配色
+
+| token | 色值 | 用途 |
+|---|---|---|
+| `--color-paper` | `#f5f3ed` | 纸本底色 |
+| `--color-cream` | `#efebe1` | 卡片二级背景 |
+| `--color-cream-deep` | `#e6e1d4` | hover / 分组背景 |
+| `--color-ink` | `#14110d` | 主色墨黑 |
+| `--color-stone` | `#6b665d` | 次要文字（mute） |
+| `--color-stone-light` | `#a39d92` | 弱化文字（dim） |
+| `--color-line` | `#d8d2bf` | 浅 hairline |
+| `--color-clay` | `#a8281c` | 砖红，**仅** 用于危险 / 低电量 / 错误 |
+
+不用蓝紫；不用灰阶 fill；clay 是唯一警示色，正常态绝不出现。
+
+### 形态
+
+- **圆角全部 0px**（`--radius-*` 全部置 0），通过 `global.css` 顶层选择器把 Tailwind utility 的 radius 强制覆写为 0（排除 Radix 弹层避免破样式）。
+- **边框**：卡片用 1px ink 墨线（`.craft-card`）；分割用 hairline `--color-line` 或多层 rule（`DoubleRule`）。
+- **阴影**：仅 dialog / dropdown / drag，无模糊浮起。dialog 阴影 `4px 4px 0 rgba(20,17,13,0.12)` 偏移直角硬阴影。
+- **焦点环**：`outline: 2px solid var(--color-ink)` + 2px offset，无 blur。
 
 ## 结构
 
 ```
 src/
-├── main.tsx           入口：BrowserRouter + QueryClientProvider + Auth/Toast/Confirm Provider
-├── App.tsx            路由表（仅 3 条：Login / Dashboard / GroupDetail）
-├── styles/global.css  Tailwind v4 + design tokens（@theme）+ soft-craft primitives
+├── main.tsx            入口：BrowserRouter + QueryClientProvider + Auth/Toast/Confirm Provider
+├── App.tsx             路由表（Login / Register / Dashboard / GroupDetail / FrameEditor）
+├── styles/global.css   Tailwind v4 + Mono Press tokens + .craft-* primitives
 ├── lib/
-│   ├── api.ts         axios 实例：baseURL '/'、auto Bearer JWT、401 跳 /login
-│   ├── auth.tsx       AuthProvider + useAuth（token / login / logout）
-│   ├── queries.ts     全部 useQuery / useMutation hooks（devices / groups / frames）
-│   ├── format.ts      isOnline / timeAgo / rssiLabel / greeting / formatBytes
-│   ├── dnd.ts         useDndOrder：dnd-kit + 乐观更新 + 后端 reorder mutation
-│   ├── styles.ts      共用 className 片段
-│   └── cn.ts          clsx-style 合并
+│   ├── api.ts          axios 实例：baseURL '/', auto Bearer JWT, 401 跳 /login
+│   ├── api-error.ts    解包 ApiErrorEnvelope
+│   ├── auth.tsx        AuthProvider + useAuth（token / login / logout）
+│   ├── queries.ts      全部 useQuery / useMutation hooks（devices / groups / frames）
+│   ├── format.ts       isOnline / timeAgo / rssiLabel / formatBytes / normalizeMac / normalizePairCode
+│   ├── dnd.ts          useDndOrder：dnd-kit + 乐观更新 + 后端 reorder mutation
+│   ├── hooks.ts        通用 hooks
+│   ├── image.ts        1bpp blob → ImageData
+│   ├── colors.ts       从 token 派生的语义色
+│   ├── styles.ts       共用 className 片段（dialogContentCls / dialogOverlayCls 等）
+│   └── cn.ts           tailwind-merge 包装
 ├── routes/
-│   ├── Login.tsx      左侧大色块 + 楷书欢迎语，右侧表单
-│   ├── Dashboard.tsx  首页：设备 grid + 内容组 grid。/devices/:did 是 deep link
-│   └── GroupDetail.tsx /groups/:gid 帧管理（列表 + dropzone + FrameEditor）
+│   ├── Login.tsx              邮箱 / 用户名 + 密码，POST /sessions
+│   ├── Register.tsx           邮箱 + 用户名 + 密码，POST /users
+│   ├── Dashboard.tsx          首页：设备 grid + 相册 grid；/devices/:did 是 deep link
+│   ├── GroupDetail.tsx        /groups/:gid 帧列表 + 操作
+│   └── FrameEditorPage.tsx    /groups/:gid/frames/new 与 /:seq/edit 共用
 └── components/
-    ├── Layout.tsx              header（logo + 用户菜单）
+    ├── Layout.tsx              header（logo + 用户菜单）+ Outlet
+    ├── AuthLayout.tsx          登录 / 注册页布局
     ├── RequireAuth.tsx         路由守卫，无 token 跳 /login
-    ├── Section.tsx             页内分块 + 楷书标题 + wave-divider
-    ├── Card.tsx                通用卡片（圆角 + 奶米底 + hover 浮起）
-    ├── Button.tsx              5 种 variant（primary / outline / soft / danger / link）
-    ├── Input.tsx               label-on-top input + 错误提示
+    ├── Section.tsx             页内分块 + 标题 + rule
+    ├── DoubleRule.tsx          双线分割（报刊感）
+    ├── Card.tsx                通用卡片（craft-card）
+    ├── Button.tsx              variants
+    ├── Input.tsx               label-on-top + 2px ink underline + error 红字
     ├── Select.tsx              Radix Select 包装
-    ├── Spinner.tsx             心跳点 loading
-    ├── Toast.tsx + Confirm.tsx Provider 风格，window.toast() / await confirm()
-    ├── EmptyState.tsx          缺省态（图标 + 楷书提示 + CTA）
-    ├── IconBlock.tsx           大色块 logo / 图标方块
-    ├── DeviceModal.tsx         设备详情：在线 / 电池 / RSSI / 固件 + 切组 + 解绑
-    ├── AddDeviceDialog.tsx     按 MAC 认领设备的对话框
-    ├── FrameCard.tsx           组详情里的帧卡（thumb + caption + 操作）
-    ├── FrameEditor.tsx         帧上传 / 编辑壳，组合下面 frame-editor/* 4 个组件
+    ├── Spinner.tsx             loading 指示器
+    ├── Toast.tsx + Confirm.tsx Provider：useToast() / await confirm()
+    ├── EmptyState.tsx          缺省态
+    ├── IconBlock.tsx           方块 logo / 图标
+    ├── DialogHeader.tsx        对话框通用标题区
+    ├── CreateGroupDialog.tsx   新建相册对话框
+    ├── DeviceCard.tsx          设备卡（可拖拽 + 在线点 + 电量 / 信号）
+    ├── DeviceModal.tsx         设备详情：在线 / 电池 / RSSI / 固件 + 切相册 + 解绑
+    ├── AddDeviceDialog.tsx     输入 6 位 pair_code 绑定设备
+    ├── GroupCard.tsx           相册卡（可拖拽 + 帧数）
+    ├── FrameCard.tsx           帧卡（thumb + caption + 操作）
+    ├── FrameEditor.tsx         帧上传 / 编辑壳，组合下面 4 个子组件
     ├── frame-editor/
-    │   ├── ImageDropzone.tsx   react-dropzone 拖入图片
-    │   ├── AudioDropzone.tsx   拖入音频（传给 backend ffmpeg 转 PCM）
+    │   ├── ImageDropzone.tsx   react-dropzone 选图
+    │   ├── AudioDropzone.tsx   选音频（backend ffmpeg 转 PCM）
     │   ├── DitherControls.tsx  阈值滑块 + 6 种 dither 模式（shared.DITHER_INFO）
-    │   └── PreviewCanvas.tsx   <canvas> 用 shared 的同一套 preprocess + dither 出预览
-    ├── AudioPlayPreview.tsx    .pcm raw 解码后 Web Audio 播
-    └── StatusBarOverlay.tsx    设备 frame 预览顶部的状态栏 mock
+    │   └── PreviewCanvas.tsx   <canvas> 用 shared 同一套 preprocess + dither 出预览
+    ├── AudioPlayPreview.tsx    raw PCM → WebAudio 播放
+    └── StatusBarOverlay.tsx    设备 frame 顶部状态栏 mock（24px 白底，1:1 对齐设备渲染）
 ```
 
 ## 路由
 
 | path | 组件 | 说明 |
 |---|---|---|
-| `/login` | `Login` | 邮箱 + 密码，POST /sessions → token 入 localStorage |
-| `/` | `Dashboard` | 总览：设备 grid + 内容组 grid |
-| `/devices/:did` | `Dashboard` | deep link，自动打开对应 `DeviceModal`，关闭时 navigate('/') 回首页 |
-| `/groups/:gid` | `GroupDetail` | 帧管理：列表 + 上传 + 重排 + 编辑 caption / audio |
-| 其它 | `<Navigate to="/">` | |
+| `/login` | `Login` | 邮箱 / 用户名 + 密码，POST /sessions → token 入 localStorage |
+| `/register` | `Register` | 邮箱 + 用户名 + 密码注册 |
+| `/` | `Dashboard` | 总览：设备 grid + 相册 grid |
+| `/devices/:did` | `Dashboard` | deep link，自动打开对应 `DeviceModal`，关闭时 `navigate('/')` 回首页 |
+| `/groups/:gid` | `GroupDetail` | 单相册帧列表 + 重排 + 编辑入口 |
+| `/groups/:gid/frames/new` | `FrameEditorPage` | 新建帧 |
+| `/groups/:gid/frames/:seq/edit` | `FrameEditorPage` | 编辑帧 |
+| 其它 | `<Navigate to="/" />` | |
 
-`/groups` 列表页**故意不存在** —— 总览页本身就是入口。独立 `DeviceDetail` 路由也已删（统一走 modal）。
+> 故意没有独立 `/groups` 列表页 —— Dashboard 已经是入口；独立 `DeviceDetail` 路由也不留，统一走 Dashboard 上的 Modal。
 
 ## 数据流
 
-- **状态管理**：TanStack Query 一把梭。所有服务端态在 `lib/queries.ts`，组件只调 `useDevices()` / `useGroups()` / `useGroupFrames(gid)` 这种 hook。mutation 在 `onSuccess` 里 `invalidateQueries` 触发 refetch。
-- **缓存策略**：`staleTime: 30s`、`refetchOnWindowFocus: false`（避免 e-ink 调试时频繁请求）。设备列表 `refetchInterval: 30s` 保持 lastSeenAt 新鲜。
-- **frame binary**：`useFrameImage(gid, seq, etag)` 的 queryKey 包含 etag，`staleTime: Infinity` —— etag 不变就永远不重拉，跟设备端 ETag/304 行为一致。
+- **状态管理**：TanStack Query 一把梭。所有服务端态在 `lib/queries.ts`，组件只调 `useDevices()` / `useGroups()` / `useGroupFrames(gid)` 这类 hook。mutation 在 `onSuccess` 里 `invalidateQueries` 触发 refetch。
+- **缓存策略**：`staleTime: 30s`，`refetchOnWindowFocus: false`（避免 e-ink 调试频繁请求）。设备列表 `refetchInterval: 30s` 保持 `last_seen_at` 新鲜。
+- **frame binary**：`useFrameImage(gid, seq, etag)` 的 queryKey 带 etag，`staleTime: Infinity` —— etag 不变就永远不重拉，跟设备端 ETag/304 行为一致。
 
 ## API 客户端
 
 `lib/api.ts` 的 axios 实例：
 
-- `baseURL: '/'`，dev 时 vite 反代 `/api` 与 `/healthz` 到 `:3001`，prod 同域。
+- `baseURL: '/'`；dev 时 Vite 反代 `/api` 与 `/healthz` 到 `:3001`，prod 同域。
 - request 拦截器读 `localStorage.getItem('slate_jwt')` 自动补 `Authorization: Bearer`。
-- response 拦截器在 401 时清 token + `window.location.href = '/login'`，避免 SPA history 残留。
+- response 拦截器 401 时清 token + `window.location.href = '/login'`（不在 `/login` 时才跳，避免登录页 401 自循环）。
 
 错误体走 backend 的 `ApiErrorEnvelope`：`{error, message, detail?, requestId?}`。toast 直接展示 `message`。
 
@@ -99,24 +152,27 @@ import type { DeviceSummaryT, FrameMutationResponseT, ManifestResponseT } from '
 import { rgbaToGray, autoInvert, autoContrast, ditherToBinary } from 'shared';
 ```
 
-`FrameEditor` 的 `PreviewCanvas` 跟 backend `RenderService` 走的是同一套 5 步管线（解码 → 灰度 → autoInvert → autoContrast → dither）。这就是预览跟设备显示「所见即所得」的根据。
+`PreviewCanvas` 跟 backend `RenderService` 走同一套 5 步管线（解码 → 灰度 → autoInvert → autoContrast → dither），这就是预览与设备显示「所见即所得」的根据。
+
+## Vite chunk 策略
+
+`vite.config.ts` 的 `manualChunks` 按变更频率分四块独立缓存，业务代码改动只 invalidate `app` chunk：
+
+| chunk | 包 |
+|---|---|
+| `react-vendor` | react, react-dom, react-router-dom, scheduler |
+| `radix-vendor` | `@radix-ui/*` |
+| `dnd-vendor` | `@dnd-kit/*` |
+| `lucide-vendor` | lucide-react |
 
 ## 本地开发
 
 ```bash
 bun install
-bun run dev:frontend                        # http://localhost:5173，proxy /api → :3001
+bun run dev:frontend                        # http://localhost:5173
 bun run --cwd frontend lint
 bun run --cwd frontend typecheck
-bun run --cwd frontend build                # → dist/，生产由 backend fastify-static 托管
+bun run --cwd frontend build                # 出 dist/
 ```
 
-dev 需要 `bun run dev:backend` 同时跑。生产单镜像里 `dist/` 直接由 backend 同域 serve，SPA fallback 在 `backend/src/main.ts` 的 onSend hook 里。
-
-## CSS 与类名约定
-
-- 颜色 / 圆角 / 字体只走 `@theme` token，不写裸十六进制。
-- 卡片用 `.craft-card` 或 `.craft-card-danger`（破坏性操作染砖红 hover）。
-- 所有按钮走 `<Button>` 组件，避免一处一种 hover。
-- 中文标题加 `.font-kai`，英文标题加 `.font-serif`，等宽数字加 `.font-mono`。
-- 入场动画用 `.fade-up` + `.fade-up-{1..4}` stagger。
+dev 需 `bun run dev:backend` 同时跑（Vite proxy `/api → :3001`）。生产环境 `dist/` 直接由 backend 的 `@fastify/static` 同域托管，SPA fallback 在 `backend/src/main.ts` 的 `onSend` hook 里。

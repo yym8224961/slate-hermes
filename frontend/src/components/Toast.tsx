@@ -1,15 +1,15 @@
 /* eslint-disable react-refresh/only-export-components */
-// 全局 toast — Radix Toast 风格化。两种语调:
-//   info(默认):奶米底 + 砖红边
-//   error:     砖红底 + 白字
+// 全局 toast — Radix Toast 风格化。两种语调：
+//   info（默认）：奶米底 + 砖红边
+//   error：     砖红底 + 白字
 //
-// 用法:
+// 用法：
 //   const toast = useToast();
 //   toast.success('已添加'); toast.error('MAC 已被他人占用');
 //
 // 在 app 根挂 <ToastProvider /> 一次。
 
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
 import * as RT from '@radix-ui/react-toast';
 import { CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import { cn } from '../lib/cn';
@@ -38,11 +38,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     setItems((p) => [...p, { id: Date.now() + Math.random(), tone, message, hint }]);
   }, []);
 
-  const api: ToastApi = {
-    success: (m, h) => push('success', m, h),
-    error: (m, h) => push('error', m, h),
-    info: (m, h) => push('info', m, h),
-  };
+  const api = useMemo<ToastApi>(
+    () => ({
+      success: (m, h) => push('success', m, h),
+      error: (m, h) => push('error', m, h),
+      info: (m, h) => push('info', m, h),
+    }),
+    [push]
+  );
 
   return (
     <ToastCtx.Provider value={api}>

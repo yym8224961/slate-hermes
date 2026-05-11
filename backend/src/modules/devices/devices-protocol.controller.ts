@@ -20,8 +20,8 @@ export class DevicesProtocolController {
   ) {}
 
   // ── register / reset（无鉴权）────────────────────────────
-  // 同 mac 二次进来一律走 reset 路径(清 owner、清相册、轮换 secret + pair_code),
-  // 实现"物理重置即转移"语义。固件那侧只在 NVS 没 device_secret 时调用此端点。
+  // 同 mac 二次进来一律走 reset 路径（清 owner、清相册、轮换 secret + pair_code），
+  // 实现「物理重置即转移」语义。固件那侧只在 NVS 没 device_secret 时调用此端点。
   @Public()
   @Post('devices/register')
   async register(@Body() body: RegisterDeviceDto): Promise<RegisterDeviceResponseT> {

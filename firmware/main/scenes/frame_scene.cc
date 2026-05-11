@@ -46,7 +46,7 @@ void FrameScene::OnEnter(SceneContext& ctx) {
     lv_obj_set_style_border_width(root_, 0, 0);
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
 
-    // FrameView 全屏（400×300）；StatusBar 浮在最上 28px 白底盖一部分。
+    // FrameView 全屏（400×300）；StatusBar 浮在最上 24px 白底盖一部分。
     // 后创建在上：StatusBar 在 FrameView 之上。
     frame_view_ = std::make_unique<FrameView>(root_);
 
@@ -326,9 +326,9 @@ void FrameScene::ApplyEmptyState() {
 }
 
 void FrameScene::SyncRender(SceneContext& ctx, bool force_full) {
-    // 状态栏微改也必须同步渲染：异步路径下 50ms debounce 内 LVGL 还没 flush，
+    // 状态栏微改也必须同步渲染：异步路径下 50 ms debounce 内 LVGL 还没 flush，
     // refresh_task 拿到 prev=cur Diff=0 直接 continue，表现为图标不刷新。
-    // 必须在 ui_loop task 上下文调（栈 8KB），其他 task 栈 3584 装不下 LVGL render。
+    // 必须在 ui_loop task 上下文调（栈 8 KB），其他 task 栈 3584 装不下 LVGL render。
     if (!ctx.epd) return;
     if (!ctx.epd->Lock(500)) {
         ESP_LOGW(kTag, "SyncRender: epd lock timeout");

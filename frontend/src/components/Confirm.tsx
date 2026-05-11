@@ -1,7 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
-// 全局 confirm:替代浏览器 window.confirm,用 Radix Dialog 风格化。
+// 全局 confirm：替代浏览器 window.confirm，用 Radix Dialog 风格化。
 //
-// 用法:
+// 用法：
 //   const confirm = useConfirm();
 //   if (await confirm({ title: '删除这一帧?', description: '此操作不可逆。', destructive: true })) {
 //     del.mutate(...);
@@ -55,10 +55,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
         }}
       >
         <Dialog.Portal>
-          {/* z-index 故意比其它 dialog 高一档:
-                普通 dialog (FrameEditor / Groups create): overlay z-40 / content z-50
-                Confirm                                  : overlay z-50 / content z-60
-              因为业务里 dialog 内部还可能再触发 confirm(如 FrameEditor 删音频),
+          {/* z-index 故意比其它 dialog 高一档：
+                普通 dialog （FrameEditor / Groups create）： overlay z-40 / content z-50
+                Confirm                                  ： overlay z-50 / content z-60
+              因为业务里 dialog 内部还可能再触发 confirm（如 FrameEditor 删音频），
               confirm 必须盖在那些 dialog 之上。改前请确认这条不变量。 */}
           <Dialog.Overlay className={dialogOverlayConfirmCls} />
           <Dialog.Content className={dialogContentConfirmCls}>

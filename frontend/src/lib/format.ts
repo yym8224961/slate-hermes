@@ -30,7 +30,7 @@ export function rssiLabel(rssi: number | null): string {
   return '极弱';
 }
 
-// MAC 规范化:展示用大写 + 冒号分隔。
+// MAC 规范化：展示用大写 + 冒号分隔。
 export function normalizeMac(input: string): string {
   return (
     input
@@ -42,19 +42,14 @@ export function normalizeMac(input: string): string {
   );
 }
 
-// MAC 格式校验(规范化前的宽松版,允许空格 / 短横 / 冒号 / 大小写)。
+// MAC 格式校验（规范化前的宽松版，允许空格 / 短横 / 冒号 / 大小写）。
 const MAC_REGEX = /^([0-9A-Fa-f]{2}[:-]?){5}[0-9A-Fa-f]{2}$/;
 export function isValidMac(input: string): boolean {
   return MAC_REGEX.test(input.trim().replace(/\s/g, ''));
 }
 
-// 短 mac 尾号(用于卡片或 modal 头部副标)。
-export function macTail(mac: string, n = 5): string {
-  return mac.replace(/:/g, '').slice(-n);
-}
-
-// 配对码规范化:去空格、横线，统一大写。设备屏上是 6 位 [A-Z2-9](后端避了
-// 0/O/1/I/L),用户输入时应该不会撞到这些字符,但 normalize 宽松点容错。
+// 配对码规范化：去空格、横线，统一大写。设备屏上是 6 位 [A-Z2-9]（后端避了
+// 0/O/1/I/L），用户输入时应该不会撞到这些字符，但 normalize 宽松点容错。
 export function normalizePairCode(input: string): string {
   return input.replace(/[\s-]/g, '').toUpperCase();
 }

@@ -10,7 +10,6 @@
   /* fonts */
   --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", Georgia, serif;
   --font-sans:  "IBM Plex Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
-  --font-kai:   "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", Georgia, serif; /* backward-compat alias */
   --font-mono:  "IBM Plex Mono", "JetBrains Mono", ui-monospace, monospace;
 
   /* mono press palette */
@@ -62,12 +61,7 @@ body {
   border-radius: 0;
 }
 
-/* 保留 font-kai 兼容别名 — 底层已指向 Noto Serif SC */
 @layer components {
-  .font-kai {
-    font-family: var(--font-kai);
-    letter-spacing: var(--tracking-tight);
-  }
   .font-serif {
     font-family: var(--font-serif);
     letter-spacing: var(--tracking-tight);

@@ -102,7 +102,7 @@ void Board::StopChargeTickTask() {
 
 void Board::ChargeTickTaskEntry(void* arg) {
     auto*            self = static_cast<Board*>(arg);
-    // 500ms 而不是 200ms:充电 IC 状态变化以秒计,kStableHighMs=400/kAltWindowMs=1500
+    // 500 ms 而不是 200 ms：充电 IC 状态变化以秒计，kStableHighMs=400/kAltWindowMs=1500
     // 仍然能正常去抖,但任务唤醒次数减半,light-sleep 期间收益更明显。
     const TickType_t poll = pdMS_TO_TICKS(500);
     while (self->charge_tick_running_.load()) {

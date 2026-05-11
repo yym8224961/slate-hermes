@@ -19,7 +19,7 @@ constexpr char kTag[] = "VolumePage";
 constexpr int kBarWidth  = 280;
 constexpr int kBarHeight = 24;
 
-// 16kHz 单声道 16-bit PCM,440Hz 200ms 正弦波
+// 16 kHz 单声道 16-bit PCM，440 Hz 200 ms 正弦波
 std::vector<uint8_t> MakeTestTone() {
     constexpr int   kRate    = 16000;
     constexpr int   kMs      = 200;

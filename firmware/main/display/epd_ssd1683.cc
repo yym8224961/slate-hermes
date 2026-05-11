@@ -198,8 +198,8 @@ bool EpdSsd1683::IsRefreshPending() {
 
 void EpdSsd1683::RequestUrgentPartialRefresh() {
     // 设标志位 + notify,立即返回。不在这里等 LVGL,因为 flush_cb 也会 notify;
-    // RefreshTaskLoop 头部的 sliding debounce(50ms 内有新 notify 就续 50ms,
-    // 最长 500ms）会自然吸收「ShowCar 后 LVGL 50ms 才 flush」这一段时间。
+    // RefreshTaskLoop 头部的 sliding debounce（50 ms 内有新 notify 就续 50 ms，
+    // 最长 500 ms）会自然吸收「ShowCar 后 LVGL 50 ms 才 flush」这一段时间。
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
     urgent_refresh_      = true;
     refresh_in_progress_ = true;
@@ -294,15 +294,15 @@ void EpdSsd1683::RefreshTaskEntry(void* arg) {
 }
 
 void EpdSsd1683::RefreshTaskLoop() {
-    constexpr TickType_t kDebounceMs    = 50;   // 每来一次新 notify,续 50ms
-    constexpr TickType_t kDebounceMaxMs = 500;  // 兜底:总等待最多 500ms,防止 LVGL 永不静默
+    constexpr TickType_t kDebounceMs    = 50;   // 每来一次新 notify，续 50 ms
+    constexpr TickType_t kDebounceMaxMs = 500;  // 兜底：总等待最多 500 ms，防止 LVGL 永不静默
     while (true) {
         // 第一次阻塞等 notify。来源:flush_cb / RequestUrgentXxxRefresh / 周期采样(已废)。
         if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY) == 0)
             continue;
 
-        // Sliding debounce:在 50ms 窗口内吸收所有新 notify,每来一次重置窗口,
-        // 直到 50ms 没有新 notify 才进入真正的刷新。这一步把 LVGL 把整屏
+        // Sliding debounce：在 50 ms 窗口内吸收所有新 notify，每来一次重置窗口，
+        // 直到 50 ms 没有新 notify 才进入真正的刷新。这一步把 LVGL 把整屏
         // invalidate 分成多个 chunk 多次调用 flush_cb 的"碎片"合并成一轮刷新。
         TickType_t       first_tick = xTaskGetTickCount();
         TickType_t       hard_max   = first_tick + pdMS_TO_TICKS(kDebounceMaxMs);
@@ -313,7 +313,7 @@ void EpdSsd1683::RefreshTaskLoop() {
                 break;
             TickType_t wait = (deadline < hard_max ? deadline : hard_max) - now;
             if (ulTaskNotifyTake(pdTRUE, wait) > 0) {
-                // 又一次 notify(更多 flush_cb 或新的 Request)→ 续 50ms。
+                // 又一次 notify（更多 flush_cb 或新的 Request）→ 续 50 ms。
                 deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kDebounceMs);
             }
         }
@@ -401,7 +401,7 @@ void EpdSsd1683::RefreshTaskLoop() {
                      (unsigned long)Hash16(prev_buffer_, kBufferLen));
             // 跟参考实现对齐:每次 PARTIAL 也先做完整 EpdInit(含 PowerOn + RESET +
             // 重发初始化命令),跟末尾 EpdTurnOnDisplay 内的 EpdPowerOff 配对。
-            // 之前为了省 ~40ms 让 partial → partial 不重 init,但 EpdTurnOnDisplay
+            // 之前为了省 ~40 ms 让 partial → partial 不重 init，但 EpdTurnOnDisplay
             // 末尾仍 PowerOff,导致下一轮 partial 命令送到已断电的 controller,
             // 表现为"屏幕变更黑一点但图没切"。
             EpdInit();
@@ -470,7 +470,7 @@ void EpdSsd1683::SpiPortRxInit() {
     b.max_transfer_sz               = kBufferLen * 2;
     spi_device_interface_config_t d = {};
     d.spics_io_num                  = -1;
-    d.clock_speed_hz                = 8 * 1000 * 1000;  // 读时降速到 8MHz
+    d.clock_speed_hz                = 8 * 1000 * 1000;  // 读时降速到 8 MHz
     d.mode                          = 0;
     d.queue_size                    = 7;
     ESP_ERROR_CHECK(spi_bus_initialize(spi_host_, &b, SPI_DMA_CH_AUTO));
@@ -584,7 +584,7 @@ void EpdSsd1683::EpdInit() {
 
 void EpdSsd1683::ApplyTemperatureBoost() {
     // 0x40 = Get Temp,ReadBusy 后 EPD 把片内温度寄存器值放到 DI 上,SPI 反向读 1B。
-    // 这次切换 SPI 模式约 5-10ms,所以 60s 内复用上次结果(屏温变化很慢)。
+    // 这次切换 SPI 模式约 5~10 ms，所以 60 s 内复用上次结果（屏温变化很慢）。
     constexpr int64_t kCacheValidMs = 60 * 1000;
     const int64_t     now_ms        = esp_timer_get_time() / 1000;
 
