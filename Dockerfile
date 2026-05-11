@@ -65,9 +65,9 @@ COPY backend/src ./backend/src
 COPY entrypoint.sh ./
 RUN chmod +x /app/entrypoint.sh
 
-# alpine 的 adduser 来自 busybox,只支持短选项;显式 addgroup 以保证 chown 命中正确 group
-RUN addgroup -S appuser \
- && adduser -S -H -s /sbin/nologin -G appuser appuser
+# alpine 的 adduser 来自 busybox,只支持短选项;显式 -g/-u 固定 999:999 以便宿主机 chown 对齐
+RUN addgroup -g 999 -S appuser \
+ && adduser -u 999 -S -H -s /sbin/nologin -G appuser appuser
 # chown 仅限需要写入的目录;其余层用 COPY --chown 在构建时设置
 USER appuser
 
