@@ -135,11 +135,11 @@ docker compose pull && docker compose up -d
 | `./slate/blobs/` | `/data/blobs/` | frame image 与 audio |
 | `./mysql/` | `/var/lib/mysql/` | MySQL datadir |
 
-容器以 uid/gid **999:999** 运行，挂载目录需提前授权：
+容器以 uid/gid **1000:1000**（`bun` 用户）运行，挂载目录需提前授权：
 
 ```bash
 mkdir -p ./slate/blobs
-chown -R 999:999 ./slate/blobs
+chown -R 1000:1000 ./slate/blobs
 ```
 
 建议每天 `mysqldump + tar ./slate/blobs` 备份。
