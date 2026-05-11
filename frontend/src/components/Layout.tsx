@@ -18,7 +18,7 @@ export function Layout() {
             <IconBlock size="md" tone="brand" className="font-serif text-[18px] font-bold">
               墨
             </IconBlock>
-            <div className="hidden sm:block min-w-0">
+            <div className="min-w-0">
               <p className="font-serif text-[18px] font-bold leading-none text-ink tracking-tight truncate">
                 Slate
               </p>
@@ -50,7 +50,7 @@ export function Layout() {
                   <DropdownMenu.Content
                     align="end"
                     sideOffset={6}
-                    className="min-w-[200px] bg-paper border border-ink shadow-[0_8px_24px_rgba(20,17,13,0.14)] py-1 z-50"
+                    className="min-w-[200px] bg-paper border border-ink shadow-dropdown py-1 z-50"
                   >
                     <div className="px-3 pt-2 pb-2.5 border-b border-line mb-1">
                       <p className="text-[10px] text-stone uppercase tracking-[0.16em] font-mono">
@@ -78,7 +78,7 @@ export function Layout() {
       </main>
 
       <footer className="border-t border-line">
-        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-3.5 text-center sm:text-right">
+        <div className="max-w-6xl mx-auto px-5 sm:px-8 py-3.5 text-center">
           <p className="font-mono text-[11px] text-stone tracking-[0.06em]">
             Slate · 1bpp · 400×300 · v0.1
           </p>

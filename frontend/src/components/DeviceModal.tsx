@@ -8,7 +8,6 @@
 //
 // /devices/:did URL 仍可用 — 由 Dashboard 监听 useParams 自动打开 modal。
 
-import { useEffect, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import {
   X,
@@ -29,8 +28,9 @@ import { Button } from './Button';
 import { Spinner } from './Spinner';
 import { Select, SelectItem, SelectSeparator } from './Select';
 import { isOnline, timeAgo, rssiLabel } from '../lib/format';
-import { inputCls } from '../lib/styles';
+import { inputCls, dialogContentWideCls, dialogOverlayCls } from '../lib/styles';
 import { cn } from '../lib/cn';
+import { useInlineRename } from '../lib/hooks';
 
 interface DeviceModalProps {
   open: boolean;
@@ -45,46 +45,34 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
   const toast = useToast();
   const confirm = useConfirm();
 
-  const [editingName, setEditingName] = useState(false);
-  const [draftName, setDraftName] = useState(device.name ?? '');
-
-  useEffect(() => {
-    setDraftName(device.name ?? '');
-    setEditingName(false);
-  }, [device.id, device.name, open]);
+  const { editing: editingName, draft: draftName, setDraft: setDraftName, startEditing, commit, handleKeyDown } = useInlineRename(
+    device.name ?? '',
+    async (name) => {
+      await new Promise<void>((resolve, reject) => {
+        patch.mutate(
+          { name },
+          {
+            onSuccess: () => {
+              toast.success('已改名');
+              resolve();
+            },
+            onError: () => {
+              toast.error('改名失败');
+              reject();
+            },
+          }
+        );
+      });
+    }
+  );
 
   const online = isOnline(device);
   const battery = device.battery_pct;
   const BatteryIcon =
-    battery == null
-      ? Battery
-      : battery < 20
-        ? BatteryWarning
-        : battery < 80
-          ? Battery
-          : BatteryCharging;
-
-  function commitName() {
-    const trimmed = draftName.trim();
-    if (!trimmed || trimmed === (device.name ?? '')) {
-      setEditingName(false);
-      setDraftName(device.name ?? '');
-      return;
-    }
-    patch.mutate(
-      { name: trimmed },
-      {
-        onSuccess: () => {
-          toast.success('已改名');
-          setEditingName(false);
-        },
-        onError: () => {
-          toast.error('改名失败');
-          setDraftName(device.name ?? '');
-        },
-      }
-    );
-  }
+    battery == null ? Battery
+    : battery < 20 ? BatteryWarning
+    : battery < 80 ? Battery
+    : BatteryCharging;
 
   function changeGroup(value: string) {
     const next = value === '__none__' ? null : value;
@@ -118,10 +106,10 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-ink/20 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-xl max-h-[calc(100vh-3rem)] flex flex-col bg-paper border-2 border-ink z-50 shadow-[4px_4px_0_rgba(20,17,13,0.12)]">
+        <Dialog.Overlay className={dialogOverlayCls} />
+        <Dialog.Content className={dialogContentWideCls}>
           {/* 顶栏:状态点 + mac + 关闭 */}
-          <div className="flex items-start justify-between gap-4 px-6 sm:px-7 pt-5 pb-3.5 border-b border-line">
+          <div className="flex items-center justify-between gap-4 px-6 sm:px-7 pt-5 pb-3.5 border-b border-line">
             <div className="min-w-0">
               <p className="inline-flex items-center gap-2 text-[12px] text-stone">
                 <span className={cn('dot', online ? 'dot-online' : 'dot-offline')} />
@@ -135,14 +123,8 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
                     autoFocus
                     value={draftName}
                     onChange={(e) => setDraftName(e.target.value)}
-                    onBlur={commitName}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitName();
-                      if (e.key === 'Escape') {
-                        setEditingName(false);
-                        setDraftName(device.name ?? '');
-                      }
-                    }}
+                    onBlur={commit}
+                    onKeyDown={handleKeyDown}
                     maxLength={64}
                     placeholder="未命名"
                     className={cn(
@@ -157,8 +139,8 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
                 )}
                 <button
                   onClick={() => {
-                    if (editingName) commitName();
-                    else setEditingName(true);
+                    if (editingName) commit();
+                    else startEditing();
                   }}
                   disabled={patch.isPending}
                   aria-label={editingName ? '保存名称' : '改名'}

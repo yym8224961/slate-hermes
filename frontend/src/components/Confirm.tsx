@@ -14,6 +14,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from './Button';
 import { IconBlock } from './IconBlock';
+import { dialogContentConfirmCls, dialogOverlayConfirmCls } from '../lib/styles';
 
 interface ConfirmOptions {
   title: string;
@@ -59,18 +60,18 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 Confirm                                  : overlay z-50 / content z-60
               因为业务里 dialog 内部还可能再触发 confirm(如 FrameEditor 删音频),
               confirm 必须盖在那些 dialog 之上。改前请确认这条不变量。 */}
-          <Dialog.Overlay className="fixed inset-0 bg-ink/20 z-50" />
-          <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-md bg-paper border-2 border-ink z-[60] p-6 shadow-[4px_4px_0_rgba(20,17,13,0.12)]">
-            <div className="flex items-start gap-4">
-              <IconBlock tone={opts?.destructive ? 'danger' : 'muted'}>
-                <AlertTriangle size={18} />
+          <Dialog.Overlay className={dialogOverlayConfirmCls} />
+          <Dialog.Content className={dialogContentConfirmCls}>
+            <div className="flex items-center gap-4">
+              <IconBlock size="lg" tone={opts?.destructive ? 'danger' : 'muted'}>
+                <AlertTriangle size={24} />
               </IconBlock>
               <div className="min-w-0 flex-1">
-                <Dialog.Title className="font-serif text-[20px] font-bold leading-tight">
+                <Dialog.Title className="font-serif text-[20px] font-bold leading-[1.2]">
                   {opts?.title}
                 </Dialog.Title>
                 {opts?.description && (
-                  <Dialog.Description className="font-sans text-[13px] text-stone mt-2 leading-relaxed">
+                  <Dialog.Description className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
                     {opts.description}
                   </Dialog.Description>
                 )}

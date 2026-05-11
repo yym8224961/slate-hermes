@@ -14,19 +14,17 @@ interface DialogHeaderProps {
 
 export function DialogHeader({ icon, title, description, onClose, className }: DialogHeaderProps) {
   return (
-    <div className={cn('flex items-start justify-between gap-4', className)}>
-      <div className="flex items-start gap-3 min-w-0">
-        <IconBlock tone="soft">{icon}</IconBlock>
-        <div className="min-w-0">
-          <Dialog.Title className="font-serif text-[22px] font-bold leading-tight">
-            {title}
-          </Dialog.Title>
-          {description && (
-            <Dialog.Description className="font-sans text-[13px] text-stone mt-1 leading-relaxed">
-              {description}
-            </Dialog.Description>
-          )}
-        </div>
+    <div className={cn('flex items-center gap-4', className)}>
+      <IconBlock size="lg" tone="soft">{icon}</IconBlock>
+      <div className="min-w-0 flex-1">
+        <Dialog.Title className="font-serif text-[22px] font-bold leading-[1.2]">
+          {title}
+        </Dialog.Title>
+        {description && (
+          <Dialog.Description className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
+            {description}
+          </Dialog.Description>
+        )}
       </div>
       <Dialog.Close asChild>
         <button

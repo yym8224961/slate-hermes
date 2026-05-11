@@ -2,7 +2,7 @@
 
 import { DITHER_MODES, DITHER_INFO } from 'shared';
 import type { DitherMode } from 'shared';
-import { Select, SelectItem } from '../Select';
+import { cn } from '../../lib/cn';
 
 interface DitherControlsProps {
   mode: DitherMode;
@@ -62,17 +62,25 @@ export function DitherControls({
           <p className="font-sans text-[13px] text-stone">抖动算法</p>
           <p className="font-mono text-[11px] text-stone-light">{DITHER_INFO[mode].hint}</p>
         </div>
-        <Select
-          value={mode}
-          onValueChange={(v) => onModeChange(v as DitherMode)}
-          aria-label="抖动算法"
-        >
+        <div className="grid grid-cols-2">
           {DITHER_MODES.map((m) => (
-            <SelectItem key={m} value={m}>
-              <span className="font-serif">{DITHER_INFO[m].label}</span>
-            </SelectItem>
+            <button
+              key={m}
+              type="button"
+              aria-pressed={mode === m}
+              onClick={() => onModeChange(m)}
+              className={cn(
+                'flex items-center justify-between px-3 py-2.5 font-serif text-[13px] border border-ink -ml-px -mt-px transition-colors',
+                mode === m
+                  ? 'bg-cream-deep text-ink'
+                  : 'text-stone hover:bg-cream'
+              )}
+            >
+              <span>{DITHER_INFO[m].label}</span>
+              {mode === m && <span className="font-mono text-[10px]">●</span>}
+            </button>
           ))}
-        </Select>
+        </div>
         <p className="font-kai text-[11px] text-stone-light mt-1.5">
           线稿用「线稿 · 纯黑白」;照片用「照片 · 推荐」。
         </p>

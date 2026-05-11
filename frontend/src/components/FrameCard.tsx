@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Pencil, Trash2, GripVertical } from 'lucide-react';
+import { FRAME_WIDTH, FRAME_HEIGHT } from 'shared';
 import { useFrameImage, useDeleteFrame } from '../lib/queries';
 import type { FrameSummaryT } from 'shared';
 import { Spinner } from './Spinner';
@@ -11,6 +12,7 @@ import { AudioPlayPreview } from './AudioPlayPreview';
 import { useConfirm } from './Confirm';
 import { useToast } from './Toast';
 import { cn } from '../lib/cn';
+import { decodeBppImage, isValidBppLength } from '../lib/image';
 
 interface FrameCardProps {
   gid: string;
@@ -18,33 +20,8 @@ interface FrameCardProps {
   onEdit: () => void;
 }
 
-const FRAME_W = 400;
-const FRAME_H = 300;
-
-// Mono Press 墨色 #14110d + 纸本 #f5f3ed
-const C_WHITE: [number, number, number] = [0xf5, 0xf3, 0xed];
-const C_BLACK: [number, number, number] = [0x14, 0x11, 0x0d];
-
 const imageDataCache = new Map<string, ImageData>();
 const MAX_CACHE_SIZE = 50;
-
-function buildFrameImageData(bytes: Uint8Array): ImageData {
-  const data = new ImageData(FRAME_W, FRAME_H);
-  const bpr = FRAME_W >> 3;
-  for (let y = 0; y < FRAME_H; y++) {
-    for (let x = 0; x < FRAME_W; x++) {
-      const byteIdx = y * bpr + (x >> 3);
-      const bit = (bytes[byteIdx]! >> (7 - (x & 7))) & 1;
-      const i = (y * FRAME_W + x) * 4;
-      const c = bit ? C_WHITE : C_BLACK;
-      data.data[i] = c[0];
-      data.data[i + 1] = c[1];
-      data.data[i + 2] = c[2];
-      data.data[i + 3] = 255;
-    }
-  }
-  return data;
-}
 
 export function FrameCard({ gid, frame, onEdit }: FrameCardProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -68,11 +45,11 @@ export function FrameCard({ gid, frame, onEdit }: FrameCardProps) {
     const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return;
     const bytes = new Uint8Array(img.data);
-    if (bytes.byteLength !== (FRAME_W * FRAME_H) / 8) return;
+    if (!isValidBppLength(bytes)) return;
 
     let data = imageDataCache.get(frame.image_etag);
     if (!data) {
-      data = buildFrameImageData(bytes);
+      data = decodeBppImage(bytes);
       imageDataCache.set(frame.image_etag, data);
       if (imageDataCache.size > MAX_CACHE_SIZE) {
         const firstKey = imageDataCache.keys().next().value;
@@ -117,8 +94,8 @@ export function FrameCard({ gid, frame, onEdit }: FrameCardProps) {
         ) : (
           <canvas
             ref={canvasRef}
-            width={FRAME_W}
-            height={FRAME_H}
+            width={FRAME_WIDTH}
+            height={FRAME_HEIGHT}
             className="block w-full h-full"
             style={{ imageRendering: 'pixelated' }}
           />
@@ -149,7 +126,7 @@ export function FrameCard({ gid, frame, onEdit }: FrameCardProps) {
       </div>
 
       {/* 操作行 */}
-      <div className="px-2 py-1.5 border-t border-line flex items-center gap-0.5">
+      <div className="px-2 py-2 border-t border-line flex items-center gap-0.5">
         <button
           {...attributes}
           {...listeners}

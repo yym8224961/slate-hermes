@@ -16,10 +16,12 @@ import { Input } from './Input';
 import { Button } from './Button';
 import { Spinner } from './Spinner';
 import { IconBlock } from './IconBlock';
+import { DoubleRule } from './DoubleRule';
 import { PreviewCanvas } from './frame-editor/PreviewCanvas';
 import { ImageDropzone } from './frame-editor/ImageDropzone';
 import { AudioDropzone } from './frame-editor/AudioDropzone';
 import { DitherControls } from './frame-editor/DitherControls';
+import { getApiErrorMessage } from '../lib/api-error';
 
 interface FrameEditorProps {
   gid: string;
@@ -40,7 +42,6 @@ export function FrameEditor({ gid, frame, onDone }: FrameEditorProps) {
   const [threshold, setThreshold] = useState(BW_THRESHOLD_DEFAULT);
   const [mode, setMode] = useState<DitherMode>(DEFAULT_DITHER_MODE);
   const [caption, setCaption] = useState(isEdit ? (frame.caption ?? '') : '');
-  const [showSafeArea, setShowSafeArea] = useState(true);
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
   const previewRef = useRef<HTMLCanvasElement>(null);
@@ -69,8 +70,8 @@ export function FrameEditor({ gid, frame, onDone }: FrameEditorProps) {
     if (imageFile) {
       const canvas = previewRef.current;
       if (canvas) {
-        const blob = await new Promise<Blob>((resolve) => {
-          canvas.toBlob((b) => resolve(b!), 'image/png');
+        const blob = await new Promise<Blob>((resolve, reject) => {
+          canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas export failed'))), 'image/png');
         });
         fd.append('image', blob, 'cropped.png');
       }
@@ -90,9 +91,7 @@ export function FrameEditor({ gid, frame, onDone }: FrameEditorProps) {
       }
       onDone();
     } catch (err) {
-      const env = (err as { response?: { data?: { message?: string; error?: string } } })?.response
-        ?.data;
-      toast.error(isEdit ? '保存失败' : '新建失败', env?.message ?? env?.error);
+      toast.error(isEdit ? '保存失败' : '新建失败', getApiErrorMessage(err));
     }
   }
 
@@ -108,23 +107,32 @@ export function FrameEditor({ gid, frame, onDone }: FrameEditorProps) {
       </nav>
 
       <header className="mt-5 fade-up flex items-center gap-4">
-        <IconBlock size="xl" tone="soft">
-          <Frame size={28} />
+        <IconBlock size="lg" tone="soft">
+          <Frame size={24} />
         </IconBlock>
-        <div className="min-w-0 flex-1">
-          <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-tight truncate tracking-tight">
+        <div className="flex-1 min-w-0">
+          <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-[1.2] truncate tracking-tight">
             {isEdit ? `编辑第 ${frame!.sort_order} 帧` : '新建一帧'}
           </h1>
-          <p className="font-serif italic text-[14px] text-stone mt-1.5">
+          <p className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
             {isEdit ? '改顺序请在组内用拖拽。' : '追加至列尾，可拖拽改序。'}
           </p>
         </div>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <Button variant="outline" onClick={onDone}>
+            取消
+          </Button>
+          <Button
+            onClick={onSubmit}
+            disabled={!canSubmit || submitting}
+            iconLeft={!submitting ? <ArrowUp size={16} /> : undefined}
+          >
+            {submitting ? <Spinner /> : isEdit ? '保存' : '上传'}
+          </Button>
+        </div>
       </header>
 
-      <div className="mt-5 flex flex-col gap-[3px]">
-        <div className="h-px bg-ink" />
-        <div className="h-0.5 bg-ink" />
-      </div>
+      <DoubleRule className="mt-3" />
 
       <div className="mt-6 fade-up fade-up-1">
         <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr] gap-6 lg:gap-8">
@@ -135,13 +143,6 @@ export function FrameEditor({ gid, frame, onDone }: FrameEditorProps) {
                 <p className="font-sans text-[12px] text-stone">
                   预览 · 1bpp · {FRAME_WIDTH}×{FRAME_HEIGHT}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => setShowSafeArea((v) => !v)}
-                  className="font-sans text-[11px] text-stone border-b border-stone hover:border-ink hover:text-ink transition-colors"
-                >
-                  {showSafeArea ? '隐藏安全区' : '显示安全区'}
-                </button>
               </div>
               <PreviewCanvas
                 canvasRef={previewRef}
@@ -150,7 +151,7 @@ export function FrameEditor({ gid, frame, onDone }: FrameEditorProps) {
                 threshold={threshold}
                 mode={mode}
                 caption={caption}
-                showSafeArea={showSafeArea}
+                showSafeArea={false}
                 scale={scale}
                 offset={offset}
                 onOffsetChange={setOffset}
@@ -205,19 +206,6 @@ export function FrameEditor({ gid, frame, onDone }: FrameEditorProps) {
             />
           </div>
         </div>
-      </div>
-
-      <div className="mt-8 flex items-center justify-end gap-3 border-t border-ink pt-5 pb-8">
-        <Button variant="outline" onClick={onDone}>
-          取消
-        </Button>
-        <Button
-          onClick={onSubmit}
-          disabled={!canSubmit || submitting}
-          iconLeft={!submitting ? <ArrowUp size={16} /> : undefined}
-        >
-          {submitting ? <Spinner /> : isEdit ? '保存' : '上传'}
-        </Button>
       </div>
     </div>
   );

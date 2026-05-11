@@ -15,6 +15,7 @@ import { Input } from './Input';
 import { Button } from './Button';
 import { Spinner } from './Spinner';
 import { DialogHeader } from './DialogHeader';
+import { dialogContentCls, dialogOverlayCls } from '../lib/styles';
 
 interface AddDeviceDialogProps {
   open: boolean;
@@ -66,10 +67,10 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-ink/20 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-md bg-paper border-2 border-ink z-50 p-7 shadow-[4px_4px_0_rgba(20,17,13,0.12)]">
+        <Dialog.Overlay className={dialogOverlayCls} />
+        <Dialog.Content className={dialogContentCls}>
           <DialogHeader
-            icon={<KeyRound size={18} />}
+            icon={<KeyRound size={24} />}
             title="添加设备"
             description="在设备屏上查看 6 位配对码，输入此处即绑定。"
             className="mb-6"

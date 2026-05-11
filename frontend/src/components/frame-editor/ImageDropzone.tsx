@@ -21,8 +21,8 @@ export function ImageDropzone({ isEdit, imageFile, onPick }: ImageDropzoneProps)
     <div
       {...dz.getRootProps()}
       className={cn(
-        'border-2 border-dashed transition-colors px-5 py-6 text-center cursor-pointer',
-        dz.isDragActive ? 'border-ink bg-cream' : 'border-line hover:border-ink hover:bg-cream'
+        'border border-dashed transition-colors px-5 py-6 text-center cursor-pointer',
+        dz.isDragActive ? 'border-ink bg-cream' : 'border-ink/50 hover:border-ink hover:bg-cream'
       )}
     >
       <input {...dz.getInputProps()} />

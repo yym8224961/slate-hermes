@@ -36,14 +36,39 @@ export function AudioDropzone({
 
   return (
     <div>
-      <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-2">
-        音频{hasExistingAudio ? ' · 已有' : ' · 选填'}
-      </p>
+      <div className="flex items-center justify-between mb-2">
+        <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em]">
+          音频{hasExistingAudio ? ' · 已有' : ' · 选填'}
+        </p>
+        {hasExistingAudio && editingSeq != null && (
+          <button
+            type="button"
+            onClick={async () => {
+              const ok = await confirm({
+                title: '删除这一帧的音频？',
+                description: '图保留，只移除音频文件。',
+                destructive: true,
+                confirmText: '删除音频',
+              });
+              if (!ok) return;
+              delAudio.mutate(editingSeq, {
+                onSuccess: () => toast.success('音频已删除'),
+                onError: () => toast.error('删除失败'),
+              });
+            }}
+            disabled={delAudio.isPending}
+            className="inline-flex items-center gap-1.5 font-mono text-[10px] text-clay hover:opacity-80 disabled:opacity-50"
+          >
+            <Trash2 size={11} />
+            删除
+          </button>
+        )}
+      </div>
       <div
         {...dz.getRootProps()}
         className={cn(
           'border border-dashed px-4 py-3 cursor-pointer transition-colors flex items-center gap-3',
-          dz.isDragActive ? 'border-ink bg-cream' : 'border-line hover:border-ink hover:bg-cream'
+          dz.isDragActive ? 'border-ink bg-cream' : 'border-ink/50 hover:border-ink hover:bg-cream'
         )}
       >
         <input {...dz.getInputProps()} />
@@ -65,30 +90,6 @@ export function AudioDropzone({
           )}
         </div>
       </div>
-
-      {hasExistingAudio && editingSeq != null && (
-        <button
-          type="button"
-          onClick={async () => {
-            const ok = await confirm({
-              title: '删除这一帧的音频？',
-              description: '图保留，只移除音频文件。',
-              destructive: true,
-              confirmText: '删除音频',
-            });
-            if (!ok) return;
-            delAudio.mutate(editingSeq, {
-              onSuccess: () => toast.success('音频已删除'),
-              onError: () => toast.error('删除失败'),
-            });
-          }}
-          disabled={delAudio.isPending}
-          className="mt-2 inline-flex items-center gap-1.5 font-sans text-[11px] text-clay border-b border-clay hover:opacity-80 disabled:opacity-50"
-        >
-          <Trash2 size={11} />
-          删除已有音频
-        </button>
-      )}
     </div>
   );
 }

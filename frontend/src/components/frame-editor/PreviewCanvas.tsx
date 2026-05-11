@@ -17,13 +17,8 @@ import {
 import type { DitherMode } from 'shared';
 import { StatusBarOverlay } from '../StatusBarOverlay';
 import { cn } from '../../lib/cn';
-
-const PAPER_R = 0xfa,
-  PAPER_G = 0xf6,
-  PAPER_B = 0xef;
-const INK_R = 0x3d,
-  INK_G = 0x28,
-  INK_B = 0x17;
+import { PAPER_HEX, PAPER_RGB, INK_RGB } from '../../lib/colors';
+import { decodeBppImage, isValidBppLength } from '../../lib/image';
 
 interface PreviewCanvasProps {
   imageFile: File | null;
@@ -74,7 +69,7 @@ export function PreviewCanvas({
       };
       const img = new Image();
       img.onload = () => {
-        ctx.fillStyle = '#ffffff';
+        ctx.fillStyle = PAPER_HEX;
         ctx.fillRect(0, 0, canvas.width, canvas.height);
 
         const baseScale = Math.min(canvas.width / img.width, canvas.height / img.height);
@@ -93,9 +88,10 @@ export function PreviewCanvas({
 
         for (let i = 0, j = 0; i < imageData.data.length; i += 4, j++) {
           const isWhite = bin[j] === 255;
-          imageData.data[i] = isWhite ? PAPER_R : INK_R;
-          imageData.data[i + 1] = isWhite ? PAPER_G : INK_G;
-          imageData.data[i + 2] = isWhite ? PAPER_B : INK_B;
+          const c = isWhite ? PAPER_RGB : INK_RGB;
+          imageData.data[i] = c[0];
+          imageData.data[i + 1] = c[1];
+          imageData.data[i + 2] = c[2];
           imageData.data[i + 3] = 255;
         }
         ctx.putImageData(imageData, 0, 0);
@@ -108,31 +104,13 @@ export function PreviewCanvas({
 
     if (existingImage) {
       const bytes = new Uint8Array(existingImage);
-      if (bytes.byteLength !== (FRAME_WIDTH * FRAME_HEIGHT) / 8) return;
-      const data = ctx.createImageData(FRAME_WIDTH, FRAME_HEIGHT);
-      const bpr = FRAME_WIDTH >> 3;
-      for (let y = 0; y < FRAME_HEIGHT; y++) {
-        for (let x = 0; x < FRAME_WIDTH; x++) {
-          const byteIdx = y * bpr + (x >> 3);
-          const bit = (bytes[byteIdx]! >> (7 - (x & 7))) & 1;
-          const i = (y * FRAME_WIDTH + x) * 4;
-          if (bit) {
-            data.data[i] = PAPER_R;
-            data.data[i + 1] = PAPER_G;
-            data.data[i + 2] = PAPER_B;
-          } else {
-            data.data[i] = INK_R;
-            data.data[i + 1] = INK_G;
-            data.data[i + 2] = INK_B;
-          }
-          data.data[i + 3] = 255;
-        }
-      }
+      if (!isValidBppLength(bytes)) return;
+      const data = decodeBppImage(bytes);
       ctx.putImageData(data, 0, 0);
       return;
     }
 
-    ctx.fillStyle = '#faf6ef';
+    ctx.fillStyle = PAPER_HEX;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   }, [imageFile, existingImage, threshold, mode, scale, offset, canvasRef]);
 

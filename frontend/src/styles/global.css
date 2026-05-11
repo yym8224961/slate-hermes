@@ -32,6 +32,11 @@
   /* tracking */
   --tracking-tight: -0.015em;
   --tracking-soft:  0.02em;
+
+  /* shadows */
+  --shadow-dialog: 4px 4px 0 rgba(20,17,13,0.12);
+  --shadow-dropdown: 0 8px 24px rgba(20,17,13,0.14);
+  --shadow-drag: 0 16px 40px rgba(61,40,23,0.25);
 }
 
 /* ─── Base reset ─────────────────────────────────────────────────────── */
@@ -49,8 +54,7 @@ body {
 * { box-sizing: border-box; }
 
 /* Mono Press: 0px 圆角全局覆写 ─────────────────────
-   Tailwind 的 rounded- 工具类生成于 @layer utilities；
-   无层 CSS 的优先级高于任何 @layer，无需 !important。
+   留在 @layer 外保证优先级高于 Tailwind 的 @layer utilities。
    排除 Radix UI 组件（下拉菜单、Select 弹层等）避免样式异常。 */
 *:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]):not([data-radix-dropdown-menu-content]):not([data-radix-tooltip-content]):not([data-radix-popover-content]),
 *::before:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]),
@@ -59,16 +63,18 @@ body {
 }
 
 /* 保留 font-kai 兼容别名 — 底层已指向 Noto Serif SC */
-.font-kai {
-  font-family: var(--font-kai);
-  letter-spacing: var(--tracking-tight);
-}
-.font-serif {
-  font-family: var(--font-serif);
-  letter-spacing: var(--tracking-tight);
-}
-.font-mono, code, kbd, samp {
-  font-feature-settings: "tnum";
+@layer components {
+  .font-kai {
+    font-family: var(--font-kai);
+    letter-spacing: var(--tracking-tight);
+  }
+  .font-serif {
+    font-family: var(--font-serif);
+    letter-spacing: var(--tracking-tight);
+  }
+  .font-mono, code, kbd, samp {
+    font-feature-settings: "tnum";
+  }
 }
 
 /* selection */
@@ -84,106 +90,87 @@ body {
 }
 
 /* form reset */
-button, input, textarea, select {
-  font: inherit;
-  background: transparent;
-  color: inherit;
+@layer base {
+  button, input, textarea, select {
+    font: inherit;
+    background: transparent;
+    color: inherit;
+  }
+  button:not(:disabled) { cursor: pointer; }
+  button:disabled       { cursor: not-allowed; }
+  a[href]               { cursor: pointer; }
+  input[type="range"]   { cursor: pointer; }
 }
-button:not(:disabled) { cursor: pointer; }
-button:disabled       { cursor: not-allowed; }
-a[href]               { cursor: pointer; }
-input[type="range"]   { cursor: pointer; }
 
 /* ─── Mono Press primitives ──────────────────────────────────────── */
+@layer components {
+  /* 卡片 — 0 圆角 + 纸本底 + 1px 墨线边框 */
+  .craft-card {
+    background: var(--color-paper);
+    border: 1px solid var(--color-ink);
+    display: flex;
+    flex-direction: column;
+    transition: background 150ms ease;
+  }
+  .craft-card[data-hoverable="true"]:hover {
+    background: var(--color-cream);
+    cursor: pointer;
+  }
+  .craft-card-danger {
+    background: var(--color-paper);
+    border: 1px solid var(--color-ink);
+    cursor: pointer;
+    transition: background 150ms ease, border-color 150ms ease;
+  }
+  .craft-card-danger:hover:not(:disabled) {
+    background: rgba(168, 40, 28, 0.06);
+    border-color: var(--color-clay);
+  }
 
-/* 卡片 — 0 圆角 + 纸本底 + 1px 墨线边框 */
-.craft-card {
-  background: var(--color-paper);
-  border: 1px solid var(--color-ink);
-  display: flex;
-  flex-direction: column;
-  transition: background 150ms ease;
-}
-.craft-card[data-hoverable="true"]:hover {
-  background: var(--color-cream);
-  cursor: pointer;
-}
-.craft-card-danger {
-  background: var(--color-paper);
-  border: 1px solid var(--color-ink);
-  cursor: pointer;
-  transition: background 150ms ease, border-color 150ms ease;
-}
-.craft-card-danger:hover:not(:disabled) {
-  background: rgba(168, 40, 28, 0.06);
-  border-color: var(--color-clay);
-}
+  /* 状态方块：在线=实心墨，离线=空框，警告=实心砖红 */
+  .dot { display: inline-block; width: 8px; height: 8px; }
+  .dot-online  { background: var(--color-ink); border: 1.2px solid var(--color-ink); }
+  .dot-offline { background: transparent; border: 1.2px solid var(--color-stone); opacity: 0.55; }
+  .dot-warn    { background: var(--color-clay); border: 1.2px solid var(--color-clay); }
 
-/* 状态方块：在线=实心墨，离线=空框，警告=实心砖红 */
-.dot { display: inline-block; width: 8px; height: 8px; }
-.dot-online  { background: var(--color-ink); border: 1.2px solid var(--color-ink); }
-.dot-offline { background: transparent; border: 1.2px solid var(--color-stone); opacity: 0.55; }
-.dot-warn    { background: var(--color-clay); border: 1.2px solid var(--color-clay); }
+  /* small caps 标签 */
+  .smallcaps {
+    font-family: var(--font-sans);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--color-stone);
+  }
 
-/* small caps 标签 */
-.smallcaps {
-  font-family: var(--font-sans);
-  font-size: 10px;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: var(--color-stone);
-}
-
-/* 双线分隔 — 替代原来的 wave-divider */
-.wave-divider {
-  height: auto;
-  background-image: none;
-  background-repeat: unset;
-  background-size: unset;
-  opacity: 1;
-  border: none;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-.wave-divider::before {
-  content: '';
-  display: block;
-  height: 1px;
-  background: var(--color-ink);
-}
-.wave-divider::after {
-  content: '';
-  display: block;
-  height: 2px;
-  background: var(--color-ink);
+  /* loading 点 — ink 色 */
+  .heart-dot {
+    display: inline-block;
+    width: 7px; height: 7px;
+    background: var(--color-ink);
+    margin: 0 2px;
+    animation: heartbeat 1.4s ease-in-out infinite;
+  }
+  .heart-dot:nth-child(2) { animation-delay: 0.2s; }
+  .heart-dot:nth-child(3) { animation-delay: 0.4s; }
 }
 
-/* 入场动画 */
+/* 入场动画 — @keyframes 留在 @layer 外保证被 animation 属性正确引用 */
 @keyframes fade-up {
   from { opacity: 0; transform: translateY(8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
-.fade-up { animation: fade-up 400ms cubic-bezier(.2,.7,.2,1) both; }
-.fade-up-1 { animation-delay: 60ms; }
-.fade-up-2 { animation-delay: 120ms; }
-.fade-up-3 { animation-delay: 180ms; }
-.fade-up-4 { animation-delay: 240ms; }
+@layer utilities {
+  .fade-up { animation: fade-up 400ms cubic-bezier(.2,.7,.2,1) both; }
+  .fade-up-1 { animation-delay: 60ms; }
+  .fade-up-2 { animation-delay: 120ms; }
+  .fade-up-3 { animation-delay: 180ms; }
+  .fade-up-4 { animation-delay: 240ms; }
+}
 
-/* loading 点 — ink 色 */
 @keyframes heartbeat {
   0%, 100% { transform: scale(1);   opacity: 0.5; }
   50%       { transform: scale(1.3); opacity: 1; }
 }
-.heart-dot {
-  display: inline-block;
-  width: 7px; height: 7px;
-  background: var(--color-ink);
-  margin: 0 2px;
-  animation: heartbeat 1.4s ease-in-out infinite;
-}
-.heart-dot:nth-child(2) { animation-delay: 0.2s; }
-.heart-dot:nth-child(3) { animation-delay: 0.4s; }
 
 /* range slider — ink thumb */
 input[type="range"] {
