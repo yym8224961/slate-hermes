@@ -92,13 +92,30 @@ void PollIntervalPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
                 ctx.stack->RequestPop();
             }
             break;
-        case UiEventKind::kBatteryUpdated:
-        case UiEventKind::kChargeChanged:
-            if (status_bar_) {
-                status_bar_->Refresh();
+        case UiEventKind::kChargeChanged: {
+            const auto& c = e.u.charge;
+            int pct       = -1;
+            if (!c.no_battery && ctx.read_battery) {
+                int mv = 0;
+                ctx.read_battery(&mv, &pct);
+            }
+            if (status_bar_ && status_bar_->SetBattery(pct, c.charging, c.full)) {
                 SyncRender(ctx);
             }
             break;
+        }
+        case UiEventKind::kBatteryUpdated: {
+            bool charging = false, full = false;
+            if (ctx.read_charge) {
+                const auto snap = ctx.read_charge();
+                charging        = snap.charging;
+                full            = snap.full;
+            }
+            if (status_bar_ && status_bar_->SetBattery(e.u.battery.pct, charging, full)) {
+                SyncRender(ctx);
+            }
+            break;
+        }
         default:
             break;
     }
