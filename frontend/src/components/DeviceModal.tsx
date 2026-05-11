@@ -45,34 +45,41 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
   const toast = useToast();
   const confirm = useConfirm();
 
-  const { editing: editingName, draft: draftName, setDraft: setDraftName, startEditing, commit, handleKeyDown } = useInlineRename(
-    device.name ?? '',
-    async (name) => {
-      await new Promise<void>((resolve, reject) => {
-        patch.mutate(
-          { name },
-          {
-            onSuccess: () => {
-              toast.success('已改名');
-              resolve();
-            },
-            onError: () => {
-              toast.error('改名失败');
-              reject();
-            },
-          }
-        );
-      });
-    }
-  );
+  const {
+    editing: editingName,
+    draft: draftName,
+    setDraft: setDraftName,
+    startEditing,
+    commit,
+    handleKeyDown,
+  } = useInlineRename(device.name ?? '', async (name) => {
+    await new Promise<void>((resolve, reject) => {
+      patch.mutate(
+        { name },
+        {
+          onSuccess: () => {
+            toast.success('已改名');
+            resolve();
+          },
+          onError: () => {
+            toast.error('改名失败');
+            reject();
+          },
+        }
+      );
+    });
+  });
 
   const online = isOnline(device);
   const battery = device.battery_pct;
   const BatteryIcon =
-    battery == null ? Battery
-    : battery < 20 ? BatteryWarning
-    : battery < 80 ? Battery
-    : BatteryCharging;
+    battery == null
+      ? Battery
+      : battery < 20
+        ? BatteryWarning
+        : battery < 80
+          ? Battery
+          : BatteryCharging;
 
   function changeGroup(value: string) {
     const next = value === '__none__' ? null : value;

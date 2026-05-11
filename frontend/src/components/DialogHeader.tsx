@@ -15,7 +15,9 @@ interface DialogHeaderProps {
 export function DialogHeader({ icon, title, description, onClose, className }: DialogHeaderProps) {
   return (
     <div className={cn('flex items-center gap-4', className)}>
-      <IconBlock size="lg" tone="soft">{icon}</IconBlock>
+      <IconBlock size="lg" tone="soft">
+        {icon}
+      </IconBlock>
       <div className="min-w-0 flex-1">
         <Dialog.Title className="font-serif text-[22px] font-bold leading-[1.2]">
           {title}

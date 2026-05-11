@@ -49,9 +49,9 @@ class MenuList {
     int                    cursor_       = 0;
     int                    viewport_top_ = 0;
     lv_obj_t*              root_         = nullptr;
-    std::vector<lv_obj_t*> rows_;          // 行容器,滚动时调整 y / hidden
+    std::vector<lv_obj_t*> rows_;  // 行容器,滚动时调整 y / hidden
     std::vector<lv_obj_t*> cursor_bars_;
     // 右侧 scrollbar thumb,items > kVisibleRows 时才创建。
     // 高度 = visible/total × track_h(下界 kThumbMinH),y 跟随 viewport_top_。
-    lv_obj_t*              thumb_ = nullptr;
+    lv_obj_t* thumb_ = nullptr;
 };

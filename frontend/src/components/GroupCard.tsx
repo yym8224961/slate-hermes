@@ -19,11 +19,14 @@ export function GroupCardSortable({
     id: group.id,
     animateLayoutChanges: () => false,
   });
-  const style = useMemo(() => ({
-    transform: CSS.Transform.toString(transform),
-    transition: 'none' as const,
-    zIndex: isDragging ? 10 : undefined,
-  }), [transform, isDragging]);
+  const style = useMemo(
+    () => ({
+      transform: CSS.Transform.toString(transform),
+      transition: 'none' as const,
+      zIndex: isDragging ? 10 : undefined,
+    }),
+    [transform, isDragging]
+  );
 
   const KindIcon = group.kind === 'dynamic' ? Webhook : Layers;
   const kindLabel = group.kind === 'static' ? '相册' : '看板';

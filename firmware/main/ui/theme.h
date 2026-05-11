@@ -32,4 +32,4 @@ constexpr int kStatusBarHeight = 24;
 constexpr int kThumbW        = 2;
 constexpr int kThumbRightPad = 6;
 constexpr int kThumbMinH     = 14;
-}
+}  // namespace theme

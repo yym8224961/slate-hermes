@@ -8,12 +8,7 @@
 
 import { useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import {
-  Plus,
-  FolderHeart,
-  MonitorSmartphone,
-  Cpu,
-} from 'lucide-react';
+import { Plus, FolderHeart, MonitorSmartphone, Cpu } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import {
@@ -230,4 +225,3 @@ function GroupsSection() {
     </Section>
   );
 }
-

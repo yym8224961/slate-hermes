@@ -71,9 +71,7 @@ export function DitherControls({
               onClick={() => onModeChange(m)}
               className={cn(
                 'flex items-center justify-between px-3 py-2.5 font-serif text-[13px] border border-ink -ml-px -mt-px transition-colors',
-                mode === m
-                  ? 'bg-cream-deep text-ink'
-                  : 'text-stone hover:bg-cream'
+                mode === m ? 'bg-cream-deep text-ink' : 'text-stone hover:bg-cream'
               )}
             >
               <span>{DITHER_INFO[m].label}</span>

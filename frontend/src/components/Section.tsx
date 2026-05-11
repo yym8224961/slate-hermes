@@ -17,7 +17,11 @@ export function Section({ title, subtitle, badge, action, className, children }:
   return (
     <section className={cn('mt-12 first:mt-8', className)}>
       <header className="flex items-center gap-4">
-        {badge && <IconBlock size="lg" tone="soft">{badge}</IconBlock>}
+        {badge && (
+          <IconBlock size="lg" tone="soft">
+            {badge}
+          </IconBlock>
+        )}
         <div className="flex-1 min-w-0">
           <h2 className="font-serif text-[26px] sm:text-[30px] leading-[1.2] text-ink truncate">
             {title}

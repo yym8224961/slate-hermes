@@ -49,11 +49,14 @@ export function DeviceCard({
     id: device.id,
     animateLayoutChanges: () => false,
   });
-  const style = useMemo(() => ({
-    transform: CSS.Transform.toString(transform),
-    transition: 'none' as const,
-    zIndex: isDragging ? 10 : undefined,
-  }), [transform, isDragging]);
+  const style = useMemo(
+    () => ({
+      transform: CSS.Transform.toString(transform),
+      transition: 'none' as const,
+      zIndex: isDragging ? 10 : undefined,
+    }),
+    [transform, isDragging]
+  );
 
   const playingFrames = currentGroup?.frame_count;
 

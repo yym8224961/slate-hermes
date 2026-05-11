@@ -25,7 +25,7 @@ class SleepManager {
     // unbound 状态保持禁睡的最长窗口。超过则即便仍 unbound 也允许 deep sleep。
     static constexpr int64_t kUnboundGraceMs = 2LL * 60 * 60 * 1000;
     // 电量低于此阈值时强制允许 deep sleep,无视 unbound 状态。
-    static constexpr int     kLowBatteryPct  = 20;
+    static constexpr int kLowBatteryPct = 20;
 
     void Init(int idle_timeout_min);
     void Disable();  // captive portal 等场景禁用 deep sleep

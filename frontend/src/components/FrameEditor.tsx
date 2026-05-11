@@ -71,7 +71,10 @@ export function FrameEditor({ gid, frame, onDone }: FrameEditorProps) {
       const canvas = previewRef.current;
       if (canvas) {
         const blob = await new Promise<Blob>((resolve, reject) => {
-          canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('canvas export failed'))), 'image/png');
+          canvas.toBlob(
+            (b) => (b ? resolve(b) : reject(new Error('canvas export failed'))),
+            'image/png'
+          );
         });
         fd.append('image', blob, 'cropped.png');
       }
