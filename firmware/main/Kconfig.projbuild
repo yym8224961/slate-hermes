@@ -21,13 +21,6 @@ config SLATE_DEFAULT_TIMEZONE
     help
         Used by setenv("TZ", ...) after SNTP sync. CST-8 = China Standard Time.
 
-config SLATE_DEFAULT_POLL_INTERVAL_S
-    int "Default device poll interval (seconds)"
-    default 60
-    range 10 3600
-    help
-        Fallback if server doesn't include poll_interval_s in /state response.
-
 config SLATE_BOOT_LONGPRESS_RESET_MS
     int "BOOT button long-press to clear NVS (ms)"
     default 5000

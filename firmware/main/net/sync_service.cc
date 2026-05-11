@@ -12,6 +12,7 @@
 #include "../app/event_bus.h"
 #include "../storage/cache.h"
 #include "api_client.h"
+#include "poll_interval_store.h"
 
 namespace {
 constexpr char kTag[]            = "Sync";
@@ -19,6 +20,14 @@ constexpr int  BIT_TRIGGER       = BIT0;
 constexpr int  BIT_STOP          = BIT1;
 constexpr int  BIT_CYCLE_NEXT    = BIT2;
 constexpr int  BIT_CYCLE_PREV    = BIT3;
+
+// unbound 期阶梯退避轮询: 用户在 Web 端输码后快速屏切「等待相册」。
+// bound 后由 SleepManager 允许 deep sleep,设备活跃时 poll 间隔由用户偏好决定。
+constexpr int kUnboundFastPollSec    = 10;   // 前 10 分钟
+constexpr int kUnboundMediumPollSec  = 30;   // 10-30 分钟
+constexpr int kUnboundSlowPollSec    = 60;   // 30 分钟-2 小时
+constexpr int64_t kUnboundFastMs     = 10LL * 60 * 1000;
+constexpr int64_t kUnboundMediumMs   = 30LL * 60 * 1000;
 }
 
 SyncService& SyncService::Get() {
@@ -75,9 +84,11 @@ std::string SyncService::CurrentGroupId() const {
 }
 
 int SyncService::NextIntervalSec() const {
-    // 后端 state.poll_interval_s 是权威:unbound 期 5s,bound 期 30s,
-    // 后续可在 server 端按需调(例如低电量延长)。客户端只信值。
-    return last_poll_interval_s_.load();
+    if (was_bound_.load()) return poll::Get();
+    const int64_t elapsed = (esp_timer_get_time() / 1000) - unbound_since_ms_.load();
+    if (elapsed < kUnboundFastMs)   return kUnboundFastPollSec;
+    if (elapsed < kUnboundMediumMs) return kUnboundMediumPollSec;
+    return kUnboundSlowPollSec;
 }
 
 void SyncService::PostGroupReady(const std::string& gid, int frame_count, int default_seq,
@@ -92,12 +103,20 @@ void SyncService::PostGroupReady(const std::string& gid, int frame_count, int de
     evt::Post(e);
 }
 
-// 把 telemetry 准备好。
+// 把 telemetry 准备好。顺便 emit kBatteryUpdated 让 status_bar / SleepManager 同步;
+// 系统中只有这里周期性读电量,没必要单独再起一个 battery tick。
 static api::Telemetry BuildTelemetry(const SyncDeps& deps, const std::string& current_group) {
     api::Telemetry tel;
     if (deps.read_battery) {
         int mv = 0, pct = 0;
-        if (deps.read_battery(&mv, &pct)) tel.battery_pct = pct;
+        if (deps.read_battery(&mv, &pct)) {
+            tel.battery_pct = pct;
+            UiEvent e{};
+            e.kind          = UiEventKind::kBatteryUpdated;
+            e.u.battery.mv  = mv;
+            e.u.battery.pct = pct;
+            evt::Post(e, 0);
+        }
     }
     if (deps.read_rssi) tel.rssi_dbm = deps.read_rssi();
     tel.fw_version        = CONFIG_APP_PROJECT_VER;
@@ -208,11 +227,6 @@ void SyncService::SyncOnce() {
         return;
     }
 
-    // 后端动态控制 poll 节奏:unbound 5s / bound 30s。
-    if (state.poll_interval_s > 0) {
-        last_poll_interval_s_.store(state.poll_interval_s);
-    }
-
     // 1. bound 翻转:发独立事件让 splash / frame_scene 都能响应。
     bool prev_bound = was_bound_.load();
     if (state.bound != prev_bound) {
@@ -229,6 +243,11 @@ void SyncService::SyncOnce() {
         }
         evt::Post(e, 0);
         was_bound_.store(state.bound);
+        if (state.bound) {
+            unbound_since_ms_.store(0);
+        } else {
+            unbound_since_ms_.store(esp_timer_get_time() / 1000);
+        }
     }
 
     // 2. 当前态推 splash:让重启场景的 splash 也能直接拿到正确文案,无需依赖翻转。

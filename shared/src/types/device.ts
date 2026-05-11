@@ -38,7 +38,6 @@ export const DeviceState = z.object({
     server_time: z.string().datetime(),
   }),
   group: DeviceStateGroup.nullable(),
-  poll_interval_s: z.number().int().positive(),
 });
 export type DeviceStateT = z.infer<typeof DeviceState>;
 

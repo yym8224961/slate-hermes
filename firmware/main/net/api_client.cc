@@ -203,8 +203,6 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
         out.has_group = false;
     }
 
-    out.poll_interval_s = get_int(root, "poll_interval_s", 60);
-
     cJSON_Delete(root);
     return true;
 }

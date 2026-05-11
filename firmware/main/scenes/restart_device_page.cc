@@ -42,7 +42,7 @@ void RestartDevicePage::OnEnter(SceneContext& ctx) {
             int mv = 0;
             ctx.read_battery(&mv, &pct);
         }
-        status_bar_->SetBattery(pct, snap.charging || snap.full);
+        status_bar_->SetBattery(pct, snap.charging, snap.full);
     }
 
     auto* warn = lv_label_create(root_);

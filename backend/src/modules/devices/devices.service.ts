@@ -2,7 +2,6 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import type { DeviceStateT, DeviceSummaryT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { AppConfig } from '../../infra/config/app.config';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
 import { GroupsService, type CycleResult } from '../groups/groups.service';
 
@@ -34,8 +33,6 @@ interface DeviceRow {
 
 // 配对码字母表去掉视觉易混的 0/O/1/I/L,降低用户对屏抄码出错率。
 const PAIR_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-// splash 期 (未 bound) 缩短轮询,让用户在 Web 端输码后能 ≤5s 看到屏切「等待相册」。
-const POLL_INTERVAL_UNBOUND_S = 5;
 
 @Injectable()
 export class DevicesService {
@@ -43,7 +40,6 @@ export class DevicesService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly config: AppConfig,
     private readonly groups: GroupsService
   ) {}
 
@@ -165,8 +161,6 @@ export class DevicesService {
             position: resolvedGroup.position!,
           }
         : null,
-      // 配对等待期加快轮询,Web 输码后 ≤5s 设备屏切「等待相册」。
-      poll_interval_s: bound ? this.config.devicePollIntervalSec : POLL_INTERVAL_UNBOUND_S,
     };
   }
 

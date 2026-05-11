@@ -14,7 +14,11 @@ class StatusBar {
 
     // 返回 true 表示有任何字段实际变化（调用方据此决定是否刷屏）。
     bool SetWifi(bool connected, int rssi);
-    bool SetBattery(int pct, bool charging);
+    // charging / full 互斥(ChargeStatus 保证):
+    //   full=true     → 满电图标 + "100%"(物理充满,不再走 ADC 估算)
+    //   charging=true → BOLT 图标 + "--"(ADC 端电压被充电 IC 拉高,pct 不可信)
+    //   都 false      → 按 pct 显示真实电量
+    bool SetBattery(int pct, bool charging, bool full);
     bool SetCaption(const std::string& text);
 
     void Show();
@@ -29,6 +33,8 @@ class StatusBar {
 
     const char* shown_wifi_    = nullptr;
     const char* shown_battery_ = nullptr;
-    int         shown_pct_     = -2;  // -1 表示无电池/未知,-2 表示从未 set 过(强制首次 redraw)
+    // 直接缓存最终文本(可能为空,空 = 充电中只剩图标),避免再用 sentinel int 区分
+    // "未知"/"隐藏"/"具体百分比"。
+    std::string shown_pct_text_;
     std::string shown_caption_;
 };

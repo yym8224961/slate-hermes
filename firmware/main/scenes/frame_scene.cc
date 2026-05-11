@@ -126,16 +126,24 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
                 int mv = 0;
                 ctx.read_battery(&mv, &pct);
             }
-            const bool charging_icon = c.charging || c.full;
             ESP_LOGI(kTag, "ChargeChanged: present=%d charging=%d full=%d no_battery=%d pct=%d",
                      c.present, c.charging, c.full, c.no_battery, pct);
-            if (status_bar_->SetBattery(pct, charging_icon)) {
+            if (status_bar_->SetBattery(pct, c.charging, c.full)) {
                 SyncRender(ctx, /*force_full*/ false);
             }
             break;
         }
         case UiEventKind::kBatteryUpdated: {
-            if (status_bar_->SetBattery(e.u.battery.pct, false)) {
+            // SyncService 在每轮 poll 上报 telemetry 时 emit 此事件,pct 来自 ADC。
+            // 充电时 ADC 数据虚高,把当前 charge 状态查出来交给 status_bar,
+            // 由其内部策略决定是否显示 pct(满电 100%、充电中 "--"、否则真实 %)。
+            bool charging = false, full = false;
+            if (ctx.read_charge) {
+                const auto snap = ctx.read_charge();
+                charging        = snap.charging;
+                full            = snap.full;
+            }
+            if (status_bar_->SetBattery(e.u.battery.pct, charging, full)) {
                 SyncRender(ctx, /*force_full*/ false);
             }
             break;
@@ -294,7 +302,7 @@ void FrameScene::RefreshStatusBarFromSensors(SceneContext& ctx) {
             int mv = 0;
             ctx.read_battery(&mv, &pct);
         }
-        changed |= status_bar_->SetBattery(pct, snap.charging || snap.full);
+        changed |= status_bar_->SetBattery(pct, snap.charging, snap.full);
     }
 
     if (changed) SyncRender(ctx, /*force_full*/ false);

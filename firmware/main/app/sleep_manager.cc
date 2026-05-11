@@ -80,14 +80,41 @@ void SleepManager::OnEvent(const UiEvent& e) {
                 last_active_ms_.store(esp_timer_get_time() / 1000);
             }
             break;
+        case UiEventKind::kBound:
+            unbound_.store(false);
+            unbound_since_ms_.store(0);
+            ESP_LOGI(kTag, "Bound -> exit unbound grace, normal idle sleep applies");
+            break;
+        case UiEventKind::kUnbound:
+            // 仅首次进入 unbound 时记录起始 ts,重复事件不重置(否则 24h 兜底永不触发)。
+            if (!unbound_.exchange(true)) {
+                unbound_since_ms_.store(esp_timer_get_time() / 1000);
+                ESP_LOGW(kTag, "Unbound -> deep sleep blocked for up to %lld h",
+                         (long long)(kUnboundGraceMs / (60 * 60 * 1000)));
+            }
+            break;
+        case UiEventKind::kBatteryUpdated:
+            battery_pct_.store(e.u.battery.pct);
+            break;
         default:
             break;
     }
 }
 
+bool SleepManager::InUnboundGrace(int64_t now_ms) const {
+    // 注意:三次 atomic load 之间无一致快照,OnEvent 可能并发修改。
+    // 实际风险低:最差结果是多/少一次 Tick 阻塞或放行 deep sleep。
+    if (!unbound_.load()) return false;
+    if (battery_pct_.load() < kLowBatteryPct) return false;
+    const int64_t since = unbound_since_ms_.load();
+    if (since == 0) return false;  // 还没收到第一次 unbound 事件
+    return (now_ms - since) < kUnboundGraceMs;
+}
+
 void SleepManager::Tick(int64_t now_ms) {
     if (!enabled_.load()) return;
     if (paused_.load()) return;
+    if (InUnboundGrace(now_ms)) return;
     const int64_t idle_ms      = now_ms - last_active_ms_.load();
     const int64_t threshold_ms = static_cast<int64_t>(idle_timeout_min_) * 60 * 1000;
     if (idle_ms < threshold_ms) return;

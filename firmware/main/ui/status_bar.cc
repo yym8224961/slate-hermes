@@ -13,7 +13,8 @@ const char* WifiIcon(bool connected, int rssi) {
     return FONT_AWESOME_WIFI_WEAK;
 }
 
-const char* BatteryIcon(int pct, bool charging) {
+const char* BatteryIcon(int pct, bool charging, bool full) {
+    if (full)     return FONT_AWESOME_BATTERY_FULL;
     if (charging) return FONT_AWESOME_BATTERY_BOLT;
     if (pct < 0)  return FONT_AWESOME_BATTERY_EMPTY;
     if (pct >= 80) return FONT_AWESOME_BATTERY_FULL;
@@ -83,24 +84,33 @@ bool StatusBar::SetWifi(bool connected, int rssi) {
     return true;
 }
 
-bool StatusBar::SetBattery(int pct, bool charging) {
-    bool changed = false;
-    const char* icon = BatteryIcon(pct, charging);
+bool StatusBar::SetBattery(int pct, bool charging, bool full) {
+    bool        changed = false;
+    const char* icon    = BatteryIcon(pct, charging, full);
     if (icon != shown_battery_) {
         shown_battery_ = icon;
         lv_label_set_text(battery_label_, icon);
         changed = true;
     }
-    // pct < 0 显示 "--",其他显示 "%d%%"。无电池场景跟"未读到"都走 -- 即可。
-    if (pct != shown_pct_) {
-        shown_pct_ = pct;
-        char buf[16];
-        if (pct < 0) {
-            std::snprintf(buf, sizeof(buf), "--");
-        } else {
-            const int clamped = pct > 100 ? 100 : pct;
-            std::snprintf(buf, sizeof(buf), "%d%%", clamped);
-        }
+
+    // 数字策略:
+    //   full       → "100%"(STDBY 拉高,物理可信)
+    //   charging   → ""(ADC 端电压被充电 IC 拉到 4.0-4.2V,SoC 不可信,只剩 BOLT 图标)
+    //   pct >= 0   → "%d%%"
+    //   pct < 0    → "--"(无电池 / 未读到)
+    char buf[16] = "";
+    if (full) {
+        std::snprintf(buf, sizeof(buf), "100%%");
+    } else if (charging) {
+        // 留空,只剩图标
+    } else if (pct < 0) {
+        std::snprintf(buf, sizeof(buf), "--");
+    } else {
+        const int clamped = pct > 100 ? 100 : pct;
+        std::snprintf(buf, sizeof(buf), "%d%%", clamped);
+    }
+    if (buf != shown_pct_text_) {
+        shown_pct_text_ = buf;
         lv_label_set_text(battery_pct_lbl_, buf);
         lv_obj_align(battery_pct_lbl_, LV_ALIGN_RIGHT_MID, -26, 0);
         changed = true;

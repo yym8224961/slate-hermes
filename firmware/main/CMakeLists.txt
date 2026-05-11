@@ -12,6 +12,7 @@ set(SOURCES
     "scenes/frame_scene.cc"
     "scenes/settings_scene.cc"
     "scenes/volume_page.cc"
+    "scenes/poll_interval_page.cc"
     "scenes/device_info_page.cc"
     "scenes/data_sync_page.cc"
     "scenes/font_demo_page.cc"
@@ -43,6 +44,8 @@ set(SOURCES
 
     "audio/audio_player.cc"
     "audio/volume_store.cc"
+
+    "net/poll_interval_store.cc"
 
     "fonts/SourceHanSansSC_Regular_slim.c"
     "fonts/FusionPixel_12.c"

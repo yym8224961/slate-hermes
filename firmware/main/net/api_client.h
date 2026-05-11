@@ -40,9 +40,6 @@ struct DeviceState {
     int         group_sort_order  = 0;
     int         position_current  = 0;
     int         position_total    = 0;
-
-    // 轮询节奏(后端动态:splash 期 5s,bound 后 30s)
-    int poll_interval_s = 60;
 };
 
 struct RegisterResult {

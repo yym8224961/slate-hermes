@@ -30,7 +30,7 @@ void DataSyncPage::OnEnter(SceneContext& ctx) {
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
 
     status_bar_ = std::make_unique<StatusBar>(root_);
-    status_bar_->SetCaption("数据同步");
+    status_bar_->SetCaption("立即同步");
     if (ctx.wifi_connected && ctx.wifi_rssi) {
         status_bar_->SetWifi(ctx.wifi_connected(), ctx.wifi_rssi());
     }
@@ -41,7 +41,7 @@ void DataSyncPage::OnEnter(SceneContext& ctx) {
             int mv = 0;
             ctx.read_battery(&mv, &pct);
         }
-        status_bar_->SetBattery(pct, snap.charging || snap.full);
+        status_bar_->SetBattery(pct, snap.charging, snap.full);
     }
 
     // 中央状态文字 — 初始空闲

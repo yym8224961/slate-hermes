@@ -17,6 +17,10 @@
 namespace {
 constexpr char kTag[] = "DeviceInfo";
 
+// thumb 几何来自 theme.h,与 MenuList 共用。
+constexpr int kThumbPadTop = 12;  // 跟 MenuList 对称 pad 一致
+constexpr int kThumbPadBot   = 12;
+
 const char* ChargeText(const ChargeStatus::Snapshot& s) {
     if (s.no_battery) return "无电池";
     if (s.full)        return "已充满";
@@ -68,7 +72,17 @@ void DeviceInfoPage::OnEnter(SceneContext& ctx) {
     lv_label_set_long_mode(info_, LV_LABEL_LONG_WRAP);
     lv_obj_set_pos(info_, 24, 12);  // 相对 scroll_area_,顶部留 12px
 
+    // thumb 挂在 root_ 而不是 scroll_area_,否则会跟着内容一起滚。
+    thumb_ = lv_obj_create(root_);
+    lv_obj_set_style_bg_color(thumb_, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(thumb_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(thumb_, 0, 0);
+    lv_obj_set_style_radius(thumb_, 0, 0);
+    lv_obj_set_style_pad_all(thumb_, 0, 0);
+    lv_obj_clear_flag(thumb_, LV_OBJ_FLAG_SCROLLABLE);
+
     (void)Refresh(ctx);
+    UpdateThumb();
 
     lv_refr_now(NULL);
     ctx.epd->Unlock();
@@ -108,6 +122,7 @@ void DeviceInfoPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
         case UiEventKind::kMinuteTick:
             // 内容真变了才 partial,避免一小时 60 次 MinuteTick 都触发刷新
             if (Refresh(ctx)) {
+                UpdateThumb();  // 内容长度变了,thumb 比例也得跟
                 SyncRender(ctx);
             }
             break;
@@ -127,7 +142,37 @@ void DeviceInfoPage::ScrollBy(SceneContext& ctx, int dy_view) {
     if (new_y > max_y) new_y = max_y;
     if (new_y == cur_y) return;  // 已到边界,什么都不做
     lv_obj_scroll_to_y(scroll_area_, new_y, LV_ANIM_OFF);
+    UpdateThumb();
     SyncRender(ctx);
+}
+
+void DeviceInfoPage::UpdateThumb() {
+    if (!thumb_ || !scroll_area_) return;
+    // 强制把 layout 算完再读 scroll_bottom:OnEnter 刚 set_text,LVGL 还没跑布局,
+    // 直接读 scroll_bottom 会拿到 0 → thumb_h 偏短;第一次按方向键再 UpdateThumb
+    // 时已经经过一轮 redraw,值才正常。这里同步一次避免初始视觉跳变。
+    lv_obj_update_layout(scroll_area_);
+    // visible_h 取 root 内对称 pad 之间的范围,跟 MenuList 视觉一致。
+    const int track_h    = LV_VER_RES - theme::kStatusBarHeight - kThumbPadTop - kThumbPadBot;
+    const int scroll_y   = lv_obj_get_scroll_y(scroll_area_);
+    const int scroll_bot = lv_obj_get_scroll_bottom(scroll_area_);
+    const int max_scroll = scroll_y + scroll_bot;  // 总可滚距离 = 内容高 - 视口高
+    // 内容比视口短:不需要 thumb,隐藏。
+    if (max_scroll <= 0) {
+        lv_obj_add_flag(thumb_, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_obj_clear_flag(thumb_, LV_OBJ_FLAG_HIDDEN);
+    const int visible_h = lv_obj_get_height(scroll_area_);
+    const int content_h = visible_h + max_scroll;
+    int thumb_h = (track_h * visible_h) / content_h;
+    if (thumb_h < theme::kThumbMinH) thumb_h = theme::kThumbMinH;
+    if (thumb_h > track_h)    thumb_h = track_h;
+    const int thumb_y_max = track_h - thumb_h;
+    const int thumb_y     = (thumb_y_max * scroll_y) / max_scroll;
+    lv_obj_set_size(thumb_, theme::kThumbW, thumb_h);
+    lv_obj_set_pos(thumb_, LV_HOR_RES - theme::kThumbW - theme::kThumbRightPad,
+                   theme::kStatusBarHeight + kThumbPadTop + thumb_y);
 }
 
 bool DeviceInfoPage::Refresh(SceneContext& ctx) {
@@ -145,7 +190,7 @@ bool DeviceInfoPage::Refresh(SceneContext& ctx) {
                 int mv = 0;
                 ctx.read_battery(&mv, &pct);
             }
-            status_bar_->SetBattery(pct, snap.charging || snap.full);
+            status_bar_->SetBattery(pct, snap.charging, snap.full);
         }
     }
 
@@ -190,7 +235,9 @@ bool DeviceInfoPage::Refresh(SceneContext& ctx) {
 
     // 存储:LittleFS partition label "storage"(跟 cache::Init 一致)
     size_t fs_total = 0, fs_used = 0;
-    esp_littlefs_info("storage", &fs_total, &fs_used);
+    if (esp_littlefs_info("storage", &fs_total, &fs_used) != ESP_OK) {
+        ESP_LOGW(kTag, "esp_littlefs_info failed");
+    }
     const size_t fs_used_kb  = round_kb_100(fs_used);
     const size_t fs_total_kb = round_kb_100(fs_total);
 

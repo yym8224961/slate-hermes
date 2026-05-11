@@ -12,6 +12,7 @@
 #include "device_info_page.h"
 #include "factory_reset_page.h"
 #include "font_demo_page.h"
+#include "poll_interval_page.h"
 #include "restart_device_page.h"
 #include "volume_page.h"
 
@@ -41,13 +42,19 @@ void SettingsScene::OnEnter(SceneContext& ctx) {
     status_bar_ = std::make_unique<StatusBar>(root_);
     status_bar_->SetCaption("设置");
 
+    // 三段语义分组(MenuList 不显式画分隔,靠顺序传达):
+    //   偏好    音量调节 / 同步频率
+    //   信息    立即同步 / 设备信息
+    //   调试    字体演示
+    //   危险    重启设备 / 恢复出厂(永远末尾,避免误触)
     std::vector<MenuList::Item> items = {
-        {"音量调节",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<VolumePage>()); }},
-        {"设备信息",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<DeviceInfoPage>()); }},
-        {"数据同步",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<DataSyncPage>()); }},
-        {"字体演示",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<FontDemoPage>()); }},
-        {"重启设备",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<RestartDevicePage>()); }},
-        {"恢复出厂",    [&ctx]() { ctx.stack->RequestPush(std::make_unique<FactoryResetPage>()); }},
+        {"音量调节", [&ctx]() { ctx.stack->RequestPush(std::make_unique<VolumePage>()); }},
+        {"同步频率", [&ctx]() { ctx.stack->RequestPush(std::make_unique<PollIntervalPage>()); }},
+        {"立即同步", [&ctx]() { ctx.stack->RequestPush(std::make_unique<DataSyncPage>()); }},
+        {"设备信息", [&ctx]() { ctx.stack->RequestPush(std::make_unique<DeviceInfoPage>()); }},
+        {"字体演示", [&ctx]() { ctx.stack->RequestPush(std::make_unique<FontDemoPage>()); }},
+        {"重启设备", [&ctx]() { ctx.stack->RequestPush(std::make_unique<RestartDevicePage>()); }},
+        {"恢复出厂", [&ctx]() { ctx.stack->RequestPush(std::make_unique<FactoryResetPage>()); }},
     };
     menu_ = std::make_unique<MenuList>(root_, std::move(items), saved_cursor_);
 
@@ -63,7 +70,7 @@ void SettingsScene::OnEnter(SceneContext& ctx) {
                 int mv = 0;
                 ctx.read_battery(&mv, &pct);
             }
-            status_bar_->SetBattery(pct, snap.charging || snap.full);
+            status_bar_->SetBattery(pct, snap.charging, snap.full);
         }
     }
 
@@ -114,6 +121,7 @@ void SettingsScene::SyncRender(SceneContext& ctx) {
     if (!ctx.epd->Lock(500)) return;
     lv_refr_now(NULL);
     ctx.epd->Unlock();
-    // 菜单上下移动 diff 小,EPD 看 diff 自决,累计 8 次自动 full 兜底清残影
+    // 一律 partial:cursor 移动小 dirty,viewport 滚动也走 partial,
+    // 让 EPD 内部按 dirty 比例自决是否兜底升 full,避免每次滚动都强制全屏闪。
     ctx.epd->RequestUrgentPartialRefresh();
 }

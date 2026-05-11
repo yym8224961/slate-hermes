@@ -27,4 +27,9 @@ LV_FONT_DECLARE(FusionPixel_12);
 
 namespace theme {
 constexpr int kStatusBarHeight = 24;
+
+// 右侧 scrollbar thumb 几何,MenuList 与 DeviceInfoPage 共用。
+constexpr int kThumbW        = 2;
+constexpr int kThumbRightPad = 6;
+constexpr int kThumbMinH     = 14;
 }
