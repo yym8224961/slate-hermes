@@ -2,7 +2,7 @@
 
 // 设置主菜单。FrameScene 的 ENTER 长按触发 push 到栈。
 // UP/DOWN 短按移动光标,ENTER 短按 push 子页,ENTER 长按 pop 回 FrameScene。
-// 条目超过 MenuList::kVisibleRows(5)时启用视口滚动,光标越界自动滚屏。
+// 条目超过 MenuList::kVisibleRows(6)时启用视口滚动,光标越界自动滚屏。
 
 #include <memory>
 

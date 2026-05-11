@@ -177,8 +177,8 @@ FrameScene（栈底）
 └─ MinuteTick        → 刷新状态栏（Wi-Fi / 电量）
 
 SettingsScene
-└─ 子页：VolumePage / DeviceInfoPage / DataSyncPage / PollIntervalPage
-        / FactoryResetPage / FontDemoPage
+└─ 子页：VolumePage / PollIntervalPage / DataSyncPage / DeviceInfoPage
+        / RestartDevicePage / FactoryResetPage
 ```
 
 ### 事件总线
@@ -285,5 +285,5 @@ idf                      >= 5.5
 字体在 `main/fonts/`：
 
 - `SourceHanSansSC_Regular_slim.c`（生产用，GB2312 6763 字，~2.16 MB）
-- `FusionPixel_12.c`（`FontDemoPage` A/B 测试用，89 字 + ASCII，~52 KB）
+- `FusionPixel_12.c`（生产用 ASCII 子集，状态栏百分比数字，~18 KB）
 - `tools/gen_fonts.sh` 用 `lv_font_conv` 重新生成（`npm i -g lv_font_conv`）

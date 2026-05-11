@@ -2,7 +2,7 @@
 # 生成 main/fonts/ 下的 LVGL 字体 .c 文件。
 #
 # 用途:
-#   - 想换字符集(比如扩到 GB2312 全集) → 改下方 SYMS_FILE / RANGES,重跑。
+#   - 想换字符集(比如扩到 GB2312 全集) → 改下方 RANGES,重跑。
 #   - 想再加一种字体 → 在 download_ttf 阶段加 url, 在 generate 阶段加配置。
 #
 # 依赖:
@@ -11,10 +11,7 @@
 #
 # 当前字体:
 #   1. 思源黑体 SC Regular slim 16px (生产用,GB2312 6763 字, ~2.16MB) ← 不在脚本里(已有)
-#   2. FusionPixel 12px (生产用 ASCII 子集 + FontDemoPage 用 89 字, ~52KB)
-#
-# 测试集字符见下方 SYMS;扩展 FusionPixel 到全 GB2312 时把 SYMS 换成 GB2312 列表
-# 或加 `-r 0x4E00-0x9FA5` 到 RANGES。
+#   2. FusionPixel 12px (生产用 ASCII 子集,状态栏百分比数字)
 #
 # 执行:
 #   cd firmware && bash tools/gen_fonts.sh
@@ -25,11 +22,8 @@ WORKDIR="${WORKDIR:-/tmp/font_gen_$$}"
 OUTDIR="$(cd "$(dirname "$0")/.." && pwd)/main/fonts"
 mkdir -p "$WORKDIR" "$OUTDIR"
 
-# A/B 测试用字符集 — 89 个常用中文,覆盖典型 UI 文本
-SYMS='正在准备工程车合集同步进度下载完成失败设备信息数据音量调节恢复出厂立即全屏刷新长按确认短返回已未连接信号弱强中拒绝电充满无池供接入源存储内系统服务器固件时间分秒今日在线离选择操作试听检测'
-
-# 公共范围: ASCII + 中日韩标点
-RANGES=(-r 0x20-0x7F -r 0x3000-0x303F)
+# 状态栏百分比只需要 ASCII（数字、%、-）。
+RANGES=(-r 0x20-0x7F)
 
 # ---- 1. 下载 ttf ----
 fetch() {
@@ -54,10 +48,10 @@ generate() {
         --bpp 1 --size "$size" \
         --font "$ttf" --autohint-off \
         "${RANGES[@]}" \
-        --symbols "$SYMS" \
         --format lvgl \
-        -o "$OUTDIR/${name}.c" \
+        -o "${name}.c" \
         --lv-font-name "$name"
+    mv "${name}.c" "$OUTDIR/${name}.c"
 }
 
 generate fusion-pixel-12px-proportional-zh_hans.ttf 12 FusionPixel_12

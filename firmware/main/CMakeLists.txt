@@ -15,7 +15,6 @@ set(SOURCES
     "scenes/poll_interval_page.cc"
     "scenes/device_info_page.cc"
     "scenes/data_sync_page.cc"
-    "scenes/font_demo_page.cc"
     "scenes/restart_device_page.cc"
     "scenes/factory_reset_page.cc"
 

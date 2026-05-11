@@ -4,7 +4,7 @@
 
 namespace {
 // list root 高度 = 屏 300 - status bar 24 = 276。对称 pad 12 + 6 行 × 42 = 276。
-// 选 6 行 + 42 行高:行间不空,列表能放下设置页全部 7 项中的 6 项一屏(只剩 1 项滚)。
+// 选 6 行 + 42 行高:行间不空,设置页 6 项可完整放进一屏。
 // thumb track 区 [pad_top, root_h - pad_bot] 自然对称,顶/底间距相等。
 constexpr int kRowHeight  = 42;
 constexpr int kListPadTop = 12;

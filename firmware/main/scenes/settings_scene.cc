@@ -11,7 +11,6 @@
 #include "data_sync_page.h"
 #include "device_info_page.h"
 #include "factory_reset_page.h"
-#include "font_demo_page.h"
 #include "poll_interval_page.h"
 #include "restart_device_page.h"
 #include "volume_page.h"
@@ -45,14 +44,12 @@ void SettingsScene::OnEnter(SceneContext& ctx) {
     // 三段语义分组(MenuList 不显式画分隔,靠顺序传达):
     //   偏好    音量调节 / 同步频率
     //   信息    立即同步 / 设备信息
-    //   调试    字体演示
     //   危险    重启设备 / 恢复出厂(永远末尾,避免误触)
     std::vector<MenuList::Item> items = {
         {"音量调节", [&ctx]() { ctx.stack->RequestPush(std::make_unique<VolumePage>()); }},
         {"同步频率", [&ctx]() { ctx.stack->RequestPush(std::make_unique<PollIntervalPage>()); }},
         {"立即同步", [&ctx]() { ctx.stack->RequestPush(std::make_unique<DataSyncPage>()); }},
         {"设备信息", [&ctx]() { ctx.stack->RequestPush(std::make_unique<DeviceInfoPage>()); }},
-        {"字体演示", [&ctx]() { ctx.stack->RequestPush(std::make_unique<FontDemoPage>()); }},
         {"重启设备", [&ctx]() { ctx.stack->RequestPush(std::make_unique<RestartDevicePage>()); }},
         {"恢复出厂", [&ctx]() { ctx.stack->RequestPush(std::make_unique<FactoryResetPage>()); }},
     };
