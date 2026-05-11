@@ -24,17 +24,8 @@ export class AppConfig {
   get jwtExpiration() {
     return this.cs.get('JWT_EXPIRATION', { infer: true });
   }
-  get webhookApiKey() {
-    return this.cs.get('WEBHOOK_API_KEY', { infer: true });
-  }
   get blobDir() {
     return this.cs.get('BLOB_DIR', { infer: true });
-  }
-  get devicePollIntervalSec() {
-    return this.cs.get('DEVICE_POLL_INTERVAL_SECONDS', { infer: true });
-  }
-  get corsOrigin() {
-    return this.cs.get('CORS_ORIGIN', { infer: true });
   }
   get isProd() {
     return this.nodeEnv === 'production';

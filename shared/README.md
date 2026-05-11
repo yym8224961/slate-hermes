@@ -36,7 +36,7 @@ export const PollRequest = z.object({ telemetry: z.object({...}).optional() });
 export type  PollRequestT = z.infer<typeof PollRequest>;
 ```
 
-后端 `nestjs-zod` 把 `*Request` 直接当 DTO 校验入参；前端 axios 把 `*Response` / `*Summary` 当返回值类型。
+后端自实现的 `ZodValidationPipe` 通过 DTO 上的 `static schema = *Request` 校验入参；前端 axios 把 `*Response` / `*Summary` 当返回值类型。
 
 ## Dither 算法（`dither.ts`）
 

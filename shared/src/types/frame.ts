@@ -43,7 +43,7 @@ export const ManifestResponse = z.object({
 export type ManifestResponseT = z.infer<typeof ManifestResponse>;
 
 // POST /groups/:gid/frames/:seq/render
-//   外部项目用 X-Api-Key,或 Web 用 JWT,把渲染好的内容推到指定帧。
+//   用 JWT 把渲染好的内容推到指定帧。
 export const RenderFrameRequest = z.object({
   source: z.enum(['markdown', 'html', 'png_base64']),
   content: z.string(),

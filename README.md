@@ -31,7 +31,7 @@ slate/
  └─► STA → SNTP 对时 → POST /api/v1/devices（register，幂等）
  └─► SyncService 周期 POST /api/v1/me/poll
         ├ 上报 telemetry（battery / rssi / fw_version / current_group / current_frame_seq）
-        └ 拿 DeviceState{device, group:{etag, frame_count, ...}, poll_interval_s}
+        └ 拿 DeviceState{device, group:{etag, frame_count, ...}}
 
 内容变更
  └─► group_etag 变 → GET /manifest（If-None-Match，命中 304 多数零流量）
@@ -45,11 +45,11 @@ Web 推送
                 → 设备下次 poll 看到 group 变了 → 重拉 manifest → 切显示
 
 外部 webhook
- └─► POST /api/v1/groups/:gid/frames/:seq/render（X-Api-Key）
+ └─► POST /api/v1/groups/:gid/frames/:seq/render（JWT）
         body {source: 'png_base64'|'markdown'|'html', content, mode?, threshold?}
 ```
 
-API 全部挂在 `/api/v1` 下，`/healthz` 不带前缀。鉴权按端点区分（JWT / `X-Device-Mac` / `X-Api-Key` / dual-auth），完整矩阵见 [`backend/README.md`](backend/README.md)。
+API 全部挂在 `/api/v1` 下，`/healthz` 不带前缀。鉴权按端点区分（JWT / `X-Device-Mac` / dual-auth），完整矩阵见 [`backend/README.md`](backend/README.md)。
 
 ## 本地开发
 
@@ -68,7 +68,7 @@ docker run -d --name slate-mysql -p 3306:3306 \
 
 ```bash
 bun install
-cp backend/.env.example backend/.env       # 改 DATABASE_URL / JWT_SECRET / WEBHOOK_API_KEY
+cp backend/.env.example backend/.env       # 改 DATABASE_URL / JWT_SECRET
 bun run --cwd backend prisma:generate
 bun run --cwd backend prisma:migrate       # 第一次会创建 dev migration
 
@@ -115,7 +115,7 @@ ghcr.io/qiujun8023/slate:latest
 ```bash
 git clone <repo-url>
 cd slate
-$EDITOR compose.yml                         # 把 JWT_SECRET / WEBHOOK_API_KEY 占位符
+$EDITOR compose.yml                         # 把 JWT_SECRET 占位符
                                             # 换成 openssl rand -hex 32 生成的真值
 docker compose up -d
 ```

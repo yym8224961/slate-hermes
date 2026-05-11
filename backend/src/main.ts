@@ -19,10 +19,6 @@ async function bootstrap(): Promise<void> {
   const config = app.get(AppConfig);
 
   await app.register(import('@fastify/cookie') as never);
-  await app.register(import('@fastify/cors') as never, {
-    origin: config.corsOrigin,
-    credentials: true,
-  });
   await app.register(import('@fastify/multipart') as never, {
     limits: { fileSize: 32 * 1024 * 1024 },
   });

@@ -23,7 +23,6 @@ import {
 } from '../../common/decorators/current-device.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtOrDeviceAuthGuard } from '../../common/guards/jwt-or-device-auth.guard';
-import { JwtOrApiKeyAuthGuard } from '../../common/guards/jwt-or-api-key-auth.guard';
 import { etagMatches, respondWithEtag } from '../../common/etag/etag.util';
 import { FramesService } from './frames.service';
 import { MultipartParser } from './multipart.parser';
@@ -174,7 +173,7 @@ export class FramesController {
     @Headers('content-type') ct: string,
     @Req() req: FastifyRequest
   ): Promise<FrameMutationResponseT> {
-    if (ct?.includes('multipart/form-data')) {
+    if (ct?.startsWith('multipart/form-data')) {
       const parsed = await this.multipart.parseFrame(req);
       return this.frames.patchFrameMultipart(gid, seq, user.userId, parsed);
     }
@@ -205,10 +204,8 @@ export class FramesController {
     return this.frames.deleteAudio(gid, seq, user.userId);
   }
 
-  // ── 渲染推送（JWT 或 X-Api-Key）──────────────────────────
+  // ── 渲染推送（JWT）──────────────────────────
 
-  @Public()
-  @UseGuards(JwtOrApiKeyAuthGuard)
   @Post('frames/:seq/render')
   @HttpCode(200)
   async render(

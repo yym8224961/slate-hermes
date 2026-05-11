@@ -222,11 +222,13 @@ export class FramesService {
   async deleteFrame(gid: string, seq: number, ownerUserId: string): Promise<void> {
     await this.groups.assertOwned(gid, ownerUserId);
     const { id: frameId } = await this.requireFrame(gid, seq);
+    // 先删库再删盘：DB 删除失败时 blob 仍在，记录保持一致；
+    // blob 删除失败时仅留孤儿文件，不影响数据正确性。
+    await this.prisma.frame.delete({ where: { id: frameId } });
     await Promise.all([
       this.blob.delete(gid, frameId, 'image'),
       this.blob.delete(gid, frameId, 'audio'),
     ]);
-    await this.prisma.frame.deleteMany({ where: { groupId: gid, sortOrder: seq } });
     await this.groups.recomputeGroupEtag(gid);
   }
 
@@ -436,6 +438,8 @@ export class FramesService {
     if (image) await this.blob.write(gid, frameId, 'image', image.bytes);
     if (audio) await this.blob.write(gid, frameId, 'audio', audio.bytes);
 
+    // ⚠ blob 已覆盖写：若 db.update 失败，blob 是新内容但 etag 未更新，
+    // 重试时会重新写入并更新 etag，属于可自愈的短暂不一致。
     const data: Record<string, unknown> = {};
     if (parsed.hasCaption) data.caption = parsed.caption;
     if (image) {
@@ -447,10 +451,18 @@ export class FramesService {
       data.audioSize = audio.size;
     }
     if (Object.keys(data).length > 0) {
-      await this.prisma.frame.update({
-        where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
-        data,
-      });
+      try {
+        await this.prisma.frame.update({
+          where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
+          data,
+        });
+      } catch (err) {
+        this.logger.error(
+          `updateFrameUpload: blob written but db update failed — gid=${gid} seq=${seq}`,
+          err
+        );
+        throw err;
+      }
     }
 
     const group_etag = await this.groups.recomputeGroupEtag(gid);
@@ -468,9 +480,12 @@ export class FramesService {
         finalAudioEtag ??= cur.audioEtag;
       }
     }
+    if (!finalImageEtag) {
+      throw new Error(`imageEtag missing for frame gid=${gid} seq=${seq} after update`);
+    }
     return {
       sort_order: seq,
-      image_etag: finalImageEtag ?? '',
+      image_etag: finalImageEtag,
       audio_etag: finalAudioEtag,
       group_etag,
     };
