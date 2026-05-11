@@ -18,13 +18,21 @@ export class AuthService {
     const ok = await bcrypt.compare(input.password, user.password);
     if (!ok) throw new AuthError('invalid credentials');
 
-    const token = this.tokens.sign({ sub: user.id, email: user.email, username: user.username ?? '' });
+    const token = this.tokens.sign({
+      sub: user.id,
+      email: user.email,
+      username: user.username ?? '',
+    });
     return { token, user: { id: user.id, email: user.email, username: user.username ?? '' } };
   }
 
   async register(input: RegisterRequestT): Promise<RegisterResponseT> {
     const user = await this.users.create(input.email, input.username, input.password);
-    const token = this.tokens.sign({ sub: user.id, email: user.email, username: user.username ?? '' });
+    const token = this.tokens.sign({
+      sub: user.id,
+      email: user.email,
+      username: user.username ?? '',
+    });
     return { token, user: { id: user.id, email: user.email, username: user.username ?? '' } };
   }
 }

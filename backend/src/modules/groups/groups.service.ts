@@ -189,10 +189,7 @@ export class GroupsService {
     return toSummary(g, sizeMap.get(gid) ?? 0);
   }
 
-  async create(
-    ownerUserId: string,
-    body: { name: string }
-  ): Promise<GroupSummaryT> {
+  async create(ownerUserId: string, body: { name: string }): Promise<GroupSummaryT> {
     const sortOrder = await this.nextGroupSortOrder(ownerUserId);
     const created = await this.prisma.group.create({
       data: {

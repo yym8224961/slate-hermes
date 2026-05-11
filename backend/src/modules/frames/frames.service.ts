@@ -1,17 +1,9 @@
 import { createId } from '@paralleldrive/cuid2';
 import { Injectable, Logger } from '@nestjs/common';
-import type {
-  FrameMutationResponseT,
-  FrameSummaryT,
-  ManifestResponseT,
-} from 'shared';
+import type { FrameMutationResponseT, FrameSummaryT, ManifestResponseT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { BlobService } from '../../infra/blob/blob.service';
-import {
-  ConflictError,
-  NotFoundError,
-  ValidationError,
-} from '../../common/errors';
+import { ConflictError, NotFoundError, ValidationError } from '../../common/errors';
 import { computeETag } from '../../common/etag/etag.util';
 import { GroupsService } from '../groups/groups.service';
 import { RenderService } from '../render/render.service';

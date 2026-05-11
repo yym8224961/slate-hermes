@@ -45,7 +45,11 @@ export class JwtAuthGuard implements CanActivate {
     }
     if (!payload?.sub) throw new AuthError('missing or invalid token');
 
-    req[CURRENT_USER_KEY] = { userId: payload.sub, email: payload.email, username: payload.username ?? '' };
+    req[CURRENT_USER_KEY] = {
+      userId: payload.sub,
+      email: payload.email,
+      username: payload.username ?? '',
+    };
     return true;
   }
 }
