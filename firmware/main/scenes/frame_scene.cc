@@ -106,11 +106,11 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             switch (e.u.button.btn) {
                 case ButtonId::kUp:
                     ESP_LOGI(kTag, "Long Up -> cycle group prev");
-                    SyncService::Get().CyclePrev();
+                    CycleGroup(ctx, /*next=*/false);
                     break;
                 case ButtonId::kDown:
                     ESP_LOGI(kTag, "Long Down -> cycle group next");
-                    SyncService::Get().CycleNext();
+                    CycleGroup(ctx, /*next=*/true);
                     break;
                 case ButtonId::kEnter:
                     ESP_LOGI(kTag, "Long Enter -> push Settings");
@@ -165,12 +165,10 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             break;
         }
         case UiEventKind::kSyncFinished: {
-            // sync 失败时不会走 GroupReady → LoadFrame,caption 残留进度文字。
-            // 收到 finished 主动恢复成最近一次 frame caption(LoadFrame 缓存的)。
-            if (!e.u.sync.ok && !cached_caption_.empty()) {
-                if (status_bar_->SetCaption(cached_caption_)) {
-                    SyncRender(ctx, /*force_full*/ false);
-                }
+            // sync/cycle 失败或无实际 group 切换时不会走 LoadFrame,caption 可能残留
+            // 「下载…」或「切换…」。收到 finished 主动恢复最近一次 frame caption。
+            if (!cached_caption_.empty() && status_bar_->SetCaption(cached_caption_)) {
+                SyncRender(ctx, /*force_full*/ false);
             }
             break;
         }
@@ -230,6 +228,15 @@ void FrameScene::PrevFrame(SceneContext& ctx) {
     if (frame_count_ <= 0) return;
     idx_ = (idx_ - 1 + frame_count_) % frame_count_;
     LoadFrame(ctx, idx_, /*force_full*/ false);
+}
+
+void FrameScene::CycleGroup(SceneContext& ctx, bool next) {
+    if (status_bar_) {
+        status_bar_->SetCaption(next ? "切换到下一相册…" : "切换到上一相册…");
+        SyncRender(ctx, /*force_full*/ false);
+    }
+    if (next) SyncService::Get().CycleNext();
+    else      SyncService::Get().CyclePrev();
 }
 
 void FrameScene::RebindGroup(SceneContext& ctx, const char* gid, int frame_count, int default_idx) {

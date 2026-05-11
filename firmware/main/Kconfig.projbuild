@@ -21,13 +21,6 @@ config SLATE_DEFAULT_TIMEZONE
     help
         Used by setenv("TZ", ...) after SNTP sync. CST-8 = China Standard Time.
 
-config SLATE_BOOT_LONGPRESS_RESET_MS
-    int "BOOT button long-press to clear NVS (ms)"
-    default 5000
-    range 2000 15000
-    help
-        阶段 2 起改成 5 击触发清 NVS,这个值仅作为 Button 库构造参数的兼容保留。
-
 config SLATE_IDLE_DEEP_SLEEP_MIN
     int "Idle minutes before entering deep sleep"
     default 5

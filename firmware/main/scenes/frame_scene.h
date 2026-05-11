@@ -1,10 +1,11 @@
 #pragma once
 
 // 主场景：渲染当前 group 的 frame[idx]，顶部 24px 状态栏叠加。
-// 阶段 1 行为：
+// 按键行为：
 //   ButtonShort{kUp}            → idx-- (wrap)
 //   ButtonShort{kDown,kEnter}   → idx++ (wrap)
-//   ButtonLong{kUp,kDown,kEnter}→ 仅 log TODO（阶段 2/3 接）
+//   ButtonLong{kUp,kDown}       → 立即提示并切换 group
+//   ButtonLong{kEnter}          → push SettingsScene
 //   ChargeChanged / BatteryUpdated / WifiStateChanged → 更新状态栏
 //   GroupReady                  → 如 gid 变了，重新 Rebind + LoadFrame default
 //   SyncStarted/Finished        → 状态栏同步图标
@@ -37,6 +38,7 @@ class FrameScene : public Scene {
     void LoadFrame(SceneContext& ctx, int idx, bool force_full);
     void NextFrame(SceneContext& ctx);
     void PrevFrame(SceneContext& ctx);
+    void CycleGroup(SceneContext& ctx, bool next);
     void RebindGroup(SceneContext& ctx, const char* gid, int frame_count, int default_idx);
     void RefreshStatusBarFromSensors(SceneContext& ctx);
     // 根据 frame_count_ 切换「空相册提示」与 frame_view 的可见性。

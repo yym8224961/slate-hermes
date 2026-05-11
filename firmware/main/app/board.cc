@@ -119,17 +119,15 @@ void Board::InitEpd() {
 }
 
 void Board::InitButtons() {
-    // up/down 短按切车,长按 1s(留作 M3 跳转用);
-    // BOOT 短按切车,长按 5s 清 NVS 凭据触发重新配网。
-    // 第 5 个参数 enable_power_save=true:button 库内部会调 gpio_wakeup_enable
-    // 把 GPIO 注册成 light-sleep 唤醒源,不开 light sleep 时按键无法唤醒 CPU。
+    // 三个业务按键统一 1s 长按阈值。具体语义由当前 Scene 处理:
+    // FrameScene 中 UP/DOWN 长按切相册,ENTER 长按进设置;危险动作在各确认页长按执行。
+    // 第 5 个参数 enable_power_save=true:button 库内部会调 gpio_wakeup_enable,
+    // 把 GPIO 注册成 light-sleep 唤醒源。
     constexpr bool kPowerSave = true;
     up_btn_   = std::make_unique<Button>(static_cast<gpio_num_t>(UP_BUTTON_GPIO), false,
                                        kNavLongPressMs, 0, kPowerSave);
     down_btn_ = std::make_unique<Button>(static_cast<gpio_num_t>(DOWN_BUTTON_GPIO), false,
                                          kNavLongPressMs, 0, kPowerSave);
-    // ENTER 键长按 1s = 进设置(从 frame_scene push SettingsScene)。
-    // 清 NVS 重置改成 5 击触发(见 App::AttachInputs)。
     boot_btn_ = std::make_unique<Button>(static_cast<gpio_num_t>(BOOT_BUTTON_GPIO), false,
                                          kNavLongPressMs, 0, kPowerSave);
 }
