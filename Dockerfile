@@ -67,7 +67,6 @@ RUN chmod +x /app/entrypoint.sh
 
 USER bun
 
-VOLUME ["/data/blobs"]
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
