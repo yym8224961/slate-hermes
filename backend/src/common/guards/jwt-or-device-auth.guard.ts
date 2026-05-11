@@ -12,6 +12,7 @@ import { readDeviceSecret } from './device-auth.guard';
 interface JwtPayload {
   sub: string;
   email: string;
+  username: string;
 }
 
 @Injectable()
