@@ -191,13 +191,12 @@ export class GroupsService {
 
   async create(
     ownerUserId: string,
-    body: { name: string; kind: 'static' | 'dynamic' }
+    body: { name: string }
   ): Promise<GroupSummaryT> {
     const sortOrder = await this.nextGroupSortOrder(ownerUserId);
     const created = await this.prisma.group.create({
       data: {
         name: body.name,
-        kind: body.kind,
         etag: 'empty',
         ownerUserId,
         sortOrder,
@@ -344,7 +343,6 @@ function toSummary(
     id: string;
     name: string;
     etag: string;
-    kind: string;
     sortOrder: number;
     _count: { frames: number };
   },
@@ -354,7 +352,6 @@ function toSummary(
     id: g.id,
     name: g.name,
     etag: g.etag,
-    kind: g.kind as GroupSummaryT['kind'],
     sort_order: g.sortOrder,
     frame_count: g._count.frames,
     total_bytes: totalBytes,

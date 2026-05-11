@@ -9,7 +9,7 @@ import type { LoginRequestT, LoginResponseT, RegisterRequestT, RegisterResponseT
 
 interface AuthState {
   token: string | null;
-  user: { id: string; email: string } | null;
+  user: { id: string; email: string; username: string } | null;
   login: (creds: LoginRequestT) => Promise<void>;
   register: (creds: RegisterRequestT) => Promise<void>;
   logout: () => void;
@@ -30,7 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     api
-      .get<{ id: string; email: string }>('/api/v1/me')
+      .get<{ id: string; email: string; username: string }>('/api/v1/me')
       .then(({ data }) => {
         if (!cancelled) setUser(data);
       })

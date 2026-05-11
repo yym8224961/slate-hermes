@@ -1,13 +1,9 @@
 import { z } from 'zod';
 
-export const GroupKind = z.enum(['static', 'dynamic']);
-export type GroupKindT = z.infer<typeof GroupKind>;
-
 export const GroupSummary = z.object({
   id: z.string(),
   name: z.string(),
   etag: z.string(),
-  kind: GroupKind,
   sort_order: z.number().int(),
   frame_count: z.number().int().nonnegative(),
   /** 所有 frame 的 image_size + audio_size 总和(字节)。
@@ -18,7 +14,6 @@ export type GroupSummaryT = z.infer<typeof GroupSummary>;
 
 export const CreateGroupRequest = z.object({
   name: z.string().min(1).max(64),
-  kind: GroupKind.default('static'),
 });
 export type CreateGroupRequestT = z.infer<typeof CreateGroupRequest>;
 

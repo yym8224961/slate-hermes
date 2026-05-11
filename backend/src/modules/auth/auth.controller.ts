@@ -31,7 +31,7 @@ export class AuthController {
   }
 
   @Get('me')
-  me(@CurrentUser() user: WebUserContext): { id: string; email: string } {
-    return { id: user.userId, email: user.email };
+  me(@CurrentUser() user: WebUserContext): { id: string; email: string; username: string } {
+    return { id: user.userId, email: user.email, username: user.username };
   }
 }

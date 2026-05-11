@@ -25,7 +25,7 @@ export function useMe() {
   return useQuery({
     queryKey: ['me'],
     queryFn: async () => {
-      const { data } = await api.get<{ id: string; email: string }>(`${V1}/me`);
+      const { data } = await api.get<{ id: string; email: string; username: string }>(`${V1}/me`);
       return data;
     },
   });

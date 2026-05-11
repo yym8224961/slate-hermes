@@ -13,8 +13,10 @@ import { getApiErrorMessage } from '../lib/api-error';
 export function Register() {
   const { token, register } = useAuth();
   const [email, setEmail] = useState('');
+  const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [usernameError, setUsernameError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -25,8 +27,13 @@ export function Register() {
   async function onSubmit(e: { preventDefault(): void }) {
     e.preventDefault();
     setError(null);
+    setUsernameError(null);
     setPasswordError(null);
     setConfirmError(null);
+    if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) {
+      setUsernameError('用户名只能包含字母、数字、下划线，3-32 位');
+      return;
+    }
     if (password.length < 8) {
       setPasswordError('密码至少 8 位');
       return;
@@ -37,7 +44,7 @@ export function Register() {
     }
     setLoading(true);
     try {
-      await register({ email, password });
+      await register({ email, username, password });
     } catch (err) {
       setError(getApiErrorMessage(err, '注册失败，请稍后再试'));
     } finally {
@@ -52,11 +59,21 @@ export function Register() {
 
         <div className="mt-10 space-y-7">
           <Input
+            label="用户名"
+            type="text"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            autoFocus
+            required
+            autoComplete="username"
+            placeholder="字母、数字、下划线，3-32 位"
+            error={usernameError ?? undefined}
+          />
+          <Input
             label="邮箱"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            autoFocus
             required
             autoComplete="email"
             placeholder="you@example.com"

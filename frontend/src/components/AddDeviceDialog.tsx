@@ -11,6 +11,7 @@ import { ArrowRight, KeyRound } from 'lucide-react';
 import { useClaimByPairCode } from '../lib/queries';
 import { useToast } from './Toast';
 import { isValidPairCode, normalizePairCode } from '../lib/format';
+import { getApiErrorMessage, getApiErrorStatus } from '../lib/api-error';
 import { Input } from './Input';
 import { Button } from './Button';
 import { Spinner } from './Spinner';
@@ -47,13 +48,13 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
       reset();
       onOpenChange(false);
     } catch (err) {
-      const e = err as { response?: { status?: number; data?: { error?: string } } };
-      if (e.response?.status === 404) {
+      const status = getApiErrorStatus(err);
+      if (status === 404) {
         toast.error('配对码无效', '请核对设备屏上的码，或在设备上长按 ENTER 工厂重置后重试。');
-      } else if (e.response?.status === 403) {
+      } else if (status === 403) {
         toast.error('该设备已被其他账号绑定', '在设备上工厂重置后再试。');
       } else {
-        toast.error('绑定失败', e.response?.data?.error);
+        toast.error('绑定失败', getApiErrorMessage(err));
       }
     }
   }

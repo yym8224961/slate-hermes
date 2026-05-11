@@ -13,18 +13,18 @@ export class AuthService {
   ) {}
 
   async login(input: LoginRequestT): Promise<LoginResponseT> {
-    const user = await this.users.findByEmail(input.email);
+    const user = await this.users.findByIdentifier(input.identifier);
     if (!user) throw new AuthError('invalid credentials');
     const ok = await bcrypt.compare(input.password, user.password);
     if (!ok) throw new AuthError('invalid credentials');
 
-    const token = this.tokens.sign({ sub: user.id, email: user.email });
-    return { token, user: { id: user.id, email: user.email } };
+    const token = this.tokens.sign({ sub: user.id, email: user.email, username: user.username ?? '' });
+    return { token, user: { id: user.id, email: user.email, username: user.username ?? '' } };
   }
 
   async register(input: RegisterRequestT): Promise<RegisterResponseT> {
-    const user = await this.users.create(input.email, input.password);
-    const token = this.tokens.sign({ sub: user.id, email: user.email });
-    return { token, user };
+    const user = await this.users.create(input.email, input.username, input.password);
+    const token = this.tokens.sign({ sub: user.id, email: user.email, username: user.username ?? '' });
+    return { token, user: { id: user.id, email: user.email, username: user.username ?? '' } };
   }
 }

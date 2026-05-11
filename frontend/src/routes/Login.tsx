@@ -12,7 +12,7 @@ import { getApiErrorMessage } from '../lib/api-error';
 
 export function Login() {
   const { token, login } = useAuth();
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -24,9 +24,9 @@ export function Login() {
     setError(null);
     setLoading(true);
     try {
-      await login({ email, password });
+      await login({ identifier, password });
     } catch (err) {
-      setError(getApiErrorMessage(err, '登录失败，请检查邮箱和密码'));
+      setError(getApiErrorMessage(err, '登录失败，请检查账号和密码'));
     } finally {
       setLoading(false);
     }
@@ -39,14 +39,14 @@ export function Login() {
 
         <div className="mt-10 space-y-7">
           <Input
-            label="邮箱"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            label="账号或邮箱"
+            type="text"
+            value={identifier}
+            onChange={(e) => setIdentifier(e.target.value)}
             autoFocus
             required
-            autoComplete="email"
-            placeholder="you@example.com"
+            autoComplete="username"
+            placeholder="用户名或邮箱"
           />
           <Input
             label="密码"

@@ -40,7 +40,7 @@ export class JwtOrDeviceAuthGuard implements CanActivate {
     try {
       const payload = jwt.verify(token, this.config.jwtSecret) as JwtPayload;
       if (!payload?.sub) return false;
-      req[CURRENT_USER_KEY] = { userId: payload.sub, email: payload.email };
+      req[CURRENT_USER_KEY] = { userId: payload.sub, email: payload.email, username: payload.username ?? '' };
       return true;
     } catch {
       return false;

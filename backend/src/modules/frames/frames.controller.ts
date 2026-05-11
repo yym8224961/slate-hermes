@@ -28,7 +28,6 @@ import { FramesService } from './frames.service';
 import { MultipartParser } from './multipart.parser';
 import { PatchFrameDto } from './dto/patch-frame.dto';
 import { ReorderFramesDto } from './dto/reorder-frames.dto';
-import { RenderFrameDto } from './dto/render-frame.dto';
 
 @Controller('groups/:gid')
 export class FramesController {
@@ -202,17 +201,5 @@ export class FramesController {
     @CurrentUser() user: WebUserContext
   ): Promise<{ group_etag: string }> {
     return this.frames.deleteAudio(gid, seq, user.userId);
-  }
-
-  // ── 渲染推送（JWT）──────────────────────────
-
-  @Post('frames/:seq/render')
-  @HttpCode(200)
-  async render(
-    @Param('gid') gid: string,
-    @Param('seq', ParseIntPipe) seq: number,
-    @Body() body: RenderFrameDto
-  ): Promise<FrameMutationResponseT> {
-    return this.frames.renderToFrame(gid, seq, body);
   }
 }

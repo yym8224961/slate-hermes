@@ -50,7 +50,7 @@ export function Dashboard() {
   // 添加设备弹窗
   const [addOpen, setAddOpen] = useState(false);
 
-  const greetName = me.data?.email?.split('@')[0] ?? '';
+  const greetName = me.data?.username ?? '';
 
   // 设备拖拽排序
   const reorderDevices = useReorderDevices();
@@ -211,9 +211,9 @@ function GroupsSection() {
       <CreateGroupDialog
         open={createOpen}
         onOpenChange={setCreateOpen}
-        onCreate={async (name, kind) => {
+        onCreate={async (name) => {
           try {
-            await create.mutateAsync({ name, kind });
+            await create.mutateAsync({ name });
             toast.success('已创建');
             setCreateOpen(false);
           } catch {

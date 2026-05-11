@@ -23,7 +23,8 @@ export const AUDIO_CHANNELS = 1;
 // secret 由注册响应一次性下发，固件 NVS 持久化；DB 只存 sha256(secret)。
 
 export const LoginRequest = z.object({
-  email: z.email(),
+  // 支持邮箱或用户名登录
+  identifier: z.string().min(3),
   password: z.string().min(8),
 });
 export type LoginRequestT = z.infer<typeof LoginRequest>;
@@ -33,12 +34,17 @@ export const LoginResponse = z.object({
   user: z.object({
     id: z.string(),
     email: z.email(),
+    username: z.string(),
   }),
 });
 export type LoginResponseT = z.infer<typeof LoginResponse>;
 
-// 注册请求与响应复用 Login 形状（注册成功直接发 JWT，免二次登录）。
-export const RegisterRequest = LoginRequest;
+// 注册请求：在登录基础上增加 email 和 username
+export const RegisterRequest = z.object({
+  email: z.email(),
+  username: z.string().regex(/^[a-zA-Z0-9_]{3,32}$/, '用户名只能包含字母、数字、下划线，3-32 位'),
+  password: z.string().min(8),
+});
 export type RegisterRequestT = z.infer<typeof RegisterRequest>;
 
 export const RegisterResponse = LoginResponse;

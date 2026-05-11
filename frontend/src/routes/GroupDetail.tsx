@@ -3,10 +3,10 @@
 // dnd-kit reorder 通过 useDndOrder 复用；optimistic update 仍在本地处理，
 // 因为 server 接受的是「旧 idx 的新顺序」，不是 etag 列表。
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus, Layers, Webhook, Frame, Pencil, Check } from 'lucide-react';
+import { ArrowLeft, Plus, Layers, Frame, Pencil, Check } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -28,6 +28,8 @@ import { DoubleRule } from '../components/DoubleRule';
 import { useToast } from '../components/Toast';
 import { inputCls } from '../lib/styles';
 import { cn } from '../lib/cn';
+import { useInlineRename } from '../lib/hooks';
+import { formatBytes } from '../lib/format';
 
 export function GroupDetail() {
   const { gid } = useParams();
@@ -114,7 +116,7 @@ export function GroupDetail() {
     );
   }
 
-  const KindIcon = group.kind === 'dynamic' ? Webhook : Layers;
+  const KindIcon = Layers;
 
   function openCreate() {
     navigate(`/groups/${gid}/frames/new`);
@@ -182,37 +184,29 @@ function GroupHeader({
 }) {
   const update = useUpdateGroup(group.id);
   const toast = useToast();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(group.name);
 
-  useEffect(() => {
-    setDraft(group.name);
-    setEditing(false);
-  }, [group.id, group.name]);
-
-  function commit() {
-    const next = draft.trim();
-    if (!next || next === group.name) {
-      setEditing(false);
-      setDraft(group.name);
-      return;
+  const { editing, draft, setDraft, startEditing, commit, handleKeyDown } = useInlineRename(
+    group.name,
+    async (name) => {
+      await new Promise<void>((resolve, reject) => {
+        update.mutate(
+          { name },
+          {
+            onSuccess: () => {
+              toast.success('已改名');
+              resolve();
+            },
+            onError: () => {
+              toast.error('改名失败');
+              reject();
+            },
+          }
+        );
+      });
     }
-    update.mutate(
-      { name: next },
-      {
-        onSuccess: () => {
-          toast.success('已改名');
-          setEditing(false);
-        },
-        onError: () => {
-          toast.error('改名失败');
-          setDraft(group.name);
-        },
-      }
-    );
-  }
+  );
 
-  const kindLabel = group.kind === 'static' ? '相册' : '看板';
+  const kindLabel = '内容';
 
   return (
     <header className="mt-5 fade-up flex items-center gap-4">
@@ -228,13 +222,7 @@ function GroupHeader({
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onBlur={commit}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commit();
-                if (e.key === 'Escape') {
-                  setEditing(false);
-                  setDraft(group.name);
-                }
-              }}
+              onKeyDown={handleKeyDown}
               maxLength={64}
               className={cn(
                 inputCls,
@@ -247,7 +235,7 @@ function GroupHeader({
             </h1>
           )}
           <button
-            onClick={() => (editing ? commit() : setEditing(true))}
+            onClick={() => (editing ? commit() : startEditing())}
             disabled={update.isPending}
             aria-label={editing ? '保存名称' : '改名'}
             title={editing ? '保存' : '改名'}
@@ -258,7 +246,7 @@ function GroupHeader({
         </div>
         {/* meta 在标题下方 */}
         <p className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
-          {kindLabel} · {group.frame_count} 帧
+          {group.frame_count} 帧 · {formatBytes(group.total_bytes)}
         </p>
       </div>
       <Button

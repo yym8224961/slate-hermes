@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { Layers, Webhook, Trash2, GripVertical } from 'lucide-react';
+import { Layers, Trash2, GripVertical } from 'lucide-react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { GroupSummaryT } from 'shared';
@@ -28,9 +28,6 @@ export function GroupCardSortable({
     [transform, isDragging]
   );
 
-  const KindIcon = group.kind === 'dynamic' ? Webhook : Layers;
-  const kindLabel = group.kind === 'static' ? '相册' : '看板';
-
   return (
     <div
       ref={setNodeRef}
@@ -45,8 +42,8 @@ export function GroupCardSortable({
         className="block flex-1 min-w-0 px-5 py-5 sm:px-6 sm:py-6 hover:bg-cream transition-colors"
       >
         <div className="flex items-start gap-3.5">
-          <IconBlock size="lg" tone="soft" title={kindLabel} aria-label={kindLabel}>
-            <KindIcon size={24} />
+          <IconBlock size="lg" tone="soft" title="内容" aria-label="内容">
+            <Layers size={24} />
           </IconBlock>
           <div className="min-w-0 flex-1 flex items-center justify-between gap-2">
             <div className="min-w-0">

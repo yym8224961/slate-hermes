@@ -4,6 +4,7 @@ import type { FastifyRequest } from 'fastify';
 export interface WebUserContext {
   userId: string;
   email: string;
+  username: string;
 }
 
 export const CURRENT_USER_KEY = 'currentUser';

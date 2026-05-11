@@ -6,6 +6,7 @@ import { AuthError } from '../../common/errors';
 export interface JwtPayload {
   sub: string;
   email: string;
+  username: string;
   iat?: number;
   exp?: number;
 }
@@ -14,7 +15,7 @@ export interface JwtPayload {
 export class JwtTokenService {
   constructor(private readonly config: AppConfig) {}
 
-  sign(payload: { sub: string; email: string }): string {
+  sign(payload: { sub: string; email: string; username: string }): string {
     const opts: SignOptions = {
       expiresIn: this.config.jwtExpiration as SignOptions['expiresIn'],
     };

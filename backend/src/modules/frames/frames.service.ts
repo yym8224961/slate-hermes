@@ -4,14 +4,12 @@ import type {
   FrameMutationResponseT,
   FrameSummaryT,
   ManifestResponseT,
-  RenderFrameRequestT,
 } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { BlobService } from '../../infra/blob/blob.service';
 import {
   ConflictError,
   NotFoundError,
-  NotImplementedError,
   ValidationError,
 } from '../../common/errors';
 import { computeETag } from '../../common/etag/etag.util';
@@ -286,70 +284,6 @@ export class FramesService {
     });
     const group_etag = await this.groups.recomputeGroupEtag(gid);
     return { group_etag };
-  }
-
-  /** 外部/Web 推预渲内容到指定帧（dynamic group）。 */
-  async renderToFrame(
-    gid: string,
-    seq: number,
-    body: RenderFrameRequestT
-  ): Promise<FrameMutationResponseT> {
-    const group = await this.prisma.group.findUnique({
-      where: { id: gid },
-      select: { id: true, kind: true },
-    });
-    if (!group) throw new NotFoundError('group not found');
-    if (group.kind !== 'dynamic') {
-      throw new ValidationError('group must be dynamic', { code: 'group_kind_mismatch' });
-    }
-
-    let imageBuf: Buffer;
-    if (body.source === 'png_base64') {
-      try {
-        imageBuf = Buffer.from(body.content, 'base64');
-      } catch {
-        throw new ValidationError('invalid base64', { code: 'invalid_base64' });
-      }
-    } else {
-      throw new NotImplementedError(`source=${body.source} not yet supported`);
-    }
-
-    const rendered = await this.render.renderTo1bpp(imageBuf, {
-      threshold: body.threshold,
-      mode: body.mode,
-    });
-    this.render.validateFrameSize(rendered.data);
-
-    const imageEtag = computeETag(rendered.data);
-    const existing = await this.prisma.frame.findUnique({
-      where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
-      select: { id: true },
-    });
-    const frameId = existing?.id ?? createId();
-    // 先盘后库：blob.write 失败时 db 不留下指向不存在文件的 etag
-    await this.blob.write(gid, frameId, 'image', rendered.data);
-    await this.prisma.frame.upsert({
-      where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
-      create: {
-        id: frameId,
-        groupId: gid,
-        sortOrder: seq,
-        imageEtag,
-        imageSize: rendered.data.byteLength,
-      },
-      update: {
-        imageEtag,
-        imageSize: rendered.data.byteLength,
-      },
-    });
-    const group_etag = await this.groups.recomputeGroupEtag(gid);
-    this.logger.log(`frame rendered: gid=${gid} seq=${seq} src=${body.source}`);
-    return {
-      sort_order: seq,
-      image_etag: imageEtag,
-      audio_etag: null,
-      group_etag,
-    };
   }
 
   // ── 内部：完整 image/audio + caption 写入 + recompute etag ──
