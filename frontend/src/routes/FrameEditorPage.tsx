@@ -22,6 +22,10 @@ export function FrameEditorPage() {
     );
   }
 
+  if (isEdit && frames.isError) {
+    return <EmptyState title="加载失败" hint="请刷新重试。" />;
+  }
+
   const frame = isEdit ? frames.data?.find((f) => f.sort_order === Number(seq)) : undefined;
 
   if (isEdit && !frame) {

@@ -3,7 +3,7 @@
 // dnd-kit reorder 通过 useDndOrder 复用；optimistic update 仍在本地处理，
 // 因为 server 接受的是「旧 idx 的新顺序」，不是 etag 列表。
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Layers, Webhook, Frame, Pencil, Check } from 'lucide-react';
@@ -24,6 +24,7 @@ import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { IconBlock } from '../components/IconBlock';
 import { FrameCard } from '../components/FrameCard';
+import { DoubleRule } from '../components/DoubleRule';
 import { useToast } from '../components/Toast';
 import { inputCls } from '../lib/styles';
 import { cn } from '../lib/cn';
@@ -37,7 +38,8 @@ export function GroupDetail() {
   const reorder = useReorderFrames(gid ?? '');
   const toast = useToast();
 
-  const group = groups.data?.find((g) => g.id === gid);
+  const group = useMemo(() => groups.data?.find((g) => g.id === gid), [groups.data, gid]);
+  const orderIds = useMemo(() => (frames.data ?? []).map((f) => f.image_etag), [frames.data]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
@@ -48,7 +50,10 @@ export function GroupDetail() {
     if (!over || active.id === over.id) return;
 
     const cur = qc.getQueryData<FT[]>(['frames', gid]);
-    if (!cur) return;
+    if (!cur) {
+      toast.error('排序失败，请刷新重试');
+      return;
+    }
 
     const oldPos = cur.findIndex((f) => f.image_etag === active.id);
     const newPos = cur.findIndex((f) => f.image_etag === over.id);
@@ -118,8 +123,6 @@ export function GroupDetail() {
     navigate(`/groups/${gid}/frames/${f.sort_order}/edit`);
   }
 
-  const orderIds = (frames.data ?? []).map((f) => f.image_etag);
-
   return (
     <div>
       <nav>
@@ -134,13 +137,12 @@ export function GroupDetail() {
       <GroupHeader group={group} KindIcon={KindIcon} onAddFrame={openCreate} />
 
       {/* 双线分隔 */}
-      <div className="mt-5 flex flex-col gap-[3px]">
-        <div className="h-px bg-ink" />
-        <div className="h-0.5 bg-ink" />
-      </div>
+      <DoubleRule className="mt-3" />
       <div className="mt-6 fade-up fade-up-1">
         {frames.isPending ? (
           <Spinner label="加载中" />
+        ) : frames.isError ? (
+          <EmptyState title="加载失败" hint="请刷新重试。" />
         ) : frames.data && frames.data.length > 0 ? (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={orderIds} strategy={rectSortingStrategy}>
@@ -214,64 +216,59 @@ function GroupHeader({
 
   return (
     <header className="mt-5 fade-up flex items-center gap-4">
-      <IconBlock size="xl" tone="soft" title={kindLabel} aria-label={kindLabel}>
-        <KindIcon size={28} />
+      <IconBlock size="lg" tone="soft" title={kindLabel} aria-label={kindLabel}>
+        <KindIcon size={24} />
       </IconBlock>
-
-      {/* 右侧:标题在上、meta 在下;按钮浮在最右 */}
-      <div className="flex-1 min-w-0 flex items-center gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2 min-w-0">
-            {editing ? (
-              <input
-                autoFocus
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onBlur={commit}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') commit();
-                  if (e.key === 'Escape') {
-                    setEditing(false);
-                    setDraft(group.name);
-                  }
-                }}
-                maxLength={64}
-                className={cn(
-                  inputCls,
-                  'flex-1 min-w-0 !font-serif !font-bold !text-[32px] sm:!text-[40px] leading-tight'
-                )}
-              />
-            ) : (
-              <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-tight truncate tracking-tight">
-                {group.name}
-              </h1>
-            )}
-            <button
-              onClick={() => (editing ? commit() : setEditing(true))}
-              disabled={update.isPending}
-              aria-label={editing ? '保存名称' : '改名'}
-              title={editing ? '保存' : '改名'}
-              className="text-stone-light hover:text-ink disabled:opacity-50 transition-colors p-2 -m-1 hover:bg-cream flex-shrink-0"
-            >
-              {editing ? <Check size={18} /> : <Pencil size={16} />}
-            </button>
-          </div>
-
-          {/* meta 在标题下方 */}
-          <p className="font-serif italic text-[14px] text-stone mt-1.5">
-            {kindLabel} · {group.frame_count} 帧
-          </p>
+      <div className="flex-1 min-w-0">
+        {/* 标题行：h1 + 改名 */}
+        <div className="flex items-center gap-2 min-w-0">
+          {editing ? (
+            <input
+              autoFocus
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={commit}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') commit();
+                if (e.key === 'Escape') {
+                  setEditing(false);
+                  setDraft(group.name);
+                }
+              }}
+              maxLength={64}
+              className={cn(
+                inputCls,
+                'flex-1 min-w-0 !font-serif !font-bold !text-[32px] sm:!text-[40px] !leading-[1.2]'
+              )}
+            />
+          ) : (
+            <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-[1.2] truncate tracking-tight">
+              {group.name}
+            </h1>
+          )}
+          <button
+            onClick={() => (editing ? commit() : setEditing(true))}
+            disabled={update.isPending}
+            aria-label={editing ? '保存名称' : '改名'}
+            title={editing ? '保存' : '改名'}
+            className="text-stone-light hover:text-ink disabled:opacity-50 transition-colors p-2 -m-1 hover:bg-cream flex-shrink-0"
+          >
+            {editing ? <Check size={18} /> : <Pencil size={16} />}
+          </button>
         </div>
-
-        <Button
-          onClick={onAddFrame}
-          iconLeft={<Plus size={16} />}
-          size="sm"
-          className="flex-shrink-0 mt-2"
-        >
-          新建一帧
-        </Button>
+        {/* meta 在标题下方 */}
+        <p className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
+          {kindLabel} · {group.frame_count} 帧
+        </p>
       </div>
+      <Button
+        onClick={onAddFrame}
+        iconLeft={<Plus size={16} />}
+        size="sm"
+        className="flex-shrink-0"
+      >
+        新建一帧
+      </Button>
     </header>
   );
 }

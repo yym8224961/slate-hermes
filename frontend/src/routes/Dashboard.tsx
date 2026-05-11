@@ -6,29 +6,16 @@
 // 设备点卡 → 弹 modal(无 URL 跳转,留在列表上下文)
 // 组点卡   → /groups/:gid 进帧管理
 
-import { useEffect, useState } from 'react';
-import { Link, useParams, useNavigate } from 'react-router-dom';
+import { useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import {
   Plus,
-  Wifi,
-  Battery,
-  BatteryWarning,
-  BatteryCharging,
-  ArrowRight,
-  Frame,
   FolderHeart,
   MonitorSmartphone,
-  Layers,
-  Webhook,
-  Trash2,
-  GripVertical,
   Cpu,
-  Check,
 } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
-import { SortableContext, useSortable, rectSortingStrategy } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import * as Dialog from '@radix-ui/react-dialog';
+import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import {
   useDevices,
   useGroups,
@@ -36,23 +23,21 @@ import {
   useCreateGroup,
   useDeleteGroup,
   useReorderGroups,
-  useUnbindDevice,
   useReorderDevices,
 } from '../lib/queries';
-import type { DeviceSummaryT, GroupSummaryT } from 'shared';
 import { Section } from '../components/Section';
 import { Spinner } from '../components/Spinner';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
-import { IconBlock } from '../components/IconBlock';
-import { Input } from '../components/Input';
 import { DeviceModal } from '../components/DeviceModal';
 import { AddDeviceDialog } from '../components/AddDeviceDialog';
+import { DeviceCard } from '../components/DeviceCard';
+import { GroupCardSortable } from '../components/GroupCard';
+import { CreateGroupDialog } from '../components/CreateGroupDialog';
 import { useToast } from '../components/Toast';
 import { useConfirm } from '../components/Confirm';
 import { useDndOrder } from '../lib/dnd';
-import { isOnline, timeAgo, rssiLabel, greeting, formatBytes } from '../lib/format';
-import { cn } from '../lib/cn';
+import { greeting } from '../lib/format';
 
 export function Dashboard() {
   const me = useMe();
@@ -94,6 +79,7 @@ export function Dashboard() {
       <Section
         title="设备"
         badge={<MonitorSmartphone size={18} />}
+        subtitle="设备通过 WiFi 连接，自动同步显示内容"
         action={
           <Button onClick={() => setAddOpen(true)} iconLeft={<Cpu size={14} />} size="sm">
             添加设备
@@ -101,7 +87,9 @@ export function Dashboard() {
         }
       >
         {devices.isPending ? (
-          <Spinner label="加载中" />
+          <div className="flex justify-center py-8">
+            <Spinner label="加载中" />
+          </div>
         ) : devices.data && devices.data.length > 0 ? (
           <DndContext
             sensors={dnd.sensors}
@@ -153,174 +141,6 @@ export function Dashboard() {
   );
 }
 
-// ───────────── DeviceCard ─────────────
-// 骨架与 GroupCard 完全对称:
-//   [上半: 状态信息也在这,整卡可点弹 modal]
-//   [footer: grip 拖动 + trash 解绑]
-function DeviceCard({
-  device,
-  groups,
-  onOpen,
-}: {
-  device: DeviceSummaryT;
-  groups: GroupSummaryT[];
-  onOpen: () => void;
-}) {
-  const online = isOnline(device);
-  const groupName = groups.find((g) => g.id === device.selected_group_id)?.name;
-  const battery = device.battery_pct;
-  const lowBattery = battery != null && battery < 20;
-  const BatteryIcon =
-    battery == null
-      ? Battery
-      : battery < 20
-        ? BatteryWarning
-        : battery < 80
-          ? Battery
-          : BatteryCharging;
-
-  const unbind = useUnbindDevice();
-  const toast = useToast();
-  const confirm = useConfirm();
-
-  // 拖拽
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: device.id,
-    animateLayoutChanges: () => false,
-  });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition: 'none',
-    zIndex: isDragging ? 10 : undefined,
-  };
-
-  // 当前在播组的帧数(派生自 groups join)
-  const currentGroup = groups.find((g) => g.id === device.selected_group_id);
-  const playingFrames = currentGroup?.frame_count;
-
-  async function onUnbind(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    const ok = await confirm({
-      title: '解绑这台设备？',
-      description: `${device.name ?? device.mac} 将从你的账号移除。素材保留，设备屏会切回配对码状态。`,
-      destructive: true,
-      confirmText: '解绑',
-    });
-    if (!ok) return;
-    unbind.mutate(device.id, {
-      onSuccess: () => toast.success('已解绑', '设备屏会显示新配对码。'),
-      onError: () => toast.error('解绑失败'),
-    });
-  }
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        'craft-card flex flex-col overflow-hidden',
-        isDragging && 'shadow-[0_16px_40px_rgba(61,40,23,0.25)] opacity-90'
-      )}
-      data-hoverable="true"
-    >
-      {/* 上半:整张可点弹 modal */}
-      <button
-        onClick={onOpen}
-        className="block w-full text-left px-5 pt-5 pb-4 sm:px-6 sm:pt-6 sm:pb-4 hover:bg-cream transition-colors"
-      >
-        <div className="flex items-start gap-3">
-          <IconBlock tone="soft">
-            <Frame size={18} />
-          </IconBlock>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="font-serif text-[18px] font-bold leading-tight truncate tracking-tight">
-                {device.name ?? '未命名'}
-              </h3>
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-stone flex-shrink-0">
-                <span className={cn('dot', online ? 'dot-online' : 'dot-offline')} />
-                {online ? '在线' : '离线'}
-              </span>
-            </div>
-
-            {/* 设备 ID — 紧贴标题的 mono 副行,与 GroupCard 的 etag 风格一致 */}
-            <p className="font-mono text-[11px] text-stone-light mt-1 truncate">
-              {device.id.slice(0, 12)}
-            </p>
-
-            {/* 在播 + 帧数 — 「在播」是 sans 标签；后面组名 + 帧数 同色 serif，视觉统一 */}
-            <p className="mt-2 truncate">
-              <span className="font-sans text-[9px] uppercase tracking-[0.18em] text-stone-light mr-1.5">
-                在播
-              </span>
-              <span
-                className={cn(
-                  'font-serif text-[13px]',
-                  groupName ? 'text-stone' : 'text-stone-light italic'
-                )}
-              >
-                {groupName ?? '未选组'}
-                {groupName && playingFrames != null && ` · ${playingFrames} 帧`}
-              </span>
-            </p>
-
-            {/* 状态行 — 在线显示电量/信号/刚刚,离线只显示上次心跳 */}
-            <div className="mt-2 flex items-center gap-3.5 text-[12px] text-stone">
-              {online ? (
-                <>
-                  <span className={cn('flex items-center gap-1.5', lowBattery && 'text-clay')}>
-                    <BatteryIcon size={14} />
-                    <span className="font-mono tabular-nums">
-                      {battery != null ? `${battery}%` : '—'}
-                    </span>
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <Wifi size={14} />
-                    <span>{rssiLabel(device.rssi_dbm)}</span>
-                  </span>
-                  <span className="text-stone-light text-[11px] ml-auto">刚刚</span>
-                </>
-              ) : (
-                <span className="text-stone-light text-[11px]">
-                  上次心跳 {timeAgo(device.last_seen_at)}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-      </button>
-
-      {/* footer — 拖动 + 解绑 */}
-      <div className="px-2 py-1.5 border-t border-line flex items-center min-h-[34px]">
-        <button
-          type="button"
-          {...attributes}
-          {...listeners}
-          aria-label="拖拽排序"
-          title="拖拽排序"
-          className="p-1.5 text-stone-light hover:text-ink hover:bg-cream transition-colors cursor-grab active:cursor-grabbing touch-none"
-        >
-          <GripVertical size={14} />
-        </button>
-
-        <span className="flex-1" />
-
-        <button
-          type="button"
-          onClick={onUnbind}
-          disabled={unbind.isPending}
-          aria-label="解绑"
-          title="从账号解绑"
-          className="p-1.5 text-stone hover:text-clay hover:bg-cream transition-colors disabled:opacity-50"
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 // ───────────── GroupsSection(原 /groups 列表整合进首页)─────────────
 function GroupsSection() {
   const groups = useGroups();
@@ -343,7 +163,7 @@ function GroupsSection() {
     <Section
       title="内容"
       badge={<FolderHeart size={18} />}
-      subtitle="一组 = 一套循环画面。相册手动上传，看板由 webhook 推。"
+      subtitle="支持图片和音频，音频会随图片同步播放"
       action={
         <Button onClick={() => setCreateOpen(true)} iconLeft={<Plus size={16} />} size="sm">
           新建组
@@ -351,7 +171,9 @@ function GroupsSection() {
       }
     >
       {groups.isPending ? (
-        <Spinner label="加载中" />
+        <div className="flex justify-center py-8">
+          <Spinner label="加载中" />
+        </div>
       ) : groups.data && groups.data.length > 0 ? (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={currentOrder} strategy={rectSortingStrategy}>
@@ -382,7 +204,7 @@ function GroupsSection() {
         <EmptyState
           icon={<FolderHeart size={26} />}
           title="尚无内容"
-          hint="新建一组开始上传图片。设备会按顺序循环显示。"
+          hint="新建组开始上传图片。设备会按顺序循环显示。"
           action={
             <Button onClick={() => setCreateOpen(true)} iconLeft={<Plus size={16} />}>
               新建第一组
@@ -409,196 +231,3 @@ function GroupsSection() {
   );
 }
 
-// ───────────── GroupCard(可拖拽)─────────────
-function GroupCardSortable({ group, onDelete }: { group: GroupSummaryT; onDelete: () => void }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: group.id,
-    animateLayoutChanges: () => false,
-  });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition: 'none',
-    zIndex: isDragging ? 10 : undefined,
-  };
-
-  const KindIcon = group.kind === 'dynamic' ? Webhook : Layers;
-  const kindLabel = group.kind === 'static' ? '相册' : '看板';
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        'craft-card flex flex-col overflow-hidden',
-        isDragging && 'shadow-[0_16px_40px_rgba(61,40,23,0.25)] opacity-90'
-      )}
-    >
-      {/* 主区 — icon + 名 + 帧数 + 副标(总素材体积 · etag)。
-          kind 用 icon 区分(Layers=相册 / Webhook=看板),hover tooltip 给文字。 */}
-      <Link
-        to={`/groups/${group.id}`}
-        className="block flex-1 min-w-0 px-5 py-5 sm:px-6 sm:py-6 hover:bg-cream transition-colors"
-      >
-        <div className="flex items-start gap-3.5">
-          <IconBlock tone="soft" title={kindLabel} aria-label={kindLabel}>
-            <KindIcon size={18} />
-          </IconBlock>
-          <div className="min-w-0 flex-1 flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <h3 className="font-serif text-[20px] font-bold leading-tight truncate tracking-tight">
-                {group.name}
-              </h3>
-              <p className="font-mono text-[11px] text-stone-light mt-1.5 truncate">
-                {formatBytes(group.total_bytes)} · {group.etag.slice(0, 12)}
-              </p>
-            </div>
-            <div className="flex items-baseline gap-1 flex-shrink-0">
-              <span className="font-serif text-[28px] font-bold leading-none tabular-nums text-ink">
-                {group.frame_count}
-              </span>
-              <span className="font-sans text-[11px] text-stone">帧</span>
-            </div>
-          </div>
-        </div>
-      </Link>
-
-      {/* footer — 拖动 + 删除 */}
-      <div className="px-2 py-1.5 border-t border-line flex items-center min-h-[34px]">
-        <button
-          type="button"
-          {...attributes}
-          {...listeners}
-          aria-label="拖拽排序"
-          title="拖拽排序"
-          className="p-1.5 text-stone-light hover:text-ink hover:bg-cream transition-colors cursor-grab active:cursor-grabbing touch-none"
-        >
-          <GripVertical size={14} />
-        </button>
-
-        <span className="flex-1" />
-
-        <button
-          type="button"
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDelete();
-          }}
-          aria-label="删除"
-          title="删除整组"
-          className="p-1.5 text-stone hover:text-clay hover:bg-cream transition-colors"
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
-    </div>
-  );
-}
-
-// ───────────── CreateGroupDialog ─────────────
-function CreateGroupDialog({
-  open,
-  onOpenChange,
-  onCreate,
-  isPending,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  onCreate: (name: string, kind: 'static' | 'dynamic') => Promise<void> | void;
-  isPending: boolean;
-}) {
-  const [name, setName] = useState('');
-  const [kind, setKind] = useState<'static' | 'dynamic'>('static');
-
-  useEffect(() => {
-    if (!open) {
-      setName('');
-      setKind('static');
-    }
-  }, [open]);
-
-  return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-ink/20 z-40" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[calc(100vw-2rem)] max-w-md bg-paper border-2 border-ink z-50 p-7 shadow-[4px_4px_0_rgba(20,17,13,0.12)]">
-          <div className="flex items-start gap-3 mb-6">
-            <IconBlock tone="soft">
-              <FolderHeart size={18} />
-            </IconBlock>
-            <div className="min-w-0">
-              <Dialog.Title className="font-serif text-[22px] font-bold leading-tight">
-                新建一组
-              </Dialog.Title>
-              <Dialog.Description className="font-sans text-[13px] text-stone mt-1 leading-relaxed">
-                相册手动上传，看板由 webhook 推数据。
-              </Dialog.Description>
-            </div>
-          </div>
-
-          <div className="space-y-5">
-            <Input
-              label="名称"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-              placeholder="如：每日卡片"
-            />
-
-            <div>
-              <p className="block font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-2">
-                类型
-              </p>
-              <div className="grid grid-cols-2 gap-0 border border-ink">
-                {(['static', 'dynamic'] as const).map((k) => {
-                  const active = kind === k;
-                  const Icon = k === 'static' ? Layers : Webhook;
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => setKind(k)}
-                      aria-pressed={active}
-                      className={cn(
-                        'relative text-left px-4 py-3.5 border-r border-ink last:border-r-0 transition-colors',
-                        active
-                          ? 'bg-ink text-paper'
-                          : 'bg-paper text-stone hover:bg-cream-deep hover:text-ink'
-                      )}
-                    >
-                      {active && (
-                        <span className="absolute top-2.5 right-2.5">
-                          <Check size={11} strokeWidth={3} />
-                        </span>
-                      )}
-                      <Icon size={18} />
-                      <p className="font-serif text-[15px] font-medium mt-2">
-                        {k === 'static' ? '静态相册' : '动态看板'}
-                      </p>
-                      <p className="font-sans text-[11px] mt-1 leading-tight opacity-70">
-                        {k === 'static' ? '手动上传图片/音频' : 'Webhook 渲染外部数据'}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-7 flex items-center justify-end gap-3">
-            <Dialog.Close asChild>
-              <Button variant="outline">取消</Button>
-            </Dialog.Close>
-            <Button
-              onClick={() => name.trim() && onCreate(name.trim(), kind)}
-              disabled={!name.trim() || isPending}
-              iconRight={isPending ? undefined : <ArrowRight size={14} />}
-            >
-              {isPending ? <Spinner /> : '创建'}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  );
-}
