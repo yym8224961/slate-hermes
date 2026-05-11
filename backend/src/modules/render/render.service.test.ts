@@ -65,7 +65,7 @@ describe('RenderService', () => {
   it('width 不是 8 的倍数时报错', async () => {
     const input = await makePng(100, 100, { r: 0, g: 0, b: 0 });
     await expect(renderer.renderTo1bpp(input, { width: 401, height: 300 })).rejects.toThrow(
-      /multiple of 8/
+      /8 的倍数/
     );
   });
 
