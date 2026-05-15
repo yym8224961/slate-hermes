@@ -138,6 +138,7 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
                 canvasRef={previewRef}
                 imageFile={imageFile}
                 existingImage={isEdit ? existingImg.data : undefined}
+                existingImagePending={isEdit && existingImg.isPending && !imageFile}
                 threshold={threshold}
                 mode={mode}
                 caption={caption}
@@ -146,15 +147,6 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
                 offset={offset}
                 onOffsetChange={setOffset}
               />
-              <p className="font-serif italic text-[11px] text-stone-light mt-2 text-center">
-                {imageFile
-                  ? '拖拽定位 · 滑块缩放 · 顶部白条为设备状态栏'
-                  : isEdit
-                    ? existingImg.isPending
-                      ? '加载原图…'
-                      : '原图当前样子'
-                    : '选图后此处显示阈值化预览'}
-              </p>
             </div>
           </div>
 

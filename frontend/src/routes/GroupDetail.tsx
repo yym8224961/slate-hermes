@@ -3,20 +3,10 @@
 // dnd-kit reorder 通过 useDndOrder 复用；optimistic update 仍在本地处理，
 // 因为 server 接受的是「旧 idx 的新顺序」，不是 etag 列表。
 
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import {
-  ArrowLeft,
-  Plus,
-  Layers,
-  Pencil,
-  Check,
-  ChevronDown,
-  Sparkles,
-  Image as ImageIcon,
-} from 'lucide-react';
-import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
+import { ArrowLeft, Plus, Layers, Pencil, Check } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -128,11 +118,8 @@ export function GroupDetail() {
 
   const KindIcon = Layers;
 
-  function openCreateImage() {
-    navigate(`/groups/${gid}/contents/image/new`);
-  }
-  function openCreateDynamic() {
-    navigate(`/groups/${gid}/contents/dynamic/new`);
+  function openCreate() {
+    navigate(`/groups/${gid}/contents/new`);
   }
   function openEdit(f: ContentDetailT) {
     if (f.kind === 'dynamic') {
@@ -153,12 +140,7 @@ export function GroupDetail() {
         </Link>
       </nav>
 
-      <GroupHeader
-        group={group}
-        KindIcon={KindIcon}
-        onAddImage={openCreateImage}
-        onAddDynamic={openCreateDynamic}
-      />
+      <GroupHeader group={group} KindIcon={KindIcon} onAdd={openCreate} />
 
       {/* 双线分隔 */}
       <DoubleRule className="mt-3" />
@@ -194,20 +176,11 @@ export function GroupDetail() {
         ) : (
           <EmptyState
             title="尚无内容"
-            hint="新建图片内容或动态内容开始。"
+            hint="点击新建帧开始添加内容。"
             action={
-              <div className="flex gap-3 justify-center">
-                <Button onClick={openCreateImage} iconLeft={<Plus size={16} />}>
-                  新建图片内容
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={openCreateDynamic}
-                  iconLeft={<Sparkles size={16} />}
-                >
-                  新建动态内容
-                </Button>
-              </div>
+              <Button onClick={openCreate} iconLeft={<Plus size={16} />}>
+                新建帧
+              </Button>
             }
           />
         )}
@@ -220,13 +193,11 @@ export function GroupDetail() {
 function GroupHeader({
   group,
   KindIcon,
-  onAddImage,
-  onAddDynamic,
+  onAdd,
 }: {
   group: GroupSummaryT;
   KindIcon: typeof Layers;
-  onAddImage: () => void;
-  onAddDynamic: () => void;
+  onAdd: () => void;
 }) {
   const update = useUpdateGroup(group.id);
   const toast = useToast();
@@ -295,48 +266,9 @@ function GroupHeader({
           {group.content_count} 项 · {formatBytes(group.total_bytes)}
         </p>
       </div>
-      <NewItemDropdown onAddImage={onAddImage} onAddDynamic={onAddDynamic} />
+      <Button iconLeft={<Plus size={16} />} size="sm" onClick={onAdd}>
+        新建帧
+      </Button>
     </header>
-  );
-}
-
-function NewItemDropdown({
-  onAddImage,
-  onAddDynamic,
-}: {
-  onAddImage: () => void;
-  onAddDynamic: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <DropdownMenu.Root open={open} onOpenChange={setOpen}>
-      <DropdownMenu.Trigger asChild>
-        <Button iconLeft={<Plus size={16} />} iconRight={<ChevronDown size={14} />} size="sm">
-          新建
-        </Button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          className="bg-paper border border-ink min-w-[180px] py-1 z-50"
-          sideOffset={6}
-          align="end"
-        >
-          <DropdownMenu.Item
-            onSelect={onAddImage}
-            className="px-3 py-2 flex items-center gap-2 cursor-pointer outline-none font-sans text-[13px] data-[highlighted]:bg-ink data-[highlighted]:text-paper"
-          >
-            <ImageIcon size={14} />
-            图片内容
-          </DropdownMenu.Item>
-          <DropdownMenu.Item
-            onSelect={onAddDynamic}
-            className="px-3 py-2 flex items-center gap-2 cursor-pointer outline-none font-sans text-[13px] data-[highlighted]:bg-ink data-[highlighted]:text-paper"
-          >
-            <Sparkles size={14} />
-            动态内容
-          </DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
   );
 }

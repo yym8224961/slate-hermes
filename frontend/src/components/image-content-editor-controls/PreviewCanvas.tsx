@@ -23,6 +23,8 @@ import { decodeBppImage, isValidBppLength } from '../../lib/image';
 interface PreviewCanvasProps {
   imageFile: File | null;
   existingImage: ArrayBuffer | undefined;
+  /** edit 模式下原图加载中的状态 */
+  existingImagePending?: boolean;
   threshold: number;
   mode: DitherMode;
   caption: string;
@@ -37,6 +39,7 @@ interface PreviewCanvasProps {
 export function PreviewCanvas({
   imageFile,
   existingImage,
+  existingImagePending,
   threshold,
   mode,
   caption,
@@ -146,24 +149,39 @@ export function PreviewCanvas({
   }, []);
 
   return (
-    <div className="bg-paper border border-ink p-1.5">
-      <div className="relative overflow-hidden border border-line aspect-[4/3]">
-        <canvas
-          ref={canvasRef}
-          width={FRAME_WIDTH}
-          height={FRAME_HEIGHT}
-          className={cn('block w-full h-full', isDragging && 'cursor-grabbing')}
-          style={{
-            imageRendering: 'auto',
-            cursor: imageFile ? 'grab' : 'default',
-          }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerCancel={onPointerUp}
-        />
-        <StatusBarOverlay caption={caption} showSafeArea={showSafeArea} />
-      </div>
+    <div className="bg-paper border border-ink relative overflow-hidden aspect-[4/3]">
+      {existingImagePending && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="font-serif italic text-[13px] text-stone-light">加载中…</span>
+        </div>
+      )}
+      {!imageFile && !existingImage && !existingImagePending && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <span className="font-serif italic text-[13px] text-stone-light">选图后显示预览</span>
+        </div>
+      )}
+      {imageFile && (
+        <div className="absolute inset-0 flex items-end justify-center pb-3 pointer-events-none">
+          <span className="font-serif italic text-[13px] text-stone-light">
+            拖拽定位 · 滑块缩放
+          </span>
+        </div>
+      )}
+      <canvas
+        ref={canvasRef}
+        width={FRAME_WIDTH}
+        height={FRAME_HEIGHT}
+        className={cn('block w-full h-full', isDragging && 'cursor-grabbing')}
+        style={{
+          imageRendering: 'auto',
+          cursor: imageFile ? 'grab' : 'default',
+        }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+      />
+      <StatusBarOverlay caption={caption} showSafeArea={showSafeArea} />
     </div>
   );
 }

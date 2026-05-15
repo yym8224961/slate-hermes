@@ -8,6 +8,7 @@ import { Dashboard } from './routes/Dashboard';
 import { GroupDetail } from './routes/GroupDetail';
 import { ImageContentEditorPage } from './routes/ImageContentEditorPage';
 import { DynamicContentEditorPage } from './routes/DynamicContentEditorPage';
+import { ContentNewPage } from './routes/ContentNewPage';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -35,6 +36,7 @@ export function App() {
           <Route index element={<Dashboard />} />
           <Route path="/devices/:did" element={<Dashboard />} />
           <Route path="/groups/:gid" element={<GroupDetail />} />
+          <Route path="/groups/:gid/contents/new" element={<ContentNewPage />} />
           <Route path="/groups/:gid/contents/image/new" element={<ImageContentEditorPage />} />
           <Route
             path="/groups/:gid/contents/image/:contentId/edit"
