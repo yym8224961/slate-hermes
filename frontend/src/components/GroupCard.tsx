@@ -1,4 +1,4 @@
-// 内容组卡片：可拖拽排序 + 帧数展示 + 底部操作行。
+// 内容组卡片：可拖拽排序 + 内容数展示 + 底部操作行。
 
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
@@ -58,9 +58,9 @@ export function GroupCardSortable({
             </div>
             <div className="flex items-baseline gap-1 flex-shrink-0">
               <span className="font-serif text-[28px] font-bold leading-none tabular-nums text-ink">
-                {group.frame_count}
+                {group.content_count}
               </span>
-              <span className="font-sans text-[11px] text-stone">帧</span>
+              <span className="font-sans text-[11px] text-stone">项</span>
             </div>
           </div>
         </div>

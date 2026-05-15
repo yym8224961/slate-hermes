@@ -181,15 +181,13 @@ bool WriteStateMeta(const std::string& selected_group_id, const std::string& eta
     return ok;
 }
 
-bool WriteManifest(const std::string& gid, const std::string& group_etag,
-                   int frame_count, int default_frame_idx) {
+bool WriteManifest(const std::string& gid, const std::string& group_etag, int content_count) {
     DirEnsure(std::string(kRoot) + "/groups");
     DirEnsure(GroupDir(gid));
     DirEnsure(FramesDir(gid));
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "group_etag", group_etag.c_str());
-    cJSON_AddNumberToObject(root, "frame_count", frame_count);
-    cJSON_AddNumberToObject(root, "default_frame_idx", default_frame_idx);
+    cJSON_AddNumberToObject(root, "content_count", content_count);
     char* s = cJSON_PrintUnformatted(root);
     bool  ok = s && WriteAll(GroupDir(gid) + "/manifest.json", s, std::strlen(s));
     cJSON_free(s);
@@ -197,12 +195,12 @@ bool WriteManifest(const std::string& gid, const std::string& group_etag,
     return ok;
 }
 
-bool ReadManifestFrameCount(const std::string& gid, int& out) {
+bool ReadManifestContentCount(const std::string& gid, int& out) {
     std::vector<uint8_t> buf;
     if (!ReadAll(GroupDir(gid) + "/manifest.json", buf)) return false;
     cJSON* root = cJSON_ParseWithLength(reinterpret_cast<const char*>(buf.data()), buf.size());
     if (!root) return false;
-    cJSON* fc = cJSON_GetObjectItemCaseSensitive(root, "frame_count");
+    cJSON* fc = cJSON_GetObjectItemCaseSensitive(root, "content_count");
     bool   ok = false;
     if (cJSON_IsNumber(fc)) {
         out = fc->valueint;
@@ -249,24 +247,50 @@ bool ReadFrameAudio(const std::string& gid, int idx, std::vector<uint8_t>& out) 
 }
 
 namespace {
-std::string CaptionPath(const std::string& gid, int idx) {
-    return FramesDir(gid) + "/" + std::to_string(idx) + ".caption";
+std::string MetaPath(const std::string& gid, int idx) {
+    return FramesDir(gid) + "/" + std::to_string(idx) + ".meta";
 }
 }  // namespace
 
-bool WriteFrameCaption(const std::string& gid, int idx, const std::string& caption) {
-    DirEnsure(GroupDir(gid));
-    DirEnsure(FramesDir(gid));
-    return WriteAll(CaptionPath(gid, idx), caption.data(), caption.size());
+void DeleteFrameAudio(const std::string& gid, int idx) {
+    unlink(AudioPath(gid, idx).c_str());
+    unlink(EtagPath(gid, idx, "pcm").c_str());
 }
 
-bool ReadFrameCaption(const std::string& gid, int idx, std::string& out) {
+void DeleteFrameFiles(const std::string& gid, int idx) {
+    unlink(ImagePath(gid, idx).c_str());
+    unlink(EtagPath(gid, idx, "img").c_str());
+    DeleteFrameAudio(gid, idx);
+    unlink(MetaPath(gid, idx).c_str());
+}
+
+bool WriteFrameMeta(const std::string& gid, int idx, const FrameMeta& meta) {
+    DirEnsure(GroupDir(gid));
+    DirEnsure(FramesDir(gid));
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "caption", meta.caption.c_str());
+    cJSON_AddNumberToObject(root, "ttl_sec", static_cast<double>(meta.ttl_sec));
+    char* s = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!s) return false;
+    const size_t len = std::strlen(s);
+    const bool ok = WriteAll(MetaPath(gid, idx), s, len);
+    cJSON_free(s);
+    return ok;
+}
+
+bool ReadFrameMeta(const std::string& gid, int idx, FrameMeta& out) {
+    out = {};
     std::vector<uint8_t> buf;
-    if (!ReadAll(CaptionPath(gid, idx), buf)) {
-        out.clear();
-        return false;
-    }
-    out.assign(reinterpret_cast<const char*>(buf.data()), buf.size());
+    if (!ReadAll(MetaPath(gid, idx), buf) || buf.empty()) return false;
+    std::string json(reinterpret_cast<const char*>(buf.data()), buf.size());
+    cJSON* root = cJSON_Parse(json.c_str());
+    if (!root) return false;
+    cJSON* cap = cJSON_GetObjectItemCaseSensitive(root, "caption");
+    cJSON* ttl = cJSON_GetObjectItemCaseSensitive(root, "ttl_sec");
+    if (cJSON_IsString(cap) && cap->valuestring) out.caption = cap->valuestring;
+    if (cJSON_IsNumber(ttl)) out.ttl_sec = static_cast<uint32_t>(ttl->valueint);
+    cJSON_Delete(root);
     return true;
 }
 

@@ -12,10 +12,13 @@ import type {
   PatchDeviceRequestT,
   ClaimByPairCodeRequestT,
   ReorderDevicesRequestT,
-  FrameSummaryT,
-  PatchFrameRequestT,
-  ReorderFramesRequestT,
-  FrameMutationResponseT,
+  ContentDetailT,
+  PatchContentRequestT,
+  ReorderContentsRequestT,
+  ContentMutationResponseT,
+  CreateDynamicContentRequestT,
+  DynamicConfigT,
+  IngestResponseT,
 } from 'shared';
 
 const V1 = '/api/v1';
@@ -143,133 +146,255 @@ export function useDeleteGroup() {
   });
 }
 
-// ── frames ──────────────────────────────────────────────────────────
-export function useGroupFrames(gid: string | undefined) {
+// ── contents ────────────────────────────────────────────────────────
+export function useGroupContents(gid: string | undefined) {
   return useQuery({
-    queryKey: ['frames', gid],
+    queryKey: ['contents', gid],
     queryFn: async () => {
-      const { data } = await api.get<FrameSummaryT[]>(`${V1}/groups/${gid}/frames`);
+      const { data } = await api.get<ContentDetailT[]>(`${V1}/groups/${gid}/contents`);
       return data;
     },
     enabled: !!gid,
   });
 }
 
-// 创建新帧：multipart，image 必填，自动 append 到末尾。
-export function useCreateFrame(gid: string) {
+export function useCreateImageContent(gid: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (form: FormData) => {
-      const { data } = await api.post<FrameMutationResponseT>(`${V1}/groups/${gid}/frames`, form, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
-      return data;
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['frames', gid] });
-      qc.invalidateQueries({ queryKey: ['groups'] });
-    },
-  });
-}
-
-// PATCH 单帧：multipart 改 image/audio，或 JSON 只改 caption。
-export function useUpdateFrame(gid: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ seq, form }: { seq: number; form: FormData }) => {
-      const { data } = await api.patch<FrameMutationResponseT>(
-        `${V1}/groups/${gid}/frames/${seq}`,
+      const { data } = await api.post<ContentMutationResponseT>(
+        `${V1}/groups/${gid}/contents/image`,
         form,
         { headers: { 'Content-Type': 'multipart/form-data' } }
       );
       return data;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['frames', gid] });
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
       qc.invalidateQueries({ queryKey: ['groups'] });
     },
   });
 }
 
-export function useDeleteFrame(gid: string) {
+export function useUpdateImageContent(gid: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (seq: number) => {
-      await api.delete(`${V1}/groups/${gid}/frames/${seq}`);
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['frames', gid] });
-      qc.invalidateQueries({ queryKey: ['groups'] });
-    },
-  });
-}
-
-// 拉某帧的 1bpp binary。queryKey 带 etag，etag 变化（=内容变化）自动重拉。
-export function useFrameImage(gid: string, seq: number, etag: string) {
-  return useQuery({
-    queryKey: ['frame-image', gid, seq, etag],
-    queryFn: async () => {
-      const { data } = await api.get<ArrayBuffer>(`${V1}/groups/${gid}/frames/${seq}/image`, {
-        responseType: 'arraybuffer',
-      });
+    mutationFn: async ({ contentId, form }: { contentId: string; form: FormData }) => {
+      const { data } = await api.patch<ContentMutationResponseT>(
+        `${V1}/contents/${contentId}`,
+        form,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
       return data;
     },
-    staleTime: Infinity, // etag 一致就别再请求
-    enabled: !!gid && seq >= 0 && !!etag,
-  });
-}
-
-// JSON-only PATCH(只改 caption)。multipart partial 走 useUpdateFrame。
-export function usePatchFrame(gid: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ seq, body }: { seq: number; body: PatchFrameRequestT }) => {
-      await api.patch(`${V1}/groups/${gid}/frames/${seq}`, body);
-    },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['frames', gid] });
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
       qc.invalidateQueries({ queryKey: ['groups'] });
     },
   });
 }
 
-// 拉某帧的 PCM binary。queryKey 带 etag，etag 变化（=内容变化）自动重拉。
-export function useFrameAudio(gid: string, seq: number, etag: string | null) {
+export function useDeleteContent(gid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (contentId: string) => {
+      await api.delete(`${V1}/contents/${contentId}`);
+      return contentId;
+    },
+    onSuccess: (_data, contentId) => {
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
+      qc.invalidateQueries({ queryKey: ['groups'] });
+      qc.removeQueries({ queryKey: ['dynamic-config', contentId] });
+      qc.removeQueries({ queryKey: ['content-image', contentId] });
+      qc.removeQueries({ queryKey: ['content-audio', contentId] });
+    },
+  });
+}
+
+export function useContentImage(contentId: string, etag: string) {
   return useQuery({
-    queryKey: ['frame-audio', gid, seq, etag],
+    queryKey: ['content-image', contentId, etag],
     queryFn: async () => {
-      const { data } = await api.get<ArrayBuffer>(`${V1}/groups/${gid}/frames/${seq}/audio`, {
+      const { data } = await api.get<ArrayBuffer>(`${V1}/contents/${contentId}/image`, {
         responseType: 'arraybuffer',
       });
       return data;
     },
     staleTime: Infinity,
-    enabled: !!gid && seq >= 0 && !!etag,
+    enabled: !!contentId && !!etag,
   });
 }
 
-export function useDeleteFrameAudio(gid: string) {
+export function usePatchContent(gid: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (seq: number) => {
-      await api.delete(`${V1}/groups/${gid}/frames/${seq}/audio`);
+    mutationFn: async ({ contentId, body }: { contentId: string; body: PatchContentRequestT }) => {
+      await api.patch(`${V1}/contents/${contentId}`, body);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['frames', gid] });
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
       qc.invalidateQueries({ queryKey: ['groups'] });
     },
   });
 }
 
-export function useReorderFrames(gid: string) {
+export function useContentAudio(contentId: string, etag: string | null) {
+  return useQuery({
+    queryKey: ['content-audio', contentId, etag],
+    queryFn: async () => {
+      const { data } = await api.get<ArrayBuffer>(`${V1}/contents/${contentId}/audio`, {
+        responseType: 'arraybuffer',
+      });
+      return data;
+    },
+    staleTime: Infinity,
+    enabled: !!contentId && !!etag,
+  });
+}
+
+export function useDeleteContentAudio(gid: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: ReorderFramesRequestT) => {
-      await api.put(`${V1}/groups/${gid}/frames/order`, body);
+    mutationFn: async (contentId: string) => {
+      await api.delete(`${V1}/contents/${contentId}/audio`);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['frames', gid] });
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
       qc.invalidateQueries({ queryKey: ['groups'] });
+    },
+  });
+}
+
+export function useReorderContents(gid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: ReorderContentsRequestT) => {
+      await api.put(`${V1}/groups/${gid}/contents/order`, body);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
+      qc.invalidateQueries({ queryKey: ['groups'] });
+    },
+  });
+}
+
+// ── dynamic contents ────────────────────────────────────────────────
+
+export function useCreateDynamicContent(gid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: CreateDynamicContentRequestT) => {
+      const { data } = await api.post<ContentMutationResponseT>(
+        `${V1}/groups/${gid}/contents/dynamic`,
+        body,
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
+      qc.invalidateQueries({ queryKey: ['groups'] });
+    },
+  });
+}
+
+export function useUpdateDynamicContent(gid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      contentId,
+      title,
+      config,
+    }: {
+      contentId: string;
+      title?: string | null;
+      config?: DynamicConfigT;
+    }) => {
+      const body: { title?: string | null; config?: DynamicConfigT } = {};
+      if (title !== undefined) body.title = title;
+      if (config !== undefined) body.config = config;
+      const { data } = await api.patch<ContentMutationResponseT>(
+        `${V1}/contents/${contentId}`,
+        body
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
+      qc.invalidateQueries({ queryKey: ['groups'] });
+    },
+  });
+}
+
+export function useUpdateContentAudio(gid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      contentId,
+      title,
+      audio,
+    }: {
+      contentId: string;
+      title?: string | null;
+      audio?: File | null;
+    }) => {
+      const form = new FormData();
+      if (title !== undefined) form.append('title', title ?? '');
+      if (audio) form.append('audio', audio);
+      const { data } = await api.patch<ContentMutationResponseT>(
+        `${V1}/contents/${contentId}`,
+        form,
+        { headers: { 'Content-Type': 'multipart/form-data' } }
+      );
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
+      qc.invalidateQueries({ queryKey: ['groups'] });
+    },
+  });
+}
+
+export function useDynamicConfig(contentId: string | undefined) {
+  return useQuery({
+    queryKey: ['dynamic-config', contentId],
+    queryFn: async () => {
+      const { data } = await api.get<{
+        dynamic_type: string;
+        config: DynamicConfigT;
+        title: string | null;
+      }>(`${V1}/contents/${contentId}/dynamic`);
+      return data;
+    },
+    enabled: !!contentId,
+    staleTime: 30_000,
+  });
+}
+
+export function useRefreshDynamicContent(gid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (contentId: string) => {
+      const { data } = await api.post<IngestResponseT>(`${V1}/contents/${contentId}/refresh`);
+      return data;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
+    },
+  });
+}
+
+/**
+ * 预览动态内容配置（不保存）。返回 1bpp 帧缓冲（ArrayBuffer，15000 字节）。
+ * 供动态内容编辑器实时预览使用。
+ */
+export function usePreviewDynamicContent(contentId: string | undefined) {
+  return useMutation({
+    mutationFn: async ({ config, title }: { config: DynamicConfigT; title?: string | null }) => {
+      const url = contentId ? `${V1}/contents/${contentId}/preview` : `${V1}/contents/preview`;
+      const body = contentId ? { config, title } : { dynamic_type: config.type, config, title };
+      const { data } = await api.post<ArrayBuffer>(url, body, { responseType: 'arraybuffer' });
+      return data;
     },
   });
 }

@@ -55,7 +55,7 @@ void RestartDevicePage::OnEnter(SceneContext& ctx) {
     lv_label_set_text(warn,
                       "确认要重启设备吗？\n\n"
                       "Wi-Fi 配置和已下载\n"
-                      "的图片缓存都保留\n"
+                      "的内容缓存都保留\n"
                       "重启完成后自动恢复");
     lv_obj_align(warn, LV_ALIGN_CENTER, 0, -8);
 

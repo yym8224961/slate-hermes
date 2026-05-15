@@ -1,6 +1,7 @@
 #include "sync_service.h"
 
 #include <cstring>
+#include <ctime>
 #include <esp_log.h>
 #include <esp_system.h>
 #include <esp_timer.h>
@@ -10,6 +11,7 @@
 #include <sdkconfig.h>
 
 #include "../app/event_bus.h"
+#include "../app/power_state.h"
 #include "../storage/cache.h"
 #include "api_client.h"
 #include "poll_interval_store.h"
@@ -91,14 +93,15 @@ int SyncService::NextIntervalSec() const {
     return kUnboundSlowPollSec;
 }
 
-void SyncService::PostGroupReady(const std::string& gid, int frame_count, int default_seq,
-                                 bool content_changed) {
+void SyncService::PostGroupReady(const std::string& gid, const std::string& name,
+                                 int content_count, bool content_changed) {
     UiEvent e{};
     e.kind = UiEventKind::kGroupReady;
     std::strncpy(e.u.group.gid, gid.c_str(), sizeof(e.u.group.gid) - 1);
     e.u.group.gid[sizeof(e.u.group.gid) - 1] = '\0';
-    e.u.group.frame_count    = frame_count;
-    e.u.group.default_idx    = default_seq;
+    std::strncpy(e.u.group.name, name.c_str(), sizeof(e.u.group.name) - 1);
+    e.u.group.name[sizeof(e.u.group.name) - 1] = '\0';
+    e.u.group.content_count   = content_count;
     e.u.group.content_changed = content_changed;
     evt::Post(e);
 }
@@ -121,7 +124,7 @@ static api::Telemetry BuildTelemetry(const SyncDeps& deps, const std::string& cu
     if (deps.read_rssi) tel.rssi_dbm = deps.read_rssi();
     tel.fw_version        = CONFIG_APP_PROJECT_VER;
     tel.current_group     = current_group;
-    tel.current_frame_seq = deps.current_frame_seq ? deps.current_frame_seq() : 0;
+    if (deps.current_content_seq) tel.current_content_seq = deps.current_content_seq();
     return tel;
 }
 
@@ -138,10 +141,11 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     if (!need) {
         if (current_group_ != gid) {
             current_group_ = gid;
-            int frame_count = 0;
-            cache::ReadManifestFrameCount(gid, frame_count);
+            int content_count = 0;
+            cache::ReadManifestContentCount(gid, content_count);
             // 内容没变,只是 splash → frame_scene 首次切换需要 hint;不刷屏。
-            PostGroupReady(gid, frame_count, 0, /*content_changed=*/false);
+            // name 留空，下一轮 manifest 拉成功后会用真实名字补一次。
+            PostGroupReady(gid, "", content_count, /*content_changed=*/false);
         }
         return;
     }
@@ -161,34 +165,59 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         const bool first_seen = (current_group_ != gid);
         current_group_ = gid;
         if (first_seen) {
-            int frame_count = 0;
-            cache::ReadManifestFrameCount(gid, frame_count);
-            // 服务端确认 manifest 没变,cache 也是最新的;不刷屏。
-            PostGroupReady(gid, frame_count, 0, /*content_changed=*/false);
+            int content_count = 0;
+            cache::ReadManifestContentCount(gid, content_count);
+            // 304 → server 没下发新 manifest，没有 group_name。留空让 UI 兜底。
+            PostGroupReady(gid, "", content_count, /*content_changed=*/false);
         }
         return;
     }
 
-    const int total = static_cast<int>(mf.frames.size());
+    int old_content_count = 0;
+    cache::ReadManifestContentCount(gid, old_content_count);
+
+    const int total = static_cast<int>(mf.contents.size());
     int       done  = 0;
-    for (auto& f : mf.frames) {
+    // 防日志噪音：同一 gid 的协议不匹配只 warn 一次/进程，避免每 tick 反复刷屏。
+    static std::string s_warned_gid;
+    for (auto& f : mf.contents) {
+        // 协议 v3：拉 image/audio 走 /contents/:contentId/image|audio。
+        // 本地缓存仍按 (gid, seq) 维度（FrameScene 按键翻页用 seq 索引），
+        // 仅 HTTP URL 切到 content_id。
+        if (f.content_id.empty()) {
+            if (s_warned_gid != gid) {
+                ESP_LOGW(kTag,
+                         "Frame seq=%d 缺 content_id（gid=%s），跳过下载",
+                         f.seq, gid.c_str());
+                s_warned_gid = gid;
+            }
+            ++done;
+            continue;
+        }
         if (!cache::FrameImageExists(gid, f.seq, f.image_etag)) {
             std::vector<uint8_t> buf;
             bool                 nm = false;
-            if (api::DownloadFrameImage(gid, f.seq, "", buf, nm)) {
+            if (api::DownloadContentImage(f.content_id, "", buf, nm)) {
                 cache::WriteFrameImage(gid, f.seq, buf, f.image_etag);
                 ESP_LOGI(kTag, "Frame %d image cached (%u B)", f.seq, (unsigned)buf.size());
             }
         }
-        if (!f.audio_etag.empty() &&
-            !cache::FrameAudioExists(gid, f.seq, f.audio_etag)) {
+        if (f.audio_etag.empty()) {
+            cache::DeleteFrameAudio(gid, f.seq);
+        } else if (!cache::FrameAudioExists(gid, f.seq, f.audio_etag)) {
             std::vector<uint8_t> buf;
             bool                 nm = false;
-            if (api::DownloadFrameAudio(gid, f.seq, "", buf, nm)) {
+            if (api::DownloadContentAudio(f.content_id, "", buf, nm)) {
                 cache::WriteFrameAudio(gid, f.seq, buf, f.audio_etag);
             }
         }
-        cache::WriteFrameCaption(gid, f.seq, f.caption);
+        // 一次性写 caption + ttl 到 .meta（减一个 LittleFS inode）。
+        // ttl 来自协议 v3 的 next_wake_sec，让 FrameScene LoadFrame 后写入
+        // power_state，设备睡前算精确 RTC wake 时刻。
+        cache::FrameMeta fm;
+        fm.caption = f.caption;
+        fm.ttl_sec = static_cast<uint32_t>(f.next_wake_sec);
+        cache::WriteFrameMeta(gid, f.seq, fm);
         ++done;
         // 帧级进度,Scene 自己决定显示与否(BootSplash + FrameScene 关心,
         // SettingsScene 等忽略)。clamp 到 0xFF 避免极端 group 溢出。
@@ -198,12 +227,15 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         e.u.progress.total   = static_cast<uint8_t>(total > 255 ? 255 : total);
         evt::Post(e, 0);
     }
-    cache::WriteManifest(gid, mf.group_etag, mf.frames.size(), mf.default_frame_seq);
+    for (int idx = total; idx < old_content_count; ++idx) {
+        cache::DeleteFrameFiles(gid, idx);
+    }
+    cache::WriteManifest(gid, mf.group_etag, mf.contents.size());
     cache::WriteStateMeta(gid, mf.group_etag);
     current_group_  = gid;
     group_changed   = true;
     // 真有内容变化(新增/修改/删除帧),让 FrameScene 重读当前帧并触发 EPD 刷新。
-    PostGroupReady(gid, static_cast<int>(mf.frames.size()), mf.default_frame_seq,
+    PostGroupReady(gid, mf.group_name, static_cast<int>(mf.contents.size()),
                    /*content_changed=*/true);
 }
 
@@ -226,6 +258,10 @@ void SyncService::SyncOnce() {
         evt::Post(e, 0);
         return;
     }
+    // 成功上报 telemetry → 记 UNIX epoch 到 RTC RAM。
+    // time(NULL) 在 SNTP 同步后是真实 wall clock，跨 deep sleep 连续；
+    // power_state 内部会检测 SNTP 未同步并拒绝写入。
+    power_state::SetLastTelemetryAt(static_cast<uint32_t>(time(nullptr)));
 
     // 1. bound 翻转:发独立事件让 splash / frame_scene 都能响应。
     bool prev_bound = was_bound_.load();

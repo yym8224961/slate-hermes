@@ -29,6 +29,7 @@
 #include "../net/sync_service.h"
 #include "../net/wifi.h"
 #include "../scenes/boot_splash_scene.h"
+#include "../scenes/frame_scene.h"
 #include "../storage/cache.h"
 #include "event_bus.h"
 
@@ -168,17 +169,19 @@ void PostWakeupKeyEvent() {
 void PostCachedGroupReadyIfAny() {
     std::string gid, etag;
     if (!cache::ReadStateMeta(gid, etag) || gid.empty()) return;
-    int frame_count = 0;
-    if (!cache::ReadManifestFrameCount(gid, frame_count) || frame_count <= 0) return;
+    int content_count = 0;
+    if (!cache::ReadManifestContentCount(gid, content_count) || content_count <= 0) return;
 
     UiEvent e{};
     e.kind = UiEventKind::kGroupReady;
     std::strncpy(e.u.group.gid, gid.c_str(), sizeof(e.u.group.gid) - 1);
     e.u.group.gid[sizeof(e.u.group.gid) - 1] = '\0';
-    e.u.group.frame_count = frame_count;
-    e.u.group.default_idx = 0;
+    // cache 不存 group name；SyncService 下一轮拉到 manifest 后会 Post 带 name 的事件。
+    e.u.group.name[0]     = '\0';
+    e.u.group.content_count = content_count;
+    e.u.group.content_changed = false;
     evt::Post(e);
-    ESP_LOGI(kTag, "Cached GroupReady gid=%s count=%d", gid.c_str(), frame_count);
+    ESP_LOGI(kTag, "Cached GroupReady gid=%s count=%d", gid.c_str(), content_count);
 }
 
 }  // namespace
@@ -379,7 +382,9 @@ void App::InitNetwork() {
         };
         deps.read_rssi          = []() -> int { return Wifi::Get().GetRssi(); };
         deps.read_charge        = []() { return Board::Get().charge()->Get(); };
-        deps.current_frame_seq  = []() -> int { return 0; };  // 阶段 1：暂不上报具体 frame
+        // FrameScene 在 LoadFrame 时同步写 g_current_seq；FrameScene 未就绪时返回 0
+        // 也是合理 fallback（telemetry 也接受 0）。
+        deps.current_content_seq  = []() -> int { return frame_scene_state::GetCurrentSeq(); };
         SyncService::Get().Start(std::move(deps));
 
         // 首次注册(NVS 之前没 secret)的设备没有可信 cache:可能是新设备(没 cache)

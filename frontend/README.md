@@ -1,6 +1,6 @@
 # Slate / Frontend
 
-Web 管理端：登录后管理「设备 ↔ 相册 ↔ 帧」三级关系，把图 / 音 / caption 推到 backend，由 backend 转给设备。
+Web 管理端：登录后管理「设备 ↔ 相册 ↔ 内容」三级关系，把图片内容、动态内容、音频和标题推到 backend，由 backend 转给设备。
 
 ## 技术栈
 
@@ -56,13 +56,13 @@ Web 管理端：登录后管理「设备 ↔ 相册 ↔ 帧」三级关系，把
 ```
 src/
 ├── main.tsx            入口：BrowserRouter + QueryClientProvider + Auth/Toast/Confirm Provider
-├── App.tsx             路由表（Login / Register / Dashboard / GroupDetail / FrameEditor）
+├── App.tsx             路由表（Login / Register / Dashboard / GroupDetail / content editors）
 ├── styles/global.css   Tailwind v4 + Mono Press tokens + .craft-* primitives
 ├── lib/
 │   ├── api.ts          axios 实例：baseURL '/', auto Bearer JWT, 401 跳 /login
 │   ├── api-error.ts    解包 ApiErrorEnvelope
 │   ├── auth.tsx        AuthProvider + useAuth（token / login / logout）
-│   ├── queries.ts      全部 useQuery / useMutation hooks（devices / groups / frames）
+│   ├── queries.ts      全部 useQuery / useMutation hooks（devices / groups / contents）
 │   ├── format.ts       isOnline / timeAgo / rssiLabel / formatBytes / normalizeMac / normalizePairCode
 │   ├── dnd.ts          useDndOrder：dnd-kit + 乐观更新 + 后端 reorder mutation
 │   ├── hooks.ts        通用 hooks
@@ -74,8 +74,9 @@ src/
 │   ├── Login.tsx              邮箱 / 用户名 + 密码，POST /sessions
 │   ├── Register.tsx           邮箱 + 用户名 + 密码，POST /users
 │   ├── Dashboard.tsx          首页：设备 grid + 相册 grid；/devices/:did 是 deep link
-│   ├── GroupDetail.tsx        /groups/:gid 帧列表 + 操作
-│   └── FrameEditorPage.tsx    /groups/:gid/frames/new 与 /:seq/edit 共用
+│   ├── GroupDetail.tsx        /groups/:gid 内容列表 + 操作
+│   ├── ImageContentEditorPage.tsx
+│   └── DynamicContentEditorPage.tsx
 └── components/
     ├── Layout.tsx              header（logo + 用户菜单）+ Outlet
     ├── AuthLayout.tsx          登录 / 注册页布局
@@ -95,16 +96,18 @@ src/
     ├── DeviceCard.tsx          设备卡（可拖拽 + 在线点 + 电量 / 信号）
     ├── DeviceModal.tsx         设备详情：在线 / 电池 / RSSI / 固件 + 切相册 + 解绑
     ├── AddDeviceDialog.tsx     输入 6 位 pair_code 绑定设备
-    ├── GroupCard.tsx           相册卡（可拖拽 + 帧数）
-    ├── FrameCard.tsx           帧卡（thumb + caption + 操作）
-    ├── FrameEditor.tsx         帧上传 / 编辑壳，组合下面 4 个子组件
-    ├── frame-editor/
+    ├── GroupCard.tsx           相册卡（可拖拽 + 内容数）
+    ├── ImageContentCard.tsx    图片内容卡（thumb + title + 操作）
+    ├── DynamicContentCard.tsx  动态内容卡（thumb + type + 操作）
+    ├── ImageContentEditor.tsx  图片上传 / 编辑壳，组合下面 4 个子组件
+    ├── DynamicContentEditor.tsx 动态内容配置 / 预览 / 音频
+    ├── image-content-editor-controls/
     │   ├── ImageDropzone.tsx   react-dropzone 选图
     │   ├── AudioDropzone.tsx   选音频（backend ffmpeg 转 PCM）
     │   ├── DitherControls.tsx  阈值滑块 + 6 种 dither 模式（shared.DITHER_INFO）
     │   └── PreviewCanvas.tsx   <canvas> 用 shared 同一套 preprocess + dither 出预览
     ├── AudioPlayPreview.tsx    raw PCM → WebAudio 播放
-    └── StatusBarOverlay.tsx    设备 frame 顶部状态栏 mock（24px 白底，1:1 对齐设备渲染）
+    └── StatusBarOverlay.tsx    设备画面顶部状态栏 mock（24px 白底，1:1 对齐设备渲染）
 ```
 
 ## 路由
@@ -115,18 +118,20 @@ src/
 | `/register` | `Register` | 邮箱 + 用户名 + 密码注册 |
 | `/` | `Dashboard` | 总览：设备 grid + 相册 grid |
 | `/devices/:did` | `Dashboard` | deep link，自动打开对应 `DeviceModal`，关闭时 `navigate('/')` 回首页 |
-| `/groups/:gid` | `GroupDetail` | 单相册帧列表 + 重排 + 编辑入口 |
-| `/groups/:gid/frames/new` | `FrameEditorPage` | 新建帧 |
-| `/groups/:gid/frames/:seq/edit` | `FrameEditorPage` | 编辑帧 |
+| `/groups/:gid` | `GroupDetail` | 单相册内容列表 + 重排 + 编辑入口 |
+| `/groups/:gid/contents/image/new` | `ImageContentEditorPage` | 新建图片内容 |
+| `/groups/:gid/contents/image/:contentId/edit` | `ImageContentEditorPage` | 编辑图片内容 |
+| `/groups/:gid/contents/dynamic/new` | `DynamicContentEditorPage` | 新建动态内容 |
+| `/groups/:gid/contents/dynamic/:contentId/edit` | `DynamicContentEditorPage` | 编辑动态内容 |
 | 其它 | `<Navigate to="/" />` | |
 
 > 故意没有独立 `/groups` 列表页 —— Dashboard 已经是入口；独立 `DeviceDetail` 路由也不留，统一走 Dashboard 上的 Modal。
 
 ## 数据流
 
-- **状态管理**：TanStack Query 一把梭。所有服务端态在 `lib/queries.ts`，组件只调 `useDevices()` / `useGroups()` / `useGroupFrames(gid)` 这类 hook。mutation 在 `onSuccess` 里 `invalidateQueries` 触发 refetch。
+- **状态管理**：TanStack Query 一把梭。所有服务端态在 `lib/queries.ts`，组件只调 `useDevices()` / `useGroups()` / `useGroupContents(gid)` 这类 hook。mutation 在 `onSuccess` 里 `invalidateQueries` 触发 refetch。
 - **缓存策略**：`staleTime: 30s`，`refetchOnWindowFocus: false`（避免 e-ink 调试频繁请求）。设备列表 `refetchInterval: 30s` 保持 `last_seen_at` 新鲜。
-- **frame binary**：`useFrameImage(gid, seq, etag)` 的 queryKey 带 etag，`staleTime: Infinity` —— etag 不变就永远不重拉，跟设备端 ETag/304 行为一致。
+- **content binary**：`useContentImage(contentId, etag)` 的 queryKey 带 etag，`staleTime: Infinity` —— etag 不变就永远不重拉，跟设备端 ETag/304 行为一致。
 
 ## API 客户端
 
@@ -143,7 +148,7 @@ src/
 vite alias `shared` → `../shared/src`，所有 DTO 与 response 类型 import 自 `shared`：
 
 ```ts
-import type { DeviceSummaryT, FrameMutationResponseT, ManifestResponseT } from 'shared';
+import type { DeviceSummaryT, ContentMutationResponseT, ManifestResponseT } from 'shared';
 ```
 
 预览阶段也直接调 `shared` 的纯函数：

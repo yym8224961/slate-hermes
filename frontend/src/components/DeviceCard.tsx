@@ -60,7 +60,7 @@ export function DeviceCard({
     [transform, isDragging]
   );
 
-  const playingFrames = currentGroup?.frame_count;
+  const playingContents = currentGroup?.content_count;
 
   async function onUnbind(e: React.MouseEvent) {
     e.preventDefault();
@@ -122,7 +122,7 @@ export function DeviceCard({
                 )}
               >
                 {groupName ?? '未选组'}
-                {groupName && playingFrames != null && ` · ${playingFrames} 帧`}
+                {groupName && playingContents != null && ` · ${playingContents} 项`}
               </span>
             </p>
 

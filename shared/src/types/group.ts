@@ -5,8 +5,8 @@ export const GroupSummary = z.object({
   name: z.string(),
   etag: z.string(),
   sort_order: z.number().int(),
-  frame_count: z.number().int().nonnegative(),
-  /** 所有 frame 的 image_size + audio_size 总和(字节)。
+  content_count: z.number().int().nonnegative(),
+  /** 所有内容的 image_size + audio_size 总和(字节)。
    *  约等于设备拉到本地后占用的存储,manifest JSON 不计。 */
   total_bytes: z.number().int().nonnegative(),
 });

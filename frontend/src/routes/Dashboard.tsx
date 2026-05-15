@@ -180,7 +180,7 @@ function GroupsSection() {
                   onDelete={async () => {
                     const ok = await confirm({
                       title: `删除「${g.name}」？`,
-                      description: `这一组连同 ${g.frame_count} 帧的图片与音频会全部删除，不可逆。`,
+                      description: `这一组连同 ${g.content_count} 项内容的图片与音频会全部删除，不可逆。`,
                       destructive: true,
                       confirmText: '删除整组',
                     });

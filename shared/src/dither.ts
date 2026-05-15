@@ -33,10 +33,10 @@ export const DITHER_INFO: Record<DitherMode, { label: string; hint: string }> = 
   sierra: { label: '照片 · 柔和', hint: 'Sierra Lite;接近 FS 更轻' },
 };
 
-/** 新建帧时 UI 默认值 — 照片可用,线稿略锐但可读 */
+/** 新建内容时 UI 默认值 — 照片可用,线稿略锐但可读 */
 export const DEFAULT_DITHER_MODE: DitherMode = 'floyd';
 
-/** API 默认值(老 webhook 不传时) — 维持现状不破坏向后兼容 */
+/** API 默认值 — 未指定 mode 时使用硬阈值，保持可预测的黑白输出 */
 export const API_DEFAULT_DITHER_MODE: DitherMode = 'threshold';
 
 export interface DitherOptions {

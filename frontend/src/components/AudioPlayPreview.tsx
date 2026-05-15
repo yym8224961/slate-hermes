@@ -3,12 +3,11 @@
 
 import { useState, useRef, useCallback } from 'react';
 import { Play, Pause } from 'lucide-react';
-import { useFrameAudio } from '../lib/queries';
+import { useContentAudio } from '../lib/queries';
 import { cn } from '../lib/cn';
 
 interface AudioPlayPreviewProps {
-  gid: string;
-  idx: number;
+  contentId: string;
   /** 没 etag 表示无音频,组件返 null */
   etag: string | null;
   className?: string;
@@ -18,8 +17,8 @@ interface AudioPlayPreviewProps {
 
 const SAMPLE_RATE = 16000;
 
-export function AudioPlayPreview({ gid, idx, etag, className, label }: AudioPlayPreviewProps) {
-  const audio = useFrameAudio(gid, idx, etag);
+export function AudioPlayPreview({ contentId, etag, className, label }: AudioPlayPreviewProps) {
+  const audio = useContentAudio(contentId, etag);
   const [playing, setPlaying] = useState(false);
   const ctxRef = useRef<AudioContext | null>(null);
   const sourceRef = useRef<AudioBufferSourceNode | null>(null);

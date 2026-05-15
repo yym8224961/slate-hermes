@@ -1,5 +1,5 @@
 // 顶层 API constants 和 Web 鉴权 schema。
-// 设备协议 schema 在 types/device.ts 和 types/frame.ts。
+// 设备协议 schema 在 types/device.ts 和 types/content.ts。
 
 import { z } from 'zod';
 
@@ -50,7 +50,7 @@ export type RegisterRequestT = z.infer<typeof RegisterRequest>;
 export const RegisterResponse = LoginResponse;
 export type RegisterResponseT = z.infer<typeof RegisterResponse>;
 
-// envelope 包：所有错误响应统一字段。兼容字段 `error` 仍保留作为类型 code。
+// envelope 包：所有错误响应统一字段。
 export const ApiErrorEnvelope = z.object({
   error: z.string(),
   message: z.string(),
@@ -59,11 +59,7 @@ export const ApiErrorEnvelope = z.object({
 });
 export type ApiErrorEnvelopeT = z.infer<typeof ApiErrorEnvelope>;
 
-// 兼容别名：旧 frontend 仍可用 ApiError 名字。
-export const ApiError = ApiErrorEnvelope;
-export type ApiErrorT = ApiErrorEnvelopeT;
-
 // 通用 reorder body:把整集的 id 列表按新顺序提交。
-// groups 用 string[]、frames 用 number[],各自定义在 types/group.ts 和 types/frame.ts。
+// groups/contents 用 string[]，各自定义在 types/group.ts 和 types/content.ts。
 export const ReorderRequest = <T extends z.ZodType<string | number>>(elem: T) =>
   z.object({ order: z.array(elem).min(1) });

@@ -57,7 +57,7 @@ void FactoryResetPage::OnEnter(SceneContext& ctx) {
     lv_label_set_text(warn,
         "确认要恢复出厂吗？\n\n"
         "Wi-Fi 配置、设备绑定\n"
-        "及所有图片缓存将全部清除\n"
+        "及所有内容缓存将全部清除\n"
         "重启后进入配网模式");
     lv_obj_align(warn, LV_ALIGN_CENTER, 0, -8);
 

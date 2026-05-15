@@ -7,16 +7,18 @@ import { ForbiddenError, NotFoundError, ValidationError } from '../../common/err
 
 interface GroupListEntry {
   id: string;
+  name: string;
   etag: string;
   sortOrder: number;
-  _count: { frames: number };
+  _count: { contents: number };
 }
 
 export interface CycleResult {
   groupId: string | null;
+  name: string | null;
   etag: string | null;
   sortOrder: number | null;
-  frameCount: number;
+  contentCount: number;
   position: { current: number; total: number } | null;
 }
 
@@ -33,13 +35,13 @@ export class GroupsService {
 
   /**
    * etag = sha256(group_name + sorted(sortOrder + image_etag + audio_etag + caption).join('|')).slice(0,32)
-   * 任意 frame / caption 改了都会 bump。
+   * 任意内容图片、音频或标题变更都会 bump。
    */
   async recomputeGroupEtag(groupId: string): Promise<string> {
     const group = await this.prisma.group.findUnique({
       where: { id: groupId },
       include: {
-        frames: {
+        contents: {
           orderBy: { sortOrder: 'asc' },
           select: {
             sortOrder: true,
@@ -54,8 +56,9 @@ export class GroupsService {
 
     const parts = [
       group.name,
-      ...group.frames.map(
-        (f) => `${f.sortOrder}:${f.imageEtag}:${f.audioEtag ?? ''}:${f.caption ?? ''}`
+      ...group.contents.map(
+        (content) =>
+          `${content.sortOrder}:${content.imageEtag}:${content.audioEtag ?? ''}:${content.caption ?? ''}`
       ),
     ];
     const etag = createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 32);
@@ -71,9 +74,10 @@ export class GroupsService {
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       select: {
         id: true,
+        name: true,
         etag: true,
         sortOrder: true,
-        _count: { select: { frames: true } },
+        _count: { select: { contents: true } },
       },
     });
   }
@@ -129,9 +133,10 @@ export class GroupsService {
 
     return {
       groupId: target.id,
+      name: target.name,
       etag: target.etag,
       sortOrder: target.sortOrder,
-      frameCount: target._count.frames,
+      contentCount: target._count.contents,
       position: { current: nextIdx + 1, total: groups.length },
     };
   }
@@ -150,9 +155,10 @@ export class GroupsService {
     const g = groups[idx]!;
     return {
       groupId: g.id,
+      name: g.name,
       etag: g.etag,
       sortOrder: g.sortOrder,
-      frameCount: g._count.frames,
+      contentCount: g._count.contents,
       position: { current: idx + 1, total: groups.length },
     };
   }
@@ -164,13 +170,13 @@ export class GroupsService {
       where: { ownerUserId },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       include: {
-        _count: { select: { frames: true } },
-        frames: { select: { imageSize: true, audioSize: true } },
+        _count: { select: { contents: true } },
+        contents: { select: { imageSize: true, audioSize: true } },
       },
     });
     return groups.map((g) => {
-      const totalBytes = g.frames.reduce(
-        (sum, f) => sum + (f.imageSize ?? 0) + (f.audioSize ?? 0),
+      const totalBytes = g.contents.reduce(
+        (sum, content) => sum + (content.imageSize ?? 0) + (content.audioSize ?? 0),
         0
       );
       return toSummary(g, totalBytes);
@@ -180,7 +186,7 @@ export class GroupsService {
   async getOwned(gid: string, ownerUserId: string): Promise<GroupSummaryT> {
     const g = await this.prisma.group.findUnique({
       where: { id: gid },
-      include: { _count: { select: { frames: true } } },
+      include: { _count: { select: { contents: true } } },
     });
     if (!g || g.ownerUserId !== ownerUserId) {
       throw new NotFoundError('相册不存在');
@@ -198,7 +204,7 @@ export class GroupsService {
         ownerUserId,
         sortOrder,
       },
-      include: { _count: { select: { frames: true } } },
+      include: { _count: { select: { contents: true } } },
     });
     // 反向自动绑定：这是 owner 的第一个相册时，把所有 selectedGroupId=null 的已绑设备都指过来。
     // 配合 claim 时的「已有相册则自动绑第一个」，新用户全程不需要再去设备详情手动「分配相册」。
@@ -244,16 +250,16 @@ export class GroupsService {
     const g = await this.prisma.group.findUnique({
       where: { id: gid },
       include: {
-        frames: { select: { id: true, audioEtag: true } },
+        contents: { select: { id: true, audioEtag: true } },
       },
     });
     if (!g || g.ownerUserId !== ownerUserId) {
       throw new NotFoundError('相册不存在');
     }
     await Promise.all(
-      g.frames.flatMap((f) => {
-        const ops = [this.blob.delete(gid, f.id, 'image')];
-        if (f.audioEtag !== null) ops.push(this.blob.delete(gid, f.id, 'audio'));
+      g.contents.flatMap((content) => {
+        const ops = [this.blob.delete(gid, content.id, 'image')];
+        if (content.audioEtag !== null) ops.push(this.blob.delete(gid, content.id, 'audio'));
         return ops;
       })
     );
@@ -306,7 +312,7 @@ export class GroupsService {
 
   private async aggregateBytes(groupIds: string[]): Promise<Map<string, number>> {
     if (groupIds.length === 0) return new Map();
-    const sums = await this.prisma.frame.groupBy({
+    const sums = await this.prisma.content.groupBy({
       by: ['groupId'],
       where: { groupId: { in: groupIds } },
       _sum: { imageSize: true, audioSize: true },
@@ -328,9 +334,10 @@ export class GroupsService {
 function emptyCycle(): CycleResult {
   return {
     groupId: null,
+    name: null,
     etag: null,
     sortOrder: null,
-    frameCount: 0,
+    contentCount: 0,
     position: null,
   };
 }
@@ -341,7 +348,7 @@ function toSummary(
     name: string;
     etag: string;
     sortOrder: number;
-    _count: { frames: number };
+    _count: { contents: number };
   },
   totalBytes: number
 ): GroupSummaryT {
@@ -350,7 +357,7 @@ function toSummary(
     name: g.name,
     etag: g.etag,
     sort_order: g.sortOrder,
-    frame_count: g._count.frames,
+    content_count: g._count.contents,
     total_bytes: totalBytes,
   };
 }

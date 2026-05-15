@@ -1,12 +1,22 @@
-// 组详情：metadata + 帧网格（拖拽排序 + 试听/编辑/删除）+ 顶部「新增帧」。
+// 组详情：metadata + 内容网格（拖拽排序 + 试听/编辑/删除）+ 顶部「新增」。
 //
 // dnd-kit reorder 通过 useDndOrder 复用；optimistic update 仍在本地处理，
 // 因为 server 接受的是「旧 idx 的新顺序」，不是 etag 列表。
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { ArrowLeft, Plus, Layers, Frame, Pencil, Check } from 'lucide-react';
+import {
+  ArrowLeft,
+  Plus,
+  Layers,
+  Pencil,
+  Check,
+  ChevronDown,
+  Sparkles,
+  Image as ImageIcon,
+} from 'lucide-react';
+import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import {
   DndContext,
   closestCenter,
@@ -16,14 +26,14 @@ import {
   useSensors,
 } from '@dnd-kit/core';
 import { SortableContext, arrayMove, rectSortingStrategy } from '@dnd-kit/sortable';
-import { useGroups, useGroupFrames, useReorderFrames, useUpdateGroup } from '../lib/queries';
-import type { GroupSummaryT } from 'shared';
-import type { FrameSummaryT as FT } from 'shared';
+import { useGroups, useGroupContents, useReorderContents, useUpdateGroup } from '../lib/queries';
+import type { ContentDetailT, GroupSummaryT } from 'shared';
 import { Spinner } from '../components/Spinner';
 import { Button } from '../components/Button';
 import { EmptyState } from '../components/EmptyState';
 import { IconBlock } from '../components/IconBlock';
-import { FrameCard } from '../components/FrameCard';
+import { ImageContentCard } from '../components/ImageContentCard';
+import { DynamicContentCard } from '../components/DynamicContentCard';
 import { DoubleRule } from '../components/DoubleRule';
 import { useToast } from '../components/Toast';
 import { inputCls } from '../lib/styles';
@@ -36,42 +46,42 @@ export function GroupDetail() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const groups = useGroups();
-  const frames = useGroupFrames(gid);
-  const reorder = useReorderFrames(gid ?? '');
+  const contents = useGroupContents(gid);
+  const reorder = useReorderContents(gid ?? '');
   const toast = useToast();
 
   const group = useMemo(() => groups.data?.find((g) => g.id === gid), [groups.data, gid]);
-  const orderIds = useMemo(() => (frames.data ?? []).map((f) => f.image_etag), [frames.data]);
+  const orderIds = useMemo(() => (contents.data ?? []).map((f) => f.content_id), [contents.data]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  // 帧排序需要「旧 idx 的新顺序」作为 server 入参，不能直接用 useDndOrder
+  // 内容排序需要「旧 idx 的新顺序」作为 server 入参，不能直接用 useDndOrder
   // 的纯 etag 列表 — 这里保留独立逻辑。
   function onDragEnd(e: DragEndEvent) {
     const { active, over } = e;
     if (!over || active.id === over.id) return;
 
-    const cur = qc.getQueryData<FT[]>(['frames', gid]);
+    const cur = qc.getQueryData<ContentDetailT[]>(['contents', gid]);
     if (!cur) {
       toast.error('排序失败，请刷新重试');
       return;
     }
 
-    const oldPos = cur.findIndex((f) => f.image_etag === active.id);
-    const newPos = cur.findIndex((f) => f.image_etag === over.id);
+    const oldPos = cur.findIndex((f) => f.content_id === active.id);
+    const newPos = cur.findIndex((f) => f.content_id === over.id);
     if (oldPos < 0 || newPos < 0) return;
 
     const reordered = arrayMove(cur, oldPos, newPos);
-    const newSeqOrder = reordered.map((f) => f.sort_order);
-    const optimistic: FT[] = reordered.map((f, i) => ({ ...f, sort_order: i }));
+    const newIdOrder = reordered.map((f) => f.content_id);
+    const optimistic: ContentDetailT[] = reordered.map((f, i) => ({ ...f, seq: i }));
 
-    qc.setQueryData(['frames', gid], optimistic);
+    qc.setQueryData(['contents', gid], optimistic);
     reorder.mutate(
-      { order: newSeqOrder },
+      { order: newIdOrder },
       {
         onError: () => {
           toast.error('排序保存失败');
-          qc.invalidateQueries({ queryKey: ['frames', gid] });
+          qc.invalidateQueries({ queryKey: ['contents', gid] });
         },
       }
     );
@@ -118,11 +128,18 @@ export function GroupDetail() {
 
   const KindIcon = Layers;
 
-  function openCreate() {
-    navigate(`/groups/${gid}/frames/new`);
+  function openCreateImage() {
+    navigate(`/groups/${gid}/contents/image/new`);
   }
-  function openEdit(f: FT) {
-    navigate(`/groups/${gid}/frames/${f.sort_order}/edit`);
+  function openCreateDynamic() {
+    navigate(`/groups/${gid}/contents/dynamic/new`);
+  }
+  function openEdit(f: ContentDetailT) {
+    if (f.kind === 'dynamic') {
+      navigate(`/groups/${gid}/contents/dynamic/${f.content_id}/edit`);
+    } else {
+      navigate(`/groups/${gid}/contents/image/${f.content_id}/edit`);
+    }
   }
 
   return (
@@ -136,34 +153,61 @@ export function GroupDetail() {
         </Link>
       </nav>
 
-      <GroupHeader group={group} KindIcon={KindIcon} onAddFrame={openCreate} />
+      <GroupHeader
+        group={group}
+        KindIcon={KindIcon}
+        onAddImage={openCreateImage}
+        onAddDynamic={openCreateDynamic}
+      />
 
       {/* 双线分隔 */}
       <DoubleRule className="mt-3" />
       <div className="mt-6 fade-up fade-up-1">
-        {frames.isPending ? (
+        {contents.isPending ? (
           <Spinner label="加载中" />
-        ) : frames.isError ? (
+        ) : contents.isError ? (
           <EmptyState title="加载失败" hint="请刷新重试。" />
-        ) : frames.data && frames.data.length > 0 ? (
+        ) : contents.data && contents.data.length > 0 ? (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
             <SortableContext items={orderIds} strategy={rectSortingStrategy}>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {frames.data.map((f) => (
-                  <FrameCard key={f.image_etag} gid={gid} frame={f} onEdit={() => openEdit(f)} />
-                ))}
+                {contents.data.map((f) =>
+                  f.kind === 'dynamic' ? (
+                    <DynamicContentCard
+                      key={f.content_id}
+                      gid={gid}
+                      content={f}
+                      onEdit={() => openEdit(f)}
+                    />
+                  ) : (
+                    <ImageContentCard
+                      key={f.content_id}
+                      gid={gid}
+                      content={f}
+                      onEdit={() => openEdit(f)}
+                    />
+                  )
+                )}
               </div>
             </SortableContext>
           </DndContext>
         ) : (
           <EmptyState
-            icon={<Frame size={26} />}
-            title="尚无帧"
-            hint="点『新建一帧』上传第一张。"
+            title="尚无内容"
+            hint="新建图片内容或动态内容开始。"
             action={
-              <Button onClick={openCreate} iconLeft={<Plus size={16} />}>
-                新建第一帧
-              </Button>
+              <div className="flex gap-3 justify-center">
+                <Button onClick={openCreateImage} iconLeft={<Plus size={16} />}>
+                  新建图片内容
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={openCreateDynamic}
+                  iconLeft={<Sparkles size={16} />}
+                >
+                  新建动态内容
+                </Button>
+              </div>
             }
           />
         )}
@@ -172,15 +216,17 @@ export function GroupDetail() {
   );
 }
 
-// ───── 组标题 + inline 改名 + 新建一帧 ───────────────────────────
+// ───── 组标题 + inline 改名 + 新建内容 ───────────────────────────
 function GroupHeader({
   group,
   KindIcon,
-  onAddFrame,
+  onAddImage,
+  onAddDynamic,
 }: {
   group: GroupSummaryT;
   KindIcon: typeof Layers;
-  onAddFrame: () => void;
+  onAddImage: () => void;
+  onAddDynamic: () => void;
 }) {
   const update = useUpdateGroup(group.id);
   const toast = useToast();
@@ -246,17 +292,51 @@ function GroupHeader({
         </div>
         {/* meta 在标题下方 */}
         <p className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
-          {group.frame_count} 帧 · {formatBytes(group.total_bytes)}
+          {group.content_count} 项 · {formatBytes(group.total_bytes)}
         </p>
       </div>
-      <Button
-        onClick={onAddFrame}
-        iconLeft={<Plus size={16} />}
-        size="sm"
-        className="flex-shrink-0"
-      >
-        新建一帧
-      </Button>
+      <NewItemDropdown onAddImage={onAddImage} onAddDynamic={onAddDynamic} />
     </header>
+  );
+}
+
+function NewItemDropdown({
+  onAddImage,
+  onAddDynamic,
+}: {
+  onAddImage: () => void;
+  onAddDynamic: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <DropdownMenu.Root open={open} onOpenChange={setOpen}>
+      <DropdownMenu.Trigger asChild>
+        <Button iconLeft={<Plus size={16} />} iconRight={<ChevronDown size={14} />} size="sm">
+          新建
+        </Button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content
+          className="bg-paper border border-ink min-w-[180px] py-1 z-50"
+          sideOffset={6}
+          align="end"
+        >
+          <DropdownMenu.Item
+            onSelect={onAddImage}
+            className="px-3 py-2 flex items-center gap-2 cursor-pointer outline-none font-sans text-[13px] data-[highlighted]:bg-ink data-[highlighted]:text-paper"
+          >
+            <ImageIcon size={14} />
+            图片内容
+          </DropdownMenu.Item>
+          <DropdownMenu.Item
+            onSelect={onAddDynamic}
+            className="px-3 py-2 flex items-center gap-2 cursor-pointer outline-none font-sans text-[13px] data-[highlighted]:bg-ink data-[highlighted]:text-paper"
+          >
+            <Sparkles size={14} />
+            动态内容
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
   );
 }

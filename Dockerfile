@@ -27,8 +27,10 @@ ENV NODE_ENV=production \
     PORT=3001 \
     BLOB_DIR=/data/blobs
 
-# ffmpeg 用于音频转码(audio.service 把上传的任意音频转成 16k mono s16le PCM)
+# 依赖：
+#   - ffmpeg：音频转码（audio.service 把上传音频转成 16k mono s16le PCM）
 # HEALTHCHECK 复用 alpine 自带的 busybox wget,无需额外装包
+# 字体由 backend/fonts/ 目录随代码库入库，resvg 通过 @font-face file:// 加载，不依赖系统 fontconfig。
 RUN apk add --no-cache ffmpeg
 
 # === 按变更频率从低到高分层,客户端 docker pull 增量最小 ===
@@ -58,10 +60,14 @@ COPY shared/src ./shared/src
 # 6. backend 配置(几乎不变)
 COPY backend/tsconfig.json ./backend/
 
-# 7. backend 源码(改动最频繁,~300K,放最后让其他层全部命中缓存)
+# 7. 字体文件（变更极少，单独成层避免 src 改动使其失效）
+COPY backend/fonts ./backend/fonts
+COPY backend/device-fonts ./backend/device-fonts
+
+# 8. backend 源码(改动最频繁,~300K,放最后让其他层全部命中缓存)
 COPY backend/src ./backend/src
 
-# 8. entrypoint
+# 9. entrypoint
 COPY entrypoint.sh ./
 RUN chmod +x /app/entrypoint.sh
 

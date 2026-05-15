@@ -13,11 +13,12 @@ export const PairCode = z
   .transform((s) => s.toUpperCase());
 
 // poll 响应里的 group 子对象。null = 还没选组。
+// name 让设备 UI 文案具体化（"切换到「日常风景」" 而非 "切到第 3 个相册"）。
 export const DeviceStateGroup = z.object({
   id: z.string(),
   etag: z.string(),
-  frame_count: z.number().int().nonnegative(),
-  default_frame_seq: z.number().int().nonnegative(),
+  name: z.string(),
+  content_count: z.number().int().nonnegative(),
   sort_order: z.number().int(),
   position: z.object({
     current: z.number().int().positive(),
@@ -49,7 +50,7 @@ export const PollRequest = z.object({
       rssi_dbm: z.number().int().optional(),
       fw_version: z.string().max(32).optional(),
       current_group: z.string().nullable().optional(),
-      current_frame_seq: z.number().int().nonnegative().optional(),
+      current_content_seq: z.number().int().nonnegative().optional(),
       free_heap: z.number().int().nonnegative().optional(),
       fw_build_ts: z.string().max(32).optional(),
     })

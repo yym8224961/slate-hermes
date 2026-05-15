@@ -1,5 +1,5 @@
 // eink-frame-server v3 data model
-// 4 个 model: User / Device / Group / Frame
+// 4 个 model: User / Device / Group / Content
 // 字段顺序约定: scalar 字段最后两个固定为 createdAt + updatedAt; relation 紧随其后。
 
 generator client {
@@ -8,6 +8,13 @@ generator client {
 
 datasource db {
   provider = "mysql"
+}
+
+enum ContentKind {
+  image
+  dynamic
+
+  @@map("content_kind")
 }
 
 model User {
@@ -62,27 +69,40 @@ model Group {
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
   owner            User?    @relation("GroupOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
-  frames           Frame[]
+  contents         Content[]
   selectingDevices Device[] @relation("DeviceSelectedGroup")
 
   @@index([ownerUserId, sortOrder])
   @@map("groups")
 }
 
-model Frame {
-  id        String   @id @default(cuid())
-  groupId   String   @map("group_id")
-  sortOrder Int      @map("sort_order") // group 内的位置序号；与 Device/Group 的 sortOrder 同义
-  caption   String?  @db.VarChar(64)
-  imageEtag String   @map("image_etag") @db.VarChar(64)
-  audioEtag String?  @map("audio_etag") @db.VarChar(64)
-  imageSize Int      @map("image_size")
-  audioSize Int?     @map("audio_size")
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
+model Content {
+  id        String    @id @default(cuid())
+  groupId   String    @map("group_id")
+  sortOrder Int       @map("sort_order") // group 内的位置序号；与 Device/Group 的 sortOrder 同义
+  caption   String?   @db.VarChar(64)
+  imageEtag String    @map("image_etag") @db.VarChar(64)
+  audioEtag String?   @map("audio_etag") @db.VarChar(64)
+  imageSize Int       @map("image_size")
+  audioSize Int?      @map("audio_size")
+  // image = 用户上传图片；dynamic = 后端按 dynamicType+dynamicConfig 周期渲染。
+  kind      ContentKind @default(image)
+  // 仅 kind=dynamic 时有意义。dynamicType 对应 modules/widgets/definitions/*.json 的 type。
+  dynamicType      String?   @map("dynamic_type") @db.VarChar(32)
+  dynamicConfig    Json?     @map("dynamic_config")
+  // dynamicType=dashboard 时存外部 push 进来的最近一次 payload；其他 dynamic 存 provider.fetchData 的快照。
+  dynamicData      Json?     @map("dynamic_data")
+  dynamicLastRunAt DateTime? @map("dynamic_last_run_at")
+  dynamicNextRunAt DateTime? @map("dynamic_next_run_at")
+  dynamicLastError String?   @map("dynamic_last_error") @db.VarChar(512)
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
 
   group Group @relation(fields: [groupId], references: [id], onDelete: Cascade)
 
   @@unique([groupId, sortOrder])
-  @@map("frames")
+  @@index([groupId, kind])
+  @@index([dynamicNextRunAt])
+  @@index([kind, dynamicType])
+  @@map("contents")
 }

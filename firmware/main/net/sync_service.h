@@ -5,7 +5,7 @@
 // 状态/进度通过 EventBus 反馈：
 //   - SyncStarted       每轮开始
 //   - SyncFinished{ok}  每轮结束(含 304 noop)
-//   - GroupReady{gid,frame_count,default_seq}  当 selected_group 内容就绪
+//   - GroupReady{gid,content_count}  当 selected_group 内容就绪
 
 #include <atomic>
 #include <functional>
@@ -20,7 +20,7 @@ struct SyncDeps {
     std::function<bool(int* mv, int* pct)>  read_battery;
     std::function<int()>                    read_rssi;
     std::function<ChargeStatus::Snapshot()> read_charge;
-    std::function<int()>                    current_frame_seq;
+    std::function<int()>                    current_content_seq;
 };
 
 class SyncService {
@@ -52,7 +52,8 @@ class SyncService {
     void        SyncOnce();
     void        DoCycle(const std::string& direction);
     void        SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, bool& group_changed);
-    void        PostGroupReady(const std::string& gid, int frame_count, int default_seq, bool content_changed);
+    void        PostGroupReady(const std::string& gid, const std::string& name,
+                                int content_count, bool content_changed);
 
     SyncDeps             deps_;
     std::atomic<bool>    running_{false};

@@ -120,10 +120,10 @@ void BootSplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
     }
 
     if (e.kind == UiEventKind::kGroupReady) {
-        ESP_LOGI(kTag, "GroupReady gid=%s frames=%d default=%d -> switch to FrameScene",
-                 e.u.group.gid, e.u.group.frame_count, e.u.group.default_idx);
+        ESP_LOGI(kTag, "GroupReady gid=%s contents=%d -> switch to FrameScene",
+                 e.u.group.gid, e.u.group.content_count);
         ctx.stack->RequestReplace(std::make_unique<FrameScene>(
-            e.u.group.gid, e.u.group.frame_count, e.u.group.default_idx));
+            e.u.group.gid, e.u.group.content_count));
         return;
     }
 

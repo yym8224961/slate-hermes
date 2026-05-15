@@ -23,11 +23,22 @@ config SLATE_DEFAULT_TIMEZONE
 
 config SLATE_IDLE_DEEP_SLEEP_MIN
     int "Idle minutes before entering deep sleep"
-    default 5
+    default 1
     range 1 60
     help
         没按键 + 不在充电时,N 分钟后进 deep sleep。BOOT/DOWN 键唤醒(GPIO 39 UP
         键不是 RTC IO 不能 ext1 唤醒)。captive portal 期间禁用。
+        协议 v2 起 deep sleep 后由 power_state::ComputeNextWakeSec() 算 RTC timer
+        间隔（最小 60s）：按当前内容 next_wake_sec 或 telemetry 间隔取最小。
+        默认 1 分钟（旧版本 5 分钟），让用户按一下就能走，省电。
+
+config SLATE_TELEMETRY_INTERVAL_H
+    int "Telemetry upload interval (hours) for static gallery"
+    default 24
+    range 1 168
+    help
+        静态内容组（无动态帧）下，设备每 N 小时 RTC wake 一次上报 telemetry
+        （电量 / RSSI / fw_version）。动态帧自带 next_wake_sec 会更频繁 wake。
 
 config SLATE_LOG_PLAINTEXT_CRED
     bool "Log WiFi password and full credentials in plaintext"

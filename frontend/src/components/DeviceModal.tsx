@@ -301,7 +301,7 @@ function GroupSelector({
       {showNone && <SelectItem value="__none__">未选组</SelectItem>}
       {showNone && groups.length > 0 && <SelectSeparator />}
       {groups.map((g) => (
-        <SelectItem key={g.id} value={g.id} hint={`${g.frame_count} 帧`}>
+        <SelectItem key={g.id} value={g.id} hint={`${g.content_count} 项`}>
           <span className="font-serif">{g.name}</span>
         </SelectItem>
       ))}

@@ -1,4 +1,4 @@
-// 拖拽重排公共逻辑 — Groups / GroupDetail / 帧网格 都用这个 hook。
+// 拖拽重排公共逻辑 — Groups / GroupDetail / 内容网格 都用这个 hook。
 //
 // 用法:
 //   const { sensors, currentOrder, onDragEnd } = useDndOrder(

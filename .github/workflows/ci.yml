@@ -91,6 +91,10 @@ jobs:
           DATABASE_URL: mysql://ci:ci@127.0.0.1:3306/ci
           JWT_SECRET: ci_dummy_secret_long_enough_to_pass_validation
 
+      # widget 渲染链路：sharp 必须能解析 SVG。runner 自带 libfontconfig，
+      # ubuntu-latest 自带常见字体，足以过 smoke；docker image 里有专门的 font-noto-cjk。
+      - run: bun run --cwd backend smoke:svg
+
   frontend-build:
     name: frontend build
     runs-on: ubuntu-latest

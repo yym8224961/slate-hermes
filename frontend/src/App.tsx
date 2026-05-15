@@ -6,7 +6,8 @@ import { Login } from './routes/Login';
 import { Register } from './routes/Register';
 import { Dashboard } from './routes/Dashboard';
 import { GroupDetail } from './routes/GroupDetail';
-import { FrameEditorPage } from './routes/FrameEditorPage';
+import { ImageContentEditorPage } from './routes/ImageContentEditorPage';
+import { DynamicContentEditorPage } from './routes/DynamicContentEditorPage';
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -34,8 +35,16 @@ export function App() {
           <Route index element={<Dashboard />} />
           <Route path="/devices/:did" element={<Dashboard />} />
           <Route path="/groups/:gid" element={<GroupDetail />} />
-          <Route path="/groups/:gid/frames/new" element={<FrameEditorPage />} />
-          <Route path="/groups/:gid/frames/:seq/edit" element={<FrameEditorPage />} />
+          <Route path="/groups/:gid/contents/image/new" element={<ImageContentEditorPage />} />
+          <Route
+            path="/groups/:gid/contents/image/:contentId/edit"
+            element={<ImageContentEditorPage />}
+          />
+          <Route path="/groups/:gid/contents/dynamic/new" element={<DynamicContentEditorPage />} />
+          <Route
+            path="/groups/:gid/contents/dynamic/:contentId/edit"
+            element={<DynamicContentEditorPage />}
+          />
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

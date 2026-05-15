@@ -14,14 +14,15 @@
 #include "../net/sync_service.h"
 #include "board.h"
 #include "event_bus.h"
+#include "power_state.h"
 
 namespace {
 constexpr char kTag[] = "Sleep";
 
-// 30 分钟兜底定时器唤醒。**防变砖核心**：
-// 万一 EXT1 配置错 / 按键焊点松 / hold 失效，timer 也能把设备捞起来。
-// 与参考实现 esp32-eink/.../zectrix-s3-epaper-4.2.cc:288 一致。
-constexpr uint64_t kFallbackTimerUs = 30ULL * 60 * 1000 * 1000;
+// 兜底 timer wakeup（秒）：当 power_state::ComputeNextWakeSec() 返回 0
+// （即静态相册 + 暂无 telemetry 需求）时，仍然让设备每 30 分钟醒一次防变砖。
+// power_state 算出的精确间隔会覆盖这个值。
+constexpr uint32_t kFallbackTimerSec = 30u * 60u;
 
 // 进 deep sleep 前等 EPD 刷新结束的最大时长。EPD 全刷 2~4 s。
 constexpr int kEpdFlushTimeoutMs = 4000;
@@ -168,13 +169,17 @@ void SleepManager::EnterDeepSleep() {
                                    | (1ULL << CHARGE_DETECT_GPIO);
     esp_sleep_enable_ext1_wakeup(kWakeupMask, ESP_EXT1_WAKEUP_ANY_LOW);
 
-    // 7) **30 分钟兜底定时器**:防一切外部唤醒源失效时永久睡死(变砖)。
-    //    宁可白白醒一次也别让设备睡死收不回来。
-    esp_sleep_enable_timer_wakeup(kFallbackTimerUs);
+    // 7) **RTC timer 唤醒**：协议 v3 起按当前显示内容的 next_wake_sec 计算：
+    //    - 动态帧（如天气 10min）→ 到期后醒来 sync
+    //    - 静态帧 → 兜底 30min 醒一次（防一切外部唤醒源失效时永久睡死）
+    //    精确间隔由 power_state 算出，最小 60s 防抖。
+    uint32_t next_sec = power_state::ComputeNextWakeSec();
+    if (next_sec == 0) next_sec = kFallbackTimerSec;
+    esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(next_sec) * 1'000'000ULL);
 
-    ESP_LOGW(kTag, "ESP deep_sleep_start (mask=0x%llx, timer=%llus)",
+    ESP_LOGW(kTag, "ESP deep_sleep_start (mask=0x%llx, timer=%us)",
              (unsigned long long)kWakeupMask,
-             (unsigned long long)(kFallbackTimerUs / 1000000ULL));
+             static_cast<unsigned>(next_sec));
     esp_deep_sleep_start();
     // 不返回
 }

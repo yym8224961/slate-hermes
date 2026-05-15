@@ -8,6 +8,8 @@ export const EnvSchema = z.object({
   JWT_SECRET: z.string().min(16),
   JWT_EXPIRATION: z.string().default('7d'),
   BLOB_DIR: z.string().default('./blobs'),
+  QWEATHER_API_KEY: z.string().optional(),
+  QWEATHER_API_HOST: z.string().min(1).optional(),
 });
 
 export type EnvT = z.infer<typeof EnvSchema>;

@@ -1,0 +1,46 @@
+{
+  "type": "history_today",
+  "default_ttl_sec": 86400,
+  "layout": {
+    "size": [400, 300],
+    "padding": 16,
+    "top_offset": 24,
+    "body": [
+      {
+        "block": "centered_text",
+        "field": "data.dateLabel",
+        "size": 20,
+        "font": "sans",
+        "weight": "bold"
+      },
+      { "block": "separator", "style": "solid" },
+      {
+        "block": "text",
+        "field": "data.line0",
+        "size": 14,
+        "font": "sans",
+        "align": "left",
+        "wrap": true,
+        "max_lines": 3
+      },
+      {
+        "block": "text",
+        "field": "data.line1",
+        "size": 14,
+        "font": "sans",
+        "align": "left",
+        "wrap": true,
+        "max_lines": 3
+      },
+      {
+        "block": "text",
+        "field": "data.line2",
+        "size": 14,
+        "font": "sans",
+        "align": "left",
+        "wrap": true,
+        "max_lines": 3
+      }
+    ]
+  }
+}

@@ -14,8 +14,8 @@
 //   POST /api/v1/me/poll              主轮询,Bearer 鉴权,响应含 bound + pair_code
 //   POST /api/v1/me/group/next|prev   cycle
 //   PUT  /api/v1/me/group             选指定 group(body {id})
-//   GET  /api/v1/groups/:gid/manifest      Bearer
-//   GET  /api/v1/groups/:gid/frames/:seq/image|audio   Bearer
+//   GET  /api/v1/groups/:gid/manifest     Bearer
+//   GET  /api/v1/contents/:contentId/image|audio   Bearer
 
 #include <functional>
 #include <string>
@@ -34,9 +34,9 @@ struct DeviceState {
     // group:为空(has_group=false)表示当前未选组
     bool        has_group = false;
     std::string group_id;
+    std::string group_name;       // 当前组中文名,用于状态栏 / boot splash 文案
     std::string group_etag;
-    int         frame_count       = 0;
-    int         default_frame_seq = 0;
+    int         content_count     = 0;
     int         group_sort_order  = 0;
     int         position_current  = 0;
     int         position_total    = 0;
@@ -49,20 +49,26 @@ struct RegisterResult {
     bool        reclaimed = false;
 };
 
-struct FrameMeta {
-    int         seq;  // group 内位置序号(JSON key: sort_order)
+// 后端协议 v3 起内容用 content_id(cuid) 寻址；image/audio 端点改为
+// /contents/:contentId/image|audio，与 reorder 时 seq 漂移解耦。
+// dynamic 内容的 next_wake_sec 由后端按 nextRenderAt-now 计算；0 表示立即可刷新。
+struct ContentMeta {
+    int         seq;  // group 内位置序号(JSON key: seq)
+    std::string content_id;  // 全局稳定 cuid，设备拼 URL: GET /contents/:id/image
     std::string caption;
     std::string image_etag;
     std::string audio_etag;
-    int         image_size = 0;
-    int         audio_size = 0;
+    int         image_size       = 0;
+    int         audio_size       = 0;
+    std::string kind;             // "image" | "dynamic"
+    int         next_wake_sec = 0;  // 0 = 立即/无周期刷新
 };
 
 struct Manifest {
-    std::string            group_id;
-    std::string            group_etag;
-    int                    default_frame_seq = 0;
-    std::vector<FrameMeta> frames;
+    std::string              group_id;
+    std::string              group_name;     // 同 DeviceState.group_name
+    std::string              group_etag;
+    std::vector<ContentMeta> contents;
 };
 
 // poll 携带的 telemetry。值为 < 0 / 空字符串 表示不上报该字段(server 不覆盖原值)。
@@ -71,7 +77,7 @@ struct Telemetry {
     int         rssi_dbm    = 0;  // 0 = 不上报
     std::string fw_version;
     std::string current_group;
-    int         current_frame_seq = 0;
+    int         current_content_seq = -1;
 };
 
 // mac 仅用于 Register() body,不参与受保护 API 鉴权。
@@ -101,10 +107,10 @@ bool SelectGroup(const std::string& gid, DeviceState& out);
 // 此时 not_modified=true、out 不动、函数 return true。
 bool GetManifest(const std::string& group_id, const std::string& if_none_match, Manifest& out, bool& not_modified);
 
-// 拉 frame binary,语义同上。seq 即 manifest.frames[i].seq。
-bool DownloadFrameImage(const std::string& group_id, int seq, const std::string& if_none_match,
-                        std::vector<uint8_t>& out, bool& not_modified);
-bool DownloadFrameAudio(const std::string& group_id, int seq, const std::string& if_none_match,
-                        std::vector<uint8_t>& out, bool& not_modified);
+// 拉 content binary。GET /api/v1/contents/:contentId/image|audio。
+bool DownloadContentImage(const std::string& content_id, const std::string& if_none_match,
+                          std::vector<uint8_t>& out, bool& not_modified);
+bool DownloadContentAudio(const std::string& content_id, const std::string& if_none_match,
+                          std::vector<uint8_t>& out, bool& not_modified);
 
 }  // namespace api

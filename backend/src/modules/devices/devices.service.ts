@@ -10,7 +10,7 @@ export interface TelemetryInput {
   rssi_dbm?: number;
   fw_version?: string;
   current_group?: string | null;
-  current_frame_seq?: number;
+  current_content_seq?: number;
   free_heap?: number;
   fw_build_ts?: string;
 }
@@ -155,8 +155,8 @@ export class DevicesService {
         ? {
             id: resolvedGroup.groupId,
             etag: resolvedGroup.etag!,
-            frame_count: resolvedGroup.frameCount,
-            default_frame_seq: 0,
+            name: resolvedGroup.name!,
+            content_count: resolvedGroup.contentCount,
             sort_order: resolvedGroup.sortOrder!,
             position: resolvedGroup.position!,
           }

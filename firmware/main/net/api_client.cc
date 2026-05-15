@@ -190,9 +190,9 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
     if (cJSON_IsObject(group)) {
         out.has_group         = true;
         out.group_id          = get_str(group, "id");
+        out.group_name        = get_str(group, "name");
         out.group_etag        = get_str(group, "etag");
-        out.frame_count       = get_int(group, "frame_count", 0);
-        out.default_frame_seq = get_int(group, "default_frame_seq", 0);
+        out.content_count     = get_int(group, "content_count", 0);
         out.group_sort_order  = get_int(group, "sort_order", 0);
         cJSON* pos = cJSON_GetObjectItemCaseSensitive(group, "position");
         if (cJSON_IsObject(pos)) {
@@ -253,7 +253,7 @@ bool Poll(const Telemetry& tel, DeviceState& out) {
     bool has_telemetry =
         tel.battery_pct >= 0 || tel.rssi_dbm != 0 ||
         !tel.fw_version.empty() || !tel.current_group.empty() ||
-        tel.current_frame_seq != 0;
+        tel.current_content_seq >= 0;
     if (has_telemetry) {
         cJSON* t = cJSON_CreateObject();
         if (tel.battery_pct >= 0) cJSON_AddNumberToObject(t, "battery_pct", tel.battery_pct);
@@ -262,7 +262,8 @@ bool Poll(const Telemetry& tel, DeviceState& out) {
             cJSON_AddStringToObject(t, "fw_version", tel.fw_version.c_str());
         if (!tel.current_group.empty())
             cJSON_AddStringToObject(t, "current_group", tel.current_group.c_str());
-        cJSON_AddNumberToObject(t, "current_frame_seq", tel.current_frame_seq);
+        if (tel.current_content_seq >= 0)
+            cJSON_AddNumberToObject(t, "current_content_seq", tel.current_content_seq);
         cJSON_AddItemToObject(root, "telemetry", t);
     }
 
@@ -318,32 +319,38 @@ bool GetManifest(const std::string& group_id, const std::string& if_none_match,
     cJSON* root = cJSON_Parse(resp.c_str());
     if (!root) return false;
 
-    cJSON* gid    = cJSON_GetObjectItemCaseSensitive(root, "group_id");
-    cJSON* etag   = cJSON_GetObjectItemCaseSensitive(root, "group_etag");
-    cJSON* dft    = cJSON_GetObjectItemCaseSensitive(root, "default_frame_seq");
-    cJSON* frames = cJSON_GetObjectItemCaseSensitive(root, "frames");
+    auto json_str = [](cJSON* obj, const char* k) -> std::string {
+        cJSON* v = cJSON_GetObjectItemCaseSensitive(obj, k);
+        return (cJSON_IsString(v) && v->valuestring) ? v->valuestring : "";
+    };
+    auto json_int = [](cJSON* obj, const char* k, int def) -> int {
+        cJSON* v = cJSON_GetObjectItemCaseSensitive(obj, k);
+        return cJSON_IsNumber(v) ? v->valueint : def;
+    };
 
-    if (cJSON_IsString(gid)) out.group_id = gid->valuestring;
-    if (cJSON_IsString(etag)) out.group_etag = etag->valuestring;
-    if (cJSON_IsNumber(dft)) out.default_frame_seq = dft->valueint;
-
-    if (cJSON_IsArray(frames)) {
+    // 协议 v3：group 子对象 { id, etag, name, sort_order, position }
+    cJSON* group  = cJSON_GetObjectItemCaseSensitive(root, "group");
+    if (cJSON_IsObject(group)) {
+        out.group_id   = json_str(group, "id");
+        out.group_name = json_str(group, "name");
+        out.group_etag = json_str(group, "etag");
+    }
+    cJSON* contents = cJSON_GetObjectItemCaseSensitive(root, "contents");
+    if (cJSON_IsArray(contents)) {
         cJSON* item = nullptr;
-        cJSON_ArrayForEach(item, frames) {
-            FrameMeta f;
-            cJSON* seq = cJSON_GetObjectItemCaseSensitive(item, "sort_order");
-            cJSON* cap = cJSON_GetObjectItemCaseSensitive(item, "caption");
-            cJSON* ie  = cJSON_GetObjectItemCaseSensitive(item, "image_etag");
-            cJSON* ae  = cJSON_GetObjectItemCaseSensitive(item, "audio_etag");
-            cJSON* is  = cJSON_GetObjectItemCaseSensitive(item, "image_size");
-            cJSON* as  = cJSON_GetObjectItemCaseSensitive(item, "audio_size");
-            if (cJSON_IsNumber(seq)) f.seq = seq->valueint;
-            if (cJSON_IsString(cap)) f.caption = cap->valuestring;
-            if (cJSON_IsString(ie)) f.image_etag = ie->valuestring;
-            if (cJSON_IsString(ae)) f.audio_etag = ae->valuestring;
-            if (cJSON_IsNumber(is)) f.image_size = is->valueint;
-            if (cJSON_IsNumber(as)) f.audio_size = as->valueint;
-            out.frames.push_back(f);
+        cJSON_ArrayForEach(item, contents) {
+            ContentMeta f;
+            f.seq              = json_int(item, "seq", 0);
+            f.content_id       = json_str(item, "content_id");
+            f.caption          = json_str(item, "title");
+            f.image_etag       = json_str(item, "image_etag");
+            f.audio_etag       = json_str(item, "audio_etag");
+            f.image_size       = json_int(item, "image_size", 0);
+            f.audio_size       = json_int(item, "audio_size", 0);
+            f.kind             = json_str(item, "kind");
+            f.next_wake_sec    = json_int(item, "next_wake_sec", 0);
+            if (f.kind.empty()) f.kind = "image";  // 兜底
+            out.contents.push_back(f);
         }
     }
     cJSON_Delete(root);
@@ -364,17 +371,15 @@ static bool DownloadBinary(const std::string& path, const std::string& if_none_m
     return !out.empty();
 }
 
-bool DownloadFrameImage(const std::string& group_id, int seq, const std::string& if_none_match,
-                        std::vector<uint8_t>& out, bool& not_modified) {
-    std::string path = std::string(kApiPrefix) + "/groups/" + group_id + "/frames/" +
-                       std::to_string(seq) + "/image";
+bool DownloadContentImage(const std::string& content_id, const std::string& if_none_match,
+                          std::vector<uint8_t>& out, bool& not_modified) {
+    std::string path = std::string(kApiPrefix) + "/contents/" + content_id + "/image";
     return DownloadBinary(path, if_none_match, out, not_modified);
 }
 
-bool DownloadFrameAudio(const std::string& group_id, int seq, const std::string& if_none_match,
-                        std::vector<uint8_t>& out, bool& not_modified) {
-    std::string path = std::string(kApiPrefix) + "/groups/" + group_id + "/frames/" +
-                       std::to_string(seq) + "/audio";
+bool DownloadContentAudio(const std::string& content_id, const std::string& if_none_match,
+                          std::vector<uint8_t>& out, bool& not_modified) {
+    std::string path = std::string(kApiPrefix) + "/contents/" + content_id + "/audio";
     return DownloadBinary(path, if_none_match, out, not_modified);
 }
 

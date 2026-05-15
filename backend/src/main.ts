@@ -22,6 +22,9 @@ async function bootstrap(): Promise<void> {
   await app.register(import('@fastify/multipart') as never, {
     limits: { fileSize: 32 * 1024 * 1024 },
   });
+  // 注：@fastify/rate-limit 装了但不在这里 register —— Nest+Fastify 适配层不暴露
+  // route-level Fastify config，全局 rate-limit 不便单独保护 ingest 端点。
+  // 改在 modules/contents/ingest-limit.guard.ts 实现按 contentId 维度限速。
 
   app.setGlobalPrefix('api/v1', {
     exclude: [{ path: 'healthz', method: RequestMethod.GET }],

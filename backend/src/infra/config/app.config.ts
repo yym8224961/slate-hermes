@@ -27,6 +27,12 @@ export class AppConfig {
   get blobDir() {
     return this.cs.get('BLOB_DIR', { infer: true });
   }
+  get qweatherApiKey() {
+    return this.cs.get('QWEATHER_API_KEY', { infer: true });
+  }
+  get qweatherApiHost() {
+    return this.cs.get('QWEATHER_API_HOST', { infer: true });
+  }
   get isProd() {
     return this.nodeEnv === 'production';
   }

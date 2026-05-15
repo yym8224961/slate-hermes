@@ -13,7 +13,8 @@ src/
 ├── types/
 │   ├── device.ts    设备协议：register / poll / state / cycle 的 zod schema
 │   ├── group.ts     group CRUD 与 reorder
-│   └── frame.ts     frame manifest / mutation schema
+│   ├── content.ts   content manifest / mutation / preview schema
+│   └── dynamic.ts   动态内容 config / ingest schema
 ├── dither.ts        6 种 1bpp 抖动算法（纯 TS，无 sharp 依赖）
 └── preprocess.ts    dither 前的灰度预处理（前后端必须按同一顺序调）
 ```
@@ -88,7 +89,7 @@ import { API_PREFIX, ManifestResponse, ditherTo1bpp } from 'shared';
 frontend：
 
 ```ts
-import type { DeviceSummaryT, FrameMutationResponseT } from 'shared';
+import type { DeviceSummaryT, ContentMutationResponseT } from 'shared';
 import { rgbaToGray, autoInvert, autoContrast, ditherToBinary } from 'shared';
 ```
 

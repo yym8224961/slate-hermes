@@ -83,8 +83,8 @@ struct UiEvent {
         } progress;
         struct {
             char gid[32];
-            int  frame_count;
-            int  default_idx;
+            char name[64];   // 当前组名（UTF-8），用于状态栏 / boot splash 文案
+            int  content_count;
             // true = 本轮 sync 真下载了新 frame(内容变化);false = fast-path/304,只是确认状态。
             // FrameScene 用它决定是否触发 EPD full refresh,避免 30s 心跳每轮都闪屏。
             bool content_changed;

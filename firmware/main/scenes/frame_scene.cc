@@ -1,10 +1,12 @@
 #include "frame_scene.h"
 
+#include <atomic>
 #include <cstdio>
 #include <esp_log.h>
 #include <vector>
 
 #include "../app/event_bus.h"
+#include "../app/power_state.h"
 #include "../app/scene_stack.h"
 #include "../audio/audio_player.h"
 #include "../display/epd_ssd1683.h"
@@ -18,14 +20,23 @@
 
 namespace {
 constexpr char kTag[] = "Frame";
-}
 
-FrameScene::FrameScene(const char* gid, int frame_count, int default_idx)
+// 当前帧 sort_order 的全局快照，FrameScene 改 idx_ 时同步更新。
+// std::atomic<int> 在 ESP32-S3 上 lock-free；SyncService task 与 ui_loop task 跨核并发安全。
+std::atomic<int> g_current_seq{0};
+}  // namespace
+
+namespace frame_scene_state {
+int GetCurrentSeq() {
+    return g_current_seq.load(std::memory_order_relaxed);
+}
+}  // namespace frame_scene_state
+
+FrameScene::FrameScene(const char* gid, int content_count)
     : gid_(gid ? gid : ""),
-      frame_count_(frame_count),
-      idx_(default_idx) {
-    if (frame_count_ <= 0) frame_count_ = 0;
-    if (frame_count_ > 0 && (idx_ < 0 || idx_ >= frame_count_)) idx_ = 0;
+      content_count_(content_count) {
+    if (content_count_ <= 0) content_count_ = 0;
+    if (content_count_ > 0 && (idx_ < 0 || idx_ >= content_count_)) idx_ = 0;
 }
 
 FrameScene::~FrameScene() = default;
@@ -58,7 +69,7 @@ void FrameScene::OnEnter(SceneContext& ctx) {
     lv_obj_set_style_text_line_space(empty_label_, 8, 0);
     lv_label_set_long_mode(empty_label_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(empty_label_, LV_HOR_RES - 32);
-    lv_label_set_text(empty_label_, "相册暂无图片\n\n请在管理端为本相册添加图片");
+    lv_label_set_text(empty_label_, "相册暂无内容\n\n请在管理端为本相册添加内容");
     lv_obj_align(empty_label_, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(empty_label_, LV_OBJ_FLAG_HIDDEN);
 
@@ -72,7 +83,7 @@ void FrameScene::OnEnter(SceneContext& ctx) {
     ApplyEmptyState();
 
     // 加载第一帧（force_full：清屏底色 + 第一帧的转换需要 full 一次）
-    if (!gid_.empty() && frame_count_ > 0) {
+    if (!gid_.empty() && content_count_ > 0) {
         LoadFrame(ctx, idx_, /*force_full*/ true);
     } else {
         // 空 group：留状态栏 + 白底 + 空相册提示，触发一次 full 让 splash 转过来。
@@ -177,22 +188,26 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             const bool same_group     = (gid_ == e.u.group.gid);
             const bool content_changed = e.u.group.content_changed;
             // 同 group 且服务端确认无变化(fast-path/304):屏幕已经是最新,不刷新省电。
-            // 仍同步一下 frame_count_(理论上不变,保险),不动 idx_/不重绘。
+            // 仍同步一下内容数量(理论上不变,保险),不动 idx_/不重绘。
             if (same_group && !content_changed) {
-                frame_count_ = e.u.group.frame_count > 0 ? e.u.group.frame_count : 0;
-                if (frame_count_ > 0 && (idx_ < 0 || idx_ >= frame_count_)) idx_ = 0;
+                content_count_ = e.u.group.content_count > 0 ? e.u.group.content_count : 0;
+                if (content_count_ > 0 && (idx_ < 0 || idx_ >= content_count_)) idx_ = 0;
                 break;
             }
             if (!same_group) {
-                RebindGroup(ctx, e.u.group.gid, e.u.group.frame_count, e.u.group.default_idx);
+                RebindGroup(ctx, e.u.group.gid, e.u.group.content_count);
+                // 注：GroupReady 携带 e.u.group.name 但这里不显示——LoadFrame 紧跟着
+                // 会用 frame caption 覆盖 status_bar，group name 一帧都看不到。
+                // 真要展示组名需要在 status_bar 留专门区域 / 或用 toast 计时器，
+                // 目前未实现；name 字段保留供未来 UI 改造用。
             } else {
                 // 同 group 但内容真变了(新增/修改/删除帧):sync_service 已把变化的 frame
                 // 重写入 cache,这里必须强制刷新当前帧,否则屏幕会停留在旧图。
-                frame_count_ = e.u.group.frame_count > 0 ? e.u.group.frame_count : 0;
-                if (frame_count_ > 0 && (idx_ < 0 || idx_ >= frame_count_)) idx_ = 0;
+                content_count_ = e.u.group.content_count > 0 ? e.u.group.content_count : 0;
+                if (content_count_ > 0 && (idx_ < 0 || idx_ >= content_count_)) idx_ = 0;
             }
             ApplyEmptyState();
-            if (frame_count_ > 0) {
+            if (content_count_ > 0) {
                 LoadFrame(ctx, idx_, /*force_full*/ true);
             } else {
                 SyncRender(ctx, /*force_full*/ true);
@@ -219,14 +234,14 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
 }
 
 void FrameScene::NextFrame(SceneContext& ctx) {
-    if (frame_count_ <= 0) return;
-    idx_ = (idx_ + 1) % frame_count_;
+    if (content_count_ <= 0) return;
+    idx_ = (idx_ + 1) % content_count_;
     LoadFrame(ctx, idx_, /*force_full*/ false);
 }
 
 void FrameScene::PrevFrame(SceneContext& ctx) {
-    if (frame_count_ <= 0) return;
-    idx_ = (idx_ - 1 + frame_count_) % frame_count_;
+    if (content_count_ <= 0) return;
+    idx_ = (idx_ - 1 + content_count_) % content_count_;
     LoadFrame(ctx, idx_, /*force_full*/ false);
 }
 
@@ -239,16 +254,16 @@ void FrameScene::CycleGroup(SceneContext& ctx, bool next) {
     else      SyncService::Get().CyclePrev();
 }
 
-void FrameScene::RebindGroup(SceneContext& ctx, const char* gid, int frame_count, int default_idx) {
+void FrameScene::RebindGroup(SceneContext& ctx, const char* gid, int content_count) {
     gid_         = gid ? gid : "";
-    frame_count_ = frame_count > 0 ? frame_count : 0;
-    idx_         = (frame_count_ > 0 && default_idx >= 0 && default_idx < frame_count_) ? default_idx : 0;
+    content_count_ = content_count > 0 ? content_count : 0;
+    idx_         = 0;
     first_loaded_ = false;
-    ESP_LOGI(kTag, "Rebind group: gid=%s count=%d default=%d", gid_.c_str(), frame_count_, idx_);
+    ESP_LOGI(kTag, "Rebind group: gid=%s count=%d", gid_.c_str(), content_count_);
 }
 
 void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full) {
-    if (gid_.empty() || idx < 0 || frame_count_ <= 0 || idx >= frame_count_) return;
+    if (gid_.empty() || idx < 0 || content_count_ <= 0 || idx >= content_count_) return;
 
     std::vector<uint8_t> raw;
     if (!cache::ReadFrameImage(gid_, idx, raw) ||
@@ -257,17 +272,17 @@ void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full) {
                  static_cast<unsigned>(raw.size()));
         return;
     }
-    std::string caption;
-    cache::ReadFrameCaption(gid_, idx, caption);
+    cache::FrameMeta meta;
+    cache::ReadFrameMeta(gid_, idx, meta);
 
     if (!ctx.epd->Lock(2000)) {
         ESP_LOGW(kTag, "LoadFrame %d: epd lock timeout", idx);
         return;
     }
     if (status_bar_) {
-        status_bar_->SetCaption(caption);
+        status_bar_->SetCaption(meta.caption);
     }
-    cached_caption_ = caption;  // 保存当前 caption,sync 失败/进度显示后用来恢复
+    cached_caption_ = meta.caption;  // 保存当前 caption,sync 失败/进度显示后用来恢复
     // 先把状态栏渲染进 buffer，再写图像：LVGL 只渲染脏区域，不会覆盖后续
     // WriteRaw1bpp 写入的内容区。若顺序颠倒，lv_refr_now 会把状态栏区以外的
     // 旧像素写入 buffer，覆盖刚写入的帧数据。
@@ -286,13 +301,21 @@ void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full) {
     } else {
         ctx.epd->RequestUrgentPartialRefresh();
     }
-    ESP_LOGI(kTag, "LoadFrame %d: caption=%s%s", idx, caption.c_str(), full ? " (full)" : "");
+    ESP_LOGI(kTag, "LoadFrame %d: caption=%s%s", idx, meta.caption.c_str(), full ? " (full)" : "");
 
     // 若该 frame 配了 audio，立即播放（中断之前的播放）。
     std::vector<uint8_t> pcm;
     if (ctx.audio && cache::ReadFrameAudio(gid_, idx, pcm) && !pcm.empty()) {
         ctx.audio->Play(pcm.data(), pcm.size());
     }
+
+    // 把当前内容的 next_wake_sec 写入 RTC RAM，sleep_manager EnterDeepSleep 时算 timer wake：
+    //   - 动态帧（如天气 600s）→ 10 分钟后 RTC wake 拉新内容
+    //   - 静态图片 → 0，仅按键唤醒 + 兜底 telemetry
+    power_state::SetCurrentFrameTtlSec(meta.ttl_sec);
+
+    // 同步全局快照供 SyncService telemetry.current_content_seq 用。
+    g_current_seq.store(idx, std::memory_order_relaxed);
 }
 
 void FrameScene::RefreshStatusBarFromSensors(SceneContext& ctx) {
@@ -316,7 +339,7 @@ void FrameScene::RefreshStatusBarFromSensors(SceneContext& ctx) {
 }
 
 void FrameScene::ApplyEmptyState() {
-    const bool empty = (frame_count_ <= 0);
+    const bool empty = (content_count_ <= 0);
     if (frame_view_) {
         if (empty) frame_view_->Hide();
         else       frame_view_->Show();

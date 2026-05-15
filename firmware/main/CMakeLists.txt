@@ -4,6 +4,7 @@ set(SOURCES
     "app/app.cc"
     "app/board.cc"
     "app/event_bus.cc"
+    "app/power_state.cc"
     "app/scene_stack.cc"
     "app/sleep_manager.cc"
     "app/time_tick.cc"
