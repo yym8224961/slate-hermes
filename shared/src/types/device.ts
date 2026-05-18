@@ -114,6 +114,8 @@ export const DeviceSummary = z.object({
   battery_pct: z.number().int().nullable(),
   rssi_dbm: z.number().int().nullable(),
   fw_version: z.string().nullable(),
+  free_heap: z.number().int().nullable(),
+  fw_build_ts: z.string().nullable(),
   owner_user_id: z.string().nullable(),
   sort_order: z.number().int(),
 });

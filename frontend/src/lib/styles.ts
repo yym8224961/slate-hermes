@@ -33,15 +33,20 @@ export const selectTriggerCls = [
 
 // Radix Select 弹层
 export const selectContentCls = [
-  'min-w-[var(--radix-select-trigger-width)]',
+  'w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-2rem)]',
   'bg-paper border border-ink',
   'shadow-dropdown',
   'py-1 z-[60] overflow-hidden',
 ].join(' ');
 
+export const selectViewportCls = [
+  'max-h-[min(22rem,var(--radix-select-content-available-height))]',
+  'overflow-y-auto',
+].join(' ');
+
 // Radix Select 单条 item
 export const selectItemCls = [
-  'flex items-center gap-2 mx-1 px-3 py-2 text-[14px]',
+  'flex min-w-0 items-center gap-2 mx-1 px-3 py-2 text-[14px]',
   'cursor-pointer outline-none',
   'hover:bg-cream',
   'data-[highlighted]:bg-cream',

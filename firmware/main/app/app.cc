@@ -15,26 +15,30 @@
 #include <esp_sleep.h>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "board.h"
 #include "button.h"
 #include "config.h"
 #include "epd_ssd1683.h"
+#include "power_state.h"
 
-#include "../audio/audio_player.h"
-#include "../net/api_client.h"
-#include "../net/captive_portal.h"
-#include "../net/cred_store.h"
-#include "../net/sntp.h"
-#include "../net/sync_service.h"
-#include "../net/wifi.h"
-#include "../scenes/boot_splash_scene.h"
-#include "../scenes/frame_scene.h"
-#include "../storage/cache.h"
+#include "audio_player.h"
+#include "api_client.h"
+#include "captive_portal.h"
+#include "cred_store.h"
+#include "sntp.h"
+#include "sync_service.h"
+#include "wifi.h"
+#include "boot_splash_scene.h"
+#include "frame_scene.h"
+#include "cache.h"
 #include "event_bus.h"
 
 namespace {
 constexpr char kTag[] = "App";
+constexpr int kSaveSecretRetryCount = 3;
+constexpr int kSaveSecretRetryDelayMs = 200;
 
 // 组合键 UP+DOWN 同时按下 = 全屏刷新（清残影）。仅依赖按下/释放瞬间事件维护
 // 「当前按住中」标志：两个键都处于按住中时立即触发 + 标记 consumed，本次按键
@@ -117,8 +121,18 @@ bool TryConnectAndSetup(cred::Credentials& c) {
             EmitBootStage(BootStage::kServerUnreachable, nullptr, nullptr);
             return false;
         }
-        // SaveSecret 是 NVS 单独 commit;失败让设备 panic 重启避免半写状态。
-        if (!cred::SaveSecret(rr.device_id, rr.device_secret)) {
+        // SaveSecret 是 NVS 单独 commit;短暂失败先重试,避免一次写盘抖动放大成重注册。
+        bool saved = false;
+        for (int attempt = 1; attempt <= kSaveSecretRetryCount; ++attempt) {
+            if (cred::SaveSecret(rr.device_id, rr.device_secret)) {
+                saved = true;
+                break;
+            }
+            ESP_LOGW(kTag, "SaveSecret failed attempt %d/%d",
+                     attempt, kSaveSecretRetryCount);
+            vTaskDelay(pdMS_TO_TICKS(kSaveSecretRetryDelayMs));
+        }
+        if (!saved) {
             ESP_LOGE(kTag, "Fatal: SaveSecret failed, restarting");
             esp_restart();
         }
@@ -160,6 +174,7 @@ void PostWakeupKeyEvent() {
     else if (mask & (1ULL << BOOT_BUTTON_GPIO)) btn = ButtonId::kEnter;
     else return;
     UiEvent e{};
+    SyncService::Get().MarkUserActive();
     e.kind         = UiEventKind::kButtonShort;
     e.u.button.btn = btn;
     evt::Post(e);
@@ -244,8 +259,10 @@ void App::UiLoopEntry(void* arg) {
 }
 
 void App::UiLoopTask() {
-    // 进入 ui_loop 第一件事：把 BootSplash 入栈（OnEnter 内调 epd->Lock + LVGL 渲染）。
-    scene_stack_.Push(std::make_unique<BootSplashScene>());
+    // RTC timer 唤醒只为后台同步动态帧，不渲染启动页，避免一次无意义全刷。
+    if (power_state::Classify() != power_state::WakeCause::kRtcTimer) {
+        scene_stack_.Push(std::make_unique<BootSplashScene>());
+    }
 
     while (ui_loop_running_) {
         UiEvent e;
@@ -262,6 +279,21 @@ void App::UiLoopTask() {
             vTaskDelay(pdMS_TO_TICKS(200));
             esp_restart();
         }
+        if (e.kind == UiEventKind::kDynamicWakeSyncFinished) {
+            scene_stack_.ApplyPending();
+            sleep_mgr_.OnEvent(e);
+            sleep_mgr_.EnterDeepSleep();
+            continue;
+        }
+        if (e.kind == UiEventKind::kGroupReady && scene_stack_.Empty()) {
+            auto scene = std::make_unique<FrameScene>(e.u.group.gid, e.u.group.content_count);
+            if (power_state::Classify() == power_state::WakeCause::kRtcTimer) {
+                scene->SetFirstLoadFullRefresh(false);
+            }
+            scene_stack_.Push(std::move(scene));
+            scene_stack_.ApplyPending();
+            continue;
+        }
         scene_stack_.Dispatch(e);
         sleep_mgr_.OnEvent(e);
         scene_stack_.ApplyPending();
@@ -272,6 +304,7 @@ void App::UiLoopTask() {
 void App::AttachInputs() {
     auto post_short = [](ButtonId b) {
         return [b]() {
+            SyncService::Get().MarkUserActive();
             UiEvent e{};
             e.kind         = UiEventKind::kButtonShort;
             e.u.button.btn = b;
@@ -280,6 +313,7 @@ void App::AttachInputs() {
     };
     auto post_long = [](ButtonId b) {
         return [b]() {
+            SyncService::Get().MarkUserActive();
             UiEvent e{};
             e.kind         = UiEventKind::kButtonLong;
             e.u.button.btn = b;
@@ -381,10 +415,18 @@ void App::InitNetwork() {
             return ok;
         };
         deps.read_rssi          = []() -> int { return Wifi::Get().GetRssi(); };
-        deps.read_charge        = []() { return Board::Get().charge()->Get(); };
-        // FrameScene 在 LoadFrame 时同步写 g_current_seq；FrameScene 未就绪时返回 0
-        // 也是合理 fallback（telemetry 也接受 0）。
-        deps.current_content_seq  = []() -> int { return frame_scene_state::GetCurrentSeq(); };
+        deps.current_group      = []() -> std::string {
+            std::string gid, etag;
+            if (!cache::ReadStateMeta(gid, etag)) return "";
+            return gid;
+        };
+        // 只有当前帧确实需要定时刷新时才上报 seq，避免静态帧/推送型 dashboard
+        // 在每次 poll 时触发后端 current-frame 动态刷新查询。
+        deps.current_content_seq  = []() -> int {
+            return power_state::CurrentFrameNeedsTimerWake()
+                       ? power_state::GetCurrentFrameSeq()
+                       : -1;
+        };
         SyncService::Get().Start(std::move(deps));
 
         // 首次注册(NVS 之前没 secret)的设备没有可信 cache:可能是新设备(没 cache)
@@ -395,9 +437,18 @@ void App::InitNetwork() {
             PostCachedGroupReadyIfAny();
             // ext1 唤醒补一次 ButtonShort,让 FrameScene 进栈后立即翻页(用户期望)。
             // 必须排在 GroupReady 之后,所以放在这。
-            PostWakeupKeyEvent();
+            if (power_state::Classify() == power_state::WakeCause::kButton) {
+                PostWakeupKeyEvent();
+            }
         }
     } else {
+        if (power_state::Classify() == power_state::WakeCause::kRtcTimer) {
+            ESP_LOGW(kTag, "Timer wake network setup failed -> deep sleep");
+            UiEvent e{};
+            e.kind = UiEventKind::kDynamicWakeSyncFinished;
+            evt::Post(e, portMAX_DELAY);
+            return;
+        }
         ESP_LOGW(kTag, "Fallback to captive portal");
         StartPortal();
     }
@@ -443,17 +494,6 @@ void App::StartSleep() {
         return;
     }
     sleep_mgr_.Init(CONFIG_SLATE_IDLE_DEEP_SLEEP_MIN);
-
-    // 进睡前最后一刻把"已断开"事件 dispatch 给当前栈顶,让状态栏 wifi 图标
-    // 切到 wifi-slash;EnterDeepSleep 里随后的 RequestUrgentFullRefresh 会把
-    // 这个"诚实"画面留在屏上。电池图标不动(电池静态值睡前可信)。
-    sleep_mgr_.SetPreSleepHook([this]() {
-        UiEvent fake{};
-        fake.kind             = UiEventKind::kWifiStateChanged;
-        fake.u.wifi.connected = false;
-        fake.u.wifi.rssi      = 0;
-        scene_stack_.Dispatch(fake);
-    });
 
     // 注册 charge callback 时设备可能已经在充电(USB 接着启动),但 ChargeStatus
     // 内部已经在 Init 时把 snapshot 设到 kCharging,callback 不会因"未变化"而再触发。

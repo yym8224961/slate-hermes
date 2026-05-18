@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 生成 main/fonts/ 下的 LVGL 字体 .c 文件。
+# 生成 main/generated/fonts/ 下的 LVGL 字体 .c 文件。
 #
 # 用途:
 #   - 想换字符集(比如扩到 GB2312 全集) → 改下方 RANGES,重跑。
@@ -19,7 +19,7 @@
 set -euo pipefail
 
 WORKDIR="${WORKDIR:-/tmp/font_gen_$$}"
-OUTDIR="$(cd "$(dirname "$0")/.." && pwd)/main/fonts"
+OUTDIR="$(cd "$(dirname "$0")/.." && pwd)/main/generated/fonts"
 mkdir -p "$WORKDIR" "$OUTDIR"
 
 # 状态栏百分比只需要 ASCII（数字、%、-）。
@@ -51,11 +51,13 @@ generate() {
         --format lvgl \
         -o "${name}.c" \
         --lv-font-name "$name"
-    mv "${name}.c" "$OUTDIR/${name}.c"
+    local out
+    out="$(echo "$name" | sed -E 's/([a-z0-9])([A-Z])/\1_\2/g; s/([A-Z]+)([A-Z][a-z])/\1_\2/g' | tr '[:upper:]' '[:lower:]')"
+    mv "${name}.c" "$OUTDIR/${out}.c"
 }
 
 generate fusion-pixel-12px-proportional-zh_hans.ttf 12 FusionPixel_12
 
 echo
 echo "✓ 生成完成 → $OUTDIR"
-ls -la "$OUTDIR"/FusionPixel_12.c
+ls -la "$OUTDIR"/fusion_pixel_12.c

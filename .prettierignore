@@ -6,3 +6,4 @@ bun.lock
 *.md
 firmware/
 backend/prisma/*.db
+backend/assets/fonts/bitmap-1bpp/*.json

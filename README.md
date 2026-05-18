@@ -38,7 +38,7 @@ slate/
  └─ NVS 写 device_secret（明文，固件唯一持有）
  └─ SyncService 周期 POST /api/v1/me/poll（Authorization: Bearer <device_secret>）
        ├ 上报 telemetry（battery / rssi / fw_version / current_group / current_frame_seq）
-       └ 拿 DeviceState{device, group:{etag, frame_count, ...}}
+       └ 拿 DeviceState{device, group:{etag, content_count, ...}}
 
 设备绑定
  └─ 屏幕显示 pair_code（6 位 [A-Z2-9]）
@@ -46,7 +46,7 @@ slate/
 
 内容下发
  └─ group_etag 变 → GET /manifest（If-None-Match，命中 304 零流量）
-                 → 增量拉缺失的 frames/:seq/image + .pcm 写 LittleFS
+                 → 增量拉缺失的 400x300 1bpp image / audio 写 LittleFS
 
 按键翻页
  └─ FrameScene 本地命中 cache → EPD partial refresh + I²S DMA 同步播音
@@ -112,6 +112,8 @@ bun run --cwd backend test                  # render pipeline 单测
 bun run --cwd frontend build                # 出 dist
 ```
 
+`format:check` 只跑 Prettier，覆盖 `ts` / `tsx` / 普通 `json`；固件 C/C++ 不在根格式化链路里。固件若手动跑 `clang-format`，`firmware/.clang-format-ignore` 已排除 `build/`、`managed_components/`、`main/generated/` 和本地第三方字体组件。
+
 ## 部署
 
 backend 与 frontend 打到**单镜像**：frontend dist 由 `@fastify/static` 同域托管，`/api/v1/*` 走 NestJS。镜像走 GHCR 公有源（`ghcr.io/qiujun8023/slate:latest`），无需登录即可 pull。
@@ -154,7 +156,7 @@ curl -fsS http://localhost:3001/healthz     # {"status":"ok","ts":"..."}
 
 | 主机路径 | 容器路径 | 内容 | 备份 |
 |---|---|---|---|
-| `./slate/blobs/` | `/data/blobs/` | frame image + audio | `tar` |
+| `./slate/blobs/` | `/data/blobs/` | frame assets（image/audio 等） | `tar` |
 | `./mysql/` | `/var/lib/mysql/` | MySQL datadir | `mysqldump` |
 
 建议每天定时 `mysqldump + tar ./slate/blobs`。

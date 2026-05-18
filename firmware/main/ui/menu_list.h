@@ -1,6 +1,6 @@
 #pragma once
 
-// EPD 友好的列表 widget:每项一个 lv_label,光标位置用左侧黑色 bar 标记。
+// EPD 友好的列表控件:每项一个 lv_label,光标位置用左侧黑色 bar 标记。
 // items > kVisibleRows 时右侧出现一个细 thumb 标记当前视口在总长度里的位置,
 // 不画 track(1bpp 灰阶有限,track + thumb 都用纯黑会糊在一起)。
 //

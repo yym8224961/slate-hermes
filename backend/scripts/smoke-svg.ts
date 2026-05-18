@@ -14,7 +14,7 @@ async function main(): Promise<void> {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
   <rect x="0" y="0" width="400" height="300" fill="#fff"/>
   <text x="200" y="60" text-anchor="middle" font-family="'Noto Serif SC', serif" font-size="40" fill="#000">墨笺</text>
-  <text x="200" y="120" text-anchor="middle" font-family="'IBM Plex Sans', 'Noto Sans CJK SC', sans-serif" font-size="20" fill="#000">Slate Widget Smoke</text>
+  <text x="200" y="120" text-anchor="middle" font-family="'IBM Plex Sans', 'Noto Sans CJK SC', sans-serif" font-size="20" fill="#000">Slate Dynamic Smoke</text>
   <text x="200" y="200" text-anchor="middle" font-family="monospace" font-size="80" font-weight="bold" fill="#000">23°C</text>
 </svg>`;
 

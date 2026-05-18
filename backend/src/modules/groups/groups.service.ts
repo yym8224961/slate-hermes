@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { GroupSummaryT } from 'shared';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { BlobService } from '../../infra/blob/blob.service';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
@@ -33,21 +34,27 @@ export class GroupsService {
 
   // ── etag ──────────────────────────────────────────────────
 
-  /**
-   * etag = sha256(group_name + sorted(sortOrder + image_etag + audio_etag + caption).join('|')).slice(0,32)
-   * 任意内容图片、音频或标题变更都会 bump。
-   */
-  async recomputeGroupEtag(groupId: string): Promise<string> {
-    const group = await this.prisma.group.findUnique({
+  /** etag 覆盖 manifest 结构：内容顺序、图片/audio/frame_name/动态类型变化都会 bump。 */
+  async recomputeGroupEtag(
+    groupId: string,
+    client: Prisma.TransactionClient | PrismaService = this.prisma
+  ): Promise<string> {
+    const group = await client.group.findUnique({
       where: { id: groupId },
       include: {
         contents: {
           orderBy: { sortOrder: 'asc' },
           select: {
+            id: true,
             sortOrder: true,
+            kind: true,
+            dynamicType: true,
             imageEtag: true,
+            imageSize: true,
             audioEtag: true,
-            caption: true,
+            audioSize: true,
+            frameName: true,
+            dynamicNextRunAt: true,
           },
         },
       },
@@ -56,13 +63,23 @@ export class GroupsService {
 
     const parts = [
       group.name,
-      ...group.contents.map(
-        (content) =>
-          `${content.sortOrder}:${content.imageEtag}:${content.audioEtag ?? ''}:${content.caption ?? ''}`
-      ),
+      ...group.contents.map((content) => {
+        return [
+          content.id,
+          content.sortOrder,
+          content.kind,
+          content.dynamicType ?? '',
+          content.imageEtag,
+          content.imageSize,
+          content.audioEtag ?? '',
+          content.audioSize ?? '',
+          content.frameName ?? '',
+          content.dynamicNextRunAt?.toISOString() ?? '',
+        ].join(':');
+      }),
     ];
     const etag = createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 32);
-    await this.prisma.group.update({ where: { id: groupId }, data: { etag } });
+    await client.group.update({ where: { id: groupId }, data: { etag } });
     return etag;
   }
 
@@ -169,18 +186,16 @@ export class GroupsService {
     const groups = await this.prisma.group.findMany({
       where: { ownerUserId },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-      include: {
+      select: {
+        id: true,
+        name: true,
+        etag: true,
+        sortOrder: true,
         _count: { select: { contents: true } },
-        contents: { select: { imageSize: true, audioSize: true } },
       },
     });
-    return groups.map((g) => {
-      const totalBytes = g.contents.reduce(
-        (sum, content) => sum + (content.imageSize ?? 0) + (content.audioSize ?? 0),
-        0
-      );
-      return toSummary(g, totalBytes);
-    });
+    const sizeMap = await this.aggregateBytes(groups.map((g) => g.id));
+    return groups.map((g) => toSummary(g, sizeMap.get(g.id) ?? 0));
   }
 
   async getOwned(gid: string, ownerUserId: string): Promise<GroupSummaryT> {
@@ -250,7 +265,7 @@ export class GroupsService {
     const g = await this.prisma.group.findUnique({
       where: { id: gid },
       include: {
-        contents: { select: { id: true, audioEtag: true } },
+        contents: { select: { id: true } },
       },
     });
     if (!g || g.ownerUserId !== ownerUserId) {
@@ -258,9 +273,10 @@ export class GroupsService {
     }
     await Promise.all(
       g.contents.flatMap((content) => {
-        const ops = [this.blob.delete(gid, content.id, 'image')];
-        if (content.audioEtag !== null) ops.push(this.blob.delete(gid, content.id, 'audio'));
-        return ops;
+        return [
+          this.blob.delete(gid, content.id, 'image'),
+          this.blob.delete(gid, content.id, 'audio'),
+        ];
       })
     );
     await this.prisma.group.delete({ where: { id: gid } });
@@ -312,12 +328,16 @@ export class GroupsService {
 
   private async aggregateBytes(groupIds: string[]): Promise<Map<string, number>> {
     if (groupIds.length === 0) return new Map();
-    const sums = await this.prisma.content.groupBy({
+    const rows = await this.prisma.content.groupBy({
       by: ['groupId'],
       where: { groupId: { in: groupIds } },
       _sum: { imageSize: true, audioSize: true },
     });
-    return new Map(sums.map((s) => [s.groupId, (s._sum.imageSize ?? 0) + (s._sum.audioSize ?? 0)]));
+    const result = new Map<string, number>();
+    for (const row of rows) {
+      result.set(row.groupId, (row._sum.imageSize ?? 0) + (row._sum.audioSize ?? 0));
+    }
+    return result;
   }
 
   async assertOwned(gid: string, ownerUserId: string): Promise<void> {

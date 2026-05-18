@@ -10,8 +10,8 @@ export interface ParsedContentUpload {
   audioBuf: Buffer | null;
   threshold?: number;
   mode?: DitherMode;
-  hasTitle: boolean;
-  title: string | null;
+  hasFrameName: boolean;
+  frameName: string | null;
 }
 
 const MODES = DITHER_MODES as readonly string[];
@@ -29,8 +29,8 @@ export class MultipartParser {
       imageBuf: null,
       hasAudio: false,
       audioBuf: null,
-      hasTitle: false,
-      title: null,
+      hasFrameName: false,
+      frameName: null,
     };
     const parts = req.parts();
     for await (const part of parts) {
@@ -52,10 +52,10 @@ export class MultipartParser {
           }
         } else if (part.fieldname === 'mode' && MODES.includes(val)) {
           result.mode = val as DitherMode;
-        } else if (part.fieldname === 'title') {
-          result.hasTitle = true;
+        } else if (part.fieldname === 'frame_name') {
+          result.hasFrameName = true;
           const trimmed = val.trim().slice(0, 64);
-          result.title = trimmed === '' ? null : trimmed;
+          result.frameName = trimmed === '' ? null : trimmed;
         }
       }
     }

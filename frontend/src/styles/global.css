@@ -56,8 +56,8 @@ body {
    留在 @layer 外保证优先级高于 Tailwind 的 @layer utilities。
    排除 Radix UI 组件（下拉菜单、Select 弹层等）避免样式异常。 */
 *:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]):not([data-radix-dropdown-menu-content]):not([data-radix-tooltip-content]):not([data-radix-popover-content]),
-*::before:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]),
-*::after:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]) {
+*:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]):not([data-radix-dropdown-menu-content]):not([data-radix-tooltip-content]):not([data-radix-popover-content])::before,
+*:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]):not([data-radix-dropdown-menu-content]):not([data-radix-tooltip-content]):not([data-radix-popover-content])::after {
   border-radius: 0;
 }
 
@@ -146,6 +146,35 @@ body {
   }
   .heart-dot:nth-child(2) { animation-delay: 0.2s; }
   .heart-dot:nth-child(3) { animation-delay: 0.4s; }
+
+  .content-type-scroll {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    scroll-padding-inline: 4px;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+  .content-type-scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .content-type-scroll-frame::before,
+  .content-type-scroll-frame::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 2;
+    width: 12px;
+    pointer-events: none;
+  }
+  .content-type-scroll-frame::before {
+    left: 0;
+    background: linear-gradient(to right, var(--color-paper), rgba(245, 243, 237, 0));
+  }
+  .content-type-scroll-frame::after {
+    right: 0;
+    background: linear-gradient(to left, var(--color-paper), rgba(245, 243, 237, 0));
+  }
 }
 
 /* 入场动画 — @keyframes 留在 @layer 外保证被 animation 属性正确引用 */

@@ -9,7 +9,7 @@ export interface City {
 
 export const CITIES: City[] = [
   // ── 直辖市 ──────────────────────────────────────────────────
-  { name: '北京', province: '北京', locationId: '北京' },
+  { name: '北京', province: '北京', locationId: '101010100' },
   { name: '天津', province: '天津', locationId: '101030100' },
   { name: '上海', province: '上海', locationId: '101020100' },
   { name: '重庆', province: '重庆', locationId: '101040100' },

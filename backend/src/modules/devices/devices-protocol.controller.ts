@@ -8,6 +8,7 @@ import {
 } from '../../common/decorators/current-device.decorator';
 import { DevicesService } from './devices.service';
 import { GroupsService } from '../groups/groups.service';
+import { DynamicContentRefreshService } from '../dynamic-content/dynamic-content-refresh.service';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 import { PollDto } from './dto/poll.dto';
 import { SelectGroupByDeviceDto } from './dto/select-group.dto';
@@ -16,7 +17,8 @@ import { SelectGroupByDeviceDto } from './dto/select-group.dto';
 export class DevicesProtocolController {
   constructor(
     private readonly devices: DevicesService,
-    private readonly groups: GroupsService
+    private readonly groups: GroupsService,
+    private readonly dynamicContentRefresh: DynamicContentRefreshService
   ) {}
 
   // ── register / reset（无鉴权）────────────────────────────
@@ -42,6 +44,9 @@ export class DevicesProtocolController {
   @Post('me/poll')
   async poll(@CurrentDevice() dev: DeviceContext, @Body() body: PollDto): Promise<DeviceStateT> {
     await this.devices.recordTelemetry(dev.deviceId, body.telemetry);
+    if (body.telemetry?.current_group && body.telemetry.current_content_seq !== undefined) {
+      await this.dynamicContentRefresh.refreshDeviceCurrentFrame(dev.deviceId, body.telemetry);
+    }
     return this.devices.buildState(dev.deviceId);
   }
 

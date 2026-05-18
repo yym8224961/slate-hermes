@@ -7,7 +7,7 @@
 #include <lvgl.h>
 #include <functional>
 
-#include "../hal/charge_status.h"
+#include "charge_status.h"
 
 class EpdSsd1683;
 class AudioPlayer;

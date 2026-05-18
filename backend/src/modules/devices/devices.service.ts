@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
 import type { DeviceStateT, DeviceSummaryT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
 import { GroupsService, type CycleResult } from '../groups/groups.service';
 
 export interface TelemetryInput {
@@ -27,12 +27,15 @@ interface DeviceRow {
   batteryPct: number | null;
   rssiDbm: number | null;
   fwVersion: string | null;
+  freeHeap?: number | null;
+  fwBuildTs?: string | null;
   ownerUserId: string | null;
   sortOrder: number;
 }
 
 // 配对码字母表去掉视觉易混的 0/O/1/I/L，降低用户对屏抄码出错率。
 const PAIR_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const REGISTER_RESET_THROTTLE_MS = 60_000;
 
 @Injectable()
 export class DevicesService {
@@ -46,8 +49,8 @@ export class DevicesService {
   // ── 注册 / telemetry ────────────────────────────────────────
 
   // 无鉴权路由唯一行为：固件 NVS 没 secret 时调一次。
-  // 同 mac 二次进来一律走 reset 路径（清 owner、清相册、轮换 secret + pair_code）。
-  // 这是「物理控制权 = 数字所有权」的实现锚点：谁持有设备能工厂重置，谁就能重新拿走。
+  // 同 mac 二次进来走 reset 路径；已绑定设备带 60s 保护窗口，避免一次 NVS 写盘失败
+  // 被放大成连续 reset 丢所有权。
   async registerOrReset(mac: string): Promise<{
     deviceId: string;
     deviceSecret: string; // 明文，仅本次返回，落库只存 sha256
@@ -59,14 +62,28 @@ export class DevicesService {
     const secretHash = hashSecret(secret);
     const pairCode = await this.generateUniquePairCode();
 
+    const now = new Date();
     const existing = await this.prisma.device.findUnique({
       where: { mac },
-      select: { id: true, ownerUserId: true },
+      select: { id: true, ownerUserId: true, lastRegisteredAt: true },
     });
 
     let deviceId: string;
     let reclaimed: boolean;
     if (existing) {
+      const elapsedMs = existing.lastRegisteredAt
+        ? now.getTime() - existing.lastRegisteredAt.getTime()
+        : Number.POSITIVE_INFINITY;
+      if (existing.ownerUserId !== null && elapsedMs < REGISTER_RESET_THROTTLE_MS) {
+        const retryAfterSec = Math.max(
+          Math.ceil((REGISTER_RESET_THROTTLE_MS - elapsedMs) / 1000),
+          1
+        );
+        throw new ConflictError('设备刚刚注册过，请稍后再重置', {
+          code: 'register_throttled',
+          retry_after_sec: retryAfterSec,
+        });
+      }
       await this.prisma.device.update({
         where: { mac },
         data: {
@@ -74,6 +91,7 @@ export class DevicesService {
           pairCode,
           ownerUserId: null,
           selectedGroupId: null,
+          lastRegisteredAt: now,
         },
       });
       deviceId = existing.id;
@@ -85,7 +103,7 @@ export class DevicesService {
       );
     } else {
       const created = await this.prisma.device.create({
-        data: { mac, secretHash, pairCode },
+        data: { mac, secretHash, pairCode, lastRegisteredAt: now },
         select: { id: true },
       });
       deviceId = created.id;
@@ -98,7 +116,7 @@ export class DevicesService {
       deviceSecret: secret,
       pairCode,
       reclaimed,
-      serverTime: new Date().toISOString(),
+      serverTime: now.toISOString(),
     };
   }
 
@@ -120,6 +138,8 @@ export class DevicesService {
         ...(t?.battery_pct !== undefined ? { batteryPct: t.battery_pct } : {}),
         ...(t?.rssi_dbm !== undefined ? { rssiDbm: t.rssi_dbm } : {}),
         ...(t?.fw_version !== undefined ? { fwVersion: t.fw_version } : {}),
+        ...(t?.free_heap !== undefined ? { freeHeap: t.free_heap } : {}),
+        ...(t?.fw_build_ts !== undefined ? { fwBuildTs: t.fw_build_ts } : {}),
       },
     });
   }
@@ -193,22 +213,20 @@ export class DevicesService {
     body: { name?: string; selected_group_id?: string | null }
   ): Promise<void> {
     await this.requireOwned(deviceId, ownerUserId);
+    const data: { name?: string; selectedGroupId?: string | null } = {};
     if (body.name !== undefined) {
-      await this.prisma.device.update({
-        where: { id: deviceId },
-        data: { name: body.name },
-      });
+      data.name = body.name;
     }
     if (body.selected_group_id !== undefined) {
       if (body.selected_group_id === null) {
-        await this.prisma.device.update({
-          where: { id: deviceId },
-          data: { selectedGroupId: null },
-        });
+        data.selectedGroupId = null;
       } else {
-        await this.groups.setDeviceGroup(deviceId, body.selected_group_id);
+        await this.groups.assertOwned(body.selected_group_id, ownerUserId);
+        data.selectedGroupId = body.selected_group_id;
       }
     }
+    if (Object.keys(data).length === 0) return;
+    await this.prisma.device.update({ where: { id: deviceId }, data });
   }
 
   async claimByPairCode(code: string, ownerUserId: string): Promise<DeviceSummaryT> {
@@ -261,7 +279,7 @@ export class DevicesService {
         pairCode: newPairCode,
       },
     });
-    this.logger.log(`device unbound: id=${deviceId} new_pair_code=${newPairCode}`);
+    this.logger.log(`device unbound: id=${deviceId} new_pair_code=***`);
   }
 
   async reorderDevices(ownerUserId: string, order: string[]): Promise<void> {
@@ -345,6 +363,8 @@ export function toSummary(d: DeviceRow): DeviceSummaryT {
     battery_pct: d.batteryPct,
     rssi_dbm: d.rssiDbm,
     fw_version: d.fwVersion,
+    free_heap: d.freeHeap ?? null,
+    fw_build_ts: d.fwBuildTs ?? null,
     owner_user_id: d.ownerUserId,
     sort_order: d.sortOrder,
   };

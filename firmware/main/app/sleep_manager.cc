@@ -7,11 +7,11 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "../audio/audio_player.h"
-#include "../display/epd_ssd1683.h"
-#include "../hal/config.h"
-#include "../hal/gpio_util.h"
-#include "../net/sync_service.h"
+#include "audio_player.h"
+#include "epd_ssd1683.h"
+#include "config.h"
+#include "gpio_util.h"
+#include "sync_service.h"
 #include "board.h"
 #include "event_bus.h"
 #include "power_state.h"
@@ -19,10 +19,9 @@
 namespace {
 constexpr char kTag[] = "Sleep";
 
-// 兜底 timer wakeup（秒）：当 power_state::ComputeNextWakeSec() 返回 0
-// （即静态相册 + 暂无 telemetry 需求）时，仍然让设备每 30 分钟醒一次防变砖。
-// power_state 算出的精确间隔会覆盖这个值。
-constexpr uint32_t kFallbackTimerSec = 30u * 60u;
+// 静态帧兜底 timer wakeup（秒）。动态帧使用 manifest 下发的 next_wake_sec；
+// 静态帧不需要频繁联网，但仍保留低频唤醒避免长期错过同步。
+constexpr uint32_t kFallbackTimerSec = 4u * 60u * 60u;
 
 // 进 deep sleep 前等 EPD 刷新结束的最大时长。EPD 全刷 2~4 s。
 constexpr int kEpdFlushTimeoutMs = 4000;
@@ -70,9 +69,6 @@ void SleepManager::OnEvent(const UiEvent& e) {
     switch (e.kind) {
         case UiEventKind::kButtonShort:
         case UiEventKind::kButtonLong:
-        case UiEventKind::kSyncStarted:
-        case UiEventKind::kSyncFinished:
-        case UiEventKind::kGroupReady:
             last_active_ms_.store(esp_timer_get_time() / 1000);
             break;
         case UiEventKind::kChargeChanged:
@@ -87,7 +83,7 @@ void SleepManager::OnEvent(const UiEvent& e) {
             ESP_LOGI(kTag, "Bound -> exit unbound grace, normal idle sleep applies");
             break;
         case UiEventKind::kUnbound:
-            // 仅首次进入 unbound 时记录起始 ts,重复事件不重置(否则 24h 兜底永不触发)。
+            // 仅首次进入 unbound 时记录起始 ts,重复事件不重置(否则 2h 兜底永不触发)。
             if (!unbound_.exchange(true)) {
                 unbound_since_ms_.store(esp_timer_get_time() / 1000);
                 ESP_LOGW(kTag, "Unbound -> deep sleep blocked for up to %lld h",
@@ -127,8 +123,8 @@ void SleepManager::Tick(int64_t now_ms) {
 void SleepManager::EnterDeepSleep() {
     ESP_LOGW(kTag, "EnterDeepSleep: shutting down peripherals");
 
-    // 0) 让上层(App)在进睡前最后更新一次 UI 状态 — 比如把状态栏 wifi 图标
-    //    改成「断开」，免得屏上留个「已连接」的过期画面误导用户。
+    // 0) 预睡 hook 留给上层做最小必要清理；帧场景没有固定状态栏，不再为了
+    //    Wi-Fi 图标做额外全屏刷新。
     if (pre_sleep_hook_) pre_sleep_hook_();
 
     // 1) 停后台 task,避免在 rail 关闭后还有 I²C / 网络写操作。
@@ -136,10 +132,9 @@ void SleepManager::EnterDeepSleep() {
     SyncService::Get().Stop();
     AudioPlayer::Get().Stop();
 
-    // 2) 强制 EPD 全屏刷一次 + 等传输完成。EPD 刷新 2~4 s，中途断电会卡半截画面。
-    //    deadline 兜底，极端情况（屏挂）最多等 4 s。
+    // 2) 只等待已有 EPD 刷新完成，不主动制造一轮全刷。墨水屏内容本来可保留；
+    //    静态帧超时睡眠时如果这里再全刷一次，会白白耗电。
     if (auto* epd = Board::Get().epd()) {
-        epd->RequestUrgentFullRefresh();
         const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kEpdFlushTimeoutMs);
         while (epd->IsRefreshPending() && xTaskGetTickCount() < deadline) {
             vTaskDelay(pdMS_TO_TICKS(50));
@@ -169,10 +164,7 @@ void SleepManager::EnterDeepSleep() {
                                    | (1ULL << CHARGE_DETECT_GPIO);
     esp_sleep_enable_ext1_wakeup(kWakeupMask, ESP_EXT1_WAKEUP_ANY_LOW);
 
-    // 7) **RTC timer 唤醒**：协议 v3 起按当前显示内容的 next_wake_sec 计算：
-    //    - 动态帧（如天气 10min）→ 到期后醒来 sync
-    //    - 静态帧 → 兜底 30min 醒一次（防一切外部唤醒源失效时永久睡死）
-    //    精确间隔由 power_state 算出，最小 60s 防抖。
+    // 7) RTC timer 优先服务当前动态帧；静态帧使用低频兜底同步。
     uint32_t next_sec = power_state::ComputeNextWakeSec();
     if (next_sec == 0) next_sec = kFallbackTimerSec;
     esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(next_sec) * 1'000'000ULL);

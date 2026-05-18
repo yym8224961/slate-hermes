@@ -6,8 +6,7 @@ export const GroupSummary = z.object({
   etag: z.string(),
   sort_order: z.number().int(),
   content_count: z.number().int().nonnegative(),
-  /** 所有内容的 image_size + audio_size 总和(字节)。
-   *  约等于设备拉到本地后占用的存储,manifest JSON 不计。 */
+  /** image + audio 总和(字节)。约等于设备拉到本地后的资源占用。 */
   total_bytes: z.number().int().nonnegative(),
 });
 export type GroupSummaryT = z.infer<typeof GroupSummary>;

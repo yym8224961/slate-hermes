@@ -19,6 +19,11 @@ interface ExtractedFont {
   bitmapBase64: string;
 }
 
+function parseBpp(src: string): number {
+  const m = src.match(/\*\s*Bpp:\s*(\d+)/);
+  return m ? Number.parseInt(m[1]!, 10) : 1;
+}
+
 function parseNumber(v: string): number {
   if (v.startsWith('0x') || v.startsWith('0X')) return Number.parseInt(v.slice(2), 16);
   return Number.parseInt(v, 10);
@@ -163,6 +168,41 @@ function parseLvglCharmap(src: string): Record<string, number> {
   return map;
 }
 
+function readPackedPixel(bitmap: number[], bitOffset: number, bpp: number): number {
+  if (bpp === 1) {
+    const byte = bitmap[bitOffset >> 3] ?? 0;
+    return (byte >> (7 - (bitOffset & 7))) & 1;
+  }
+  if (bpp === 4) {
+    const byte = bitmap[bitOffset >> 3] ?? 0;
+    return (bitOffset & 4) === 0 ? (byte >> 4) & 0xf : byte & 0xf;
+  }
+  throw new Error(`unsupported bpp: ${bpp}`);
+}
+
+function packAs1bpp(bitmap: number[], glyphs: Record<string, GlyphDsc>, bpp: number): number[] {
+  if (bpp === 1) return bitmap;
+
+  const out: number[] = [];
+  let outBit = 0;
+  for (const glyph of Object.values(glyphs)) {
+    if (outBit % 8 !== 0) outBit += 8 - (outBit % 8);
+    const oldBit = glyph.bitmap_index * 8;
+    glyph.bitmap_index = outBit >> 3;
+
+    for (let i = 0; i < glyph.box_w * glyph.box_h; i++) {
+      const alpha = readPackedPixel(bitmap, oldBit + i * bpp, bpp);
+      if (alpha >= 8) {
+        const byteIndex = outBit >> 3;
+        out[byteIndex] = (out[byteIndex] ?? 0) | (0x80 >> (outBit & 7));
+      }
+      outBit++;
+    }
+  }
+
+  return out;
+}
+
 async function main(): Promise<void> {
   const input = process.argv[2];
   const output = process.argv[3];
@@ -170,20 +210,22 @@ async function main(): Promise<void> {
     throw new Error('usage: bun backend/scripts/extract-lvgl-font.ts <font.c> <out.json>');
   }
   const src = await readFile(resolve(input), 'utf8');
+  const bpp = parseBpp(src);
   const bitmap = parseBitmap(src);
   const glyphDsc = parseGlyphDsc(src);
   const charmap = parseLvglCharmap(src);
   const glyphs: Record<string, GlyphDsc> = {};
   for (const [codepoint, glyphId] of Object.entries(charmap)) {
     const dsc = glyphDsc[glyphId];
-    if (dsc) glyphs[codepoint] = dsc;
+    if (dsc) glyphs[codepoint] = { ...dsc };
   }
+  const packedBitmap = packAs1bpp(bitmap, glyphs, bpp);
   const out: ExtractedFont = {
     name: parseFontName(src, 'lvgl_font'),
     lineHeight: parseLineHeight(src),
     baseLine: parseBaseLine(src),
     glyphs,
-    bitmapBase64: Buffer.from(bitmap).toString('base64'),
+    bitmapBase64: Buffer.from(packedBitmap).toString('base64'),
   };
   await mkdir(dirname(resolve(output)), { recursive: true });
   await writeFile(resolve(output), `${JSON.stringify(out)}\n`);

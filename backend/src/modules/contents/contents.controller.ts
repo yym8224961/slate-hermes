@@ -34,7 +34,6 @@ import {
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtOrDeviceAuthGuard } from '../../common/guards/jwt-or-device-auth.guard';
 import { etagMatches, respondWithEtag } from '../../common/etag/etag.util';
-import { DynamicContentRendererService } from '../widgets/dynamic-content-renderer.service';
 import { ContentsService } from './contents.service';
 import { MultipartParser } from './multipart.parser';
 import { ReorderContentsDto } from './dto/reorder-contents.dto';
@@ -44,8 +43,7 @@ import { PatchContentDto } from './dto/patch-content.dto';
 export class ContentsController {
   constructor(
     private readonly contents: ContentsService,
-    private readonly multipart: MultipartParser,
-    private readonly dynamicRenderer: DynamicContentRendererService
+    private readonly multipart: MultipartParser
   ) {}
 
   @Public()
@@ -134,7 +132,7 @@ export class ContentsController {
   @Public()
   @UseGuards(JwtOrDeviceAuthGuard)
   @Get('contents/:contentId')
-  async getOne(
+  getOne(
     @Param('contentId') contentId: string,
     @CurrentUser() user: WebUserContext | undefined,
     @CurrentDevice() device: DeviceContext | undefined
@@ -202,14 +200,14 @@ export class ContentsController {
       }
       return this.contents.patchDynamic(contentId, user.userId, {
         config: dynamicParsed.data.config,
-        title: dynamicParsed.data.title,
+        frame_name: dynamicParsed.data.frame_name,
       });
     }
     const parsed = PatchContentDto.schema.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException(parsed.error.issues[0]?.message ?? '参数非法');
     }
-    return this.contents.patchTitle(contentId, user.userId, parsed.data.title);
+    return this.contents.patchFrameName(contentId, user.userId, parsed.data.frame_name);
   }
 
   @Delete('contents/:contentId')
@@ -238,22 +236,13 @@ export class ContentsController {
   }
 
   @Post('contents/preview')
-  async previewDynamicDirect(
-    @Body() body: unknown,
-    @CurrentUser() user: WebUserContext,
-    @Res() reply: FastifyReply
-  ): Promise<void> {
-    void user;
+  async previewDynamicDirect(@Body() body: unknown, @Res() reply: FastifyReply): Promise<void> {
     const parsed = PreviewDynamicContentRequest.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException(parsed.error.issues[0]?.message ?? '配置非法');
     }
-    const data = await this.dynamicRenderer.renderPreviewDirect(
-      parsed.data.dynamic_type,
-      parsed.data.config,
-      parsed.data.title ?? null
-    );
-    void reply.type('application/octet-stream').send(data);
+    const data = await this.contents.previewDynamicDirect(parsed.data);
+    void reply.header('Cache-Control', 'no-store').type('application/octet-stream').send(data);
   }
 
   @Post('contents/:contentId/preview')
@@ -263,18 +252,17 @@ export class ContentsController {
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply
   ): Promise<void> {
-    const body = (req.body ?? {}) as { config?: unknown; title?: unknown };
+    const body = (req.body ?? {}) as { config?: unknown; frame_name?: unknown };
     const configParsed = DynamicConfig.safeParse(body.config);
     if (!configParsed.success) {
       throw new BadRequestException(configParsed.error.issues[0]?.message ?? '配置非法');
     }
-    const title = typeof body.title === 'string' || body.title === null ? body.title : undefined;
-    const data = await this.dynamicRenderer.renderPreview(
-      contentId,
-      user.userId,
-      configParsed.data,
-      title
-    );
-    void reply.type('application/octet-stream').send(data);
+    const frameName =
+      typeof body.frame_name === 'string' || body.frame_name === null ? body.frame_name : undefined;
+    const data = await this.contents.previewDynamic(contentId, user.userId, {
+      config: configParsed.data,
+      frame_name: frameName,
+    });
+    void reply.header('Cache-Control', 'no-store').type('application/octet-stream').send(data);
   }
 }

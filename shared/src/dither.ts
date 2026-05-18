@@ -3,7 +3,7 @@
 // 输入:8-bit 灰度 buffer(0=黑 255=白),无 alpha。
 // 输出二选一:
 //   - ditherTo1bpp:packed 1bpp,MSB-first,bit=1 白 / bit=0 黑。
-//                  字节序和 firmware/main/display/epd_ssd1683.cc 的 Pack1bppTo2683 对齐。
+//                  字节序和 firmware/main/drivers/display/epd_ssd1683.cc 的 Pack1bppTo2683 对齐。
 //   - ditherToBinary:每像素 0 或 255 灰度,方便前端 putImageData 直接画。
 //
 // 6 种模式:

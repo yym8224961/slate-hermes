@@ -1,6 +1,5 @@
 import { Module } from '@nestjs/common';
 import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
-import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from './infra/config/config.module';
 import { LoggerModule } from './infra/logger/logger.module';
 import { PrismaModule } from './infra/prisma/prisma.module';
@@ -11,9 +10,9 @@ import { UsersModule } from './modules/users/users.module';
 import { DevicesModule } from './modules/devices/devices.module';
 import { GroupsModule } from './modules/groups/groups.module';
 import { ContentsModule } from './modules/contents/contents.module';
-import { RenderModule } from './modules/render/render.module';
+import { ImageRendererModule } from './modules/image-renderer/image-renderer.module';
 import { AudioModule } from './modules/audio/audio.module';
-import { WidgetsModule } from './modules/widgets/widgets.module';
+import { DynamicContentModule } from './modules/dynamic-content/dynamic-content.module';
 import { AppExceptionFilter } from './common/filters/app-exception.filter';
 import { RequestIdInterceptor } from './common/interceptors/request-id.interceptor';
 import { ZodValidationPipe } from './common/pipes/zod-validation.pipe';
@@ -23,7 +22,6 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
   imports: [
     ConfigModule,
     LoggerModule,
-    ScheduleModule.forRoot(),
     PrismaModule,
     BlobModule,
     HealthModule,
@@ -31,10 +29,10 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
     UsersModule,
     GroupsModule,
     DevicesModule,
-    RenderModule,
+    ImageRendererModule,
     AudioModule,
     ContentsModule,
-    WidgetsModule,
+    DynamicContentModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AppExceptionFilter },

@@ -1,5 +1,5 @@
-// eink-frame-server v3 data model
-// 4 个 model: User / Device / Group / Content
+// slate data model
+// User / Device / Group / Content
 // 字段顺序约定: scalar 字段最后两个固定为 createdAt + updatedAt; relation 紧随其后。
 
 generator client {
@@ -43,10 +43,13 @@ model Device {
   ownerUserId     String?   @map("owner_user_id")
   sortOrder       Int       @default(0) @map("sort_order")
   selectedGroupId String?   @map("selected_group_id")
+  lastRegisteredAt DateTime? @map("last_registered_at")
   lastSeenAt      DateTime? @map("last_seen_at")
   batteryPct      Int?      @map("battery_pct")
   rssiDbm         Int?      @map("rssi_dbm")
   fwVersion       String?   @map("fw_version") @db.VarChar(32)
+  freeHeap        Int?      @map("free_heap")
+  fwBuildTs       String?   @map("fw_build_ts") @db.VarChar(32)
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
@@ -54,6 +57,7 @@ model Device {
   selectedGroup Group? @relation("DeviceSelectedGroup", fields: [selectedGroupId], references: [id], onDelete: SetNull)
 
   @@index([ownerUserId, sortOrder])
+  @@index([secretHash])
   @@index([selectedGroupId])
   @@index([lastSeenAt])
   @@map("devices")
@@ -80,17 +84,16 @@ model Content {
   id        String    @id @default(cuid())
   groupId   String    @map("group_id")
   sortOrder Int       @map("sort_order") // group 内的位置序号；与 Device/Group 的 sortOrder 同义
-  caption   String?   @db.VarChar(64)
+  frameName String?   @map("frame_name") @db.VarChar(64)
   imageEtag String    @map("image_etag") @db.VarChar(64)
   audioEtag String?   @map("audio_etag") @db.VarChar(64)
   imageSize Int       @map("image_size")
   audioSize Int?      @map("audio_size")
   // image = 用户上传图片；dynamic = 后端按 dynamicType+dynamicConfig 周期渲染。
   kind      ContentKind @default(image)
-  // 仅 kind=dynamic 时有意义。dynamicType 对应 modules/widgets/definitions/*.json 的 type。
+  // 仅 kind=dynamic 时有意义。dynamicType 对应 shared DynamicType。
   dynamicType      String?   @map("dynamic_type") @db.VarChar(32)
   dynamicConfig    Json?     @map("dynamic_config")
-  // dynamicType=dashboard 时存外部 push 进来的最近一次 payload；其他 dynamic 存 provider.fetchData 的快照。
   dynamicData      Json?     @map("dynamic_data")
   dynamicLastRunAt DateTime? @map("dynamic_last_run_at")
   dynamicNextRunAt DateTime? @map("dynamic_next_run_at")

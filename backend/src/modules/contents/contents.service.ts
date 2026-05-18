@@ -1,8 +1,8 @@
 import { createId } from '@paralleldrive/cuid2';
-import { Inject, Injectable, Logger, forwardRef } from '@nestjs/common';
-import type { Prisma } from '@prisma/client';
+import { Injectable, Logger } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
+import type { ContentKind } from '@prisma/client';
 import {
-  CreateDynamicContentRequest,
   DynamicConfig,
   type ContentDetailT,
   type ContentMutationResponseT,
@@ -11,63 +11,61 @@ import {
   type DynamicConfigResponseT,
   type ManifestResponseT,
 } from 'shared';
-import { BlobService, type BlobKind } from '../../infra/blob/blob.service';
+import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeETag } from '../../common/etag/etag.util';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/errors';
 import { AudioService } from '../audio/audio.service';
 import { GroupsService } from '../groups/groups.service';
-import { RenderService } from '../render/render.service';
-import { WidgetRegistry } from '../widgets/widget-registry';
-import { DynamicContentRendererService } from '../widgets/dynamic-content-renderer.service';
+import { ImageRendererService } from '../image-renderer/image-renderer.service';
+import { DynamicContentRegistry } from '../dynamic-content/dynamic-content-registry';
+import { DynamicContentRendererService } from '../dynamic-content/dynamic-content-renderer.service';
+import { datePartsInTz, timezoneFromConfig } from '../dynamic-content/timezone';
 import type { ParsedContentUpload } from './multipart.parser';
 
 interface ContentRow {
   id: string;
+  groupId?: string;
   sortOrder: number;
-  caption: string | null;
+  frameName: string | null;
   imageEtag: string;
   audioEtag: string | null;
   imageSize: number;
   audioSize: number | null;
-  kind: 'image' | 'dynamic';
+  kind: ContentKind;
   dynamicType: string | null;
+  dynamicNextRunAt?: Date | null;
+  dynamicConfig?: Prisma.JsonValue | null;
+  dynamicData?: Prisma.JsonValue | null;
+  dynamicLastRunAt?: Date | null;
+  dynamicLastError?: string | null;
 }
+
+interface StatusBarTextSource {
+  kind: ContentKind;
+  frameName: string | null;
+  dynamicType: string | null;
+  dynamicConfig?: Prisma.JsonValue | null;
+  dynamicData?: Prisma.JsonValue | null;
+}
+
+export const MAX_DYNAMIC_CONTENTS_PER_GROUP = 20;
 
 const CONTENT_SELECT = {
   id: true,
+  groupId: true,
   sortOrder: true,
-  caption: true,
+  frameName: true,
   imageEtag: true,
   audioEtag: true,
   imageSize: true,
   audioSize: true,
   kind: true,
   dynamicType: true,
+  dynamicNextRunAt: true,
+  dynamicConfig: true,
+  dynamicData: true,
 } as const;
-
-export const MAX_DYNAMIC_CONTENTS_PER_GROUP = 10;
-
-function nextWakeSec(nextRunAt: Date | null): number | null {
-  if (!nextRunAt) return null;
-  return Math.max(Math.ceil((nextRunAt.getTime() - Date.now()) / 1000), 0);
-}
-
-function toMutationResponse(
-  contentId: string,
-  seq: number,
-  imageEtag: string,
-  audioEtag: string | null,
-  groupEtag: string
-): ContentMutationResponseT {
-  return {
-    content_id: contentId,
-    seq,
-    image_etag: imageEtag,
-    audio_etag: audioEtag,
-    group_etag: groupEtag,
-  };
-}
 
 @Injectable()
 export class ContentsService {
@@ -77,11 +75,10 @@ export class ContentsService {
     private readonly prisma: PrismaService,
     private readonly blob: BlobService,
     private readonly groups: GroupsService,
-    private readonly render: RenderService,
+    private readonly imageRenderer: ImageRendererService,
     private readonly audio: AudioService,
-    @Inject(forwardRef(() => DynamicContentRendererService))
-    private readonly dynamicRenderer: DynamicContentRendererService,
-    private readonly widgetRegistry: WidgetRegistry
+    private readonly dynamicContentRegistry: DynamicContentRegistry,
+    private readonly dynamicRenderer: DynamicContentRendererService
   ) {}
 
   async assertReadable(gid: string, scope: { userId?: string; deviceId?: string }): Promise<void> {
@@ -90,9 +87,21 @@ export class ContentsService {
       select: { ownerUserId: true },
     });
     if (!group) throw new NotFoundError('相册不存在');
-    if (scope.userId !== undefined && group.ownerUserId !== scope.userId) {
-      throw new NotFoundError('相册不存在');
+    if (scope.userId !== undefined) {
+      if (group.ownerUserId !== scope.userId) throw new NotFoundError('相册不存在');
+      return;
     }
+    if (scope.deviceId !== undefined) {
+      const device = await this.prisma.device.findUnique({
+        where: { id: scope.deviceId },
+        select: { selectedGroupId: true, ownerUserId: true },
+      });
+      if (!device || device.selectedGroupId !== gid || device.ownerUserId !== group.ownerUserId) {
+        throw new NotFoundError('相册不存在');
+      }
+      return;
+    }
+    throw new NotFoundError('相册不存在');
   }
 
   async manifest(
@@ -105,7 +114,7 @@ export class ContentsService {
       include: {
         contents: {
           orderBy: { sortOrder: 'asc' },
-          select: { ...CONTENT_SELECT, dynamicNextRunAt: true },
+          select: CONTENT_SELECT,
         },
       },
     });
@@ -146,22 +155,18 @@ export class ContentsService {
       orderBy: { sortOrder: 'asc' },
       select: {
         ...CONTENT_SELECT,
-        groupId: true,
-        dynamicConfig: true,
-        dynamicData: true,
         dynamicLastRunAt: true,
-        dynamicNextRunAt: true,
         dynamicLastError: true,
       },
     });
     return rows.map((row) => ({
       ...this.toSummary(row),
       group_id: row.groupId,
-      dynamic_config: row.dynamicConfig as unknown,
-      dynamic_data: row.dynamicData as unknown,
+      dynamic_config: row.dynamicConfig ?? null,
+      dynamic_data: row.dynamicData ?? null,
       dynamic_last_rendered_at: row.dynamicLastRunAt?.toISOString() ?? null,
       dynamic_next_render_at: row.dynamicNextRunAt?.toISOString() ?? null,
-      dynamic_render_error: row.dynamicLastError,
+      dynamic_render_error: row.dynamicLastError ?? null,
     }));
   }
 
@@ -171,7 +176,7 @@ export class ContentsService {
   ): Promise<ContentSummaryT> {
     const content = await this.prisma.content.findUnique({
       where: { id: contentId },
-      select: { ...CONTENT_SELECT, groupId: true, dynamicNextRunAt: true },
+      select: CONTENT_SELECT,
     });
     if (!content) throw new NotFoundError('内容不存在');
     await this.assertReadable(content.groupId, scope);
@@ -185,7 +190,7 @@ export class ContentsService {
         kind: true,
         dynamicType: true,
         dynamicConfig: true,
-        caption: true,
+        frameName: true,
         groupId: true,
       },
     });
@@ -198,7 +203,14 @@ export class ContentsService {
     return {
       dynamic_type: config.type,
       config,
-      title: content.caption,
+      frame_name: content.frameName,
+      device_status_bar_text: deviceStatusBarText({
+        frameName: content.frameName,
+        kind: 'dynamic',
+        dynamicType: content.dynamicType,
+        dynamicConfig: content.dynamicConfig,
+        dynamicData: null,
+      }),
     };
   }
 
@@ -227,12 +239,36 @@ export class ContentsService {
     });
     if (!content) throw new NotFoundError('内容不存在');
     await this.assertReadable(content.groupId, scope);
-    if (!content.audioEtag || !content.audioSize) {
-      throw new NotFoundError('该内容没有音频');
-    }
+    if (!content.audioEtag || !content.audioSize) throw new NotFoundError('该内容没有音频');
     const data = await this.blob.read(content.groupId, content.id, 'audio');
     if (!data) throw new NotFoundError('音频文件丢失');
     return { data, etag: content.audioEtag };
+  }
+
+  async previewDynamicDirect(raw: {
+    dynamic_type: string;
+    config: unknown;
+    frame_name?: string | null;
+  }): Promise<Buffer> {
+    const config = DynamicConfig.parse(raw.config);
+    if (config.type !== raw.dynamic_type) {
+      throw new ValidationError(
+        `dynamic_type 与 config.type 不一致: ${raw.dynamic_type} vs ${config.type}`
+      );
+    }
+    return this.dynamicRenderer.renderPreviewDirect(
+      raw.dynamic_type,
+      config,
+      raw.frame_name ?? defaultFrameName(raw.dynamic_type, config)
+    );
+  }
+
+  async previewDynamic(
+    contentId: string,
+    ownerUserId: string,
+    body: { config: unknown; frame_name?: string | null }
+  ): Promise<Buffer> {
+    return this.dynamicRenderer.renderPreview(contentId, ownerUserId, body.config, body.frame_name);
   }
 
   async appendImage(
@@ -242,8 +278,7 @@ export class ContentsService {
   ): Promise<ContentMutationResponseT> {
     await this.groups.assertOwned(gid, ownerUserId);
     if (!parsed.hasImage) throw new ValidationError('请上传图片', { code: 'image_required' });
-    const seq = await this.nextSortOrder(gid);
-    return this.createImage(gid, seq, parsed);
+    return this.createImage(gid, parsed);
   }
 
   async appendDynamic(
@@ -252,13 +287,9 @@ export class ContentsService {
     raw: CreateDynamicContentRequestT
   ): Promise<ContentMutationResponseT> {
     await this.groups.assertOwned(gid, ownerUserId);
-    const top = CreateDynamicContentRequest.safeParse(raw);
-    if (!top.success) throw new ValidationError(`请求体非法: ${top.error.message}`);
-
-    const { dynamic_type, config, title } = top.data;
-    const entry = this.widgetRegistry.get(dynamic_type);
+    const { dynamic_type, config, frame_name } = raw;
+    const entry = this.dynamicContentRegistry.get(dynamic_type);
     if (!entry) throw new ValidationError(`未知动态类型: ${dynamic_type}`);
-
     const validatedConfig = DynamicConfig.parse(config);
     if (validatedConfig.type !== dynamic_type) {
       throw new ValidationError(
@@ -266,64 +297,60 @@ export class ContentsService {
       );
     }
 
-    const dynamicCount = await this.prisma.content.count({
-      where: { groupId: gid, kind: 'dynamic' },
-    });
-    if (dynamicCount >= MAX_DYNAMIC_CONTENTS_PER_GROUP) {
-      throw new ValidationError(
-        `该相册动态内容数已达上限 ${MAX_DYNAMIC_CONTENTS_PER_GROUP}，请先删除一些`,
-        {
-          code: 'dynamic_limit',
-        }
-      );
-    }
-
-    const seq = await this.nextSortOrder(gid);
     const contentId = createId();
     const placeholderEtag = computeETag(`dynamic-init:${contentId}`);
+    let created: { seq: number; didCreate: boolean } = { seq: -1, didCreate: false };
     try {
-      await this.prisma.content.create({
-        data: {
-          id: contentId,
-          groupId: gid,
-          sortOrder: seq,
-          caption: title ?? null,
-          imageEtag: placeholderEtag,
-          imageSize: 0,
-          kind: 'dynamic',
-          dynamicType: dynamic_type,
-          dynamicConfig: validatedConfig as unknown as Prisma.InputJsonValue,
-          dynamicNextRunAt: new Date(0),
-        },
+      const seq = await this.prisma.$transaction(async (tx) => {
+        await this.lockGroupForContentOrder(tx, gid);
+        const dynamicCount = await tx.content.count({ where: { groupId: gid, kind: 'dynamic' } });
+        if (dynamicCount >= MAX_DYNAMIC_CONTENTS_PER_GROUP) {
+          throw new ValidationError(`该相册动态内容数已达上限 ${MAX_DYNAMIC_CONTENTS_PER_GROUP}`, {
+            code: 'dynamic_limit',
+          });
+        }
+        const maxSeq = await tx.content.aggregate({
+          where: { groupId: gid },
+          _max: { sortOrder: true },
+        });
+        const nextSeq = (maxSeq._max.sortOrder ?? -1) + 1;
+        await tx.content.create({
+          data: {
+            id: contentId,
+            groupId: gid,
+            sortOrder: nextSeq,
+            frameName: frame_name ?? defaultFrameName(dynamic_type, validatedConfig),
+            kind: 'dynamic',
+            dynamicType: dynamic_type,
+            dynamicConfig: validatedConfig as unknown as Prisma.InputJsonValue,
+            imageEtag: placeholderEtag,
+            imageSize: 0,
+            dynamicNextRunAt: new Date(0),
+          },
+        });
+        return nextSeq;
       });
-    } catch (err) {
-      const code = (err as { code?: string }).code;
-      if (code === 'P2002') throw new ConflictError('内容序号已存在');
-      throw err;
-    }
-
-    try {
+      created = { seq, didCreate: true };
       const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, { force: true });
-      return toMutationResponse(contentId, seq, rendered.imageEtag, null, rendered.groupEtag);
+      return this.toMutationResponse(contentId, seq, rendered.imageEtag, null, rendered.groupEtag);
     } catch (err) {
-      this.logger.warn(
-        `首次渲染动态内容失败，回滚 ${contentId}: ${err instanceof Error ? err.message : String(err)}`
-      );
-      await this.blob.delete(gid, contentId, 'image').catch((rollbackErr) => {
-        this.logger.warn(
-          `首次渲染失败后的 image blob 回滚失败 contentId=${contentId}: ${formatError(rollbackErr)}`
-        );
-      });
-      await this.prisma.content.delete({ where: { id: contentId } }).catch((rollbackErr) => {
-        this.logger.warn(
-          `首次渲染失败后的 DB 回滚失败 contentId=${contentId}: ${formatError(rollbackErr)}`
-        );
-      });
-      await this.groups.recomputeGroupEtag(gid).catch((rollbackErr) => {
-        this.logger.warn(
-          `首次渲染失败后的 group etag 回滚失败 gid=${gid}: ${formatError(rollbackErr)}`
-        );
-      });
+      await this.blob.delete(gid, contentId, 'image').catch(() => {});
+      if (created.didCreate) {
+        await this.prisma
+          .$transaction(async (tx) => {
+            await this.lockGroupForContentOrder(tx, gid);
+            await tx.content.delete({ where: { id: contentId } });
+            await this.compactSortOrders(tx, gid);
+            await this.groups.recomputeGroupEtag(gid, tx);
+          })
+          .catch((rollbackErr: unknown) => {
+            this.logger.warn(
+              `创建动态内容失败后的 DB 回滚失败 content=${contentId}: ${formatError(rollbackErr)}`
+            );
+          });
+      }
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')
+        throw new ConflictError('内容序号已存在');
       throw err;
     }
   }
@@ -335,8 +362,8 @@ export class ContentsService {
   ): Promise<ContentMutationResponseT> {
     const content = await this.requireContent(contentId);
     await this.groups.assertOwned(content.groupId, ownerUserId);
-    if (content.kind !== 'image' && parsed.hasImage) {
-      throw new ValidationError('动态内容的画面由服务端生成，不能上传图片替换');
+    if (content.kind !== 'image' && (parsed.hasImage || parsed.hasAudio)) {
+      throw new ValidationError('动态内容由服务端生成，不支持上传图片或音频');
     }
     return this.updateImage(content.groupId, content.sortOrder, contentId, parsed);
   }
@@ -344,72 +371,149 @@ export class ContentsService {
   async patchDynamic(
     contentId: string,
     ownerUserId: string,
-    body: { title?: string | null; config?: unknown }
+    body: { frame_name?: string | null; config?: unknown }
   ): Promise<ContentMutationResponseT> {
     const content = await this.prisma.content.findUnique({
       where: { id: contentId },
-      select: { id: true, groupId: true, sortOrder: true, kind: true, dynamicType: true },
+      select: {
+        id: true,
+        groupId: true,
+        sortOrder: true,
+        kind: true,
+        dynamicType: true,
+        audioEtag: true,
+      },
     });
     if (!content) throw new NotFoundError('内容不存在');
-    if (content.kind !== 'dynamic') throw new ValidationError('该内容不是动态类型');
+    if (content.kind !== 'dynamic' || !content.dynamicType)
+      throw new ValidationError('该内容不是动态类型');
     await this.groups.assertOwned(content.groupId, ownerUserId);
-
-    const data: Prisma.ContentUpdateInput = {};
-    if (body.title !== undefined) data.caption = body.title;
-    if (body.config !== undefined) {
-      const validated = DynamicConfig.parse(body.config);
-      if (validated.type !== content.dynamicType) {
-        throw new ValidationError(
-          `不能在已有动态内容上改 type（${content.dynamicType} → ${validated.type}），请删除后重建`
-        );
-      }
-      data.dynamicConfig = validated as unknown as Prisma.InputJsonValue;
-    }
-    if (Object.keys(data).length === 0) {
+    if (body.frame_name === undefined && body.config === undefined) {
       throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
     }
 
+    const data: Prisma.ContentUpdateInput = {};
+    if (body.frame_name !== undefined) data.frameName = body.frame_name;
+    if (body.config !== undefined) {
+      const validated = DynamicConfig.parse(body.config);
+      const currentType = content.dynamicType;
+      if (validated.type !== currentType) {
+        throw new ValidationError(
+          `不能在已有动态内容上改 type（${currentType} → ${validated.type}），请删除后重建`
+        );
+      }
+      data.dynamicConfig = validated as unknown as Prisma.InputJsonValue;
+      if (body.frame_name === undefined && currentType !== 'dashboard') {
+        data.frameName = defaultFrameName(currentType, validated);
+      }
+    }
     await this.prisma.content.update({ where: { id: contentId }, data });
     const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, { force: true });
-    const latest = await this.prisma.content.findUnique({
-      where: { id: contentId },
-      select: { audioEtag: true },
-    });
-    return toMutationResponse(
+    return this.toMutationResponse(
       contentId,
       content.sortOrder,
       rendered.imageEtag,
-      latest?.audioEtag ?? null,
+      content.audioEtag,
       rendered.groupEtag
     );
   }
 
-  async patchTitle(
+  async patchFrameName(
     contentId: string,
     ownerUserId: string,
-    title: string | null | undefined
+    frameName: string | null | undefined
   ): Promise<ContentMutationResponseT> {
     const content = await this.requireContent(contentId);
     await this.groups.assertOwned(content.groupId, ownerUserId);
-    if (title === undefined) {
+    if (frameName === undefined) {
       throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
     }
-    await this.prisma.content.update({
-      where: { id: contentId },
-      data: { caption: title },
-    });
+    await this.prisma.content.update({ where: { id: contentId }, data: { frameName } });
+    if (content.kind === 'dynamic') {
+      const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, { force: true });
+      return this.toMutationResponse(
+        contentId,
+        content.sortOrder,
+        rendered.imageEtag,
+        content.audioEtag,
+        rendered.groupEtag
+      );
+    }
     const groupEtag = await this.groups.recomputeGroupEtag(content.groupId);
-    const latest = await this.prisma.content.findUnique({
-      where: { id: contentId },
-      select: { imageEtag: true, audioEtag: true },
-    });
-    return toMutationResponse(
+    return this.toMutationResponse(
       contentId,
       content.sortOrder,
-      latest?.imageEtag ?? '',
-      latest?.audioEtag ?? null,
+      content.imageEtag,
+      content.audioEtag,
       groupEtag
     );
+  }
+
+  async ingestDashboard(
+    contentId: string,
+    data: unknown
+  ): Promise<ContentMutationResponseT & { updatedAt: Date }> {
+    const content = await this.prisma.content.findUnique({
+      where: { id: contentId },
+      select: {
+        id: true,
+        groupId: true,
+        sortOrder: true,
+        kind: true,
+        dynamicType: true,
+        audioEtag: true,
+      },
+    });
+    if (!content || content.kind !== 'dynamic' || content.dynamicType !== 'dashboard') {
+      throw new NotFoundError('dashboard 内容不存在');
+    }
+    const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, {
+      force: true,
+      dataOverride: data,
+    });
+    return {
+      ...this.toMutationResponse(
+        contentId,
+        content.sortOrder,
+        rendered.imageEtag,
+        content.audioEtag,
+        rendered.groupEtag
+      ),
+      updatedAt: rendered.renderedAt,
+    };
+  }
+
+  async refreshDynamicContent(
+    contentId: string,
+    ownerUserId: string
+  ): Promise<ContentMutationResponseT & { updatedAt: Date }> {
+    const content = await this.prisma.content.findUnique({
+      where: { id: contentId },
+      select: {
+        id: true,
+        groupId: true,
+        sortOrder: true,
+        kind: true,
+        dynamicType: true,
+        audioEtag: true,
+        group: { select: { ownerUserId: true } },
+      },
+    });
+    if (!content) throw new NotFoundError('内容不存在');
+    if (content.kind !== 'dynamic' || !content.dynamicType)
+      throw new ValidationError('非动态内容不支持手动刷新');
+    if (content.group.ownerUserId !== ownerUserId) throw new NotFoundError('内容不存在');
+    const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, { force: true });
+    return {
+      ...this.toMutationResponse(
+        contentId,
+        content.sortOrder,
+        rendered.imageEtag,
+        content.audioEtag,
+        rendered.groupEtag
+      ),
+      updatedAt: rendered.renderedAt,
+    };
   }
 
   async delete(contentId: string, ownerUserId: string): Promise<void> {
@@ -422,52 +526,43 @@ export class ContentsService {
       this.blob.delete(content.groupId, contentId, 'audio'),
     ]);
     try {
-      await this.prisma.content.delete({ where: { id: contentId } });
+      await this.prisma.$transaction(async (tx) => {
+        await this.lockGroupForContentOrder(tx, content.groupId);
+        await tx.content.delete({ where: { id: contentId } });
+        await this.compactSortOrders(tx, content.groupId);
+        await this.groups.recomputeGroupEtag(content.groupId, tx);
+      });
     } catch (err) {
-      this.logger.error(`delete: blob deleted but db delete failed contentId=${contentId}`, err);
-      await Promise.all([
-        this.restoreBlob(content.groupId, contentId, 'image', previousImage, 'delete DB 失败'),
-        this.restoreBlob(content.groupId, contentId, 'audio', previousAudio, 'delete DB 失败'),
-      ]);
+      if (previousImage)
+        await this.blob.write(content.groupId, contentId, 'image', previousImage).catch(() => {});
+      if (previousAudio)
+        await this.blob.write(content.groupId, contentId, 'audio', previousAudio).catch(() => {});
       throw err;
     }
-    await this.groups.recomputeGroupEtag(content.groupId);
   }
 
   async deleteAudio(contentId: string, ownerUserId: string): Promise<{ group_etag: string }> {
-    const content = await this.prisma.content.findUnique({
-      where: { id: contentId },
-      select: { id: true, groupId: true, audioEtag: true, audioSize: true },
-    });
-    if (!content) throw new NotFoundError('内容不存在');
+    const content = await this.requireContent(contentId);
     await this.groups.assertOwned(content.groupId, ownerUserId);
-    const previousAudio = await this.blob.read(content.groupId, contentId, 'audio');
-    await this.prisma.content.update({
-      where: { id: contentId },
-      data: { audioEtag: null, audioSize: null },
-    });
+    const previousAudioBytes = await this.blob.read(content.groupId, contentId, 'audio');
+    await this.blob.delete(content.groupId, contentId, 'audio');
     try {
-      await this.blob.delete(content.groupId, contentId, 'audio');
+      await this.prisma.content.update({
+        where: { id: contentId },
+        data: { audioEtag: null, audioSize: null },
+      });
+      const group_etag = await this.groups.recomputeGroupEtag(content.groupId);
+      return { group_etag };
     } catch (err) {
-      this.logger.error(
-        `deleteAudio: db updated but blob delete failed contentId=${contentId}`,
-        err
-      );
-      await this.prisma.content
-        .update({
-          where: { id: contentId },
-          data: { audioEtag: content.audioEtag, audioSize: content.audioSize },
-        })
-        .catch((rollbackErr) => {
-          this.logger.warn(
-            `deleteAudio 失败后的 DB 回滚失败 contentId=${contentId}: ${formatError(rollbackErr)}`
-          );
-        });
-      await this.restoreBlob(content.groupId, contentId, 'audio', previousAudio, 'deleteAudio');
+      if (previousAudioBytes) {
+        await this.blob
+          .write(content.groupId, contentId, 'audio', previousAudioBytes)
+          .catch((restoreErr: unknown) => {
+            this.logger.warn(`恢复音频文件失败 content=${contentId}: ${String(restoreErr)}`);
+          });
+      }
       throw err;
     }
-    const group_etag = await this.groups.recomputeGroupEtag(content.groupId);
-    return { group_etag };
   }
 
   async reorder(
@@ -476,51 +571,162 @@ export class ContentsService {
     order: string[]
   ): Promise<{ group_etag: string }> {
     await this.groups.assertOwned(gid, ownerUserId);
-    const all = await this.prisma.content.findMany({
-      where: { groupId: gid },
-      select: { id: true },
-    });
-    const allIds = new Set(all.map((content) => content.id));
-    const orderSet = new Set(order);
-    if (
-      order.length !== allIds.size ||
-      orderSet.size !== order.length ||
-      !order.every((id) => allIds.has(id))
-    ) {
-      throw new ValidationError('排序列表须覆盖该组的所有内容且不重复', {
-        code: 'order_mismatch',
+    const group_etag = await this.prisma.$transaction(async (tx) => {
+      await this.lockGroupForContentOrder(tx, gid);
+      const all = await tx.content.findMany({
+        where: { groupId: gid },
+        select: { id: true },
       });
-    }
-
-    await this.prisma.$transaction(async (tx) => {
+      const allIds = new Set(all.map((content) => content.id));
+      const orderSet = new Set(order);
+      if (
+        order.length !== allIds.size ||
+        orderSet.size !== order.length ||
+        !order.every((id) => allIds.has(id))
+      ) {
+        throw new ValidationError('排序列表须覆盖该组的所有内容且不重复', {
+          code: 'order_mismatch',
+        });
+      }
       for (let i = 0; i < order.length; i++) {
         await tx.content.update({ where: { id: order[i]! }, data: { sortOrder: -(i + 1) } });
       }
       for (let i = 0; i < order.length; i++) {
         await tx.content.update({ where: { id: order[i]! }, data: { sortOrder: i } });
       }
+      return this.groups.recomputeGroupEtag(gid, tx);
     });
-    const group_etag = await this.groups.recomputeGroupEtag(gid);
     return { group_etag };
   }
 
-  private toSummary(row: ContentRow & { dynamicNextRunAt?: Date | null }): ContentSummaryT {
+  private toSummary(row: ContentRow): ContentSummaryT {
     return {
       content_id: row.id,
       seq: row.sortOrder,
-      title: row.caption,
+      frame_name: row.frameName,
+      device_status_bar_text: deviceStatusBarText(row),
       image_etag: row.imageEtag,
       audio_etag: row.audioEtag,
       image_size: row.imageSize,
       audio_size: row.audioSize,
       kind: row.kind === 'dynamic' ? 'dynamic' : 'image',
       dynamic_type: row.dynamicType,
-      next_wake_sec:
-        row.kind === 'dynamic'
-          ? (nextWakeSec(row.dynamicNextRunAt ?? null) ??
-            (row.dynamicType ? this.widgetRegistry.defaultTtlSec(row.dynamicType) : null))
-          : null,
+      next_wake_sec: nextWakeSec(row.dynamicNextRunAt ?? null),
     };
+  }
+
+  private async createImage(
+    gid: string,
+    parsed: ParsedContentUpload
+  ): Promise<ContentMutationResponseT> {
+    const { image, audio } = await this.renderUpload(parsed);
+    if (!image) throw new ValidationError('创建图片内容时必须上传图片');
+    const contentId = createId();
+    let seq: number;
+    try {
+      await this.blob.write(gid, contentId, 'image', image.bytes);
+      if (audio) await this.blob.write(gid, contentId, 'audio', audio.bytes);
+      seq = await this.prisma.$transaction(async (tx) => {
+        await this.lockGroupForContentOrder(tx, gid);
+        const maxSeq = await tx.content.aggregate({
+          where: { groupId: gid },
+          _max: { sortOrder: true },
+        });
+        const nextSeq = (maxSeq._max.sortOrder ?? -1) + 1;
+        await tx.content.create({
+          data: {
+            id: contentId,
+            groupId: gid,
+            sortOrder: nextSeq,
+            frameName: parsed.hasFrameName ? parsed.frameName : null,
+            imageEtag: image.etag,
+            imageSize: image.size,
+            audioEtag: audio?.etag ?? null,
+            audioSize: audio?.size ?? null,
+            kind: 'image',
+          },
+        });
+        return nextSeq;
+      });
+    } catch (err) {
+      await Promise.all([
+        this.blob.delete(gid, contentId, 'image').catch(() => {}),
+        this.blob.delete(gid, contentId, 'audio').catch(() => {}),
+      ]);
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')
+        throw new ConflictError('内容序号已存在');
+      throw err;
+    }
+    const groupEtag = await this.groups.recomputeGroupEtag(gid);
+    return this.toMutationResponse(contentId, seq, image.etag, audio?.etag ?? null, groupEtag);
+  }
+
+  private async updateImage(
+    gid: string,
+    seq: number,
+    contentId: string,
+    parsed: ParsedContentUpload
+  ): Promise<ContentMutationResponseT> {
+    const { image, audio } = await this.renderUpload(parsed);
+    const data: Prisma.ContentUpdateInput = {};
+    if (parsed.hasFrameName) data.frameName = parsed.frameName;
+    const previousImageBytes = image ? await this.blob.read(gid, contentId, 'image') : null;
+    const previousAudioBytes = audio ? await this.blob.read(gid, contentId, 'audio') : null;
+    if (parsed.hasFrameName === false && !image && !audio) {
+      throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
+    }
+
+    let dbUpdated = false;
+    try {
+      if (image) {
+        await this.blob.write(gid, contentId, 'image', image.bytes);
+        data.imageEtag = image.etag;
+        data.imageSize = image.size;
+      }
+      if (audio) {
+        await this.blob.write(gid, contentId, 'audio', audio.bytes);
+        data.audioEtag = audio.etag;
+        data.audioSize = audio.size;
+      }
+      const updated = await this.prisma.content.update({
+        where: { id: contentId },
+        data,
+        select: { imageEtag: true, audioEtag: true },
+      });
+      dbUpdated = true;
+      const groupEtag = await this.groups.recomputeGroupEtag(gid);
+      return this.toMutationResponse(
+        contentId,
+        seq,
+        updated.imageEtag,
+        updated.audioEtag,
+        groupEtag
+      );
+    } catch (err) {
+      if (!dbUpdated) {
+        await Promise.all([
+          restoreBlob(
+            this.blob,
+            gid,
+            contentId,
+            'image',
+            previousImageBytes,
+            Boolean(image),
+            this.logger
+          ).catch(() => {}),
+          restoreBlob(
+            this.blob,
+            gid,
+            contentId,
+            'audio',
+            previousAudioBytes,
+            Boolean(audio),
+            this.logger
+          ).catch(() => {}),
+        ]);
+      }
+      throw err;
+    }
   }
 
   private async renderUpload(parsed: ParsedContentUpload): Promise<{
@@ -529,11 +735,11 @@ export class ContentsService {
   }> {
     let image: { bytes: Buffer; etag: string; size: number } | null = null;
     if (parsed.hasImage && parsed.imageBuf) {
-      const rendered = await this.render.renderTo1bpp(parsed.imageBuf, {
+      const rendered = await this.imageRenderer.renderTo1bpp(parsed.imageBuf, {
         threshold: parsed.threshold,
         mode: parsed.mode,
       });
-      this.render.validateFrameSize(rendered.data);
+      this.imageRenderer.validateFrameSize(rendered.data);
       image = {
         bytes: rendered.data,
         etag: computeETag(rendered.data),
@@ -549,169 +755,173 @@ export class ContentsService {
     return { image, audio };
   }
 
-  private async createImage(
-    gid: string,
-    seq: number,
-    parsed: ParsedContentUpload
-  ): Promise<ContentMutationResponseT> {
-    const { image, audio } = await this.renderUpload(parsed);
-    if (!image) throw new ValidationError('创建图片内容时必须上传图片');
-
-    const contentId = createId();
-    try {
-      await this.blob.write(gid, contentId, 'image', image.bytes);
-      if (audio) await this.blob.write(gid, contentId, 'audio', audio.bytes);
-      await this.prisma.content.create({
-        data: {
-          id: contentId,
-          groupId: gid,
-          sortOrder: seq,
-          caption: parsed.hasTitle ? parsed.title : null,
-          imageEtag: image.etag,
-          imageSize: image.size,
-          audioEtag: audio?.etag ?? null,
-          audioSize: audio?.size ?? null,
-        },
-      });
-    } catch (err) {
-      await Promise.all([
-        this.blob.delete(gid, contentId, 'image').catch((rollbackErr) => {
-          this.logger.warn(
-            `创建图片内容失败后的 image blob 回滚失败 contentId=${contentId}: ${formatError(rollbackErr)}`
-          );
-        }),
-        this.blob.delete(gid, contentId, 'audio').catch((rollbackErr) => {
-          this.logger.warn(
-            `创建图片内容失败后的 audio blob 回滚失败 contentId=${contentId}: ${formatError(rollbackErr)}`
-          );
-        }),
-      ]);
-      const code = (err as { code?: string }).code;
-      if (code === 'P2002') throw new ConflictError('内容序号已存在');
-      throw err;
-    }
-
-    const groupEtag = await this.groups.recomputeGroupEtag(gid);
-    return toMutationResponse(contentId, seq, image.etag, audio?.etag ?? null, groupEtag);
+  private async lockGroupForContentOrder(tx: Prisma.TransactionClient, gid: string): Promise<void> {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>`
+      SELECT id FROM \`groups\` WHERE id = ${gid} FOR UPDATE
+    `;
+    if (rows.length === 0) throw new NotFoundError('相册不存在');
   }
 
-  private async updateImage(
-    gid: string,
-    seq: number,
-    contentId: string,
-    parsed: ParsedContentUpload
-  ): Promise<ContentMutationResponseT> {
-    const { image, audio } = await this.renderUpload(parsed);
-    const data: Prisma.ContentUpdateInput = {};
-    if (parsed.hasTitle) data.caption = parsed.title;
-    if (image) {
-      data.imageEtag = image.etag;
-      data.imageSize = image.size;
-    }
-    if (audio) {
-      data.audioEtag = audio.etag;
-      data.audioSize = audio.size;
-    }
-
-    const previousImage = image ? await this.blob.read(gid, contentId, 'image') : null;
-    const previousAudio = audio ? await this.blob.read(gid, contentId, 'audio') : null;
-    let wroteImage = false;
-    let wroteAudio = false;
-    if (Object.keys(data).length > 0) {
-      try {
-        if (image) {
-          await this.blob.write(gid, contentId, 'image', image.bytes);
-          wroteImage = true;
-        }
-        if (audio) {
-          await this.blob.write(gid, contentId, 'audio', audio.bytes);
-          wroteAudio = true;
-        }
-        await this.prisma.content.update({
-          where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
-          data,
-        });
-      } catch (err) {
-        this.logger.error(
-          `updateImage: blob written but db update failed gid=${gid} seq=${seq}`,
-          err
-        );
-        await Promise.all([
-          wroteImage
-            ? this.restoreBlobAfterFailedUpdate(gid, contentId, 'image', previousImage)
-            : Promise.resolve(),
-          wroteAudio
-            ? this.restoreBlobAfterFailedUpdate(gid, contentId, 'audio', previousAudio)
-            : Promise.resolve(),
-        ]);
-        throw err;
-      }
-    }
-
-    const groupEtag = await this.groups.recomputeGroupEtag(gid);
-    let finalImageEtag = image?.etag ?? null;
-    let finalAudioEtag = audio?.etag ?? null;
-    if (!finalImageEtag || !finalAudioEtag) {
-      const latest = await this.prisma.content.findUnique({
-        where: { groupId_sortOrder: { groupId: gid, sortOrder: seq } },
-        select: { imageEtag: true, audioEtag: true },
-      });
-      finalImageEtag ??= latest?.imageEtag ?? null;
-      finalAudioEtag ??= latest?.audioEtag ?? null;
-    }
-    if (!finalImageEtag) {
-      throw new Error(`imageEtag missing for content gid=${gid} seq=${seq} after update`);
-    }
-    return toMutationResponse(contentId, seq, finalImageEtag, finalAudioEtag, groupEtag);
-  }
-
-  private async nextSortOrder(gid: string): Promise<number> {
-    const last = await this.prisma.content.findFirst({
+  private async compactSortOrders(tx: Prisma.TransactionClient, gid: string): Promise<void> {
+    const rows = await tx.content.findMany({
       where: { groupId: gid },
-      orderBy: { sortOrder: 'desc' },
-      select: { sortOrder: true },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: { id: true },
     });
-    return last ? last.sortOrder + 1 : 0;
+    for (let i = 0; i < rows.length; i++) {
+      await tx.content.update({ where: { id: rows[i]!.id }, data: { sortOrder: -(i + 1) } });
+    }
+    for (let i = 0; i < rows.length; i++) {
+      await tx.content.update({ where: { id: rows[i]!.id }, data: { sortOrder: i } });
+    }
   }
 
-  private async requireContent(
-    contentId: string
-  ): Promise<{ id: string; groupId: string; sortOrder: number; kind: 'image' | 'dynamic' }> {
+  private async requireContent(contentId: string): Promise<{
+    id: string;
+    groupId: string;
+    sortOrder: number;
+    kind: ContentKind;
+    imageEtag: string;
+    audioEtag: string | null;
+  }> {
     const content = await this.prisma.content.findUnique({
       where: { id: contentId },
-      select: { id: true, groupId: true, sortOrder: true, kind: true },
+      select: {
+        id: true,
+        groupId: true,
+        sortOrder: true,
+        kind: true,
+        imageEtag: true,
+        audioEtag: true,
+      },
     });
     if (!content) throw new NotFoundError('内容不存在');
     return content;
   }
 
-  private async restoreBlobAfterFailedUpdate(
-    gid: string,
+  private toMutationResponse(
     contentId: string,
-    kind: BlobKind,
-    previous: Buffer | null
-  ): Promise<void> {
-    await this.restoreBlob(gid, contentId, kind, previous, 'updateImage DB 失败');
+    seq: number,
+    imageEtag: string,
+    audioEtag: string | null,
+    groupEtag: string
+  ): ContentMutationResponseT {
+    return {
+      content_id: contentId,
+      seq,
+      image_etag: imageEtag,
+      audio_etag: audioEtag,
+      group_etag: groupEtag,
+    };
   }
+}
 
-  private async restoreBlob(
-    gid: string,
-    contentId: string,
-    kind: BlobKind,
-    previous: Buffer | null,
-    context: string
-  ): Promise<void> {
-    try {
-      if (previous) {
-        await this.blob.write(gid, contentId, kind, previous);
-      } else {
-        await this.blob.delete(gid, contentId, kind);
-      }
-    } catch (rollbackErr) {
-      this.logger.warn(
-        `${context} 后的 ${kind} blob 回滚失败 contentId=${contentId}: ${formatError(rollbackErr)}`
-      );
-    }
+function nextWakeSec(nextRunAt: Date | null): number | null {
+  if (!nextRunAt) return null;
+  return Math.max(Math.ceil((nextRunAt.getTime() - Date.now()) / 1000), 0);
+}
+
+function defaultFrameName(dynamicType: string | null, config?: unknown): string | null {
+  switch (dynamicType) {
+    case 'daily_calendar':
+      return '日历';
+    case 'month_calendar':
+      return '月历';
+    case 'history_today':
+      return '历史上的今天';
+    case 'weather':
+      return weatherStatusBarText(config);
+    case 'dashboard':
+      return '数据看板';
+    case 'font_test':
+      return '字体测试';
+    default:
+      return null;
+  }
+}
+
+function deviceStatusBarText(row: StatusBarTextSource): string {
+  if (row.kind !== 'dynamic') return row.frameName ?? '';
+  switch (row.dynamicType) {
+    case 'daily_calendar':
+      return dailyCalendarStatusBarText(row.dynamicData, row.dynamicConfig);
+    case 'month_calendar':
+      return monthCalendarStatusBarText(row.dynamicConfig);
+    case 'history_today':
+      return historyTodayStatusBarText(row.dynamicData, row.dynamicConfig);
+    case 'weather':
+      return weatherStatusBarText(row.dynamicConfig);
+    case 'dashboard':
+      return row.frameName ?? '数据看板';
+    case 'font_test':
+      return '字体测试';
+    default:
+      return row.frameName ?? '';
+  }
+}
+
+function dailyCalendarStatusBarText(
+  data: Prisma.JsonValue | null | undefined,
+  config: Prisma.JsonValue | null | undefined
+): string {
+  const parts = datePartsInTz(new Date(), timezoneFromConfig(config));
+  const month = valueText(recordValue(data, 'month')) ?? String(parts.month);
+  const day = valueText(recordValue(data, 'day')) ?? String(parts.day);
+  return `${Number(month)}月${Number(day)}日`;
+}
+
+function monthCalendarStatusBarText(config: Prisma.JsonValue | null | undefined): string {
+  const parts = datePartsInTz(new Date(), timezoneFromConfig(config));
+  return `${parts.year}年${parts.month}月`;
+}
+
+function historyTodayStatusBarText(
+  data: Prisma.JsonValue | null | undefined,
+  config: Prisma.JsonValue | null | undefined
+): string {
+  const label =
+    valueText(recordValue(data, 'dateLabel')) ?? cnMonthDay(new Date(), timezoneFromConfig(config));
+  return `历史上的${label.replace(/\s+/g, '')}`;
+}
+
+function weatherStatusBarText(config: unknown): string {
+  const location = valueText(recordValue(config, 'location_label')) ?? '天气';
+  return location === '天气' ? '天气' : `${location}天气`;
+}
+
+function recordValue(value: unknown, key: string): unknown {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
+}
+
+function valueText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value).trim();
+  return text ? text : null;
+}
+
+function cnMonthDay(date: Date, timeZone: string): string {
+  const parts = datePartsInTz(date, timeZone);
+  return `${parts.month}月${parts.day}日`;
+}
+
+async function restoreBlob(
+  blob: BlobService,
+  groupId: string,
+  contentId: string,
+  kind: 'image' | 'audio',
+  previousBytes: Buffer | null,
+  touched: boolean,
+  logger: Logger
+): Promise<void> {
+  if (!touched) return;
+  try {
+    if (previousBytes) await blob.write(groupId, contentId, kind, previousBytes);
+    else await blob.delete(groupId, contentId, kind);
+  } catch (err) {
+    logger.warn(`恢复 ${kind} blob 失败 content=${contentId}: ${formatError(err)}`);
+    throw err;
   }
 }
 

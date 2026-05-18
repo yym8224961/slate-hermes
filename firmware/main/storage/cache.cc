@@ -268,8 +268,12 @@ bool WriteFrameMeta(const std::string& gid, int idx, const FrameMeta& meta) {
     DirEnsure(GroupDir(gid));
     DirEnsure(FramesDir(gid));
     cJSON* root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "caption", meta.caption.c_str());
-    cJSON_AddNumberToObject(root, "ttl_sec", static_cast<double>(meta.ttl_sec));
+    cJSON_AddStringToObject(root, "status_bar_text", meta.status_bar_text.c_str());
+    if (meta.has_ttl) {
+        cJSON_AddNumberToObject(root, "ttl_sec", static_cast<double>(meta.ttl_sec));
+    } else {
+        cJSON_AddNullToObject(root, "ttl_sec");
+    }
     char* s = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!s) return false;
@@ -286,10 +290,13 @@ bool ReadFrameMeta(const std::string& gid, int idx, FrameMeta& out) {
     std::string json(reinterpret_cast<const char*>(buf.data()), buf.size());
     cJSON* root = cJSON_Parse(json.c_str());
     if (!root) return false;
-    cJSON* cap = cJSON_GetObjectItemCaseSensitive(root, "caption");
+    cJSON* cap = cJSON_GetObjectItemCaseSensitive(root, "status_bar_text");
     cJSON* ttl = cJSON_GetObjectItemCaseSensitive(root, "ttl_sec");
-    if (cJSON_IsString(cap) && cap->valuestring) out.caption = cap->valuestring;
-    if (cJSON_IsNumber(ttl)) out.ttl_sec = static_cast<uint32_t>(ttl->valueint);
+    if (cJSON_IsString(cap) && cap->valuestring) out.status_bar_text = cap->valuestring;
+    if (cJSON_IsNumber(ttl)) {
+        out.has_ttl = true;
+        out.ttl_sec = static_cast<uint32_t>(ttl->valueint);
+    }
     cJSON_Delete(root);
     return true;
 }

@@ -1,2 +1,4 @@
-main/fonts/*.c
-main/fonts/*.h
+build/**
+managed_components/**
+main/generated/**
+components/xiaozhi-fonts/**

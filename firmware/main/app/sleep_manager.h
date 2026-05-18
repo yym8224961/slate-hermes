@@ -15,6 +15,7 @@
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <utility>
 
 struct UiEvent;
 
@@ -30,8 +31,7 @@ class SleepManager {
     void Init(int idle_timeout_min);
     void Disable();  // captive portal 等场景禁用 deep sleep
 
-    // 进睡前最后一刻调用,App 在这里 dispatch wifi 断开事件让状态栏更新,
-    // 然后 EnterDeepSleep 内部立刻 RequestUrgentFullRefresh 把「诚实」画面留在屏上。
+    // 进睡前最后一刻调用。固定状态栏已移除，默认不需要为了状态图标刷新屏幕。
     void SetPreSleepHook(PreSleepHook hook) {
         pre_sleep_hook_ = std::move(hook);
     }
@@ -43,7 +43,7 @@ class SleepManager {
     void EnterDeepSleep();
 
    private:
-    // 当前是否处于 unbound 加速窗口(unbound + 未超 24h + 电量充足)。
+    // 当前是否处于 unbound 加速窗口(unbound + 未超 2h + 电量充足)。
     bool InUnboundGrace(int64_t now_ms) const;
 
     std::atomic<bool>    enabled_{false};

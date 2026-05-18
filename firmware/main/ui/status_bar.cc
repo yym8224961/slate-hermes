@@ -66,14 +66,14 @@ StatusBar::StatusBar(lv_obj_t* parent) {
     lv_label_set_text(battery_pct_lbl_, "");
     lv_obj_align(battery_pct_lbl_, LV_ALIGN_RIGHT_MID, -26, 0);
 
-    // 中央 caption：16px SourceHanSansSC Regular 1bpp。和 BootSplash 同字体,
+    // 中央标题：16px SourceHanSansSC Regular 1bpp。和 BootSplash 同字体,
     // 整固件统一中文风格,EPD 1bpp 渲染最干净（无抗锯齿伪边）。
-    caption_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(caption_label_, &SourceHanSansSC_Regular_slim, 0);
-    lv_obj_set_style_text_color(caption_label_, lv_color_black(), 0);
-    lv_obj_set_style_text_align(caption_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(caption_label_, "");
-    lv_obj_align(caption_label_, LV_ALIGN_CENTER, 0, 0);
+    title_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(title_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_color(title_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(title_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(title_label_, "");
+    lv_obj_align(title_label_, LV_ALIGN_CENTER, 0, 0);
 }
 
 bool StatusBar::SetWifi(bool connected, int rssi) {
@@ -119,10 +119,10 @@ bool StatusBar::SetBattery(int pct, bool charging, bool full) {
 }
 
 bool StatusBar::SetCaption(const std::string& text) {
-    if (text == shown_caption_) return false;
-    shown_caption_ = text;
-    lv_label_set_text(caption_label_, text.c_str());
-    lv_obj_align(caption_label_, LV_ALIGN_CENTER, 0, 0);
+    if (text == shown_title_) return false;
+    shown_title_ = text;
+    lv_label_set_text(title_label_, text.c_str());
+    lv_obj_align(title_label_, LV_ALIGN_CENTER, 0, 0);
     return true;
 }
 

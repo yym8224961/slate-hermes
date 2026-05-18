@@ -1,6 +1,6 @@
 #pragma once
 
-// 顶部 28px 小状态栏：左 WiFi 图标 / 中 caption / 右电量图标。
+// 顶部 28px 小状态栏：左 WiFi 图标 / 中标题 / 右电量图标。
 // 不持有刷屏策略，只 set_text；调用方（FrameScene）决定何时调
 // epd->RequestUrgentPartialRefresh()。
 
@@ -29,12 +29,12 @@ class StatusBar {
     lv_obj_t* wifi_label_      = nullptr;
     lv_obj_t* battery_label_   = nullptr;
     lv_obj_t* battery_pct_lbl_ = nullptr;  // 电池图标左侧的百分比文字
-    lv_obj_t* caption_label_   = nullptr;
+    lv_obj_t* title_label_     = nullptr;
 
     const char* shown_wifi_    = nullptr;
     const char* shown_battery_ = nullptr;
     // 直接缓存最终文本(可能为空,空 = 充电中只剩图标),避免再用 sentinel int 区分
     // "未知"/"隐藏"/"具体百分比"。
     std::string shown_pct_text_;
-    std::string shown_caption_;
+    std::string shown_title_;
 };

@@ -10,11 +10,12 @@
 src/
 ├── index.ts         barrel，re-export 下面所有
 ├── api.ts           顶层常量（API_PREFIX / FRAME_* / AUDIO_*）+ Web 鉴权 schema（Login / Register / Error envelope）
+├── dynamic/         动态内容定义：类型枚举 / config schema / catalog
 ├── types/
 │   ├── device.ts    设备协议：register / poll / state / cycle 的 zod schema
 │   ├── group.ts     group CRUD 与 reorder
 │   ├── content.ts   content manifest / mutation / preview schema
-│   └── dynamic.ts   动态内容 config / ingest schema
+│   └── dynamic.ts   dynamic/ 的兼容 re-export
 ├── dither.ts        6 种 1bpp 抖动算法（纯 TS，无 sharp 依赖）
 └── preprocess.ts    dither 前的灰度预处理（前后端必须按同一顺序调）
 ```
@@ -68,7 +69,7 @@ backend 的 `ZodValidationPipe` 通过 DTO 上的 `static schema = *Request` 校
 
 ## 预处理管线（`preprocess.ts`）
 
-backend `RenderService` 与 frontend `PreviewCanvas` 必须按同一顺序调：
+backend `ImageRendererService` 与 frontend `PreviewCanvas` 必须按同一顺序调：
 
 1. **解码到 RGBA** —— 浏览器 `ImageData` 或 sharp `.raw()`
 2. **`rgbaToGray`** —— Rec.709 系数（0.2126 / 0.7152 / 0.0722），与 sharp `.grayscale()` 同步

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { mkdir, readFile, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { AppConfig } from '../config/app.config';
 
@@ -41,15 +41,6 @@ export class BlobService {
       await unlink(this.path(groupId, contentId, kind));
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    }
-  }
-
-  async exists(groupId: string, contentId: string, kind: BlobKind): Promise<boolean> {
-    try {
-      await stat(this.path(groupId, contentId, kind));
-      return true;
-    } catch {
-      return false;
     }
   }
 }

@@ -6,7 +6,7 @@ export const ContentKind = z.enum(['image', 'dynamic']);
 export type ContentKindT = z.infer<typeof ContentKind>;
 
 export const PatchContentRequest = z.object({
-  title: z.string().max(64).nullable().optional(),
+  frame_name: z.string().max(64).nullable().optional(),
 });
 export type PatchContentRequestT = z.infer<typeof PatchContentRequest>;
 
@@ -18,7 +18,8 @@ export type ReorderContentsRequestT = z.infer<typeof ReorderContentsRequest>;
 export const ContentSummary = z.object({
   content_id: z.string(),
   seq: z.number().int().nonnegative(),
-  title: z.string().nullable(),
+  frame_name: z.string().nullable(),
+  device_status_bar_text: z.string(),
   image_etag: z.string(),
   audio_etag: z.string().nullable(),
   image_size: z.number().int().nonnegative(),
@@ -52,12 +53,12 @@ export const CreateDynamicContentRequest = z.object({
   kind: z.literal('dynamic'),
   dynamic_type: DynamicType,
   config: DynamicConfig,
-  title: z.string().max(64).nullable().optional(),
+  frame_name: z.string().max(64).nullable().optional(),
 });
 export type CreateDynamicContentRequestT = z.infer<typeof CreateDynamicContentRequest>;
 
 export const PatchDynamicContentRequest = z.object({
-  title: z.string().max(64).nullable().optional(),
+  frame_name: z.string().max(64).nullable().optional(),
   config: DynamicConfig.optional(),
 });
 export type PatchDynamicContentRequestT = z.infer<typeof PatchDynamicContentRequest>;
@@ -65,14 +66,15 @@ export type PatchDynamicContentRequestT = z.infer<typeof PatchDynamicContentRequ
 export const DynamicConfigResponse = z.object({
   dynamic_type: DynamicType,
   config: DynamicConfig,
-  title: z.string().nullable(),
+  frame_name: z.string().nullable(),
+  device_status_bar_text: z.string(),
 });
 export type DynamicConfigResponseT = z.infer<typeof DynamicConfigResponse>;
 
 export const PreviewDynamicContentRequest = z.object({
   dynamic_type: DynamicType,
   config: DynamicConfig,
-  title: z.string().max(64).nullable().optional(),
+  frame_name: z.string().max(64).nullable().optional(),
 });
 export type PreviewDynamicContentRequestT = z.infer<typeof PreviewDynamicContentRequest>;
 

@@ -34,6 +34,8 @@ enum class UiEventKind : uint8_t {
     kUnbound,  // u.unbound { pair_code[8] }
     // poll 收到 401:secret 失效,固件 self-reset 流(清 NVS secret + 重启)。
     kSecretInvalid,
+    // RTC timer 唤醒后的同步/上报已结束，App 可立即进入下一轮 deep sleep。
+    kDynamicWakeSyncFinished,
 };
 
 enum class ButtonId : uint8_t { kEnter = 0, kUp, kDown };
