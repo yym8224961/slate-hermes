@@ -1,4 +1,4 @@
-import { DEFAULT_FONT_TEST_SAMPLE, type DynamicConfigT, type DynamicTypeT } from 'shared';
+import type { DynamicConfigT, DynamicTypeT } from 'shared';
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -18,7 +18,6 @@ export function defaultConfig(type: DynamicTypeT): DynamicConfigT {
         provider: 'qweather',
         location_id: '101010100',
         location_label: '北京',
-        units: 'metric',
       };
     case 'history_today':
       return { type: 'history_today', tz: TZ };
@@ -28,8 +27,6 @@ export function defaultConfig(type: DynamicTypeT): DynamicConfigT {
       return {
         type: 'font_test',
         font_id: 'fusion_pixel_12',
-        sample_text: DEFAULT_FONT_TEST_SAMPLE,
-        layout: 'specimen',
         invert: false,
       };
   }

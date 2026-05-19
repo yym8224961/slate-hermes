@@ -3,7 +3,7 @@
 // 创建：选类型 → 填配置 → 保存（POST /groups/:gid/contents/dynamic）
 // 编辑：直接进配置面板（type 不可改）→ 保存（PATCH /contents/:contentId）
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUp, Sparkles } from 'lucide-react';
 import {
   DynamicConfig,
@@ -62,18 +62,29 @@ export function DynamicContentEditor({
   const [frameName, setFrameName] = useState(content?.frame_name ?? '');
   const [config, setConfig] = useState<DynamicConfigT | null>(initialConfig ?? null);
   const initializedContentIdRef = useRef<string | null>(null);
+  const initialConfigKey = useMemo(
+    () => (initialConfig ? JSON.stringify(initialConfig) : null),
+    [initialConfig]
+  );
+  const initializedConfigKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isEdit || !content || !initialConfig) return;
-    if (initializedContentIdRef.current === content.content_id) return;
+    if (
+      initializedContentIdRef.current === content.content_id &&
+      initializedConfigKeyRef.current === initialConfigKey
+    ) {
+      return;
+    }
     initializedContentIdRef.current = content.content_id;
+    initializedConfigKeyRef.current = initialConfigKey;
 
     const nextConfig = initialConfig;
     const nextType = initialType ?? nextConfig.type;
     setType(nextType);
     setFrameName(content.frame_name ?? defaultFrameName(nextType, nextConfig));
     setConfig(nextConfig);
-  }, [isEdit, content, initialConfig, initialType]);
+  }, [isEdit, content, initialConfig, initialConfigKey, initialType]);
 
   // type 变化时（create 模式选了一个）→ 重置 config 为默认
   useEffect(() => {
@@ -93,6 +104,7 @@ export function DynamicContentEditor({
   const preview = usePreviewDynamicContent(content?.content_id);
   const [livePreviewData, setLivePreviewData] = useState<ArrayBuffer | null>(null);
   const previewSeq = useRef(0);
+  const visibleConfig = config ? hasVisibleDynamicConfig(config) : false;
 
   useEffect(() => {
     if (!livePreviewEnabled || !config) {
@@ -209,7 +221,7 @@ export function DynamicContentEditor({
               </div>
             )}
 
-            {(type === 'dashboard' || type === 'font_test') && (
+            {type === 'dashboard' && (
               <Input
                 label="帧名称（选填，最多 64 字）"
                 type="text"
@@ -220,7 +232,7 @@ export function DynamicContentEditor({
               />
             )}
 
-            {config && hasVisibleDynamicConfig(config) && (
+            {config && visibleConfig && (
               <DynamicConfigForm
                 config={config}
                 onChange={(next) => {
@@ -238,7 +250,11 @@ export function DynamicContentEditor({
             )}
 
             {/* 操作按钮：粘在表单列底部，手机上全宽好点按 */}
-            <div className="flex gap-3 pt-5 border-t border-line sticky bottom-0 bg-paper pb-4">
+            <div
+              className={`flex gap-3 pt-5 border-t border-line sticky bottom-0 bg-paper pb-4 ${
+                visibleConfig ? '' : 'lg:mt-[28px]'
+              }`}
+            >
               <Button variant="outline" onClick={onDone} className="flex-1">
                 取消
               </Button>

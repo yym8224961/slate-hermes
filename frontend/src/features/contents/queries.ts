@@ -182,9 +182,10 @@ export function useUpdateDynamicContent(gid: string) {
       );
       return data;
     },
-    onSuccess: () => {
+    onSuccess: (_data, variables) => {
       qc.invalidateQueries({ queryKey: ['contents', gid] });
       qc.invalidateQueries({ queryKey: ['groups'] });
+      qc.invalidateQueries({ queryKey: ['dynamic-config', variables.contentId] });
     },
   });
 }

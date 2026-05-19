@@ -80,6 +80,7 @@ describe('DynamicFrameRendererService', () => {
           line1: '1865 · 国际电信联盟在巴黎成立',
           line2: '1949 · 中国人民解放军解放武汉三镇',
           line3: '1995 · Java 编程语言正式发布',
+          line4: '2008 · 中国商飞公司在上海成立',
         },
         renderedAt,
       },
@@ -128,18 +129,10 @@ describe('DynamicFrameRendererService', () => {
         frameName: '字体测试',
         config: {
           type: 'font_test',
-          font_id: 'source_han_sans_sc_16',
-          sample_text: '墨水屏字体测试 0123456789 ABC abc',
-          layout: 'specimen',
+          font_id: 'unifont_16',
           invert: false,
         },
-        data: {
-          fontLabel: 'Source Han Sans SC 16',
-          fontId: 'source_han_sans_sc_16',
-          sizePx: 16,
-          note: 'Production Chinese UI font',
-          sampleText: '墨水屏字体测试 0123456789 ABC abc',
-        },
+        data: null,
         renderedAt,
       },
     ];
@@ -161,8 +154,6 @@ describe('DynamicFrameRendererService', () => {
         config: {
           type: 'font_test',
           font_id: font.id,
-          sample_text: font.sampleText,
-          layout: font.kind === 'icon' ? 'icons' : 'specimen',
           invert: false,
         },
         data: null,

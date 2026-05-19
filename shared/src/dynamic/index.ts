@@ -34,7 +34,6 @@ export const WeatherConfig = z.object({
   provider: z.enum(['qweather']).default('qweather'),
   location_id: z.string().min(1).max(32),
   location_label: z.string().min(1).max(32),
-  units: z.enum(['metric', 'imperial']).default('metric'),
 });
 export type WeatherConfigT = z.infer<typeof WeatherConfig>;
 
@@ -50,9 +49,6 @@ export const DashboardConfig = z.object({
 });
 export type DashboardConfigT = z.infer<typeof DashboardConfig>;
 
-export const DEFAULT_FONT_TEST_SAMPLE = '墨水屏字体测试 0123456789 ABC abc';
-export const LATIN_FONT_TEST_SAMPLE = 'Slate UI 0123456789 ABC abc <> {} []';
-export const DISPLAY_FONT_TEST_SAMPLE = '23:59 100% +12.8 -04 ¥128';
 export const ICON_FONT_TEST_SAMPLE =
   '\uf240 \uf241 \uf242 \uf243 \uf244 \uf1eb \uf028 \uf001 \uf00c \uf00d \uf011 \uf013 \uf015 \uf03e \uf044 \uf04b \uf04c \uf04d \uf060 \uf061 \uf062 \uf063 \uf071 \uf0f3 \uf3c5 \uf0ac \uf075 \uf007 \uf019 \uf023 \uf084 \uf05a \uf059 \uf058 \uf057 \uf017 \uf110';
 
@@ -63,11 +59,13 @@ export const FontTestFontIdValues = [
   'ark_pixel_10',
   'ark_pixel_12',
   'ark_pixel_16',
+  'zlabs_pixel_12',
+  'zlabs_roundpix_12',
+  'zlabs_roundpix_16',
+  'chill_bitmap_16',
+  'xiaoya_pixel_12',
   'cubic_11',
-  'muzai_pixel_12',
   'unifont_16',
-  'noto_sans_sc_12',
-  'source_han_sans_sc_16',
   'spleen_5x8',
   'spleen_6x12',
   'spleen_8x16',
@@ -97,7 +95,6 @@ export interface FontTestFontCatalogEntry {
   note: string;
   source: string;
   license: string;
-  sampleText: string;
 }
 
 export const FONT_TEST_FONTS = [
@@ -107,11 +104,10 @@ export const FONT_TEST_FONTS = [
     file: 'fusion-pixel-8.json',
     sizePx: 8,
     kind: 'cjk',
-    hint: '8px CJK',
-    note: '泛中日韩像素黑体，小字号密集信息。',
+    hint: '8px full cmap',
+    note: '按源字体 cmap 全量生成的小号泛中日韩像素黑体。',
     source: 'TakWolf/fusion-pixel-font',
     license: 'MIT',
-    sampleText: DEFAULT_FONT_TEST_SAMPLE,
   },
   {
     id: 'fusion_pixel_10',
@@ -119,11 +115,10 @@ export const FONT_TEST_FONTS = [
     file: 'fusion-pixel-10.json',
     sizePx: 10,
     kind: 'cjk',
-    hint: '10px CJK',
-    note: '泛中日韩像素黑体，适合墨水屏小正文。',
+    hint: '10px full cmap',
+    note: '按源字体 cmap 全量生成，适合墨水屏小正文。',
     source: 'TakWolf/fusion-pixel-font',
     license: 'MIT',
-    sampleText: DEFAULT_FONT_TEST_SAMPLE,
   },
   {
     id: 'fusion_pixel_12',
@@ -131,11 +126,10 @@ export const FONT_TEST_FONTS = [
     file: 'fusion-pixel-12.json',
     sizePx: 12,
     kind: 'cjk',
-    hint: '12px CJK',
-    note: '泛中日韩像素黑体，适合中文正文。',
+    hint: '12px full cmap',
+    note: '按源字体 cmap 全量生成，中文正文覆盖较完整。',
     source: 'TakWolf/fusion-pixel-font',
     license: 'MIT',
-    sampleText: DEFAULT_FONT_TEST_SAMPLE,
   },
   {
     id: 'ark_pixel_10',
@@ -143,11 +137,10 @@ export const FONT_TEST_FONTS = [
     file: 'ark-pixel-10.json',
     sizePx: 10,
     kind: 'cjk',
-    hint: '10px CJK',
-    note: '泛中日韩像素黑体，Fusion 的姊妹项目。',
+    hint: '10px full cmap',
+    note: '按 Ark 10px 源字体 cmap 全量生成；源字体中文覆盖较小。',
     source: 'TakWolf/ark-pixel-font',
     license: 'MIT',
-    sampleText: DEFAULT_FONT_TEST_SAMPLE,
   },
   {
     id: 'ark_pixel_12',
@@ -155,11 +148,10 @@ export const FONT_TEST_FONTS = [
     file: 'ark-pixel-12.json',
     sizePx: 12,
     kind: 'cjk',
-    hint: '12px CJK',
-    note: '泛中日韩像素黑体，中号中文测试。',
+    hint: '12px full cmap',
+    note: '按 Ark 12px 源字体 cmap 全量生成，中号中文覆盖较好。',
     source: 'TakWolf/ark-pixel-font',
     license: 'MIT',
-    sampleText: DEFAULT_FONT_TEST_SAMPLE,
   },
   {
     id: 'ark_pixel_16',
@@ -167,35 +159,76 @@ export const FONT_TEST_FONTS = [
     file: 'ark-pixel-16.json',
     sizePx: 16,
     kind: 'cjk',
-    hint: '16px limited',
-    note: '16px release 中文覆盖有限，适合看拉丁/符号和少量汉字。',
+    hint: '16px full cmap',
+    note: '按 Ark 16px 源字体 cmap 全量生成；源字体中文覆盖有限。',
     source: 'TakWolf/ark-pixel-font',
     license: 'MIT',
-    sampleText: '中文 0123456789 ABC abc',
+  },
+  {
+    id: 'zlabs_pixel_12',
+    label: 'Z Labs Pixel 12',
+    file: 'zlabs-pixel-12-demo.json',
+    sizePx: 12,
+    kind: 'cjk',
+    hint: '12px demo subset',
+    note: '中文像素黑体候选；测试页样张子集，适合和 Fusion/Ark 12px 对比。',
+    source: 'Astro-2539/ZLabs-Pixel-12px',
+    license: 'OFL-1.1',
+  },
+  {
+    id: 'zlabs_roundpix_12',
+    label: 'Z Labs RoundPix 12',
+    file: 'zlabs-roundpix-12-demo.json',
+    sizePx: 12,
+    kind: 'cjk',
+    hint: '12px demo subset',
+    note: '圆角像素中文候选；测试页样张子集，观察墨水屏边缘是否发糊。',
+    source: 'Astro-2539/ZLabs-RoundPix-12px',
+    license: 'OFL-1.1',
+  },
+  {
+    id: 'zlabs_roundpix_16',
+    label: 'Z Labs RoundPix 16',
+    file: 'zlabs-roundpix-16-demo.json',
+    sizePx: 16,
+    kind: 'cjk',
+    hint: '16px demo subset',
+    note: '圆角像素中文 16px 候选；测试页样张子集。',
+    source: 'Astro-2539/ZLabs-RoundPix-16px',
+    license: 'OFL-1.1',
+  },
+  {
+    id: 'chill_bitmap_16',
+    label: 'ChillBitmap 16',
+    file: 'chill-bitmap-16-demo.json',
+    sizePx: 16,
+    kind: 'cjk',
+    hint: '16px demo subset',
+    note: '寒蝉点阵体 16px 中文；测试页样张子集。',
+    source: 'Warren2060/ChillBitmap',
+    license: 'OFL-1.1',
+  },
+  {
+    id: 'xiaoya_pixel_12',
+    label: 'Xiaoya Pixel 12',
+    file: 'xiaoya-pixel-12-demo.json',
+    sizePx: 12,
+    kind: 'cjk',
+    hint: '12px demo subset',
+    note: '小雅像素 Classic 候选；测试页样张子集，当前样张缺 1 个字。',
+    source: 'DWNfonts/XiaoyaPixel-Classic',
+    license: 'OFL-1.1',
   },
   {
     id: 'cubic_11',
     label: 'Cubic 11',
-    file: 'cubic-11.json',
+    file: 'cubic-11-demo.json',
     sizePx: 11,
     kind: 'cjk',
-    hint: '11px CJK',
-    note: '11x11 中文点阵体，适合紧凑中文。',
+    hint: '11px demo subset',
+    note: '俐方體 11 號；偏繁体/TW 风格，测试页样张子集。',
     source: 'ACh-K/Cubic-11',
     license: 'OFL-1.1',
-    sampleText: DEFAULT_FONT_TEST_SAMPLE,
-  },
-  {
-    id: 'muzai_pixel_12',
-    label: 'Muzai Pixel 12',
-    file: 'muzai-pixel-12.json',
-    sizePx: 12,
-    kind: 'cjk',
-    hint: '12px CJK',
-    note: 'k8x12 简体中文补完像素字体。',
-    source: 'DWNfonts/MuzaiPixel',
-    license: 'Other',
-    sampleText: DEFAULT_FONT_TEST_SAMPLE,
   },
   {
     id: 'unifont_16',
@@ -203,35 +236,10 @@ export const FONT_TEST_FONTS = [
     file: 'unifont-16.json',
     sizePx: 16,
     kind: 'cjk',
-    hint: '16px fallback',
-    note: '宽覆盖 fallback 字体，风格粗糙但缺字少。',
+    hint: '16px full cmap',
+    note: '按源字体 cmap 全量生成的宽覆盖 fallback，风格粗糙但缺字少。',
     source: 'multitheftauto/unifont',
     license: 'GNU Unifont',
-    sampleText: DEFAULT_FONT_TEST_SAMPLE,
-  },
-  {
-    id: 'noto_sans_sc_12',
-    label: 'Noto Sans SC 12',
-    file: 'noto-sans-sc-12.json',
-    sizePx: 12,
-    kind: 'cjk',
-    hint: '12px CJK',
-    note: '常规无衬线中文小字号对照组。',
-    source: 'googlefonts/noto-cjk',
-    license: 'OFL-1.1',
-    sampleText: DEFAULT_FONT_TEST_SAMPLE,
-  },
-  {
-    id: 'source_han_sans_sc_16',
-    label: 'Source Han Sans SC 16',
-    file: 'source-han-sans-16.json',
-    sizePx: 16,
-    kind: 'cjk',
-    hint: '16px CJK',
-    note: '当前生产中文 UI 字体对照组。',
-    source: 'adobe-fonts/source-han-sans',
-    license: 'OFL-1.1',
-    sampleText: DEFAULT_FONT_TEST_SAMPLE,
   },
   {
     id: 'spleen_5x8',
@@ -243,7 +251,6 @@ export const FONT_TEST_FONTS = [
     note: '极小号等宽点阵，适合状态栏英文/数字。',
     source: 'fcambus/spleen',
     license: 'BSD-2-Clause',
-    sampleText: LATIN_FONT_TEST_SAMPLE,
   },
   {
     id: 'spleen_6x12',
@@ -255,7 +262,6 @@ export const FONT_TEST_FONTS = [
     note: '小号等宽点阵，适合密集英文/数字。',
     source: 'fcambus/spleen',
     license: 'BSD-2-Clause',
-    sampleText: LATIN_FONT_TEST_SAMPLE,
   },
   {
     id: 'spleen_8x16',
@@ -267,7 +273,6 @@ export const FONT_TEST_FONTS = [
     note: '经典终端点阵尺寸。',
     source: 'fcambus/spleen',
     license: 'BSD-2-Clause',
-    sampleText: LATIN_FONT_TEST_SAMPLE,
   },
   {
     id: 'spleen_12x24',
@@ -279,7 +284,6 @@ export const FONT_TEST_FONTS = [
     note: '中大号等宽点阵。',
     source: 'fcambus/spleen',
     license: 'BSD-2-Clause',
-    sampleText: LATIN_FONT_TEST_SAMPLE,
   },
   {
     id: 'spleen_16x32',
@@ -291,7 +295,6 @@ export const FONT_TEST_FONTS = [
     note: '大字号等宽点阵。',
     source: 'fcambus/spleen',
     license: 'BSD-2-Clause',
-    sampleText: DISPLAY_FONT_TEST_SAMPLE,
   },
   {
     id: 'spleen_32x64',
@@ -303,7 +306,6 @@ export const FONT_TEST_FONTS = [
     note: '超大号数字/短文本点阵。',
     source: 'fcambus/spleen',
     license: 'BSD-2-Clause',
-    sampleText: DISPLAY_FONT_TEST_SAMPLE,
   },
   {
     id: 'cozette_13',
@@ -315,7 +317,6 @@ export const FONT_TEST_FONTS = [
     note: '编程向点阵字体，ASCII 细节清晰。',
     source: 'the-moonwitch/Cozette',
     license: 'MIT',
-    sampleText: LATIN_FONT_TEST_SAMPLE,
   },
   {
     id: 'pixelmplus_10',
@@ -327,7 +328,6 @@ export const FONT_TEST_FONTS = [
     note: 'M+ bitmap 派生像素字体，小号拉丁对照。',
     source: 'itouhiro/PixelMplus',
     license: 'M+ bitmap',
-    sampleText: LATIN_FONT_TEST_SAMPLE,
   },
   {
     id: 'pixelmplus_12',
@@ -339,7 +339,6 @@ export const FONT_TEST_FONTS = [
     note: 'M+ bitmap 派生像素字体，中号拉丁对照。',
     source: 'itouhiro/PixelMplus',
     license: 'M+ bitmap',
-    sampleText: LATIN_FONT_TEST_SAMPLE,
   },
   {
     id: 'montserrat_48',
@@ -351,7 +350,6 @@ export const FONT_TEST_FONTS = [
     note: '大号拉丁数字对照组。',
     source: 'JulietaUla/Montserrat',
     license: 'OFL-1.1',
-    sampleText: DISPLAY_FONT_TEST_SAMPLE,
   },
   {
     id: 'font_awesome_14',
@@ -359,11 +357,10 @@ export const FONT_TEST_FONTS = [
     file: 'font-awesome-14.json',
     sizePx: 14,
     kind: 'icon',
-    hint: '14px icons',
-    note: '设备端已有图标库，小号图标测试。',
+    hint: '14px full icons',
+    note: '按 Font Awesome 5 源字体 cmap 全量生成的小号图标测试。',
     source: 'FortAwesome/Font-Awesome',
     license: 'Font Awesome Free',
-    sampleText: ICON_FONT_TEST_SAMPLE,
   },
   {
     id: 'font_awesome_30',
@@ -371,19 +368,16 @@ export const FONT_TEST_FONTS = [
     file: 'font-awesome-30.json',
     sizePx: 30,
     kind: 'icon',
-    hint: '30px icons',
-    note: '设备端已有图标库，大号图标测试。',
+    hint: '30px full icons',
+    note: '按 Font Awesome 5 源字体 cmap 全量生成的大号图标测试。',
     source: 'FortAwesome/Font-Awesome',
     license: 'Font Awesome Free',
-    sampleText: ICON_FONT_TEST_SAMPLE,
   },
 ] as const satisfies readonly FontTestFontCatalogEntry[];
 
 export const FontTestConfig = z.object({
   type: z.literal('font_test'),
   font_id: FontTestFontId.default('fusion_pixel_12'),
-  sample_text: z.string().min(1).max(240).default(DEFAULT_FONT_TEST_SAMPLE),
-  layout: z.enum(['specimen', 'paragraph', 'numbers', 'icons']).default('specimen'),
   invert: z.boolean().default(false),
 });
 export type FontTestConfigT = z.infer<typeof FontTestConfig>;

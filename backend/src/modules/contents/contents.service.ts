@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import type { ContentKind } from '@prisma/client';
 import {
   DynamicConfig,
+  FONT_TEST_FONTS,
   type ContentDetailT,
   type ContentMutationResponseT,
   type ContentSummaryT,
@@ -48,8 +49,6 @@ interface StatusBarTextSource {
   dynamicConfig?: Prisma.JsonValue | null;
   dynamicData?: Prisma.JsonValue | null;
 }
-
-export const MAX_DYNAMIC_CONTENTS_PER_GROUP = 20;
 
 const CONTENT_SELECT = {
   id: true,
@@ -303,12 +302,6 @@ export class ContentsService {
     try {
       const seq = await this.prisma.$transaction(async (tx) => {
         await this.lockGroupForContentOrder(tx, gid);
-        const dynamicCount = await tx.content.count({ where: { groupId: gid, kind: 'dynamic' } });
-        if (dynamicCount >= MAX_DYNAMIC_CONTENTS_PER_GROUP) {
-          throw new ValidationError(`该相册动态内容数已达上限 ${MAX_DYNAMIC_CONTENTS_PER_GROUP}`, {
-            code: 'dynamic_limit',
-          });
-        }
         const maxSeq = await tx.content.aggregate({
           where: { groupId: gid },
           _max: { sortOrder: true },
@@ -834,7 +827,7 @@ function defaultFrameName(dynamicType: string | null, config?: unknown): string 
     case 'dashboard':
       return '数据看板';
     case 'font_test':
-      return '字体测试';
+      return fontTestStatusBarText(config);
     default:
       return null;
   }
@@ -854,7 +847,7 @@ function deviceStatusBarText(row: StatusBarTextSource): string {
     case 'dashboard':
       return row.frameName ?? '数据看板';
     case 'font_test':
-      return '字体测试';
+      return fontTestStatusBarText(row.dynamicConfig);
     default:
       return row.frameName ?? '';
   }
@@ -887,6 +880,11 @@ function historyTodayStatusBarText(
 function weatherStatusBarText(config: unknown): string {
   const location = valueText(recordValue(config, 'location_label')) ?? '天气';
   return location === '天气' ? '天气' : `${location}天气`;
+}
+
+function fontTestStatusBarText(config: unknown): string {
+  const id = valueText(recordValue(config, 'font_id'));
+  return id ? (FONT_TEST_FONTS.find((font) => font.id === id)?.label ?? '字体测试') : '字体测试';
 }
 
 function recordValue(value: unknown, key: string): unknown {

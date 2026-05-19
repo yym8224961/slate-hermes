@@ -129,6 +129,14 @@ export class BitmapCanvas {
     return penX - x;
   }
 
+  drawMask(mask: BitmapMask, x: number, y: number, color = PIXEL_BLACK): void {
+    for (let yy = 0; yy < mask.height; yy++) {
+      for (let xx = 0; xx < mask.width; xx++) {
+        if (mask.pixels[yy * mask.width + xx]) this.setPixel(x + xx, y + yy, color);
+      }
+    }
+  }
+
   toRaw1bpp(): Buffer {
     const out = Buffer.alloc((this.width * this.height) / 8);
     for (let i = 0; i < this.pixels.length; i++) {
@@ -136,4 +144,10 @@ export class BitmapCanvas {
     }
     return out;
   }
+}
+
+export interface BitmapMask {
+  width: number;
+  height: number;
+  pixels: Uint8Array;
 }

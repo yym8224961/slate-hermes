@@ -96,7 +96,7 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
   }
 
   private cacheKey(c: WeatherConfigT): string {
-    return `${c.provider}:${c.location_id}:${c.units}:${c.tz}`;
+    return `${c.provider}:${c.location_id}:${c.tz}`;
   }
 
   async fetchData(
@@ -141,10 +141,9 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
     const host = this.config.qweatherApiHost.replace(/\/+$/, '');
     const locationId = await this.resolveLocationId(host, apiKey, config.location_id);
     const location = encodeURIComponent(locationId);
-    const unit = config.units === 'imperial' ? 'i' : 'm';
     const lang = 'zh';
-    const nowUrl = `${host}/v7/weather/now?location=${location}&lang=${lang}&unit=${unit}`;
-    const forecastUrl = `${host}/v7/weather/3d?location=${location}&lang=${lang}&unit=${unit}`;
+    const nowUrl = `${host}/v7/weather/now?location=${location}&lang=${lang}&unit=m`;
+    const forecastUrl = `${host}/v7/weather/3d?location=${location}&lang=${lang}&unit=m`;
 
     const [nowJson, forecastJson] = await Promise.all([
       fetchJson<QWeatherNowResponse>(nowUrl, apiKey),
@@ -157,7 +156,6 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
 
     const nowData = nowJson.now ?? {};
     const windSpeed = toDisplayNumber(nowData.windSpeed);
-    const windUnit = config.units === 'imperial' ? 'mph' : 'km/h';
     const fc =
       forecastJson.daily?.slice(0, 3).map((day, index) => {
         const dayText = day.textDay || day.textNight || '--';
@@ -194,7 +192,7 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
         ? `${nowData.windDir}${nowData.windScale ? nowData.windScale + '级' : ''}`
         : windSpeed === '--'
           ? '--'
-          : `${windSpeed}${windUnit}`,
+          : `${windSpeed}km/h`,
       summary: nowData.text || '--',
       code: Number.parseInt(nowData.icon ?? forecastJson.daily?.[0]?.iconDay ?? '999', 10),
       obsTime: nowData.obsTime || nowJson.updateTime || ctx.now.toISOString(),

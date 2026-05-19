@@ -1,13 +1,25 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { FRAME_BYTES, FRAME_HEIGHT, FRAME_WIDTH, type FontTestFontIdT } from 'shared';
+import {
+  FRAME_BYTES,
+  FRAME_HEIGHT,
+  FRAME_WIDTH,
+  ICON_FONT_TEST_SAMPLE,
+  type FontTestFontIdT,
+} from 'shared';
 import { BITMAP_1BPP_FONT_DIR } from '../../infra/assets/asset-paths';
 import { traditionalFestivalShortName } from '../dynamic-content/traditional-festivals';
 import { timezoneFromConfig } from '../dynamic-content/timezone';
-import { BitmapCanvas, PIXEL_BLACK, PIXEL_WHITE } from './bitmap-canvas';
-import { DEVICE_FONT_CATALOG, DEVICE_FONT_IDS, getDeviceFontEntry } from './font-catalog';
+import { BitmapCanvas, PIXEL_BLACK, PIXEL_WHITE, type BitmapMask } from './bitmap-canvas';
+import {
+  DEVICE_FONT_CATALOG,
+  DEVICE_FONT_IDS,
+  getDeviceFontEntry,
+  type DeviceFontCatalogEntry,
+} from './font-catalog';
 import { hasGlyph, loadBitmapFont, textWidth, type BitmapFont } from './bitmap-font';
+import { loadWeatherIconMask } from './weather-icons';
 
 export interface DynamicRenderContext {
   type: string;
@@ -20,7 +32,10 @@ export interface DynamicRenderContext {
 interface FontSet {
   sans16: BitmapFont;
   sans12: BitmapFont;
-  display48: BitmapFont;
+  calendarSub10: BitmapFont;
+  metric12: BitmapFont;
+  fallback16: BitmapFont;
+  displayLarge: BitmapFont;
   catalog: Partial<Record<string, BitmapFont>>;
 }
 
@@ -33,8 +48,17 @@ interface TextOptions {
   color?: number;
 }
 
+interface FontSpecimen {
+  hero: string;
+  body: string[];
+  metrics: string[];
+  glyphs: string[];
+}
+
 const STATUS_BAR_H = 24;
 const CONTENT_TOP = STATUS_BAR_H + 10;
+const CONTENT_SAFE_TOP = STATUS_BAR_H;
+const CONTENT_SAFE_BOTTOM = FRAME_HEIGHT;
 const CONTENT_LEFT = 20;
 const CONTENT_RIGHT = FRAME_WIDTH - 20;
 const CONTENT_WIDTH = CONTENT_RIGHT - CONTENT_LEFT;
@@ -45,12 +69,7 @@ export class DynamicFrameRendererService implements OnModuleInit {
   private fonts: FontSet | null = null;
 
   async onModuleInit(): Promise<void> {
-    this.fonts = {
-      sans16: await loadBitmapFont(resolveFontPath('source-han-sans-16.json')),
-      sans12: await loadBitmapFont(resolveFontPath('noto-sans-sc-12.json')),
-      display48: await loadBitmapFont(resolveFontPath('montserrat-48.json')),
-      catalog: await loadDeviceFontCatalog(),
-    };
+    await this.getFonts();
   }
 
   async render(ctx: DynamicRenderContext): Promise<Buffer> {
@@ -67,7 +86,7 @@ export class DynamicFrameRendererService implements OnModuleInit {
         this.renderMonthCalendar(c, fonts, ctx);
         break;
       case 'weather':
-        this.renderWeather(c, fonts, ctx);
+        await this.renderWeather(c, fonts, ctx);
         break;
       case 'history_today':
         this.renderHistoryToday(c, fonts, ctx);
@@ -92,10 +111,14 @@ export class DynamicFrameRendererService implements OnModuleInit {
 
   private async getFonts(): Promise<FontSet> {
     if (this.fonts) return this.fonts;
+    const fusionPixel10 = await loadBitmapFont(resolveFontPath('fusion-pixel-10.json'));
     this.fonts = {
-      sans16: await loadBitmapFont(resolveFontPath('source-han-sans-16.json')),
-      sans12: await loadBitmapFont(resolveFontPath('noto-sans-sc-12.json')),
-      display48: await loadBitmapFont(resolveFontPath('montserrat-48.json')),
+      sans16: await loadBitmapFont(resolveFontPath('source-han-sans-16-slim.json')),
+      sans12: fusionPixel10,
+      calendarSub10: fusionPixel10,
+      metric12: await loadBitmapFont(resolveFontPath('pixelmplus-12.json')),
+      fallback16: await loadBitmapFont(resolveFontPath('unifont-16.json')),
+      displayLarge: await loadBitmapFont(resolveFontPath('spleen-32x64.json')),
       catalog: await loadDeviceFontCatalog(),
     };
     return this.fonts;
@@ -115,7 +138,7 @@ export class DynamicFrameRendererService implements OnModuleInit {
     const ganzhi = [data.ganzhiYear, data.ganzhiMonth, data.ganzhiDay]
       .map((v) => pickText(v, ''))
       .filter(Boolean)
-      .join('  ');
+      .join(' ');
     const solarTerm = pickText(data.solarTerm, '');
     const nextSolarTerm = pickText(data.nextSolarTerm, '');
     const festival = traditionalFestivalShortName(pickText(data.festival, ''));
@@ -134,41 +157,55 @@ export class DynamicFrameRendererService implements OnModuleInit {
           ? '今天'
           : `${nextSolarTermDays}天后`;
 
-    const topY = 42;
-    const rightX = 228;
-    this.drawText(c, fonts.display48, monthDay, CONTENT_LEFT, topY + 8, {
-      maxWidth: 172,
+    const ruleY = Math.round((CONTENT_SAFE_TOP + CONTENT_SAFE_BOTTOM) / 2);
+    const upperTop = CONTENT_SAFE_TOP + 18;
+    const upperBottom = ruleY - 16;
+    const dateY =
+      upperTop + Math.round((upperBottom - upperTop - fonts.displayLarge.lineHeight) / 2);
+    const rightY =
+      upperTop + Math.round((upperBottom - upperTop - (fonts.sans16.lineHeight * 3 + 14 * 2)) / 2);
+    const dateX = 18;
+    const rightX = 202;
+    this.drawText(c, fonts.displayLarge, monthDay, dateX, dateY, {
+      maxWidth: 176,
       ellipsis: true,
     });
-    this.drawText(c, fonts.sans16, weekday || '今日', rightX, topY + 8, {
+    this.drawText(c, fonts.sans16, weekday || '今日', rightX, rightY, {
       maxWidth: CONTENT_RIGHT - rightX,
       ellipsis: true,
     });
     if (lunarDate) {
-      this.drawText(c, fonts.sans16, lunarDate, rightX, topY + 39, {
+      this.drawText(c, fonts.sans16, lunarDate, rightX, rightY + 30, {
         maxWidth: CONTENT_RIGHT - rightX,
         ellipsis: true,
       });
     }
     if (ganzhi) {
-      this.drawText(c, fonts.sans16, ganzhi, rightX, topY + 72, {
+      this.drawText(c, fonts.sans16, ganzhi, rightX, rightY + 60, {
         maxWidth: CONTENT_RIGHT - rightX,
         maxLines: 1,
         ellipsis: true,
       });
     }
-    this.drawRule(c, CONTENT_LEFT, 170, CONTENT_WIDTH, 'dashed');
+    this.drawRule(c, CONTENT_LEFT, ruleY, CONTENT_WIDTH, 'dashed');
 
-    const rows: Array<[string, string]> = [];
-    if (solarTerm) rows.push(['今日节气', daysLabel ? `${solarTerm} ${daysLabel}` : solarTerm]);
-    else if (festival) rows.push(['今日节日', festival]);
-    else if (term) rows.push(['下个节气', daysLabel ? `${term} ${daysLabel}` : term]);
-    else if (ganzhi) rows.push(['干支', ganzhi]);
-    rows.slice(0, 1).forEach(([label, value], index) => {
-      this.drawInfoRow(c, fonts, label, value, CONTENT_LEFT, 184 + index * 27, CONTENT_WIDTH);
-    });
-    if (yi) this.drawLabeledText(c, fonts, '宜', yi, CONTENT_LEFT, 215, CONTENT_WIDTH);
-    if (ji) this.drawLabeledText(c, fonts, '忌', ji, CONTENT_LEFT, 243, CONTENT_WIDTH);
+    const infoRow: [string, string] | null = solarTerm
+      ? ['今日节气', daysLabel ? `${solarTerm} ${daysLabel}` : solarTerm]
+      : festival
+        ? ['今日节日', festival]
+        : term
+          ? ['下个节气', daysLabel ? `${term} ${daysLabel}` : term]
+          : ganzhi
+            ? ['干支', ganzhi]
+            : null;
+    const infoY = ruleY + 20;
+    const yiY = ruleY + 56;
+    const jiY = ruleY + 98;
+    if (infoRow) {
+      this.drawInfoRow(c, fonts, infoRow[0], infoRow[1], CONTENT_LEFT, infoY, CONTENT_WIDTH);
+    }
+    if (yi) this.drawLabeledText(c, fonts, '宜', yi, CONTENT_LEFT, yiY, CONTENT_WIDTH);
+    if (ji) this.drawLabeledText(c, fonts, '忌', ji, CONTENT_LEFT, jiY, CONTENT_WIDTH);
   }
 
   private renderMonthCalendar(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
@@ -219,9 +256,9 @@ export class DynamicFrameRendererService implements OnModuleInit {
 
       const iso = `${parts.year}-${pad2(parts.month)}-${pad2(day)}`;
       const dayData = isRecord(days) ? days[iso] : null;
-      const sub = monthCellSubtitle(dayData, ctx.config);
+      const sub = monthCellSubtitle(dayData);
       if (sub) {
-        this.drawText(c, fonts.sans12, sub, x + Math.floor(colW / 2), y + 15, {
+        this.drawText(c, fonts.calendarSub10, sub, x + Math.floor(colW / 2), y + 15, {
           align: 'center',
           maxWidth: colW - 2,
           color: PIXEL_BLACK,
@@ -231,7 +268,11 @@ export class DynamicFrameRendererService implements OnModuleInit {
     }
   }
 
-  private renderWeather(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
+  private async renderWeather(
+    c: BitmapCanvas,
+    fonts: FontSet,
+    ctx: DynamicRenderContext
+  ): Promise<void> {
     const data = ctx.data ?? {};
     const temp = pickText(data.tempC, pickText(data.temp, '--'));
     const feelsLike = pickText(data.feelsLikeC, pickText(data.feelsLike, ''));
@@ -239,90 +280,114 @@ export class DynamicFrameRendererService implements OnModuleInit {
     const wind = pickText(data.windDisplay, pickText(data.wind, '--'));
     const fc = Array.isArray(data.fc) ? data.fc.slice(0, 3) : [];
 
-    this.drawWeatherIcon(c, normalizeWeatherCode(data.code), 92, 92, 'large');
-    this.drawText(c, fonts.display48, temp, 148, 45, {
-      maxWidth: 110,
-      ellipsis: true,
-    });
-    this.drawText(
-      c,
-      fonts.sans16,
-      '°',
-      148 + Math.min(104, textWidth(fonts.display48, temp) + 6),
-      52,
-      {
-        maxWidth: 20,
-      }
-    );
-
-    this.drawText(c, fonts.sans16, feelsLike ? `体感 ${feelsLike}°` : '体感 --', 274, 66, {
-      maxWidth: 96,
-      ellipsis: true,
-    });
-    this.drawText(c, fonts.sans16, humidity === '--' ? '湿度 --' : `湿度 ${humidity}%`, 274, 96, {
-      maxWidth: 96,
-      ellipsis: true,
-    });
-    this.drawText(c, fonts.sans16, wind, 274, 126, {
-      maxWidth: 96,
-      ellipsis: true,
-    });
-
-    this.drawRule(c, CONTENT_LEFT, 166, CONTENT_WIDTH, 'dashed');
+    const forecastTop = CONTENT_SAFE_TOP + 132;
+    const heroTop = CONTENT_SAFE_TOP;
+    const heroBottom = forecastTop;
+    const heroCenterY = Math.round((heroTop + heroBottom) / 2);
+    const leftAreaX = CONTENT_LEFT;
+    const leftAreaW = 232;
+    const halfW = Math.floor(leftAreaW / 2);
+    const iconCx = leftAreaX + Math.round(halfW / 2);
+    const iconCy = heroCenterY;
+    const tempCenterX = leftAreaX + halfW + Math.round(halfW / 2) - 8;
+    const tempVisualH = textVisualHeight(fonts.displayLarge, temp) || 40;
+    const tempY =
+      Math.round(heroCenterY - tempVisualH / 2) - glyphTopOffset(fonts.displayLarge, temp);
     const forecast = fc.length > 0 ? fc : [null, null, null];
+    const forecastRecords = forecast.slice(0, 3).map((item) => (isRecord(item) ? item : {}));
+    const [heroIcon, ...forecastIcons] = await Promise.all([
+      loadWeatherIconMask(normalizeWeatherCode(data.code), 'large'),
+      ...forecastRecords.map((record) =>
+        loadWeatherIconMask(normalizeWeatherCode(record.code), 'tiny')
+      ),
+    ]);
+
+    this.drawWeatherIcon(c, heroIcon, iconCx, iconCy);
+    const tempWidth = textWidth(fonts.displayLarge, temp);
+    const tempX = Math.round(tempCenterX - tempWidth / 2);
+    this.drawText(c, fonts.displayLarge, temp, tempX, tempY, {
+      maxWidth: 92,
+      ellipsis: true,
+    });
+    this.drawText(c, fonts.sans16, '°', tempX + Math.min(92, tempWidth + 4), tempY + 18, {
+      maxWidth: 20,
+    });
+    const metrics = [
+      feelsLike && feelsLike !== '--' ? `体感 ${feelsLike}°` : '体感 --',
+      humidity === '--' ? '湿度 --' : `湿度 ${humidity}%`,
+      wind,
+    ];
+    const metricX = 274;
+    const metricGap = 30;
+    const metricBlockH = fonts.sans16.lineHeight + metricGap * (metrics.length - 1);
+    const metricY = Math.round(heroCenterY - metricBlockH / 2);
+    metrics.forEach((line, index) => {
+      this.drawText(c, fonts.sans16, line, metricX, metricY + index * metricGap, {
+        maxWidth: CONTENT_RIGHT - metricX,
+        ellipsis: true,
+      });
+    });
+
+    this.drawRule(c, CONTENT_LEFT, forecastTop, CONTENT_WIDTH, 'dashed');
     const colW = Math.floor(CONTENT_WIDTH / 3);
-    forecast.slice(0, 3).forEach((item, index) => {
-      const record = isRecord(item) ? item : {};
+    for (let index = 0; index < forecastRecords.length; index++) {
+      const record = forecastRecords[index]!;
       const x = CONTENT_LEFT + index * colW;
-      if (index > 0) this.drawVRule(c, x, 178, 104, 'dashed');
+      if (index > 0) this.drawVRule(c, x, forecastTop + 10, 110, 'dashed');
       const label = pickText(record.label, ['今日', '明日', '后天'][index] ?? '');
       const text = pickText(record.text, forecastTextFromVal(record.val));
       const min = pickText(record.tempMin, '');
       const max = pickText(record.tempMax, '');
-      const range = min && max ? `${min}~${max}°` : forecastRangeFromVal(record.val);
+      const range = formatTemperatureRange(min, max) || forecastRangeFromVal(record.val);
       const center = Math.round(x + colW / 2);
-      this.drawText(c, fonts.sans16, label, center, 180, {
+      this.drawText(c, fonts.sans16, label, center, forecastTop + 14, {
         align: 'center',
         maxWidth: colW - 12,
         ellipsis: true,
       });
-      this.drawWeatherIcon(c, normalizeWeatherCode(record.code), center, 214, 'tiny');
-      this.drawForecastRange(c, fonts, range || '--', center, 242, colW - 12);
-      this.drawText(c, fonts.sans16, text || '--', center, 266, {
+      this.drawWeatherIcon(c, forecastIcons[index] ?? null, center, forecastTop + 55);
+      this.drawText(c, fonts.metric12, range || '--', center, forecastTop + 84, {
         align: 'center',
         maxWidth: colW - 12,
         ellipsis: true,
       });
-    });
+      this.drawText(c, fonts.sans16, text || '--', center, forecastTop + 108, {
+        align: 'center',
+        maxWidth: colW - 12,
+        ellipsis: true,
+      });
+    }
   }
 
   private renderHistoryToday(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
     const data = ctx.data ?? {};
-    const lines = [data.line0, data.line1, data.line2, data.line3]
+    const lines = [data.line0, data.line1, data.line2, data.line3, data.line4]
       .map((v) => pickText(v, ''))
       .filter((v) => v.length > 0);
     const source = lines.length > 0 ? lines : [FALLBACK_TEXT];
-    let y = 42;
-    for (const line of source.slice(0, 4)) {
+    const timelineTop = CONTENT_SAFE_TOP + 18;
+    const timelineX = 54;
+    const rowStep = 48;
+    const rows = source.slice(0, 5);
+    c.drawVLine(timelineX, timelineTop, rowStep * (rows.length - 1) + 14, PIXEL_BLACK);
+
+    let y = CONTENT_SAFE_TOP + 20;
+    for (const line of rows) {
       const split = splitHistoryLine(line);
       if (split.year) {
-        this.drawText(c, fonts.sans12, split.year, CONTENT_LEFT, y, { maxWidth: 42 });
-        c.drawVLine(CONTENT_LEFT + 52, y + 1, 42, PIXEL_BLACK);
-        this.drawText(c, fonts.sans12, split.text, CONTENT_LEFT + 68, y, {
-          maxWidth: CONTENT_WIDTH - 68,
-          maxLines: 2,
-          ellipsis: true,
-          lineGap: 0,
-        });
-      } else {
-        this.drawText(c, fonts.sans12, split.text, CONTENT_LEFT, y, {
-          maxWidth: CONTENT_WIDTH,
-          maxLines: 2,
-          ellipsis: true,
-          lineGap: 0,
+        this.drawText(c, fonts.sans16, split.year, timelineX - 9, y - 2, {
+          align: 'right',
+          maxWidth: 42,
         });
       }
-      y += 61;
+      c.fillRect(timelineX - 3, y + 6, 7, 7, PIXEL_BLACK);
+      this.drawText(c, fonts.sans16, split.text, timelineX + 16, y - 2, {
+        maxWidth: CONTENT_RIGHT - timelineX - 16,
+        maxLines: 2,
+        ellipsis: true,
+        lineGap: 2,
+      });
+      y += rowStep;
     }
   }
 
@@ -336,6 +401,29 @@ export class DynamicFrameRendererService implements OnModuleInit {
     const metrics = isRecord(data.metrics) ? Object.entries(data.metrics).slice(0, 4) : [];
     const heading = pickText(data.heading, pickText(data.title, ctx.frameName ?? '数据看板'));
     const subtitle = pickText(data.subtitle, '');
+
+    if (metrics.length === 0) {
+      const centerY = Math.round((CONTENT_SAFE_TOP + CONTENT_SAFE_BOTTOM) / 2);
+      const lineGap = 12;
+      const totalH = fonts.sans16.lineHeight + lineGap + fonts.metric12.lineHeight;
+      const top = Math.round(centerY - totalH / 2);
+      this.drawText(c, fonts.sans16, '等待数据推送', FRAME_WIDTH / 2, top, {
+        align: 'center',
+        maxWidth: CONTENT_WIDTH,
+      });
+      this.drawText(
+        c,
+        fonts.metric12,
+        'POST /api/v1/contents/:id/data',
+        FRAME_WIDTH / 2,
+        top + 28,
+        {
+          align: 'center',
+          maxWidth: CONTENT_WIDTH,
+        }
+      );
+      return;
+    }
 
     this.drawText(c, fonts.sans16, heading, CONTENT_LEFT, CONTENT_TOP + 2, {
       maxWidth: 220,
@@ -360,12 +448,6 @@ export class DynamicFrameRendererService implements OnModuleInit {
       });
     }
     this.drawRule(c, CONTENT_LEFT, subtitle ? 82 : 66, CONTENT_WIDTH, 'solid');
-
-    if (metrics.length === 0) {
-      this.drawText(c, fonts.sans16, '等待数据推送', 200, 145, { align: 'center' });
-      this.drawText(c, fonts.sans12, 'POST /contents/:id/data', 200, 170, { align: 'center' });
-      return;
-    }
 
     const startY = subtitle ? 96 : 82;
     const colW = 166;
@@ -410,162 +492,174 @@ export class DynamicFrameRendererService implements OnModuleInit {
     const fontId = readFontId(ctx.config.font_id);
     const entry = getDeviceFontEntry(fontId);
     const sampleFont = fonts.catalog[entry.id] ?? fonts.sans16;
-    const layout = entry.kind === 'icon' ? 'icons' : readFontTestLayout(ctx.config.layout);
     const invert = ctx.config.invert === true;
-    const data = ctx.data ?? {};
-    const sample = pickText(data.sampleText, pickText(ctx.config.sample_text, entry.sampleText));
-    const header = pickText(data.fontLabel, entry.label);
-    const meta = `${entry.hint} · ${sampleFont.lineHeight}px line · ${sampleFont.glyphs.size} glyphs`;
-    const missing = missingGlyphs(sampleFont, sample);
+    const specimenKind =
+      entry.kind === 'latin' && sampleFont.lineHeight >= 28 ? 'display' : entry.kind;
+    const specimen = fontSpecimen(specimenKind, entry.id);
+    const sampleForMissing =
+      specimenKind === 'icon'
+        ? ICON_FONT_TEST_SAMPLE
+        : specimenKind === 'display'
+          ? '23:59 86% +12 -04 OK RUN'
+          : [specimen.hero, ...specimen.body, ...specimen.metrics, ...specimen.glyphs].join(' ');
+    const missing = missingGlyphs(sampleFont, sampleForMissing);
 
     if (invert) {
       c.fillRect(0, STATUS_BAR_H, FRAME_WIDTH, FRAME_HEIGHT - STATUS_BAR_H, PIXEL_BLACK);
     }
     const fg = invert ? PIXEL_WHITE : PIXEL_BLACK;
-    const bg = invert ? PIXEL_BLACK : PIXEL_WHITE;
 
-    this.drawText(c, fonts.sans16, header, CONTENT_LEFT, 35, {
-      maxWidth: 220,
-      ellipsis: true,
-      color: fg,
-    });
-    this.drawText(c, fonts.sans12, meta, CONTENT_RIGHT, 37, {
-      align: 'right',
-      maxWidth: 128,
-      ellipsis: true,
-      color: fg,
-    });
-    this.drawRuleColor(c, CONTENT_LEFT, 62, CONTENT_WIDTH, 'solid', fg);
-
-    if (layout === 'icons') {
-      this.renderFontIcons(c, fonts, sampleFont, sample, fg);
-    } else if (layout === 'numbers') {
-      this.renderFontNumbers(c, fonts, sampleFont, fg);
-    } else if (layout === 'paragraph') {
-      this.renderFontParagraph(c, fonts, sampleFont, sample, fg);
+    if (specimenKind === 'icon') this.renderFontIconSpecimen(c, sampleFont, fg);
+    else if (specimenKind === 'display') {
+      this.renderFontDisplaySpecimen(c, sampleFont, entry, specimen, fg, missing.length);
     } else {
-      this.renderFontSpecimen(c, fonts, sampleFont, sample, fg, bg);
+      this.renderFontReadingSpecimen(c, sampleFont, entry, specimen, fg, missing.length);
+    }
+  }
+
+  private renderFontReadingSpecimen(
+    c: BitmapCanvas,
+    sampleFont: BitmapFont,
+    entry: DeviceFontCatalogEntry,
+    specimen: FontSpecimen,
+    fg: number,
+    missingCount: number
+  ): void {
+    const x = CONTENT_LEFT;
+    const maxWidth = CONTENT_WIDTH;
+    const bottom = FRAME_HEIGHT - 8;
+    const lineGap = fontTestLineGap(sampleFont);
+    let y = STATUS_BAR_H + 9;
+
+    y += this.drawText(c, sampleFont, entry.label, x, y, {
+      maxWidth,
+      ellipsis: true,
+      color: fg,
+    });
+    y += Math.max(4, Math.floor(lineGap / 2));
+
+    y += this.drawText(
+      c,
+      sampleFont,
+      `${entry.sizePx}px line ${sampleFont.lineHeight} glyphs ${sampleFont.glyphs.size}`,
+      x,
+      y,
+      {
+        maxWidth,
+        ellipsis: true,
+        color: fg,
+      }
+    );
+    y += lineGap;
+    this.drawRuleColor(c, x, y, maxWidth, 'dashed', fg);
+    y += lineGap + 2;
+
+    for (const line of fontReadingLines(entry, specimen, sampleFont, missingCount)) {
+      if (y + sampleFont.lineHeight > bottom) break;
+      const used = this.drawText(c, sampleFont, line, x, y, {
+        maxWidth,
+        maxLines: sampleFont.lineHeight <= 12 ? 2 : 1,
+        ellipsis: true,
+        lineGap: 1,
+        color: fg,
+      });
+      y += used + lineGap;
+    }
+  }
+
+  private renderFontDisplaySpecimen(
+    c: BitmapCanvas,
+    sampleFont: BitmapFont,
+    entry: DeviceFontCatalogEntry,
+    specimen: FontSpecimen,
+    fg: number,
+    missingCount: number
+  ): void {
+    const huge = sampleFont.lineHeight >= 56;
+    if (huge) {
+      const lines = [
+        specimen.hero,
+        '86%',
+        missingCount > 0 ? `missing ${missingCount}` : '+12 -04',
+      ];
+      const ySlots = [36, 128, 220];
+      lines.forEach((text, index) => {
+        this.drawText(c, sampleFont, text, 200, ySlots[index]!, {
+          align: 'center',
+          maxWidth: CONTENT_WIDTH,
+          ellipsis: true,
+          color: fg,
+        });
+      });
+      return;
     }
 
-    const footer = missing.length
-      ? `缺字: ${missing.slice(0, 10).join('')}${missing.length > 10 ? '…' : ''}`
-      : pickText(data.note, `${entry.note} · ${entry.source} · ${entry.license}`);
-    this.drawRuleColor(c, CONTENT_LEFT, 269, CONTENT_WIDTH, 'dashed', fg);
-    this.drawText(c, fonts.sans12, footer, CONTENT_LEFT, 276, {
-      maxWidth: CONTENT_WIDTH,
-      ellipsis: true,
-      color: fg,
-    });
-  }
-
-  private renderFontSpecimen(
-    c: BitmapCanvas,
-    fonts: FontSet,
-    sampleFont: BitmapFont,
-    sample: string,
-    fg: number,
-    bg: number
-  ): void {
-    const blockY = 78;
-    c.strokeRect(CONTENT_LEFT, blockY, CONTENT_WIDTH, 92, fg);
-    if (bg === PIXEL_BLACK) c.fillRect(CONTENT_LEFT + 1, blockY + 1, CONTENT_WIDTH - 2, 90, bg);
-    this.drawText(c, sampleFont, sample, CONTENT_LEFT + 12, blockY + 10, {
-      maxWidth: CONTENT_WIDTH - 24,
-      maxLines: sampleFont.lineHeight <= 16 ? 4 : 2,
-      ellipsis: true,
-      lineGap: 2,
-      color: fg,
-    });
-
-    const rows: Array<[string, string]> = [
-      ['数字', '0123456789 100% --'],
-      ['拉丁', 'ABC abc Slate UI'],
-      ['中文', '墨水屏 字体 渲染'],
-    ];
-    rows.forEach(([label, text], index) => {
-      const y = 188 + index * 24;
-      this.drawText(c, fonts.sans12, label, CONTENT_LEFT, y + 1, { maxWidth: 34, color: fg });
-      this.drawText(c, sampleFont, text, CONTENT_LEFT + 46, y, {
-        maxWidth: CONTENT_WIDTH - 46,
-        ellipsis: true,
-        color: fg,
-      });
-    });
-  }
-
-  private renderFontParagraph(
-    c: BitmapCanvas,
-    fonts: FontSet,
-    sampleFont: BitmapFont,
-    sample: string,
-    fg: number
-  ): void {
-    this.drawText(c, sampleFont, sample, CONTENT_LEFT, 78, {
-      maxWidth: CONTENT_WIDTH,
-      maxLines: Math.max(2, Math.floor(168 / (sampleFont.lineHeight + 3))),
-      ellipsis: true,
-      lineGap: 3,
-      color: fg,
-    });
-    this.drawRuleColor(c, CONTENT_LEFT, 240, CONTENT_WIDTH, 'dashed', fg);
-    this.drawText(c, fonts.sans12, '基线 / 字距 / 换行检查', CONTENT_LEFT, 250, {
-      maxWidth: CONTENT_WIDTH,
-      color: fg,
-    });
-  }
-
-  private renderFontNumbers(
-    c: BitmapCanvas,
-    fonts: FontSet,
-    sampleFont: BitmapFont,
-    fg: number
-  ): void {
-    const rows = ['0123456789', '23:59 100%', '+12.8 -04', '¥128.00'];
-    rows.forEach((line, index) => {
-      const y = 76 + index * 42;
-      this.drawText(c, sampleFont, line, 200, y, {
-        align: 'center',
-        maxWidth: CONTENT_WIDTH,
-        ellipsis: true,
-        color: fg,
-      });
-      this.drawRuleColor(c, 64, y + sampleFont.lineHeight + 5, 272, 'dashed', fg);
-    });
-    this.drawText(c, fonts.sans12, '居中数字、冒号、百分号和货币符号', 200, 246, {
+    this.drawText(c, sampleFont, specimen.hero, 200, 34, {
       align: 'center',
       maxWidth: CONTENT_WIDTH,
+      ellipsis: true,
+      color: fg,
+    });
+    this.drawRuleColor(c, 72, 92, 256, 'dashed', fg);
+
+    const values = ['86%', '+12', '-04'];
+    const colW = Math.floor(CONTENT_WIDTH / values.length);
+    values.forEach((value, index) => {
+      const centerX = CONTENT_LEFT + index * colW + Math.floor(colW / 2);
+      this.drawText(c, sampleFont, value, centerX, 112, {
+        align: 'center',
+        maxWidth: colW - 10,
+        ellipsis: true,
+        color: fg,
+      });
+    });
+
+    this.drawRuleColor(c, 72, 176, 256, 'dashed', fg);
+    this.drawText(c, sampleFont, specimen.glyphs[0] ?? 'OK RUN', 200, 190, {
+      align: 'center',
+      maxWidth: CONTENT_WIDTH,
+      ellipsis: true,
+      color: fg,
+    });
+
+    const footer = missingCount > 0 ? `${entry.label} missing ${missingCount}` : entry.label;
+    this.drawText(c, sampleFont, footer, 200, 246, {
+      align: 'center',
+      maxWidth: CONTENT_WIDTH,
+      ellipsis: true,
       color: fg,
     });
   }
 
-  private renderFontIcons(
-    c: BitmapCanvas,
-    fonts: FontSet,
-    sampleFont: BitmapFont,
-    sample: string,
-    fg: number
-  ): void {
-    const icons = Array.from(sample).filter((ch) => ch.trim().length > 0);
-    const cols = sampleFont.lineHeight >= 24 ? 8 : 12;
+  private renderFontIconSpecimen(c: BitmapCanvas, sampleFont: BitmapFont, fg: number): void {
+    const icons = Array.from(ICON_FONT_TEST_SAMPLE).filter((ch) => ch.trim().length > 0);
+    const large = sampleFont.lineHeight >= 24;
+    const cols = large ? 8 : 12;
+    const startY = STATUS_BAR_H + 12;
     const cellW = Math.floor(CONTENT_WIDTH / cols);
-    const cellH = sampleFont.lineHeight >= 24 ? 48 : 34;
-    icons.slice(0, cols * 4).forEach((icon, index) => {
+    const cellH = sampleFont.lineHeight + (large ? 18 : 10);
+    const rows = Math.max(1, Math.floor((FRAME_HEIGHT - startY - 10) / cellH));
+    icons.slice(0, cols * rows).forEach((icon, index) => {
       const col = index % cols;
       const row = Math.floor(index / cols);
       const x = CONTENT_LEFT + col * cellW;
-      const y = 77 + row * cellH;
-      if (col > 0) this.drawVRule(c, x, y, cellH - 8, 'dashed');
-      this.drawText(c, sampleFont, icon, x + Math.floor(cellW / 2), y + 2, {
+      const y = startY + row * cellH;
+      this.drawText(c, sampleFont, icon, x + Math.floor(cellW / 2), y, {
         align: 'center',
         maxWidth: cellW,
         color: fg,
       });
     });
-    this.drawRuleColor(c, CONTENT_LEFT, 238, CONTENT_WIDTH, 'dashed', fg);
-    this.drawText(c, fonts.sans12, '图标字形、间距和基线检查', CONTENT_LEFT, 248, {
-      maxWidth: CONTENT_WIDTH,
-      color: fg,
-    });
+
+    if (!large) {
+      this.drawRuleColor(c, CONTENT_LEFT, 244, CONTENT_WIDTH, 'dashed', fg);
+      this.drawText(c, sampleFont, '\uf240 \uf1eb \uf028 \uf071 \uf0f3 \uf011 \uf013', 200, 256, {
+        align: 'center',
+        maxWidth: CONTENT_WIDTH,
+        ellipsis: true,
+        color: fg,
+      });
+    }
   }
 
   private renderDashboardLayout(
@@ -659,62 +753,17 @@ export class DynamicFrameRendererService implements OnModuleInit {
     w: number
   ): void {
     const boxW = 24;
-    const boxH = 21;
+    const boxH = 22;
+    const textY = y + Math.round((boxH - fonts.sans16.lineHeight) / 2);
     c.strokeRect(x, y, boxW, boxH, PIXEL_BLACK);
-    this.drawText(c, fonts.sans12, label, x + Math.floor(boxW / 2), y - 1, {
+    this.drawText(c, fonts.sans16, label, x + Math.floor(boxW / 2), textY, {
       align: 'center',
       maxWidth: boxW - 4,
     });
-    this.drawText(c, fonts.sans16, value, x + boxW + 12, y + 3, {
+    this.drawText(c, fonts.sans16, value, x + boxW + 12, textY, {
       maxWidth: w - boxW - 12,
       ellipsis: true,
     });
-  }
-
-  private drawForecastRange(
-    c: BitmapCanvas,
-    fonts: FontSet,
-    value: string,
-    centerX: number,
-    y: number,
-    maxWidth: number
-  ): void {
-    const m = value.match(/^(.+?)[~～](.+)$/);
-    if (!m) {
-      this.drawText(c, fonts.sans16, value, centerX, y, {
-        align: 'center',
-        maxWidth,
-        ellipsis: true,
-      });
-      return;
-    }
-
-    const left = m[1]!;
-    const right = m[2]!;
-    const waveW = 9;
-    const gap = 3;
-    const totalW =
-      textWidth(fonts.sans16, left) + gap + waveW + gap + textWidth(fonts.sans16, right);
-    if (totalW > maxWidth) {
-      this.drawText(c, fonts.sans16, `${left}-${right}`, centerX, y, {
-        align: 'center',
-        maxWidth,
-        ellipsis: true,
-      });
-      return;
-    }
-
-    const startX = Math.round(centerX - totalW / 2);
-    this.drawText(c, fonts.sans16, left, startX, y);
-    const waveX = startX + textWidth(fonts.sans16, left) + gap;
-    this.drawCenteredWave(c, waveX, y + 9);
-    this.drawText(c, fonts.sans16, right, waveX + waveW + gap, y);
-  }
-
-  private drawCenteredWave(c: BitmapCanvas, x: number, y: number): void {
-    c.drawLine(x, y + 1, x + 2, y - 1, PIXEL_BLACK);
-    c.drawLine(x + 2, y - 1, x + 5, y + 1, PIXEL_BLACK);
-    c.drawLine(x + 5, y + 1, x + 8, y - 1, PIXEL_BLACK);
   }
 
   private drawInfoRow(
@@ -734,20 +783,6 @@ export class DynamicFrameRendererService implements OnModuleInit {
     this.drawText(c, fonts.sans16, value, x + labelW + 8, y + 1, {
       maxWidth: w - labelW - 8,
       ellipsis: true,
-    });
-  }
-
-  private drawMetricStrip(c: BitmapCanvas, fonts: FontSet, items: Array<[string, string]>): void {
-    const y = 160;
-    const colW = Math.floor(CONTENT_WIDTH / items.length);
-    items.forEach(([label, value], index) => {
-      const x = CONTENT_LEFT + index * colW;
-      if (index > 0) c.drawVLine(x - 5, y - 2, 22, PIXEL_BLACK);
-      this.drawText(c, fonts.sans12, label, x, y - 1, { maxWidth: 32, ellipsis: true });
-      this.drawText(c, fonts.sans12, value, x + 39, y - 1, {
-        maxWidth: colW - 42,
-        ellipsis: true,
-      });
     });
   }
 
@@ -813,38 +848,8 @@ export class DynamicFrameRendererService implements OnModuleInit {
     }
   }
 
-  private drawWeatherIcon(
-    c: BitmapCanvas,
-    code: number | null,
-    cx: number,
-    cy: number,
-    size: 'tiny' | 'small' | 'large' = 'large'
-  ): void {
-    const scale = size === 'large' ? 2.1 : size === 'small' ? 1.35 : 1.15;
-    if (code !== null && isRainCode(code)) {
-      this.drawCloudIcon(c, cx, cy - Math.round(3 * scale), scale);
-      this.drawRainIcon(c, cx, cy + Math.round(15 * scale), scale);
-      return;
-    }
-    if (code !== null && isSnowCode(code)) {
-      this.drawCloudIcon(c, cx, cy - Math.round(3 * scale), scale);
-      this.drawSnowIcon(c, cx, cy + Math.round(15 * scale), scale);
-      return;
-    }
-    if (code !== null && isFogCode(code)) {
-      this.drawFogIcon(c, cx, cy, scale);
-      return;
-    }
-    if (code !== null && isPartlyCloudyCode(code)) {
-      this.drawSunIcon(c, cx - Math.round(7 * scale), cy - Math.round(5 * scale), scale * 0.74);
-      this.drawCloudIcon(c, cx + Math.round(4 * scale), cy + Math.round(4 * scale), scale * 0.88);
-      return;
-    }
-    if (code !== null && isCloudyCode(code)) {
-      this.drawCloudIcon(c, cx, cy, scale);
-      return;
-    }
-    this.drawSunIcon(c, cx, cy, scale);
+  private drawWeatherIcon(c: BitmapCanvas, mask: BitmapMask | null, cx: number, cy: number): void {
+    if (mask) c.drawMask(mask, Math.round(cx - mask.width / 2), Math.round(cy - mask.height / 2));
   }
 
   private drawSparkline(
@@ -870,91 +875,6 @@ export class DynamicFrameRendererService implements OnModuleInit {
     }
   }
 
-  private drawSunIcon(c: BitmapCanvas, cx: number, cy: number, scale: number): void {
-    const r = Math.max(5, Math.round(6 * scale));
-    const ray0 = Math.round(10 * scale);
-    const ray1 = Math.round(15 * scale);
-    c.strokeCircle(cx, cy, r, PIXEL_BLACK);
-    for (let i = 0; i < 8; i++) {
-      const angle = (Math.PI * 2 * i) / 8;
-      c.drawLine(
-        Math.round(cx + Math.cos(angle) * ray0),
-        Math.round(cy + Math.sin(angle) * ray0),
-        Math.round(cx + Math.cos(angle) * ray1),
-        Math.round(cy + Math.sin(angle) * ray1),
-        PIXEL_BLACK
-      );
-    }
-  }
-
-  private drawCloudIcon(c: BitmapCanvas, cx: number, cy: number, scale: number): void {
-    const sx = (n: number) => Math.round(n * scale);
-    const left = cx - sx(17);
-    const right = cx + sx(18);
-    const base = cy + sx(10);
-    c.drawLine(left, base, right, base, PIXEL_BLACK);
-    c.drawLine(left, base, left - sx(5), base - sx(4), PIXEL_BLACK);
-    c.drawLine(right, base, right + sx(5), base - sx(4), PIXEL_BLACK);
-    this.drawArc(c, left - sx(1), base - sx(4), sx(8), Math.PI, Math.PI * 1.53);
-    this.drawArc(c, cx - sx(3), base - sx(8), sx(11), Math.PI * 1.18, Math.PI * 1.96);
-    this.drawArc(c, cx + sx(14), base - sx(4), sx(8), Math.PI * 1.43, Math.PI * 2.04);
-  }
-
-  private drawRainIcon(c: BitmapCanvas, cx: number, cy: number, scale: number): void {
-    for (const offset of [-9, 0, 9]) {
-      const x = cx + Math.round(offset * scale);
-      c.drawLine(
-        x,
-        cy - Math.round(3 * scale),
-        x - Math.round(3 * scale),
-        cy + Math.round(5 * scale),
-        PIXEL_BLACK
-      );
-    }
-  }
-
-  private drawSnowIcon(c: BitmapCanvas, cx: number, cy: number, scale: number): void {
-    for (const offset of [-8, 8]) {
-      const x = cx + Math.round(offset * scale);
-      const r = Math.max(3, Math.round(4 * scale));
-      c.drawHLine(x - r, cy, r * 2 + 1, PIXEL_BLACK);
-      c.drawVLine(x, cy - r, r * 2 + 1, PIXEL_BLACK);
-    }
-  }
-
-  private drawFogIcon(c: BitmapCanvas, cx: number, cy: number, scale: number): void {
-    const w = Math.round(30 * scale);
-    for (let i = 0; i < 4; i++) {
-      c.drawHLine(
-        cx - Math.floor(w / 2),
-        cy - Math.round(12 * scale) + i * Math.round(8 * scale),
-        w,
-        PIXEL_BLACK
-      );
-    }
-  }
-
-  private drawArc(
-    c: BitmapCanvas,
-    cx: number,
-    cy: number,
-    r: number,
-    start: number,
-    end: number
-  ): void {
-    const steps = Math.max(8, Math.ceil((Math.abs(end - start) * r) / 2));
-    let px = Math.round(cx + Math.cos(start) * r);
-    let py = Math.round(cy + Math.sin(start) * r);
-    for (let i = 1; i <= steps; i++) {
-      const angle = start + ((end - start) * i) / steps;
-      const x = Math.round(cx + Math.cos(angle) * r);
-      const y = Math.round(cy + Math.sin(angle) * r);
-      c.drawLine(px, py, x, y, PIXEL_BLACK);
-      px = x;
-      py = y;
-    }
-  }
-
   private drawSmallSpark(c: BitmapCanvas, x: number, y: number, w: number, seed: number): void {
     let lastX = x;
     let lastY = y + 10;
@@ -976,8 +896,10 @@ export class DynamicFrameRendererService implements OnModuleInit {
     opts: TextOptions = {}
   ): number {
     const lineGap = opts.lineGap ?? 3;
+    const fallback = this.fallbackForFont(font);
     const lines = wrapText(
       font,
+      fallback,
       text,
       opts.maxWidth ?? FRAME_WIDTH,
       opts.maxLines ?? 1,
@@ -985,23 +907,25 @@ export class DynamicFrameRendererService implements OnModuleInit {
     );
     let cursorY = y;
     for (const line of lines) {
-      const width = textWidth(font, line);
+      const width = textWidthFallback(font, fallback, line);
       const drawX =
         opts.align === 'center'
           ? Math.round(x - width / 2)
           : opts.align === 'right'
             ? x - width
             : x;
-      c.drawText(
-        font,
-        line,
-        drawX,
-        cursorY + font.lineHeight - font.baseLine,
-        opts.color ?? PIXEL_BLACK
-      );
+      drawTextLine(c, font, fallback, line, drawX, cursorY, opts.color ?? PIXEL_BLACK);
       cursorY += font.lineHeight + lineGap;
     }
     return lines.length * font.lineHeight + Math.max(0, lines.length - 1) * lineGap;
+  }
+
+  private fallbackForFont(font: BitmapFont): BitmapFont | undefined {
+    const fonts = this.fonts;
+    if (!fonts) return undefined;
+    // 只对 16px sans 提供 16px unifont fallback；小字号字体若缺字直接跳过，
+    // 避免行高错位。fusion_pixel_10/12 本身就是 full cmap，缺字概率极低。
+    return font === fonts.sans16 ? fonts.fallback16 : undefined;
   }
 }
 
@@ -1068,10 +992,6 @@ function readFontId(value: unknown): FontTestFontIdT {
     : 'fusion_pixel_12';
 }
 
-function readFontTestLayout(value: unknown): 'specimen' | 'paragraph' | 'numbers' | 'icons' {
-  return value === 'paragraph' || value === 'numbers' || value === 'icons' ? value : 'specimen';
-}
-
 function missingGlyphs(font: BitmapFont, text: string): string[] {
   const missing: string[] = [];
   const seen = new Set<string>();
@@ -1083,6 +1003,98 @@ function missingGlyphs(font: BitmapFont, text: string): string[] {
     missing.push(ch);
   }
   return missing;
+}
+
+function fontSpecimen(kind: string, fontId: FontTestFontIdT): FontSpecimen {
+  if (kind === 'cjk') {
+    const compact = fontId === 'ark_pixel_16';
+    return {
+      hero: compact ? '中文 0123456789 ABC abc' : '墨水屏字体测试 中文点阵 0123456789',
+      body: compact
+        ? ['中文 ABC abc 123', '23:59 100% OK', 'A0 iIl1 O0 8B']
+        : ['今日天气 多云 23°C  风力 2 级', '简繁中文 标点，。！？', 'ABC abc 0123456789 +12.8%'],
+      metrics: ['0123456789 23:59'],
+      glyphs: ['一二三 口日目 黑墨屏'],
+    };
+  }
+
+  if (kind === 'display') {
+    return {
+      hero: '23:59',
+      body: ['86%', '+12.8', '-04'],
+      metrics: ['86% +12 -04'],
+      glyphs: ['OK RUN'],
+    };
+  }
+
+  return {
+    hero: 'Slate UI 0123456789 ABC abc',
+    body: ['The quick brown fox jumps.', 'A0 O0 I1 l1 []{} <> /\\', '23:59 100% +12.8 -04'],
+    metrics: ['0123456789 23:59'],
+    glyphs: ['A0 O0 I1 l1 mwMW'],
+  };
+}
+
+function fontTestLineGap(font: BitmapFont): number {
+  if (font.lineHeight <= 8) return 5;
+  if (font.lineHeight <= 12) return 6;
+  if (font.lineHeight <= 16) return 8;
+  if (font.lineHeight <= 24) return 10;
+  return 12;
+}
+
+function fontReadingLines(
+  entry: DeviceFontCatalogEntry,
+  specimen: FontSpecimen,
+  font: BitmapFont,
+  missingCount: number
+): string[] {
+  const footer = missingCount > 0 ? [`missing ${missingCount}`] : [];
+  if (entry.kind === 'cjk') {
+    if (entry.id === 'ark_pixel_16') {
+      return [
+        specimen.hero,
+        ...specimen.body,
+        ...specimen.metrics,
+        ...specimen.glyphs,
+        'ABCDEF abcdef 0123456789',
+        'A0 O0 I1 l1 []{}<>',
+        ...footer,
+      ];
+    }
+    return [
+      specimen.hero,
+      '中文测试 墨水屏 点阵字体',
+      '今天多云 23°C 风力 2级',
+      '黑白像素 横竖撇捺 点线面',
+      '简繁中文 标点，。！？；：',
+      '一二三四五六七八九十 口日目田回',
+      '0123456789 23:59 100% +12.8',
+      'ABC abc A0 O0 I1 l1 []{}<>',
+      ...footer,
+    ];
+  }
+
+  const dense = font.lineHeight <= 12;
+  return [
+    specimen.hero,
+    'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
+    'abcdefghijklmnopqrstuvwxyz',
+    '0123456789 23:59 100% +12.8 -04',
+    'A0 O0 I1 l1 mwMW []{} <> /\\',
+    dense ? 'The quick brown fox jumps over the lazy dog.' : 'The quick brown fox jumps.',
+    'Slate UI e-paper bitmap font',
+    '!@#$%^&*()_+-=;:,.?',
+    ...(dense
+      ? [
+          '0123456789 ABCDEF abcdef',
+          'render align width baseline',
+          'pixel density row spacing test',
+          'left center right edge sample',
+        ]
+      : []),
+    ...footer,
+  ];
 }
 
 function blockRect(
@@ -1145,8 +1157,22 @@ function forecastTextFromVal(value: unknown): string {
 
 function forecastRangeFromVal(value: unknown): string {
   const text = pickText(value, '');
-  const m = text.match(/([^\s]+~[^\s]+°)$/);
-  return m?.[1] ?? '';
+  const m = text.match(/(-?\d+)°?[~～-](-?\d+)°?$/);
+  return m ? formatTemperatureRange(m[1], m[2]) : '';
+}
+
+function formatTemperatureRange(min: string, max: string): string {
+  const left = temperatureBound(min);
+  const right = temperatureBound(max);
+  if (left && right) return `${left}°~${right}°`;
+  if (left) return `${left}°`;
+  if (right) return `${right}°`;
+  return '';
+}
+
+function temperatureBound(value: string): string | null {
+  const text = value.trim().replace(/°+$/, '');
+  return text && text !== '--' ? text : null;
 }
 
 function monthFromMonthDay(value: unknown, fallback: Date, timeZone: string): string {
@@ -1159,28 +1185,9 @@ function dayFromMonthDay(value: unknown, fallback: Date, timeZone: string): stri
   return String(Number(text.split(/[/-]/)[1] ?? text));
 }
 
-function isCloudyCode(code: number): boolean {
-  return [101, 102, 103, 104, 150, 151, 152, 153].includes(code);
-}
-
-function isPartlyCloudyCode(code: number): boolean {
-  return [102, 103, 151, 152].includes(code);
-}
-
-function isRainCode(code: number): boolean {
-  return (code >= 300 && code < 400) || code === 1201;
-}
-
-function isSnowCode(code: number): boolean {
-  return code >= 400 && code < 500;
-}
-
-function isFogCode(code: number): boolean {
-  return [500, 501, 502, 509, 510, 511, 512, 513, 514, 515].includes(code);
-}
-
 function wrapText(
   font: BitmapFont,
+  fallback: BitmapFont | undefined,
   text: string,
   maxWidth: number,
   maxLines: number,
@@ -1200,7 +1207,7 @@ function wrapText(
       continue;
     }
     const next = `${cur}${ch}`;
-    if (textWidth(font, next) > maxWidth && cur.length > 0) {
+    if (textWidthFallback(font, fallback, next) > maxWidth && cur.length > 0) {
       lines.push(cur);
       cur = ch;
       if (lines.length >= maxLines) break;
@@ -1209,36 +1216,103 @@ function wrapText(
     }
   }
   if (lines.length < maxLines && cur) lines.push(cur);
-  const clipped = lines.slice(0, maxLines).map((line) => filterDrawable(font, line));
+  const clipped = lines.slice(0, maxLines).map((line) => filterDrawable(font, fallback, line));
   if (
     ellipsis &&
     clipped.length === maxLines &&
-    textWidth(font, clipped[clipped.length - 1] ?? '') > maxWidth
+    textWidthFallback(font, fallback, clipped[clipped.length - 1] ?? '') > maxWidth
   ) {
-    clipped[clipped.length - 1] = ellipsize(font, clipped[clipped.length - 1]!, maxWidth);
+    clipped[clipped.length - 1] = ellipsize(font, fallback, clipped[clipped.length - 1]!, maxWidth);
   } else if (ellipsis && source.length > clipped.join('').length && clipped.length > 0) {
-    clipped[clipped.length - 1] = ellipsize(font, clipped[clipped.length - 1]!, maxWidth);
+    clipped[clipped.length - 1] = ellipsize(font, fallback, clipped[clipped.length - 1]!, maxWidth);
   }
   return clipped;
 }
 
-function filterDrawable(font: BitmapFont, text: string): string {
+function filterDrawable(font: BitmapFont, fallback: BitmapFont | undefined, text: string): string {
   let out = '';
   for (const ch of text) {
     const cp = ch.codePointAt(0)!;
-    if (hasGlyph(font, cp)) out += ch;
+    if (hasGlyph(font, cp) || (fallback && hasGlyph(fallback, cp))) out += ch;
     else if (ch === ' ') out += ch;
   }
   return out;
 }
 
-function ellipsize(font: BitmapFont, text: string, maxWidth: number): string {
-  const ell = hasGlyph(font, 0x2026) ? '…' : '.';
+function ellipsize(
+  font: BitmapFont,
+  fallback: BitmapFont | undefined,
+  text: string,
+  maxWidth: number
+): string {
+  const ell = hasGlyph(font, 0x2026) || (fallback && hasGlyph(fallback, 0x2026)) ? '…' : '.';
   let s = text;
-  while (s.length > 0 && textWidth(font, `${s}${ell}`) > maxWidth) {
+  while (s.length > 0 && textWidthFallback(font, fallback, `${s}${ell}`) > maxWidth) {
     s = s.slice(0, -1);
   }
   return `${s}${ell}`;
+}
+
+function textWidthFallback(
+  font: BitmapFont,
+  fallback: BitmapFont | undefined,
+  text: string
+): number {
+  let w = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    const glyph = font.glyphs.get(cp) ?? fallback?.glyphs.get(cp);
+    if (glyph) w += Math.round(glyph.adv_w / 16);
+  }
+  return w;
+}
+
+function textVisualHeight(font: BitmapFont, text: string): number {
+  const bounds = textVisualBounds(font, text);
+  return bounds ? bounds.bottom - bounds.top : 0;
+}
+
+function glyphTopOffset(font: BitmapFont, text: string): number {
+  return textVisualBounds(font, text)?.top ?? 0;
+}
+
+function textVisualBounds(font: BitmapFont, text: string): { top: number; bottom: number } | null {
+  let top = Number.POSITIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+  for (const ch of text) {
+    const glyph = font.glyphs.get(ch.codePointAt(0)!);
+    if (!glyph) continue;
+    const baselineY = font.lineHeight - font.baseLine;
+    const glyphTop = baselineY - glyph.ofs_y - glyph.box_h;
+    const glyphBottom = glyphTop + glyph.box_h;
+    top = Math.min(top, glyphTop);
+    bottom = Math.max(bottom, glyphBottom);
+  }
+  return Number.isFinite(top) && Number.isFinite(bottom) ? { top, bottom } : null;
+}
+
+function drawTextLine(
+  c: BitmapCanvas,
+  font: BitmapFont,
+  fallback: BitmapFont | undefined,
+  text: string,
+  x: number,
+  y: number,
+  color: number
+): number {
+  let penX = x;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    const drawFont = hasGlyph(font, cp)
+      ? font
+      : fallback && hasGlyph(fallback, cp)
+        ? fallback
+        : null;
+    if (!drawFont) continue;
+    const baselineY = y + drawFont.lineHeight - drawFont.baseLine;
+    penX += c.drawGlyph(drawFont, cp, penX, baselineY, color);
+  }
+  return penX - x;
 }
 
 function splitHistoryLine(line: string): { year: string | null; text: string } {
@@ -1336,9 +1410,8 @@ function getPath(root: unknown, path: string): unknown {
   return cur;
 }
 
-function monthCellSubtitle(dayData: unknown, config: Record<string, unknown>): string {
+function monthCellSubtitle(dayData: unknown): string {
   if (!isRecord(dayData)) return '';
-  void config;
   const term = pickText(dayData.solar_term, '');
   if (term) return limitChars(term, 3);
   const festival = traditionalFestivalShortName(pickText(dayData.festival, ''));

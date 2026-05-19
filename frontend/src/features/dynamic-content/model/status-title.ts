@@ -1,4 +1,4 @@
-import type { DynamicConfigT } from 'shared';
+import { FONT_TEST_FONTS, type DynamicConfigT } from 'shared';
 
 export function dynamicStatusTitle(config: DynamicConfigT | null | undefined): string | null {
   if (!config) return null;
@@ -15,7 +15,7 @@ export function dynamicStatusTitle(config: DynamicConfigT | null | undefined): s
     case 'dashboard':
       return '数据看板';
     case 'font_test':
-      return '字体测试';
+      return FONT_TEST_FONTS.find((font) => font.id === config.font_id)?.label ?? '字体测试';
     default:
       return null;
   }

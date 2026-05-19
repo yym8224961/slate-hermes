@@ -34,27 +34,7 @@ export function DynamicConfigForm({
               })
             }
           />
-          <p className="font-mono text-[10px] text-stone">QWeather · {config.location_id}</p>
-          <div>
-            <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
-              温度单位
-            </p>
-            <div className="flex gap-6">
-              <Radio
-                label="°C（摄氏）"
-                checked={config.units === 'metric'}
-                onChange={() => onChange({ ...config, units: 'metric' })}
-              />
-              <Radio
-                label="°F（华氏）"
-                checked={config.units === 'imperial'}
-                onChange={() => onChange({ ...config, units: 'imperial' })}
-              />
-            </div>
-          </div>
-          <p className="font-sans text-[11px] text-stone italic">
-            天气数据来自 QWeather，需要后端配置 QWEATHER_API_KEY 和 QWEATHER_API_HOST。
-          </p>
+          <p className="font-sans text-[12px] text-stone italic">天气数据来自 QWeather。</p>
         </div>
       );
     case 'history_today':
@@ -76,7 +56,8 @@ export function DynamicConfigForm({
           )}
         </div>
       );
-    case 'font_test':
+    case 'font_test': {
+      const font = FONT_TEST_FONTS.find((item) => item.id === config.font_id);
       return (
         <div className="space-y-4">
           <div>
@@ -86,18 +67,9 @@ export function DynamicConfigForm({
             <Select
               value={config.font_id}
               onValueChange={(v) => {
-                const font = FONT_TEST_FONTS.find((item) => item.id === v);
-                const nextLayout =
-                  font?.kind === 'icon'
-                    ? 'icons'
-                    : config.layout === 'icons'
-                      ? 'specimen'
-                      : config.layout;
                 onChange({
                   ...config,
                   font_id: v as FontTestFontIdT,
-                  sample_text: font?.sampleText ?? config.sample_text,
-                  layout: nextLayout,
                 });
               }}
             >
@@ -108,48 +80,14 @@ export function DynamicConfigForm({
               ))}
             </Select>
           </div>
-          <div>
-            <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
-              版式
-            </p>
-            <div className="flex flex-wrap gap-5">
-              <Radio
-                label="标本"
-                checked={config.layout === 'specimen'}
-                onChange={() => onChange({ ...config, layout: 'specimen' })}
-              />
-              <Radio
-                label="段落"
-                checked={config.layout === 'paragraph'}
-                onChange={() => onChange({ ...config, layout: 'paragraph' })}
-              />
-              <Radio
-                label="数字"
-                checked={config.layout === 'numbers'}
-                onChange={() => onChange({ ...config, layout: 'numbers' })}
-              />
-              <Radio
-                label="图标"
-                checked={config.layout === 'icons'}
-                onChange={() => onChange({ ...config, layout: 'icons' })}
-              />
+          {font && (
+            <div className="space-y-1.5">
+              <p className="font-sans text-[12px] text-stone leading-relaxed italic">{font.note}</p>
+              <p className="mt-1.5 font-mono text-[10px] text-stone truncate">
+                {font.source} · {font.license}
+              </p>
             </div>
-          </div>
-          <label className="block">
-            <span className="block font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
-              样本文本
-            </span>
-            <textarea
-              className={`${inputCls} min-h-28 resize-y leading-snug`}
-              maxLength={240}
-              value={config.sample_text}
-              onChange={(e) => onChange({ ...config, sample_text: e.target.value })}
-              placeholder="输入要测试的中文、英文、数字或符号"
-            />
-            <span className="block font-sans text-[11px] text-stone mt-1.5">
-              {config.sample_text.length}/240
-            </span>
-          </label>
+          )}
           <Checkbox
             label="反白测试"
             checked={config.invert}
@@ -157,6 +95,7 @@ export function DynamicConfigForm({
           />
         </div>
       );
+    }
     default:
       return <UnsupportedConfigNotice config={config} />;
   }
@@ -270,23 +209,6 @@ function Checkbox({
         onChange={(e) => onChange(e.target.checked)}
         className="w-4 h-4 accent-ink"
       />
-      <span className="font-sans text-[13px] text-ink">{label}</span>
-    </label>
-  );
-}
-
-function Radio({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <label className="inline-flex items-center gap-2 cursor-pointer select-none">
-      <input type="radio" checked={checked} onChange={onChange} className="w-4 h-4 accent-ink" />
       <span className="font-sans text-[13px] text-ink">{label}</span>
     </label>
   );

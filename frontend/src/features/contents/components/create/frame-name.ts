@@ -17,7 +17,7 @@ export function defaultFrameName(type: DynamicTypeT, config: DynamicConfigT): st
     case 'dashboard':
       return '数据看板';
     case 'font_test':
-      return '字体测试';
+      return dynamicStatusTitle(config) ?? '字体测试';
   }
 }
 
@@ -27,7 +27,7 @@ export function effectiveFrameName(
   frameName: string
 ): string | null {
   if (!type || type === 'image') return frameName.trim() || null;
-  if (type === 'dashboard' || type === 'font_test') {
+  if (type === 'dashboard') {
     return frameName.trim() || defaultFrameName(type, config);
   }
   return defaultFrameName(type, config);

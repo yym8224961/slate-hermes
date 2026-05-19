@@ -2,7 +2,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
+import { FONT_TEST_FONTS, FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
 import {
   DynamicFrameRendererService,
   type DynamicRenderContext,
@@ -42,7 +42,6 @@ const contexts: DynamicRenderContext[] = [
       provider: 'qweather',
       location_id: '101010100',
       location_label: '北京',
-      units: 'metric',
       tz,
     },
     data: {
@@ -73,6 +72,7 @@ const contexts: DynamicRenderContext[] = [
       line1: '1865 · 国际电信联盟在巴黎成立',
       line2: '1949 · 中国人民解放军解放武汉三镇',
       line3: '1995 · Java 编程语言正式发布',
+      line4: '2008 · 中国商飞公司在上海成立',
     },
     renderedAt,
   },
@@ -92,6 +92,24 @@ const contexts: DynamicRenderContext[] = [
     },
     renderedAt,
   },
+  {
+    type: 'dashboard',
+    frameName: '数据看板',
+    config: {},
+    data: {},
+    renderedAt,
+  },
+  ...FONT_TEST_FONTS.map((font) => ({
+    type: 'font_test',
+    frameName: font.label,
+    config: {
+      type: 'font_test',
+      font_id: font.id,
+      invert: false,
+    },
+    data: null,
+    renderedAt,
+  })),
 ];
 
 for (const ctx of contexts) {
@@ -102,7 +120,7 @@ for (const ctx of contexts) {
   })
     .png()
     .toBuffer();
-  const file = join(outDir, `${ctx.type}.png`);
+  const file = join(outDir, `${debugFileName(ctx)}.png`);
   await writeFile(file, png);
   process.stdout.write(`${file} ${frame.byteLength} bytes\n`);
 }
@@ -110,6 +128,17 @@ for (const ctx of contexts) {
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
+}
+
+function debugFileName(ctx: DynamicRenderContext): string {
+  if (ctx.type === 'dashboard' && isEmptyDashboardData(ctx.data)) return 'dashboard-empty';
+  if (ctx.type !== 'font_test') return ctx.type;
+  return `font-test-${String(ctx.config.font_id ?? 'unknown').replace(/[^a-z0-9_-]+/gi, '-')}`;
+}
+
+function isEmptyDashboardData(data: Record<string, unknown> | null): boolean {
+  if (!data) return true;
+  return !data.layout && !isNonEmptyRecord(data.metrics);
 }
 
 function unpack1bpp(buf: Buffer): Buffer {
@@ -123,4 +152,10 @@ function unpack1bpp(buf: Buffer): Buffer {
     }
   }
   return out;
+}
+
+function isNonEmptyRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    !!value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).length > 0
+  );
 }

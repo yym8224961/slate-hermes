@@ -236,7 +236,7 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
 
             {type && (
               <>
-                {(type === 'image' || type === 'dashboard' || type === 'font_test') && (
+                {(type === 'image' || type === 'dashboard') && (
                   <Input
                     label="帧名称（选填，最多 64 字）"
                     type="text"
