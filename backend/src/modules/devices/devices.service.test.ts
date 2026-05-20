@@ -215,7 +215,10 @@ function createClaimService(
       ],
   };
   return {
-    service: new DevicesService(prisma as unknown as PrismaService, groups as unknown as GroupsService),
+    service: new DevicesService(
+      prisma as unknown as PrismaService,
+      groups as unknown as GroupsService
+    ),
     updates,
     getRecord: () => current,
   };
@@ -237,10 +240,9 @@ describe('DevicesService.claimByPairCode', () => {
   });
 
   it('leaves an empty selected_group_id when owner has no group yet', async () => {
-    const { service } = createClaimService(
-      device({ ownerUserId: null, selectedGroupId: null }),
-      { ownerGroups: [] }
-    );
+    const { service } = createClaimService(device({ ownerUserId: null, selectedGroupId: null }), {
+      ownerGroups: [],
+    });
 
     const result = await service.claimByPairCode('ABC234', 'user-2');
 
@@ -277,19 +279,17 @@ describe('DevicesService.claimByPairCode', () => {
   });
 
   it('maps concurrent CAS misses (P2025) to conflict instead of a generic prisma error', async () => {
-    const { service } = createClaimService(
-      device({ ownerUserId: null, selectedGroupId: null }),
-      { raceOnUpdate: 'P2025' }
-    );
+    const { service } = createClaimService(device({ ownerUserId: null, selectedGroupId: null }), {
+      raceOnUpdate: 'P2025',
+    });
 
     await expect(service.claimByPairCode('ABC234', 'user-2')).rejects.toThrow(ConflictError);
   });
 
   it('maps pair_code unique-constraint collisions (P2002) to conflict as well', async () => {
-    const { service } = createClaimService(
-      device({ ownerUserId: null, selectedGroupId: null }),
-      { raceOnUpdate: 'P2002' }
-    );
+    const { service } = createClaimService(device({ ownerUserId: null, selectedGroupId: null }), {
+      raceOnUpdate: 'P2002',
+    });
 
     await expect(service.claimByPairCode('ABC234', 'user-2')).rejects.toThrow(ConflictError);
   });
