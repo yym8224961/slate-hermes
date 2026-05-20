@@ -19,10 +19,10 @@ export function ImageContentCard({ gid, content, onEdit }: ImageContentCardProps
   const del = useDeleteContent(gid);
   const confirm = useConfirm();
   const toast = useToast();
-  const img = useContentImage(content.content_id, content.image_etag);
+  const img = useContentImage(content.id, content.image_etag);
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: content.content_id,
+    id: content.id,
     animateLayoutChanges: () => false,
   });
   const style = {
@@ -41,7 +41,7 @@ export function ImageContentCard({ gid, content, onEdit }: ImageContentCardProps
       confirmText: '删除',
     });
     if (!ok) return;
-    del.mutate(content.content_id, {
+    del.mutate(content.id, {
       onSuccess: () => toast.success('已删除'),
       onError: () => toast.error('删除失败'),
     });
@@ -84,7 +84,7 @@ export function ImageContentCard({ gid, content, onEdit }: ImageContentCardProps
           </button>
 
           {content.audio_etag && (
-            <AudioPlayPreview contentId={content.content_id} etag={content.audio_etag} />
+            <AudioPlayPreview contentId={content.id} etag={content.audio_etag} />
           )}
 
           <span className="flex-1" />

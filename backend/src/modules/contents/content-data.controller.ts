@@ -25,7 +25,7 @@ export class ContentDataController {
     const data: IngestPayloadT = parsed.data;
     const r = await this.contents.ingestDashboard(contentId, data);
     return {
-      content_id: r.content_id,
+      id: r.id,
       image_etag: r.image_etag,
       group_etag: r.group_etag,
       rendered_at: r.updatedAt.toISOString(),
@@ -40,7 +40,7 @@ export class ContentDataController {
   ): Promise<IngestResponseT> {
     const r = await this.contents.refreshDynamicContent(contentId, user.userId);
     return {
-      content_id: r.content_id,
+      id: r.id,
       image_etag: r.image_etag,
       group_etag: r.group_etag,
       rendered_at: r.updatedAt.toISOString(),

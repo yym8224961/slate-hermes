@@ -34,9 +34,15 @@ export function useUpdateGroup(gid: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (body: UpdateGroupRequestT) => {
-      await api.patch(`${V1}/groups/${gid}`, body);
+      const { data } = await api.patch<GroupSummaryT>(`${V1}/groups/${gid}`, body);
+      return data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['groups'] }),
+    onSuccess: (updated) => {
+      qc.setQueryData<GroupSummaryT[]>(['groups'], (groups) => {
+        if (!groups) return groups;
+        return groups.map((group) => (group.id === updated.id ? updated : group));
+      });
+    },
   });
 }
 

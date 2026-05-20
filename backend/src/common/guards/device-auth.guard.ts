@@ -23,7 +23,7 @@ export class DeviceAuthGuard implements CanActivate {
       select: { id: true, mac: true },
     });
     if (!device) {
-      throw new AuthError('device secret invalid; clear NVS and POST /api/v1/devices/register');
+      throw new AuthError('device secret invalid; clear NVS and POST /api/v1/devices');
     }
     req[CURRENT_DEVICE_KEY] = { deviceId: device.id, mac: device.mac };
     return true;

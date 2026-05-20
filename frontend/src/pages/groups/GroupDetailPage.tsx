@@ -1,21 +1,12 @@
 // 组详情：metadata + 内容网格（拖拽排序 + 试听/编辑/删除）+ 顶部「新增」。
 //
-// dnd-kit reorder 通过 useDndOrder 复用；optimistic update 仍在本地处理，
-// 因为 server 接受的是「旧 idx 的新顺序」，不是 etag 列表。
+// dnd-kit reorder 通过 useDndOrder 复用；本地顺序会在保存失败时回滚。
 
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { useQueryClient } from '@tanstack/react-query';
 import { ArrowLeft, Plus, Layers, Pencil, Check } from 'lucide-react';
-import {
-  DndContext,
-  closestCenter,
-  type DragEndEvent,
-  PointerSensor,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core';
-import { SortableContext, arrayMove, rectSortingStrategy } from '@dnd-kit/sortable';
+import { DndContext, closestCenter } from '@dnd-kit/core';
+import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { useGroups, useUpdateGroup } from '@/features/groups/queries';
 import { useGroupContents, useReorderContents } from '@/features/contents/queries';
 import type { ContentDetailT, GroupSummaryT } from 'shared';
@@ -31,10 +22,10 @@ import { inputCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
 import { useInlineRename } from '@/lib/hooks';
 import { formatBytes } from '@/lib/format';
+import { useDndOrder } from '@/lib/dnd';
 
 export function GroupDetail() {
   const { gid } = useParams();
-  const qc = useQueryClient();
   const navigate = useNavigate();
   const groups = useGroups();
   const contents = useGroupContents(gid);
@@ -42,41 +33,21 @@ export function GroupDetail() {
   const toast = useToast();
 
   const group = useMemo(() => groups.data?.find((g) => g.id === gid), [groups.data, gid]);
-  const orderIds = useMemo(() => (contents.data ?? []).map((f) => f.content_id), [contents.data]);
-
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
-
-  // 内容排序需要「旧 idx 的新顺序」作为 server 入参，不能直接用 useDndOrder
-  // 的纯 etag 列表 — 这里保留独立逻辑。
-  function onDragEnd(e: DragEndEvent) {
-    const { active, over } = e;
-    if (!over || active.id === over.id) return;
-
-    const cur = qc.getQueryData<ContentDetailT[]>(['contents', gid]);
-    if (!cur) {
-      toast.error('排序失败，请刷新重试');
-      return;
-    }
-
-    const oldPos = cur.findIndex((f) => f.content_id === active.id);
-    const newPos = cur.findIndex((f) => f.content_id === over.id);
-    if (oldPos < 0 || newPos < 0) return;
-
-    const reordered = arrayMove(cur, oldPos, newPos);
-    const newIdOrder = reordered.map((f) => f.content_id);
-    const optimistic: ContentDetailT[] = reordered.map((f, i) => ({ ...f, seq: i }));
-
-    qc.setQueryData(['contents', gid], optimistic);
-    reorder.mutate(
-      { order: newIdOrder },
-      {
-        onError: () => {
-          toast.error('排序保存失败');
-          qc.invalidateQueries({ queryKey: ['contents', gid] });
-        },
-      }
-    );
-  }
+  const { sensors, currentOrder, orderedItems, onDragEnd } = useDndOrder(
+    contents.data,
+    useCallback((f) => f.id, []),
+    (newOrder, { commit, rollback }) =>
+      reorder.mutate(
+        { order: newOrder },
+        {
+          onSuccess: commit,
+          onError: () => {
+            rollback();
+            toast.error('排序保存失败');
+          },
+        }
+      )
+  );
 
   if (!gid) {
     return (
@@ -124,9 +95,9 @@ export function GroupDetail() {
   }
   function openEdit(f: ContentDetailT) {
     if (f.kind === 'dynamic') {
-      navigate(`/groups/${gid}/contents/dynamic/${f.content_id}/edit`);
+      navigate(`/groups/${gid}/contents/dynamic/${f.id}/edit`);
     } else {
-      navigate(`/groups/${gid}/contents/image/${f.content_id}/edit`);
+      navigate(`/groups/${gid}/contents/image/${f.id}/edit`);
     }
   }
 
@@ -152,23 +123,18 @@ export function GroupDetail() {
           <EmptyState title="加载失败" hint="请刷新重试。" />
         ) : contents.data && contents.data.length > 0 ? (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-            <SortableContext items={orderIds} strategy={rectSortingStrategy}>
+            <SortableContext items={currentOrder} strategy={rectSortingStrategy}>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {contents.data.map((f) =>
+                {orderedItems.map((f) =>
                   f.kind === 'dynamic' ? (
                     <DynamicContentCard
-                      key={f.content_id}
+                      key={f.id}
                       gid={gid}
                       content={f}
                       onEdit={() => openEdit(f)}
                     />
                   ) : (
-                    <ImageContentCard
-                      key={f.content_id}
-                      gid={gid}
-                      content={f}
-                      onEdit={() => openEdit(f)}
-                    />
+                    <ImageContentCard key={f.id} gid={gid} content={f} onEdit={() => openEdit(f)} />
                   )
                 )}
               </div>

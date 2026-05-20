@@ -1,7 +1,7 @@
 // 音频播放预览。server 给的是 raw PCM（16kHz mono 16-bit signed），浏览器
 // 不能直接 <audio src> 播，要用 WebAudio 把 PCM 包成 AudioBuffer 播放。
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { Play, Pause } from 'lucide-react';
 import { useContentAudio } from '@/features/contents/queries';
 import { cn } from '@/lib/cn';
@@ -54,6 +54,25 @@ export function AudioPlayPreview({ contentId, etag, className, label }: AudioPla
     sourceRef.current = null;
     playingRef.current = false;
     setPlaying(false);
+  }, []);
+
+  // 组件卸载时停止播放并关闭 AudioContext，避免泄漏（Chromium 限制每标签页 6 个活跃实例）。
+  // 对已停止 / 已关闭实例再调一次会抛 InvalidStateError，吞掉即可。
+  useEffect(() => {
+    return () => {
+      try {
+        sourceRef.current?.stop();
+      } catch {
+        /* already stopped */
+      }
+      sourceRef.current = null;
+      try {
+        void ctxRef.current?.close();
+      } catch {
+        /* already closed */
+      }
+      ctxRef.current = null;
+    };
   }, []);
 
   if (!etag) return null;

@@ -5,7 +5,9 @@
 #include <esp_http_client.h>
 #include <esp_log.h>
 
+#include <atomic>
 #include <cstring>
+#include <mutex>
 #include <utility>
 
 #include "protocol_keys.h"
@@ -20,17 +22,29 @@ namespace api {
 static std::string s_url;
 static std::string s_mac;
 static std::string s_secret;
+// 统一保护可变全局配置，避免后台同步线程与设置线程并发 data race。
+static std::mutex s_state_mutex;
 static UnauthorizedCb s_unauth_cb;
-static int s_consecutive_401 = 0;
+static std::atomic<int> s_consecutive_401{0};
 
 void Init(const std::string& url, const std::string& mac, const std::string& device_secret) {
+    std::lock_guard<std::mutex> lock(s_state_mutex);
     s_url    = url;
     s_mac    = mac;
     s_secret = device_secret;
 }
-void SetServerUrl(const std::string& url) { s_url = url; }
-void SetSecret(const std::string& secret) { s_secret = secret; }
-void SetUnauthorizedHandler(UnauthorizedCb cb) { s_unauth_cb = std::move(cb); }
+void SetServerUrl(const std::string& url) {
+    std::lock_guard<std::mutex> lock(s_state_mutex);
+    s_url = url;
+}
+void SetSecret(const std::string& secret) {
+    std::lock_guard<std::mutex> lock(s_state_mutex);
+    s_secret = secret;
+}
+void SetUnauthorizedHandler(UnauthorizedCb cb) {
+    std::lock_guard<std::mutex> lock(s_state_mutex);
+    s_unauth_cb = std::move(cb);
+}
 
 namespace {
 
@@ -94,11 +108,16 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
                       const std::string& if_none_match = "",
                       std::string* etag_out          = nullptr,
                       bool need_auth                 = true) {
-    if (s_url.empty()) {
+    std::string base_url;
+    {
+        std::lock_guard<std::mutex> lock(s_state_mutex);
+        base_url = s_url;
+    }
+    if (base_url.empty()) {
         ESP_LOGW(kTag, "Server URL not set");
         return false;
     }
-    std::string full = s_url;
+    std::string full = base_url;
     if (!full.empty() && full.back() == '/') full.pop_back();
     full += path;
 
@@ -115,12 +134,18 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
     if (!client) return false;
 
     if (need_auth) {
-        if (s_secret.empty()) {
+        // 锁里只复制 secret 字符串，拼接放到锁外，缩短临界区。
+        std::string secret;
+        {
+            std::lock_guard<std::mutex> lock(s_state_mutex);
+            secret = s_secret;
+        }
+        if (secret.empty()) {
             ESP_LOGW(kTag, "%s: need_auth but secret empty", path.c_str());
             esp_http_client_cleanup(client);
             return false;
         }
-        std::string bearer = "Bearer " + s_secret;
+        const std::string bearer = "Bearer " + secret;
         esp_http_client_set_header(client, "Authorization", bearer.c_str());
     }
     if (!body_in.empty()) {
@@ -191,20 +216,25 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
 
     if (status == 304) return true;
     if (status / 100 == 2) {
-        s_consecutive_401 = 0;
+        s_consecutive_401.store(0, std::memory_order_relaxed);
         return true;
     }
     if (status == 401 && need_auth) {
-        ++s_consecutive_401;
+        const int count = s_consecutive_401.fetch_add(1, std::memory_order_relaxed) + 1;
         LogErrorEnvelope(path, status, body_out);
         ESP_LOGW(kTag, "%s -> 401 count=%d/%d",
-                 path.c_str(), s_consecutive_401, kUnauthorizedResetThreshold);
-        if (s_consecutive_401 >= kUnauthorizedResetThreshold && s_unauth_cb) {
-            s_unauth_cb();
+                 path.c_str(), count, kUnauthorizedResetThreshold);
+        UnauthorizedCb cb;
+        if (count >= kUnauthorizedResetThreshold) {
+            std::lock_guard<std::mutex> lock(s_state_mutex);
+            cb = s_unauth_cb;
+        }
+        if (cb) {
+            cb();
         }
         return false;
     }
-    s_consecutive_401 = 0;
+    s_consecutive_401.store(0, std::memory_order_relaxed);
     LogErrorEnvelope(path, status, body_out);
     return false;
 }
@@ -241,7 +271,7 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
 
     cJSON* dev = cJSON_GetObjectItemCaseSensitive(root, proto::kDevice);
     if (cJSON_IsObject(dev)) {
-        out.device_id   = get_str(dev, proto::kId);
+        out.id          = get_str(dev, proto::kId);
         out.device_name = get_str(dev, proto::kName);
         out.bound       = get_bool(dev, proto::kBound, false);
         out.pair_code   = get_str(dev, proto::kPairCode);
@@ -273,12 +303,17 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
 
 // ─── 设备协议端点 ────────────────────────────────────────────────
 bool Register(RegisterResult& out) {
+    std::string mac;
+    {
+        std::lock_guard<std::mutex> lock(s_state_mutex);
+        mac = s_mac;
+    }
     cJSON* j = cJSON_CreateObject();
-    cJSON_AddStringToObject(j, proto::kMac, s_mac.c_str());
+    cJSON_AddStringToObject(j, proto::kMac, mac.c_str());
     char* body = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     std::string resp;
-    std::string path = std::string(kApiPrefix) + "/devices/register";
+    std::string path = std::string(kApiPrefix) + "/devices";
     bool ok = DoRequestJson(path, HTTP_METHOD_POST, body, resp, /*need_auth=*/false);
     cJSON_free(body);
     if (!ok) return false;
@@ -292,19 +327,19 @@ bool Register(RegisterResult& out) {
         cJSON* v = cJSON_GetObjectItemCaseSensitive(root, k);
         return (cJSON_IsString(v) && v->valuestring) ? v->valuestring : "";
     };
-    out.device_id     = get_str(proto::kDeviceId);
+    out.id            = get_str(proto::kId);
     out.device_secret = get_str(proto::kDeviceSecret);
     out.pair_code     = get_str(proto::kPairCode);
     cJSON* rcl        = cJSON_GetObjectItemCaseSensitive(root, proto::kReclaimed);
     out.reclaimed     = cJSON_IsTrue(rcl);
     cJSON_Delete(root);
 
-    if (out.device_id.empty() || out.device_secret.empty() || out.pair_code.empty()) {
+    if (out.id.empty() || out.device_secret.empty() || out.pair_code.empty()) {
         ESP_LOGW(kTag, "Register: response missing required fields");
         return false;
     }
     ESP_LOGI(kTag, "Registered: id=%s pair=%s reclaimed=%d",
-             out.device_id.c_str(), out.pair_code.c_str(), (int)out.reclaimed);
+             out.id.c_str(), out.pair_code.c_str(), (int)out.reclaimed);
     return true;
 }
 
@@ -337,18 +372,18 @@ bool Poll(const Telemetry& tel, DeviceState& out) {
     char* body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     std::string resp;
-    std::string path = std::string(kApiPrefix) + "/me/poll";
+    std::string path = std::string(kApiPrefix) + "/devices/current/poll";
     bool ok = DoRequestJson(path, HTTP_METHOD_POST, body, resp);
     cJSON_free(body);
     if (!ok) return false;
     return ParseDeviceState(resp, out);
 }
 
-// direction: "next" | "prev" → POST /api/v1/me/group/{direction}
+// direction: "next" | "prev" → POST /api/v1/devices/current/group/{direction}
 bool CycleGroup(const std::string& direction, DeviceState& out) {
     if (direction != "next" && direction != "prev") return false;
     std::string resp;
-    std::string path = std::string(kApiPrefix) + "/me/group/" + direction;
+    std::string path = std::string(kApiPrefix) + "/devices/current/group/" + direction;
     bool ok = DoRequestJson(path, HTTP_METHOD_POST, "", resp);
     if (!ok) return false;
     return ParseDeviceState(resp, out);
@@ -360,7 +395,7 @@ bool SelectGroup(const std::string& gid, DeviceState& out) {
     char* body = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     std::string resp;
-    std::string path = std::string(kApiPrefix) + "/me/group";
+    std::string path = std::string(kApiPrefix) + "/devices/current/group";
     bool ok = DoRequestJson(path, HTTP_METHOD_PUT, body, resp);
     cJSON_free(body);
     if (!ok) return false;
@@ -407,7 +442,7 @@ bool GetManifest(const std::string& group_id, const std::string& if_none_match,
         cJSON_ArrayForEach(item, contents) {
             ContentMeta f;
             f.seq           = json_int(item, proto::kSeq, 0);
-            f.content_id    = json_str(item, proto::kContentId);
+            f.id            = json_str(item, proto::kId);
             f.device_status_bar_text = json_str(item, proto::kDeviceStatusBarText);
             f.image_etag    = json_str(item, proto::kImageEtag);
             f.audio_etag    = json_str(item, proto::kAudioEtag);
@@ -439,15 +474,15 @@ static bool DownloadBinary(const std::string& path, const std::string& if_none_m
     return !out.empty();
 }
 
-bool DownloadContentImage(const std::string& content_id, const std::string& if_none_match,
+bool DownloadContentImage(const std::string& id, const std::string& if_none_match,
                           std::vector<uint8_t>& out, bool& not_modified) {
-    std::string path = std::string(kApiPrefix) + "/contents/" + content_id + "/image";
+    std::string path = std::string(kApiPrefix) + "/contents/" + id + "/image";
     return DownloadBinary(path, if_none_match, out, not_modified);
 }
 
-bool DownloadContentAudio(const std::string& content_id, const std::string& if_none_match,
+bool DownloadContentAudio(const std::string& id, const std::string& if_none_match,
                           std::vector<uint8_t>& out, bool& not_modified) {
-    std::string path = std::string(kApiPrefix) + "/contents/" + content_id + "/audio";
+    std::string path = std::string(kApiPrefix) + "/contents/" + id + "/audio";
     return DownloadBinary(path, if_none_match, out, not_modified);
 }
 

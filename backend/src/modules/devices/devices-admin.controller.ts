@@ -1,33 +1,17 @@
-import {
-  Body,
-  Controller,
-  Delete,
-  Get,
-  HttpCode,
-  Param,
-  Patch,
-  Post,
-  Put,
-  Query,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put } from '@nestjs/common';
 import type { DeviceSummaryT } from 'shared';
 import { CurrentUser, type WebUserContext } from '../../common/decorators/current-user.decorator';
 import { DevicesService } from './devices.service';
 import { PatchDeviceDto } from './dto/patch-device.dto';
-import { ClaimByPairCodeDto } from './dto/claim-by-pair-code.dto';
+import { ClaimDeviceDto } from './dto/claim-device.dto';
 import { ReorderDevicesDto } from './dto/reorder-devices.dto';
-import { ListDevicesQueryDto } from './dto/list-devices.dto';
 
 @Controller('devices')
 export class DevicesAdminController {
   constructor(private readonly devices: DevicesService) {}
 
   @Get()
-  async list(
-    @CurrentUser() user: WebUserContext,
-    @Query() q: ListDevicesQueryDto
-  ): Promise<DeviceSummaryT[]> {
-    if (q.owner === 'none') return this.devices.listUnowned();
+  async list(@CurrentUser() user: WebUserContext): Promise<DeviceSummaryT[]> {
     return this.devices.listForOwner(user.userId);
   }
 
@@ -41,12 +25,12 @@ export class DevicesAdminController {
     await this.devices.reorderDevices(user.userId, body.order);
   }
 
-  @Post('claim-by-pair-code')
+  @Post('claims')
   async claimByPairCode(
     @CurrentUser() user: WebUserContext,
-    @Body() body: ClaimByPairCodeDto
+    @Body() body: ClaimDeviceDto
   ): Promise<DeviceSummaryT> {
-    return this.devices.claimByPairCode(body.code, user.userId);
+    return this.devices.claimByPairCode(body.pair_code, user.userId);
   }
 
   @Get(':id')

@@ -478,7 +478,7 @@ export const IngestPayload = z.object({
 export type IngestPayloadT = z.infer<typeof IngestPayload>;
 
 export const IngestResponse = z.object({
-  content_id: z.string(),
+  id: z.string(),
   image_etag: z.string(),
   group_etag: z.string(),
   rendered_at: z.string().datetime(),

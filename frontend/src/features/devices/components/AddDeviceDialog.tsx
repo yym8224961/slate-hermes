@@ -38,7 +38,7 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
     e.preventDefault();
     if (!codeValid) return;
     try {
-      const device = await claim.mutateAsync({ code: normalizePairCode(code) });
+      const device = await claim.mutateAsync({ pair_code: normalizePairCode(code) });
       // 后端 claim 时若 owner 已有相册会自动绑第一个，无相册则后续 create 会反向绑；
       // 这里只给出与实际后端行为一致的概要提示，不做额外引导（用户可在设备列表看进度）。
       toast.success(

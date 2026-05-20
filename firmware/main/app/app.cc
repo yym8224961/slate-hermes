@@ -124,7 +124,7 @@ bool TryConnectAndSetup(cred::Credentials& c) {
         // SaveSecret 是 NVS 单独 commit;短暂失败先重试,避免一次写盘抖动放大成重注册。
         bool saved = false;
         for (int attempt = 1; attempt <= kSaveSecretRetryCount; ++attempt) {
-            if (cred::SaveSecret(rr.device_id, rr.device_secret)) {
+            if (cred::SaveSecret(rr.id, rr.device_secret)) {
                 saved = true;
                 break;
             }
@@ -136,11 +136,11 @@ bool TryConnectAndSetup(cred::Credentials& c) {
             ESP_LOGE(kTag, "Fatal: SaveSecret failed, restarting");
             esp_restart();
         }
-        c.device_id     = rr.device_id;
+        c.device_id     = rr.id;
         c.device_secret = rr.device_secret;
         api::SetSecret(rr.device_secret);
         ESP_LOGI(kTag, "Registered: id=%s pair=%s reclaimed=%d",
-                 rr.device_id.c_str(), rr.pair_code.c_str(), (int)rr.reclaimed);
+                 rr.id.c_str(), rr.pair_code.c_str(), (int)rr.reclaimed);
         // splash 立即显示配对码 —— 用户看屏抄码是关键体验。bound 状态由后续 poll 决定。
         EmitBootStage(BootStage::kAwaitingPair, nullptr, rr.pair_code.c_str());
     } else {
@@ -174,7 +174,6 @@ void PostWakeupKeyEvent() {
     else if (mask & (1ULL << BOOT_BUTTON_GPIO)) btn = ButtonId::kEnter;
     else return;
     UiEvent e{};
-    SyncService::Get().MarkUserActive();
     e.kind         = UiEventKind::kButtonShort;
     e.u.button.btn = btn;
     evt::Post(e);
@@ -304,7 +303,6 @@ void App::UiLoopTask() {
 void App::AttachInputs() {
     auto post_short = [](ButtonId b) {
         return [b]() {
-            SyncService::Get().MarkUserActive();
             UiEvent e{};
             e.kind         = UiEventKind::kButtonShort;
             e.u.button.btn = b;
@@ -313,7 +311,6 @@ void App::AttachInputs() {
     };
     auto post_long = [](ButtonId b) {
         return [b]() {
-            SyncService::Get().MarkUserActive();
             UiEvent e{};
             e.kind         = UiEventKind::kButtonLong;
             e.u.button.btn = b;

@@ -277,7 +277,8 @@ function errorDiffuse(
         const dx = reverse ? -e.dx : e.dx;
         const nx = x + dx;
         const ny = y + e.dy;
-        if (nx < 0 || nx >= w || ny >= h) continue;
+        // 部分扩散核会向上一行传播误差，两个方向都需要边界保护。
+        if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
         const ni = ny * w + nx;
         work[ni] += Math.trunc((err * e.w) / kernel.divisor);
       }

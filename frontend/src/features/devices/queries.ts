@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
-  ClaimByPairCodeRequestT,
+  ClaimDeviceRequestT,
   DeviceSummaryT,
   PatchDeviceRequestT,
   ReorderDevicesRequestT,
@@ -23,8 +23,8 @@ export function useDevices() {
 export function useClaimByPairCode() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: ClaimByPairCodeRequestT) => {
-      const { data } = await api.post<DeviceSummaryT>(`${V1}/devices/claim-by-pair-code`, body);
+    mutationFn: async (body: ClaimDeviceRequestT) => {
+      const { data } = await api.post<DeviceSummaryT>(`${V1}/devices/claims`, body);
       return data;
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ['devices'] }),

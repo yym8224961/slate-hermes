@@ -22,8 +22,6 @@ import {
   DynamicConfig,
   type ContentDetailT,
   type ContentMutationResponseT,
-  type ContentSummaryT,
-  type DynamicConfigResponseT,
   type ManifestResponseT,
 } from 'shared';
 import { CurrentUser, type WebUserContext } from '../../common/decorators/current-user.decorator';
@@ -48,15 +46,15 @@ export class ContentsController {
 
   @Public()
   @UseGuards(JwtOrDeviceAuthGuard)
-  @Get('groups/:gid/manifest')
+  @Get('groups/:groupId/manifest')
   async manifest(
-    @Param('gid') gid: string,
+    @Param('groupId') groupId: string,
     @CurrentUser() user: WebUserContext | undefined,
     @CurrentDevice() device: DeviceContext | undefined,
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply
   ): Promise<void> {
-    const m = await this.contents.manifest(gid, {
+    const m = await this.contents.manifest(groupId, {
       userId: user?.userId,
       deviceId: device?.deviceId,
     });
@@ -83,50 +81,48 @@ export class ContentsController {
 
   @Public()
   @UseGuards(JwtOrDeviceAuthGuard)
-  @Get('groups/:gid/contents')
+  @Get('groups/:groupId/contents')
   list(
-    @Param('gid') gid: string,
+    @Param('groupId') groupId: string,
     @CurrentUser() user: WebUserContext | undefined,
     @CurrentDevice() device: DeviceContext | undefined
   ): Promise<ContentDetailT[]> {
-    return this.contents.list(gid, {
+    return this.contents.list(groupId, {
       userId: user?.userId,
       deviceId: device?.deviceId,
     });
   }
 
-  @Post('groups/:gid/contents/image')
+  @Post('groups/:groupId/contents')
   @HttpCode(201)
-  async createImage(
-    @Param('gid') gid: string,
+  async create(
+    @Param('groupId') groupId: string,
     @CurrentUser() user: WebUserContext,
+    @Headers('content-type') ct: string,
+    @Body() body: unknown,
     @Req() req: FastifyRequest
   ): Promise<ContentMutationResponseT> {
-    const parsed = await this.multipart.parseContentUpload(req);
-    return this.contents.appendImage(gid, user.userId, parsed);
-  }
-
-  @Post('groups/:gid/contents/dynamic')
-  @HttpCode(201)
-  createDynamic(
-    @Param('gid') gid: string,
-    @CurrentUser() user: WebUserContext,
-    @Body() body: unknown
-  ): Promise<ContentMutationResponseT> {
+    if (ct?.startsWith('multipart/form-data')) {
+      const parsed = await this.multipart.parseContentUpload(req);
+      return this.contents.appendImage(groupId, user.userId, parsed);
+    }
+    if (!ct?.startsWith('application/json')) {
+      throw new BadRequestException('仅支持 multipart/form-data 或 application/json');
+    }
     const parsed = CreateDynamicContentRequest.safeParse(body);
     if (!parsed.success) {
       throw new BadRequestException(parsed.error.issues[0]?.message ?? '配置非法');
     }
-    return this.contents.appendDynamic(gid, user.userId, parsed.data);
+    return this.contents.appendDynamic(groupId, user.userId, parsed.data);
   }
 
-  @Put('groups/:gid/contents/order')
+  @Put('groups/:groupId/contents/order')
   reorder(
-    @Param('gid') gid: string,
+    @Param('groupId') groupId: string,
     @CurrentUser() user: WebUserContext,
     @Body() body: ReorderContentsDto
   ): Promise<{ group_etag: string }> {
-    return this.contents.reorder(gid, user.userId, body.order);
+    return this.contents.reorder(groupId, user.userId, body.order);
   }
 
   @Public()
@@ -136,7 +132,7 @@ export class ContentsController {
     @Param('contentId') contentId: string,
     @CurrentUser() user: WebUserContext | undefined,
     @CurrentDevice() device: DeviceContext | undefined
-  ): Promise<ContentSummaryT> {
+  ): Promise<ContentDetailT> {
     return this.contents.get(contentId, {
       userId: user?.userId,
       deviceId: device?.deviceId,
@@ -225,14 +221,6 @@ export class ContentsController {
     @CurrentUser() user: WebUserContext
   ): Promise<{ group_etag: string }> {
     return this.contents.deleteAudio(contentId, user.userId);
-  }
-
-  @Get('contents/:contentId/dynamic')
-  dynamicConfig(
-    @Param('contentId') contentId: string,
-    @CurrentUser() user: WebUserContext
-  ): Promise<DynamicConfigResponseT> {
-    return this.contents.getDynamicConfig(contentId, user.userId);
   }
 
   @Post('contents/preview')

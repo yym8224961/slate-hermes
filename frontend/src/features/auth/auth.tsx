@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-// JWT 登录态管理。App 启动时如果 localStorage 有 token，自动 GET /me 回填 user
+// JWT 登录态管理。App 启动时如果 localStorage 有 token，自动 GET /users/current 回填 user
 // （否则 Layout 等组件读 ctx.user 永远是 null，刷新后看不到登出菜单）。
 
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
@@ -30,7 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     api
-      .get<{ id: string; email: string; username: string }>('/api/v1/me')
+      .get<{ id: string; email: string; username: string }>('/api/v1/users/current')
       .then(({ data }) => {
         if (!cancelled) setUser(data);
       })
@@ -65,10 +65,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const logout = useCallback(() => {
+    // 先把本地态清掉并跳登录页，再后台 best-effort 撤销 session：
+    // 服务端 logout 现在还是占位 no-op，等失败也不影响用户体验。
+    const hadToken = !!tokenStorage.get();
     tokenStorage.clear();
     setToken(null);
     setUser(null);
     navigate('/login', { replace: true });
+    if (hadToken) {
+      api.delete('/api/v1/sessions/current').catch(() => {});
+    }
   }, [navigate]);
 
   return (

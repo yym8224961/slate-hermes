@@ -144,7 +144,6 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
         }
         await createDynamic.mutateAsync({
           kind: 'dynamic',
-          dynamic_type: type,
           config: parsed.data,
           frame_name: effectiveFrameName(type, parsed.data, frameName),
         });

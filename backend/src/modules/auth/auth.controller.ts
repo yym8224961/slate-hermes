@@ -30,8 +30,12 @@ export class AuthController {
     // JWT 无服务端状态，撤销留待后续（Redis denylist）；此处仅占位
   }
 
-  @Get('me')
-  me(@CurrentUser() user: WebUserContext): { id: string; email: string; username: string } {
+  @Get('users/current')
+  getCurrentUser(@CurrentUser() user: WebUserContext): {
+    id: string;
+    email: string;
+    username: string;
+  } {
     return { id: user.userId, email: user.email, username: user.username };
   }
 }

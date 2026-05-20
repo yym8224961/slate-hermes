@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash, randomBytes } from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import type { DeviceStateT, DeviceSummaryT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
@@ -194,14 +195,6 @@ export class DevicesService {
     return rows.map(toSummary);
   }
 
-  async listUnowned(): Promise<DeviceSummaryT[]> {
-    const rows = await this.prisma.device.findMany({
-      where: { ownerUserId: null },
-      orderBy: { createdAt: 'desc' },
-    });
-    return rows.map(toSummary);
-  }
-
   async getOwned(deviceId: string, ownerUserId: string): Promise<DeviceSummaryT> {
     const d = await this.requireOwned(deviceId, ownerUserId);
     return toSummary(d);
@@ -230,38 +223,60 @@ export class DevicesService {
   }
 
   async claimByPairCode(code: string, ownerUserId: string): Promise<DeviceSummaryT> {
-    const device = await this.prisma.device.findUnique({ where: { pairCode: code } });
-    if (!device) {
-      throw new NotFoundError('配对码无效', { code: 'pair_code_invalid' });
-    }
-    if (device.ownerUserId) {
-      // 设计上 claim 后会立即轮换 pairCode，理论上同 code 不会查到 owned device。
-      // 保险起见显式拒绝，避免攻击者用早期截图的码反复尝试（虽然本来就查不到）。
-      if (device.ownerUserId === ownerUserId) {
-        return toSummary(device);
-      }
-      throw new ForbiddenError('设备已被他人绑定', {
-        code: 'already_owned_by_other_user',
+    // 查询和 CAS 更新放进同一事务；真正的并发保护由 update where ownerUserId:null 保证。
+    const result = await this.prisma
+      .$transaction(async (tx): Promise<{ device: DeviceRow; freshlyClaimed: boolean }> => {
+        const device = await tx.device.findUnique({ where: { pairCode: code } });
+        if (!device) {
+          throw new NotFoundError('配对码无效', { code: 'pair_code_invalid' });
+        }
+        if (device.ownerUserId) {
+          if (device.ownerUserId === ownerUserId) {
+            return { device, freshlyClaimed: false };
+          }
+          throw new ForbiddenError('设备已被他人绑定', {
+            code: 'already_owned_by_other_user',
+          });
+        }
+
+        const sortOrder = await this.nextDeviceSortOrder(ownerUserId, tx);
+        const newPairCode = await this.generateUniquePairCode(tx);
+        const ownerGroups = await this.groups.listOwnerGroups(ownerUserId, tx);
+        const selectedGroupId = ownerGroups[0]?.id ?? null;
+
+        // ownerUserId: null 当 CAS 用：另一个事务抢先 update 后 P2025 抛出走 conflict。
+        const updated = await tx.device.update({
+          where: { id: device.id, ownerUserId: null },
+          data: { ownerUserId, sortOrder, pairCode: newPairCode, selectedGroupId },
+        });
+        return { device: updated, freshlyClaimed: true };
+      })
+      .catch((err: unknown) => {
+        if (err instanceof Prisma.PrismaClientKnownRequestError) {
+          // P2025: CAS 落空 —— 另一个事务已抢占。
+          // P2002: 极小概率两并发事务生成同一新 pairCode。两种都用同一 conflict 提示，
+          //        让前端引导用户重新对屏抄码。
+          if (err.code === 'P2025' || err.code === 'P2002') {
+            throw new ConflictError('配对码已被使用，请查看设备屏幕上的最新配对码', {
+              code: 'pair_code_already_claimed',
+            });
+          }
+        }
+        throw err;
       });
+
+    const { device, freshlyClaimed } = result;
+    if (freshlyClaimed) {
+      this.logger.log(
+        `device claimed by pair code: id=${device.id} owner=${ownerUserId}` +
+          (device.selectedGroupId
+            ? ` auto-bound to group ${device.selectedGroupId}`
+            : ' (owner has no group yet)')
+      );
+    } else {
+      this.logger.log(`device re-claim no-op (already owned by self): id=${device.id}`);
     }
-    const [sortOrder, newPairCode, ownerGroups] = await Promise.all([
-      this.nextDeviceSortOrder(ownerUserId),
-      this.generateUniquePairCode(),
-      this.groups.listOwnerGroups(ownerUserId),
-    ]);
-    // owner 已有相册时，自动选第一个（按 sortOrder），省去 web 端「再去设备详情手动选」二次操作。
-    // owner 0 个相册时 selectedGroupId 保持 null，设备 splash 提示「请先创建相册」；
-    // 之后 owner 首次创建相册会触发 GroupsService.create 里的反向绑定，设备自动进 FrameScene。
-    const selectedGroupId = ownerGroups[0]?.id ?? null;
-    const updated = await this.prisma.device.update({
-      where: { id: device.id },
-      data: { ownerUserId, sortOrder, pairCode: newPairCode, selectedGroupId },
-    });
-    this.logger.log(
-      `device claimed by pair code: id=${device.id} owner=${ownerUserId}` +
-        (selectedGroupId ? ` auto-bound to group ${selectedGroupId}` : ' (owner has no group yet)')
-    );
-    return toSummary(updated);
+    return toSummary(device);
   }
 
   async unbind(deviceId: string, ownerUserId: string): Promise<void> {
@@ -317,8 +332,11 @@ export class DevicesService {
 
   // ── 内部 helpers ────────────────────────────────────────────
 
-  private async nextDeviceSortOrder(ownerUserId: string): Promise<number> {
-    const last = await this.prisma.device.findFirst({
+  private async nextDeviceSortOrder(
+    ownerUserId: string,
+    client: Prisma.TransactionClient | PrismaService = this.prisma
+  ): Promise<number> {
+    const last = await client.device.findFirst({
       where: { ownerUserId },
       orderBy: { sortOrder: 'desc' },
       select: { sortOrder: true },
@@ -336,14 +354,16 @@ export class DevicesService {
 
   // 6 位 [A-Z2-9] 字母表（避开 0/O/1/I/L）。PAIR_CODE_ALPHABET.length^6 ≈ 8.8 亿，撞概率极低，
   // 但仍按 unique 约束最多重试 8 次以兜底。
-  private async generateUniquePairCode(): Promise<string> {
+  private async generateUniquePairCode(
+    client: Prisma.TransactionClient | PrismaService = this.prisma
+  ): Promise<string> {
     for (let attempt = 0; attempt < 8; attempt++) {
       const bytes = randomBytes(6);
       let code = '';
       for (let i = 0; i < 6; i++) {
         code += PAIR_CODE_ALPHABET[bytes[i]! % PAIR_CODE_ALPHABET.length];
       }
-      const exists = await this.prisma.device.findUnique({
+      const exists = await client.device.findUnique({
         where: { pairCode: code },
         select: { id: true },
       });

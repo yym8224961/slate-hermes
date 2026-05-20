@@ -51,7 +51,7 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
   const previewRef = useRef<HTMLCanvasElement>(null);
 
   const existingImg = useContentImage(
-    content?.content_id ?? '',
+    content?.id ?? '',
     isEdit && !imageFile ? (content?.image_etag ?? '') : ''
   );
 
@@ -89,7 +89,7 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
 
     try {
       if (isEdit) {
-        await updateImageContent.mutateAsync({ contentId: content!.content_id, form: fd });
+        await updateImageContent.mutateAsync({ contentId: content!.id, form: fd });
         toast.success('内容已保存');
       } else {
         await createImageContent.mutateAsync(fd);
@@ -186,7 +186,7 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
             <AudioDropzone
               gid={gid}
               hasExistingAudio={isEdit && !!content!.audio_etag}
-              editingContentId={isEdit ? content!.content_id : null}
+              editingContentId={isEdit ? content!.id : null}
               audioFile={audioFile}
               onPick={setAudioFile}
             />

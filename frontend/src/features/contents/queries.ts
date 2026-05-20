@@ -28,9 +28,11 @@ export function useCreateImageContent(gid: string) {
   return useMutation({
     mutationFn: async (form: FormData) => {
       const { data } = await api.post<ContentMutationResponseT>(
-        `${V1}/groups/${gid}/contents/image`,
+        `${V1}/groups/${gid}/contents`,
         form,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
+        {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        }
       );
       return data;
     },
@@ -69,7 +71,6 @@ export function useDeleteContent(gid: string) {
     onSuccess: (_data, contentId) => {
       qc.invalidateQueries({ queryKey: ['contents', gid] });
       qc.invalidateQueries({ queryKey: ['groups'] });
-      qc.removeQueries({ queryKey: ['dynamic-config', contentId] });
       qc.removeQueries({ queryKey: ['content-image', contentId] });
       qc.removeQueries({ queryKey: ['content-audio', contentId] });
     },
@@ -136,9 +137,29 @@ export function useReorderContents(gid: string) {
     mutationFn: async (body: ReorderContentsRequestT) => {
       await api.put(`${V1}/groups/${gid}/contents/order`, body);
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['contents', gid] });
-      qc.invalidateQueries({ queryKey: ['groups'] });
+    // 乐观更新 seq：避免拖拽落点到 refetch 完成之间 ContentCard 显示旧序号。
+    onMutate: async ({ order }) => {
+      await qc.cancelQueries({ queryKey: ['contents', gid] });
+      const previous = qc.getQueryData<ContentDetailT[]>(['contents', gid]);
+      if (previous) {
+        const byId = new Map(previous.map((c) => [c.id, c]));
+        const reordered: ContentDetailT[] = order
+          .map((id, idx) => {
+            const item = byId.get(id);
+            return item ? { ...item, seq: idx } : undefined;
+          })
+          .filter((c): c is ContentDetailT => c !== undefined);
+        qc.setQueryData<ContentDetailT[]>(['contents', gid], reordered);
+      }
+      return { previous };
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.previous) qc.setQueryData(['contents', gid], ctx.previous);
+    },
+    // 后端 reorder 会重算 group.etag，所以 groups 缓存也要 invalidate。
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ['contents', gid] });
+      void qc.invalidateQueries({ queryKey: ['groups'] });
     },
   });
 }
@@ -148,9 +169,11 @@ export function useCreateDynamicContent(gid: string) {
   return useMutation({
     mutationFn: async (body: CreateDynamicContentRequestT) => {
       const { data } = await api.post<ContentMutationResponseT>(
-        `${V1}/groups/${gid}/contents/dynamic`,
+        `${V1}/groups/${gid}/contents`,
         body,
-        { headers: { 'Content-Type': 'application/json' } }
+        {
+          headers: { 'Content-Type': 'application/json' },
+        }
       );
       return data;
     },
@@ -182,10 +205,9 @@ export function useUpdateDynamicContent(gid: string) {
       );
       return data;
     },
-    onSuccess: (_data, variables) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['contents', gid] });
       qc.invalidateQueries({ queryKey: ['groups'] });
-      qc.invalidateQueries({ queryKey: ['dynamic-config', variables.contentId] });
     },
   });
 }
@@ -219,23 +241,6 @@ export function useUpdateContentAudio(gid: string) {
   });
 }
 
-export function useDynamicConfig(contentId: string | undefined) {
-  return useQuery({
-    queryKey: ['dynamic-config', contentId],
-    queryFn: async () => {
-      const { data } = await api.get<{
-        dynamic_type: string;
-        config: DynamicConfigT;
-        frame_name: string | null;
-        device_status_bar_text: string;
-      }>(`${V1}/contents/${contentId}/dynamic`);
-      return data;
-    },
-    enabled: !!contentId,
-    staleTime: 30_000,
-  });
-}
-
 export function useRefreshDynamicContent(gid: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -260,9 +265,7 @@ export function usePreviewDynamicContent(contentId: string | undefined) {
       frameName?: string | null;
     }) => {
       const url = contentId ? `${V1}/contents/${contentId}/preview` : `${V1}/contents/preview`;
-      const body = contentId
-        ? { config, frame_name: frameName }
-        : { dynamic_type: config.type, config, frame_name: frameName };
+      const body = { config, frame_name: frameName };
       const { data } = await api.post<ArrayBuffer>(url, body, {
         responseType: 'arraybuffer',
       });

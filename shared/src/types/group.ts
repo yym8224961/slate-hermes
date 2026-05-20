@@ -18,7 +18,6 @@ export type CreateGroupRequestT = z.infer<typeof CreateGroupRequest>;
 
 export const UpdateGroupRequest = z.object({
   name: z.string().min(1).max(64).optional(),
-  sort_order: z.number().int().optional(),
 });
 export type UpdateGroupRequestT = z.infer<typeof UpdateGroupRequest>;
 

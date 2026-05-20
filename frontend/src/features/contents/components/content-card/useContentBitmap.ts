@@ -1,14 +1,30 @@
 import { useEffect, type RefObject } from 'react';
 import { decodeBppImage, isValidBppLength } from '@/lib/image';
 
+const MAX_CACHE_SIZE = 32;
+
+/** LRU cache: Map 按插入顺序迭代，get 时将条目移到末尾以更新访问顺序 */
 const imageDataCache = new Map<string, ImageData>();
-const MAX_CACHE_SIZE = 50;
+
+function getCachedImageData(etag: string): ImageData | undefined {
+  const entry = imageDataCache.get(etag);
+  if (entry === undefined) return undefined;
+  // 将命中的条目移到末尾，使其成为最近使用
+  imageDataCache.delete(etag);
+  imageDataCache.set(etag, entry);
+  return entry;
+}
 
 function rememberImageData(etag: string, data: ImageData): void {
+  // 若 etag 已存在，先删除再插入以更新顺序
+  if (imageDataCache.has(etag)) imageDataCache.delete(etag);
   imageDataCache.set(etag, data);
-  if (imageDataCache.size <= MAX_CACHE_SIZE) return;
-  const firstKey = imageDataCache.keys().next().value;
-  if (firstKey) imageDataCache.delete(firstKey);
+  // 超出容量时批量驱逐最旧的条目，保留 MAX_CACHE_SIZE 个
+  while (imageDataCache.size > MAX_CACHE_SIZE) {
+    const lruKey = imageDataCache.keys().next().value;
+    if (lruKey === undefined) break;
+    imageDataCache.delete(lruKey);
+  }
 }
 
 export function useContentBitmap(
@@ -25,7 +41,7 @@ export function useContentBitmap(
     if (!isValidBppLength(bytes)) return;
 
     if (etag) {
-      const cached = imageDataCache.get(etag);
+      const cached = getCachedImageData(etag);
       if (cached) {
         ctx.putImageData(cached, 0, 0);
         return;

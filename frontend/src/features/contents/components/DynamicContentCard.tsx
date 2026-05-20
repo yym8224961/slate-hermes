@@ -24,11 +24,11 @@ export function DynamicContentCard({ gid, content, onEdit }: DynamicContentCardP
   const confirm = useConfirm();
   const toast = useToast();
 
-  const img = useContentImage(content.content_id, content.image_etag);
+  const img = useContentImage(content.id, content.image_etag);
   const hasRenderError = !!content.dynamic_render_error;
 
   const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: content.content_id,
+    id: content.id,
     animateLayoutChanges: () => false,
   });
   const style = {
@@ -47,14 +47,14 @@ export function DynamicContentCard({ gid, content, onEdit }: DynamicContentCardP
       confirmText: '删除',
     });
     if (!ok) return;
-    del.mutate(content.content_id, {
+    del.mutate(content.id, {
       onSuccess: () => toast.success('已删除'),
       onError: () => toast.error('删除失败'),
     });
   }
 
   function onRefresh() {
-    refresh.mutate(content.content_id, {
+    refresh.mutate(content.id, {
       onSuccess: () => toast.success('已刷新'),
       onError: () => toast.error('刷新失败'),
     });

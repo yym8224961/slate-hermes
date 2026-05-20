@@ -34,24 +34,29 @@ export class GroupsController {
     await this.groups.reorderGroups(user.userId, body.order);
   }
 
-  @Get(':gid')
-  getOne(@CurrentUser() user: WebUserContext, @Param('gid') gid: string): Promise<GroupSummaryT> {
-    return this.groups.getOwned(gid, user.userId);
+  @Get(':groupId')
+  getOne(
+    @CurrentUser() user: WebUserContext,
+    @Param('groupId') groupId: string
+  ): Promise<GroupSummaryT> {
+    return this.groups.getOwned(groupId, user.userId);
   }
 
-  @Patch(':gid')
-  @HttpCode(204)
+  @Patch(':groupId')
   async patch(
     @CurrentUser() user: WebUserContext,
-    @Param('gid') gid: string,
+    @Param('groupId') groupId: string,
     @Body() body: UpdateGroupDto
-  ): Promise<void> {
-    await this.groups.update(gid, user.userId, body);
+  ): Promise<GroupSummaryT> {
+    return this.groups.update(groupId, user.userId, body);
   }
 
-  @Delete(':gid')
+  @Delete(':groupId')
   @HttpCode(204)
-  async delete(@CurrentUser() user: WebUserContext, @Param('gid') gid: string): Promise<void> {
-    await this.groups.delete(gid, user.userId);
+  async delete(
+    @CurrentUser() user: WebUserContext,
+    @Param('groupId') groupId: string
+  ): Promise<void> {
+    await this.groups.delete(groupId, user.userId);
   }
 }

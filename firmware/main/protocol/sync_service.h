@@ -1,6 +1,6 @@
 #pragma once
 
-// 后台同步：POST /api/v1/me/poll 后按 manifest 增量拉 frame image / audio。
+// 后台同步：POST /api/v1/devices/current/poll 后按 manifest 增量拉 frame image / audio。
 // 状态/进度通过 EventBus 反馈：
 //   - SyncStarted       每轮开始
 //   - SyncFinished{ok}  每轮结束(含 304 noop)
@@ -34,9 +34,6 @@ class SyncService {
     // RTC timer 到期后触发：允许同步 + telemetry，并把新 manifest/data 拉下来。
     void TriggerWakeRefresh();
 
-    // 通知「用户活动」（按键 / 切 frame）— 用于自适应轮询间隔。
-    void MarkUserActive();
-
     // 设备主动 cycle 切组(scene 按键 callback 调)。
     // 内部置 BIT_CYCLE_NEXT/PREV,Loop 在唤醒时调 api::CycleGroup 然后立即 SyncOnce。
     void CycleNext();
@@ -64,7 +61,6 @@ class SyncService {
     EventGroupHandle_t   event_group_         = nullptr;
     SemaphoreHandle_t    current_group_mutex_ = nullptr;
     mutable std::string  current_group_;
-    std::atomic<int64_t> last_user_active_ms_{0};
     // 跟踪 bound 翻转,只在变化时 emit kBound/kUnbound。
     std::atomic<bool> was_bound_{false};
     // 进入 unbound 状态的时刻,用于阶梯退避轮询间隔。

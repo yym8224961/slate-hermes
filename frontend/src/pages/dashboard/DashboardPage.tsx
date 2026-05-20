@@ -6,7 +6,7 @@
 // 设备点卡 → 弹 modal（无 URL 跳转，留在列表上下文）
 // 组点卡   → /groups/:gid 进帧管理
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Plus, FolderHeart, MonitorSmartphone, Cpu } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
@@ -56,9 +56,18 @@ export function Dashboard() {
   const toast = useToast();
   const dnd = useDndOrder(
     devices.data,
-    (d) => d.id,
-    (newOrder) =>
-      reorderDevices.mutate({ order: newOrder }, { onError: () => toast.error('排序保存失败') })
+    useCallback((d) => d.id, []),
+    (newOrder, { commit, rollback }) =>
+      reorderDevices.mutate(
+        { order: newOrder },
+        {
+          onSuccess: commit,
+          onError: () => {
+            rollback();
+            toast.error('排序保存失败');
+          },
+        }
+      )
   );
 
   return (
@@ -92,12 +101,13 @@ export function Dashboard() {
           >
             <SortableContext items={dnd.currentOrder} strategy={rectSortingStrategy}>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fade-up fade-up-1">
-                {devices.data.map((d) => (
+                {/* dnd-kit 的 item 顺序以 currentOrder 为准，渲染数据跟随同一顺序。 */}
+                {dnd.orderedItems.map((device) => (
                   <DeviceCard
-                    key={d.id}
-                    device={d}
+                    key={device.id}
+                    device={device}
                     groups={groups.data ?? []}
-                    onOpen={() => navigate(`/devices/${d.id}`)}
+                    onOpen={() => navigate(`/devices/${device.id}`)}
                   />
                 ))}
               </div>
@@ -146,11 +156,20 @@ function GroupsSection() {
 
   const [createOpen, setCreateOpen] = useState(false);
 
-  const { sensors, currentOrder, onDragEnd } = useDndOrder(
+  const { sensors, currentOrder, orderedItems, onDragEnd } = useDndOrder(
     groups.data,
-    (g) => g.id,
-    (newOrder) =>
-      reorder.mutate({ order: newOrder }, { onError: () => toast.error('排序保存失败') })
+    useCallback((g) => g.id, []),
+    (newOrder, { commit, rollback }) =>
+      reorder.mutate(
+        { order: newOrder },
+        {
+          onSuccess: commit,
+          onError: () => {
+            rollback();
+            toast.error('排序保存失败');
+          },
+        }
+      )
   );
 
   return (
@@ -172,19 +191,20 @@ function GroupsSection() {
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
           <SortableContext items={currentOrder} strategy={rectSortingStrategy}>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fade-up fade-up-2">
-              {groups.data.map((g) => (
+              {/* dnd-kit 的 item 顺序以 currentOrder 为准，渲染数据跟随同一顺序。 */}
+              {orderedItems.map((group) => (
                 <GroupCardSortable
-                  key={g.id}
-                  group={g}
+                  key={group.id}
+                  group={group}
                   onDelete={async () => {
                     const ok = await confirm({
-                      title: `删除「${g.name}」？`,
-                      description: `这一组连同 ${g.content_count} 项内容的图片与音频会全部删除，不可逆。`,
+                      title: `删除「${group.name}」？`,
+                      description: `这一组连同 ${group.content_count} 项内容的图片与音频会全部删除，不可逆。`,
                       destructive: true,
                       confirmText: '删除整组',
                     });
                     if (!ok) return;
-                    del.mutate(g.id, {
+                    del.mutate(group.id, {
                       onSuccess: () => toast.success('已删除'),
                       onError: () => toast.error('删除失败'),
                     });

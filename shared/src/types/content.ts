@@ -16,7 +16,7 @@ export const ReorderContentsRequest = z.object({
 export type ReorderContentsRequestT = z.infer<typeof ReorderContentsRequest>;
 
 export const ContentSummary = z.object({
-  content_id: z.string(),
+  id: z.string(),
   seq: z.number().int().nonnegative(),
   frame_name: z.string().nullable(),
   device_status_bar_text: z.string(),
@@ -25,14 +25,14 @@ export const ContentSummary = z.object({
   image_size: z.number().int().nonnegative(),
   audio_size: z.number().int().nonnegative().nullable(),
   kind: ContentKind,
-  dynamic_type: z.string().nullable(),
+  dynamic_type: DynamicType.nullable(),
   next_wake_sec: z.number().int().nonnegative().nullable(),
 });
 export type ContentSummaryT = z.infer<typeof ContentSummary>;
 
 export const ContentDetail = ContentSummary.extend({
   group_id: z.string(),
-  dynamic_config: z.unknown().nullable(),
+  dynamic_config: DynamicConfig.nullable(),
   dynamic_data: z.unknown().nullable(),
   dynamic_last_rendered_at: z.string().datetime().nullable(),
   dynamic_next_render_at: z.string().datetime().nullable(),
@@ -41,7 +41,7 @@ export const ContentDetail = ContentSummary.extend({
 export type ContentDetailT = z.infer<typeof ContentDetail>;
 
 export const ContentMutationResponse = z.object({
-  content_id: z.string(),
+  id: z.string(),
   seq: z.number().int().nonnegative(),
   image_etag: z.string(),
   audio_etag: z.string().nullable(),
@@ -51,7 +51,6 @@ export type ContentMutationResponseT = z.infer<typeof ContentMutationResponse>;
 
 export const CreateDynamicContentRequest = z.object({
   kind: z.literal('dynamic'),
-  dynamic_type: DynamicType,
   config: DynamicConfig,
   frame_name: z.string().max(64).nullable().optional(),
 });
@@ -63,16 +62,7 @@ export const PatchDynamicContentRequest = z.object({
 });
 export type PatchDynamicContentRequestT = z.infer<typeof PatchDynamicContentRequest>;
 
-export const DynamicConfigResponse = z.object({
-  dynamic_type: DynamicType,
-  config: DynamicConfig,
-  frame_name: z.string().nullable(),
-  device_status_bar_text: z.string(),
-});
-export type DynamicConfigResponseT = z.infer<typeof DynamicConfigResponse>;
-
 export const PreviewDynamicContentRequest = z.object({
-  dynamic_type: DynamicType,
   config: DynamicConfig,
   frame_name: z.string().max(64).nullable().optional(),
 });

@@ -158,7 +158,7 @@ async function deleteAllContents(
 ): Promise<void> {
   const rows = await contents.list(groupId, { userId });
   for (const row of rows) {
-    await contents.delete(row.content_id, userId);
+    await contents.delete(row.id, userId);
   }
 }
 
@@ -175,7 +175,7 @@ async function deleteDuplicateFontTests(
     if (row.dynamic_type !== 'font_test') continue;
     const fontId = fontIdFromContent(row);
     if (!fontId || !valid.has(fontId) || seen.has(fontId)) {
-      await contents.delete(row.content_id, userId);
+      await contents.delete(row.id, userId);
       continue;
     }
     seen.add(fontId);
@@ -204,21 +204,20 @@ async function upsertFontFrames(
     } as const;
     const existing = byFont.get(font.id);
     if (existing) {
-      await contents.patchDynamic(existing.content_id, userId, {
+      await contents.patchDynamic(existing.id, userId, {
         frame_name: font.label,
         config,
       });
-      generated.push({ fontId: font.id, contentId: existing.content_id });
+      generated.push({ fontId: font.id, contentId: existing.id });
       continue;
     }
 
     const created = await contents.appendDynamic(groupId, userId, {
       kind: 'dynamic',
-      dynamic_type: 'font_test',
       frame_name: font.label,
       config,
     });
-    generated.push({ fontId: font.id, contentId: created.content_id });
+    generated.push({ fontId: font.id, contentId: created.id });
   }
   return generated;
 }
@@ -233,7 +232,7 @@ function orderedContentIds(rows: ContentDetailT[]): string[] {
   const otherRows = rows
     .filter((row) => !(row.dynamic_type === 'font_test' && fontIdFromContent(row)))
     .sort((a, b) => a.seq - b.seq);
-  return [...fontRows, ...otherRows].map((row) => row.content_id);
+  return [...fontRows, ...otherRows].map((row) => row.id);
 }
 
 function fontIdFromContent(row: ContentDetailT): FontTestFontIdT | null {

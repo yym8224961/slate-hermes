@@ -50,12 +50,6 @@ class MutexLockGuard {
     SemaphoreHandle_t mutex_ = nullptr;
     bool locked_ = false;
 };
-
-bool IsRecentlyActive(int64_t last_user_active_ms) {
-    constexpr int64_t kActiveWindowMs = 10LL * 60 * 1000;
-    const int64_t now_ms = esp_timer_get_time() / 1000;
-    return last_user_active_ms > 0 && (now_ms - last_user_active_ms) <= kActiveWindowMs;
-}
 }  // namespace
 
 SyncService& SyncService::Get() {
@@ -86,12 +80,6 @@ void SyncService::Start(SyncDeps deps) {
         }
     }
     running_.store(true);
-    const auto cause = power_state::Classify();
-    if (cause == power_state::WakeCause::kButton || cause == power_state::WakeCause::kColdBoot) {
-        last_user_active_ms_.store(esp_timer_get_time() / 1000);
-    } else {
-        last_user_active_ms_.store(0);
-    }
     xTaskCreatePinnedToCore(&TaskEntry, "slate_sync", 10 * 1024, this, 4, nullptr, 0);
     ESP_LOGI(kTag, "Sync service started");
 }
@@ -109,10 +97,6 @@ void SyncService::TriggerNow() {
 
 void SyncService::TriggerWakeRefresh() {
     if (event_group_) xEventGroupSetBits(event_group_, BIT_WAKE_REFRESH);
-}
-
-void SyncService::MarkUserActive() {
-    last_user_active_ms_.store(esp_timer_get_time() / 1000);
 }
 
 void SyncService::CycleNext() {
@@ -262,11 +246,11 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     // 防日志噪音：同一 gid 的协议不匹配只 warn 一次/进程，避免每 tick 反复刷屏。
     static std::string s_warned_gid;
     for (auto& f : mf.contents) {
-        // 本地缓存按 (gid, seq) 维度，HTTP URL 用稳定 content_id。
-        if (f.content_id.empty()) {
+        // 本地缓存按 (gid, seq) 维度，HTTP URL 用稳定 id。
+        if (f.id.empty()) {
             if (s_warned_gid != gid) {
                 ESP_LOGW(kTag,
-                         "Frame seq=%d 缺 content_id（gid=%s），跳过下载",
+                         "Frame seq=%d 缺 id（gid=%s），跳过下载",
                          f.seq, gid.c_str());
                 s_warned_gid = gid;
             }
@@ -276,7 +260,7 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         if (!cache::FrameImageExists(gid, f.seq, f.image_etag)) {
             std::vector<uint8_t> buf;
             bool                 nm = false;
-            if (api::DownloadContentImage(f.content_id, "", buf, nm)) {
+            if (api::DownloadContentImage(f.id, "", buf, nm)) {
                 cache::WriteFrameImage(gid, f.seq, buf, f.image_etag);
                 ESP_LOGI(kTag, "Frame %d image cached (%u B)", f.seq, (unsigned)buf.size());
             }
@@ -286,7 +270,7 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         } else if (!cache::FrameAudioExists(gid, f.seq, f.audio_etag)) {
             std::vector<uint8_t> buf;
             bool                 nm = false;
-            if (api::DownloadContentAudio(f.content_id, "", buf, nm)) {
+            if (api::DownloadContentAudio(f.id, "", buf, nm)) {
                 cache::WriteFrameAudio(gid, f.seq, buf, f.audio_etag);
             }
         }
@@ -321,10 +305,8 @@ void SyncService::SyncOnce(SyncMode mode) {
     if (mode == SyncMode::kDynamicWake) {
         if (deps_.current_group) SetCurrentGroupLocked(deps_.current_group());
     }
-    if (mode == SyncMode::kUserActive && !IsRecentlyActive(last_user_active_ms_.load())) {
-        ESP_LOGI(kTag, "Skip sync: no button activity in the last 10 minutes");
-        return;
-    }
+    // Poll 是设备接收远程状态变更的保活通道，不能按本地按键活跃度节流。
+    // UI 刷新频率由 epd_display_mode 决定，不在这里控制。
 
     {
         UiEvent e{};

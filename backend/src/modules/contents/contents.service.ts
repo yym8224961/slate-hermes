@@ -9,7 +9,8 @@ import {
   type ContentMutationResponseT,
   type ContentSummaryT,
   type CreateDynamicContentRequestT,
-  type DynamicConfigResponseT,
+  type DynamicConfigT,
+  type DynamicTypeT,
   type ManifestResponseT,
 } from 'shared';
 import { BlobService } from '../../infra/blob/blob.service';
@@ -158,59 +159,24 @@ export class ContentsService {
         dynamicLastError: true,
       },
     });
-    return rows.map((row) => ({
-      ...this.toSummary(row),
-      group_id: row.groupId,
-      dynamic_config: row.dynamicConfig ?? null,
-      dynamic_data: row.dynamicData ?? null,
-      dynamic_last_rendered_at: row.dynamicLastRunAt?.toISOString() ?? null,
-      dynamic_next_render_at: row.dynamicNextRunAt?.toISOString() ?? null,
-      dynamic_render_error: row.dynamicLastError ?? null,
-    }));
+    return rows.map((row) => this.toDetail(row));
   }
 
   async get(
     contentId: string,
     scope: { userId?: string; deviceId?: string }
-  ): Promise<ContentSummaryT> {
-    const content = await this.prisma.content.findUnique({
-      where: { id: contentId },
-      select: CONTENT_SELECT,
-    });
-    if (!content) throw new NotFoundError('内容不存在');
-    await this.assertReadable(content.groupId, scope);
-    return this.toSummary(content);
-  }
-
-  async getDynamicConfig(contentId: string, ownerUserId: string): Promise<DynamicConfigResponseT> {
+  ): Promise<ContentDetailT> {
     const content = await this.prisma.content.findUnique({
       where: { id: contentId },
       select: {
-        kind: true,
-        dynamicType: true,
-        dynamicConfig: true,
-        frameName: true,
-        groupId: true,
+        ...CONTENT_SELECT,
+        dynamicLastRunAt: true,
+        dynamicLastError: true,
       },
     });
     if (!content) throw new NotFoundError('内容不存在');
-    if (content.kind !== 'dynamic' || !content.dynamicType) {
-      throw new ValidationError('该内容不是动态类型');
-    }
-    await this.groups.assertOwned(content.groupId, ownerUserId);
-    const config = DynamicConfig.parse(content.dynamicConfig);
-    return {
-      dynamic_type: config.type,
-      config,
-      frame_name: content.frameName,
-      device_status_bar_text: deviceStatusBarText({
-        frameName: content.frameName,
-        kind: 'dynamic',
-        dynamicType: content.dynamicType,
-        dynamicConfig: content.dynamicConfig,
-        dynamicData: null,
-      }),
-    };
+    await this.assertReadable(content.groupId, scope);
+    return this.toDetail(content);
   }
 
   async readImage(
@@ -245,20 +211,14 @@ export class ContentsService {
   }
 
   async previewDynamicDirect(raw: {
-    dynamic_type: string;
     config: unknown;
     frame_name?: string | null;
   }): Promise<Buffer> {
     const config = DynamicConfig.parse(raw.config);
-    if (config.type !== raw.dynamic_type) {
-      throw new ValidationError(
-        `dynamic_type 与 config.type 不一致: ${raw.dynamic_type} vs ${config.type}`
-      );
-    }
     return this.dynamicRenderer.renderPreviewDirect(
-      raw.dynamic_type,
+      config.type,
       config,
-      raw.frame_name ?? defaultFrameName(raw.dynamic_type, config)
+      raw.frame_name ?? defaultFrameName(config.type, config)
     );
   }
 
@@ -286,7 +246,8 @@ export class ContentsService {
     raw: CreateDynamicContentRequestT
   ): Promise<ContentMutationResponseT> {
     await this.groups.assertOwned(gid, ownerUserId);
-    const { dynamic_type, config, frame_name } = raw;
+    const { config, frame_name } = raw;
+    const dynamic_type = config.type;
     const entry = this.dynamicContentRegistry.get(dynamic_type);
     if (!entry) throw new ValidationError(`未知动态类型: ${dynamic_type}`);
     const validatedConfig = DynamicConfig.parse(config);
@@ -593,8 +554,9 @@ export class ContentsService {
   }
 
   private toSummary(row: ContentRow): ContentSummaryT {
+    // DB 字段已经由 schema 收口，列表场景不必每行 zod parse —— 直接断言。
     return {
-      content_id: row.id,
+      id: row.id,
       seq: row.sortOrder,
       frame_name: row.frameName,
       device_status_bar_text: deviceStatusBarText(row),
@@ -603,8 +565,26 @@ export class ContentsService {
       image_size: row.imageSize,
       audio_size: row.audioSize,
       kind: row.kind === 'dynamic' ? 'dynamic' : 'image',
-      dynamic_type: row.dynamicType,
+      dynamic_type: (row.dynamicType as DynamicTypeT | null) ?? null,
       next_wake_sec: nextWakeSec(row.dynamicNextRunAt ?? null),
+    };
+  }
+
+  private toDetail(
+    row: ContentRow & {
+      groupId: string;
+      dynamicLastRunAt?: Date | null;
+      dynamicLastError?: string | null;
+    }
+  ): ContentDetailT {
+    return {
+      ...this.toSummary(row),
+      group_id: row.groupId,
+      dynamic_config: (row.dynamicConfig as DynamicConfigT | null) ?? null,
+      dynamic_data: row.dynamicData ?? null,
+      dynamic_last_rendered_at: row.dynamicLastRunAt?.toISOString() ?? null,
+      dynamic_next_render_at: row.dynamicNextRunAt?.toISOString() ?? null,
+      dynamic_render_error: row.dynamicLastError ?? null,
     };
   }
 
@@ -800,7 +780,7 @@ export class ContentsService {
     groupEtag: string
   ): ContentMutationResponseT {
     return {
-      content_id: contentId,
+      id: contentId,
       seq,
       image_etag: imageEtag,
       audio_etag: audioEtag,

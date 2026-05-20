@@ -33,10 +33,10 @@ slate/
 ```
 开机
  └─ NVS 无凭据 → SoftAP captive portal「Slate-XXXX」配 Wi-Fi 与服务端 URL
- └─ STA → SNTP 对时 → POST /api/v1/devices/register（无鉴权）
-                     ← 一次性下发 device_secret + pair_code
+ └─ STA → SNTP 对时 → POST /api/v1/devices（无鉴权）
+         ← 一次性下发 id + device_secret + pair_code
  └─ NVS 写 device_secret（明文，固件唯一持有）
- └─ SyncService 周期 POST /api/v1/me/poll（Authorization: Bearer <device_secret>）
+ └─ SyncService 周期 POST /api/v1/devices/current/poll（Authorization: Bearer <device_secret>）
        ├ 上报 telemetry（battery / rssi / fw_version / current_group / current_frame_seq）
        └ 拿 DeviceState{device, group:{etag, content_count, ...}}
 

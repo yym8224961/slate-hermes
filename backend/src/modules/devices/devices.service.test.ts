@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
+import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../../infra/prisma/prisma.service';
-import { ConflictError } from '../../common/errors';
+import { ConflictError, ForbiddenError, NotFoundError } from '../../common/errors';
 import type { GroupsService } from '../groups/groups.service';
 import { DevicesService } from './devices.service';
 
@@ -152,5 +153,144 @@ describe('DevicesService.registerOrReset', () => {
     expect(updates).toHaveLength(1);
     expect(getRecord()?.ownerUserId).toBeNull();
     expect(getRecord()?.selectedGroupId).toBeNull();
+  });
+});
+
+function createClaimService(
+  record?: DeviceRecord,
+  opts: { raceOnUpdate?: 'P2025' | 'P2002'; ownerGroups?: { id: string }[] } = {}
+): {
+  service: DevicesService;
+  updates: { where: unknown; data: Partial<DeviceRecord> }[];
+  getRecord: () => DeviceRecord | undefined;
+} {
+  let current = record;
+  const updates: { where: unknown; data: Partial<DeviceRecord> }[] = [];
+  const deviceApi = {
+    findUnique: async (args: { where: { pairCode?: string } }) => {
+      if (!current || args.where.pairCode !== current.pairCode) return null;
+      return current;
+    },
+    findFirst: async () => ({ sortOrder: 1 }),
+    update: async (args: {
+      where: { id?: string; ownerUserId?: string | null };
+      data: Partial<DeviceRecord> & { sortOrder?: number };
+    }) => {
+      updates.push(args);
+      if (opts.raceOnUpdate) {
+        throw new Prisma.PrismaClientKnownRequestError('Record not found', {
+          code: opts.raceOnUpdate,
+          clientVersion: 'test',
+        });
+      }
+      if (
+        !current ||
+        args.where.id !== current.id ||
+        (args.where.ownerUserId !== undefined && args.where.ownerUserId !== current.ownerUserId)
+      ) {
+        throw new Prisma.PrismaClientKnownRequestError('Record not found', {
+          code: 'P2025',
+          clientVersion: 'test',
+        });
+      }
+      current = { ...current, ...args.data };
+      return current;
+    },
+  };
+  const prisma = {
+    device: deviceApi,
+    $transaction: async <T>(fn: (tx: { device: typeof deviceApi }) => Promise<T>) =>
+      fn({ device: deviceApi }),
+  };
+  const groups = {
+    listOwnerGroups: async () =>
+      opts.ownerGroups ?? [
+        {
+          id: 'group-1',
+          name: 'Group 1',
+          etag: 'etag-1',
+          sortOrder: 0,
+          _count: { contents: 0 },
+        },
+      ],
+  };
+  return {
+    service: new DevicesService(prisma as unknown as PrismaService, groups as unknown as GroupsService),
+    updates,
+    getRecord: () => current,
+  };
+}
+
+describe('DevicesService.claimByPairCode', () => {
+  it('claims an unowned device and assigns the first owner group', async () => {
+    const { service, getRecord } = createClaimService(
+      device({ ownerUserId: null, selectedGroupId: null })
+    );
+
+    const result = await service.claimByPairCode('ABC234', 'user-2');
+
+    expect(result.id).toBe('device-1');
+    expect(result.owner_user_id).toBe('user-2');
+    expect(result.selected_group_id).toBe('group-1');
+    expect(result.sort_order).toBe(2);
+    expect(getRecord()?.pairCode).not.toBe('ABC234');
+  });
+
+  it('leaves an empty selected_group_id when owner has no group yet', async () => {
+    const { service } = createClaimService(
+      device({ ownerUserId: null, selectedGroupId: null }),
+      { ownerGroups: [] }
+    );
+
+    const result = await service.claimByPairCode('ABC234', 'user-2');
+
+    expect(result.selected_group_id).toBeNull();
+  });
+
+  it('returns a clear not-found error for an invalid pair code', async () => {
+    const { service } = createClaimService(device({ ownerUserId: null, selectedGroupId: null }));
+
+    await expect(service.claimByPairCode('NOPE99', 'user-2')).rejects.toThrow(NotFoundError);
+  });
+
+  it('rejects with forbidden when device is already owned by another user', async () => {
+    const { service, updates } = createClaimService(
+      device({ ownerUserId: 'user-1', selectedGroupId: 'group-1' })
+    );
+
+    await expect(service.claimByPairCode('ABC234', 'user-2')).rejects.toThrow(ForbiddenError);
+    // 不应尝试任何 update。
+    expect(updates).toHaveLength(0);
+  });
+
+  it('is a no-op when the same owner re-claims their own device', async () => {
+    const { service, updates, getRecord } = createClaimService(
+      device({ ownerUserId: 'user-1', selectedGroupId: 'group-1' })
+    );
+
+    const result = await service.claimByPairCode('ABC234', 'user-1');
+
+    expect(result.owner_user_id).toBe('user-1');
+    // 同 owner re-claim：不应轮换 pairCode、不应改 sortOrder。
+    expect(updates).toHaveLength(0);
+    expect(getRecord()?.pairCode).toBe('ABC234');
+  });
+
+  it('maps concurrent CAS misses (P2025) to conflict instead of a generic prisma error', async () => {
+    const { service } = createClaimService(
+      device({ ownerUserId: null, selectedGroupId: null }),
+      { raceOnUpdate: 'P2025' }
+    );
+
+    await expect(service.claimByPairCode('ABC234', 'user-2')).rejects.toThrow(ConflictError);
+  });
+
+  it('maps pair_code unique-constraint collisions (P2002) to conflict as well', async () => {
+    const { service } = createClaimService(
+      device({ ownerUserId: null, selectedGroupId: null }),
+      { raceOnUpdate: 'P2002' }
+    );
+
+    await expect(service.claimByPairCode('ABC234', 'user-2')).rejects.toThrow(ConflictError);
   });
 });

@@ -3,10 +3,10 @@
 // HTTP client 封装(所有 server 通讯走这里)。单例,Init() 一次。
 //
 // 端点:
-//   POST /api/v1/devices/register
-//   POST /api/v1/me/poll
-//   POST /api/v1/me/group/next|prev
-//   PUT  /api/v1/me/group
+//   POST /api/v1/devices
+//   POST /api/v1/devices/current/poll
+//   POST /api/v1/devices/current/group/next|prev
+//   PUT  /api/v1/devices/current/group
 //   GET  /api/v1/groups/:gid/manifest
 //   GET  /api/v1/contents/:contentId/image|audio
 
@@ -17,7 +17,7 @@
 namespace api {
 
 struct DeviceState {
-    std::string device_id;
+    std::string id;
     std::string device_name;
     bool        bound = false;
     std::string pair_code;
@@ -34,7 +34,7 @@ struct DeviceState {
 };
 
 struct RegisterResult {
-    std::string device_id;
+    std::string id;
     std::string device_secret;
     std::string pair_code;
     bool        reclaimed = false;
@@ -42,7 +42,7 @@ struct RegisterResult {
 
 struct ContentMeta {
     int         seq = 0;
-    std::string content_id;
+    std::string id;
     std::string device_status_bar_text;
     std::string image_etag;
     std::string audio_etag;
@@ -84,9 +84,9 @@ bool SelectGroup(const std::string& gid, DeviceState& out);
 
 bool GetManifest(const std::string& group_id, const std::string& if_none_match, Manifest& out, bool& not_modified);
 
-bool DownloadContentImage(const std::string& content_id, const std::string& if_none_match, std::vector<uint8_t>& out,
+bool DownloadContentImage(const std::string& id, const std::string& if_none_match, std::vector<uint8_t>& out,
                           bool& not_modified);
-bool DownloadContentAudio(const std::string& content_id, const std::string& if_none_match, std::vector<uint8_t>& out,
+bool DownloadContentAudio(const std::string& id, const std::string& if_none_match, std::vector<uint8_t>& out,
                           bool& not_modified);
 
 }  // namespace api

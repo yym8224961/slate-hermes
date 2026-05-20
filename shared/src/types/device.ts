@@ -58,13 +58,13 @@ export const PollRequest = z.object({
 });
 export type PollRequestT = z.infer<typeof PollRequest>;
 
-// 设备选指定组：PUT /api/v1/me/group  body: {id}
+// 设备选指定组：PUT /api/v1/devices/current/group  body: {id}
 export const SelectGroupByDeviceRequest = z.object({
   id: z.string(),
 });
 export type SelectGroupByDeviceRequestT = z.infer<typeof SelectGroupByDeviceRequest>;
 
-// POST /api/v1/me/group/next | /prev — direction 入 path，无 body。
+// POST /api/v1/devices/current/group/next | /prev — direction 入 path，无 body。
 export const CycleDirection = z.enum(['next', 'prev']);
 export type CycleDirectionT = z.infer<typeof CycleDirection>;
 
@@ -77,7 +77,7 @@ export const RegisterDeviceRequest = z.object({
 export type RegisterDeviceRequestT = z.infer<typeof RegisterDeviceRequest>;
 
 export const RegisterDeviceResponse = z.object({
-  device_id: z.string(),
+  id: z.string(),
   mac: z.string(),
   // 64 字符 hex（sha256 摘要长度），固件 NVS 持久化后用作 Authorization: Bearer。
   device_secret: z.string().regex(/^[0-9a-f]{64}$/),
@@ -95,10 +95,10 @@ export const PatchDeviceRequest = z.object({
 export type PatchDeviceRequestT = z.infer<typeof PatchDeviceRequest>;
 
 // 用户在 Web 端输入设备屏上的 6 位配对码完成绑定。
-export const ClaimByPairCodeRequest = z.object({
-  code: PairCode,
+export const ClaimDeviceRequest = z.object({
+  pair_code: PairCode,
 });
-export type ClaimByPairCodeRequestT = z.infer<typeof ClaimByPairCodeRequest>;
+export type ClaimDeviceRequestT = z.infer<typeof ClaimDeviceRequest>;
 
 export const ReorderDevicesRequest = z.object({
   order: z.array(z.string()).min(1),

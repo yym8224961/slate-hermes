@@ -25,11 +25,11 @@ export class DevicesProtocolController {
   // 同 mac 二次进来一律走 reset 路径（清 owner、清相册、轮换 secret + pair_code），
   // 实现「物理重置即转移」语义。固件那侧只在 NVS 没 device_secret 时调用此端点。
   @Public()
-  @Post('devices/register')
+  @Post('devices')
   async register(@Body() body: RegisterDeviceDto): Promise<RegisterDeviceResponseT> {
     const r = await this.devices.registerOrReset(body.mac);
     return {
-      device_id: r.deviceId,
+      id: r.deviceId,
       mac: body.mac,
       device_secret: r.deviceSecret,
       pair_code: r.pairCode,
@@ -38,10 +38,10 @@ export class DevicesProtocolController {
     };
   }
 
-  // ── 以下 /me/* 都要 Authorization: Bearer <device_secret> ───
+  // ── 以下 /devices/current/* 都要 Authorization: Bearer <device_secret> ───
   @Public()
   @UseGuards(DeviceAuthGuard)
-  @Post('me/poll')
+  @Post('devices/current/poll')
   async poll(@CurrentDevice() dev: DeviceContext, @Body() body: PollDto): Promise<DeviceStateT> {
     await this.devices.recordTelemetry(dev.deviceId, body.telemetry);
     if (body.telemetry?.current_group && body.telemetry.current_content_seq !== undefined) {
@@ -52,7 +52,7 @@ export class DevicesProtocolController {
 
   @Public()
   @UseGuards(DeviceAuthGuard)
-  @Put('me/group')
+  @Put('devices/current/group')
   async selectGroup(
     @CurrentDevice() dev: DeviceContext,
     @Body() body: SelectGroupByDeviceDto
@@ -63,7 +63,7 @@ export class DevicesProtocolController {
 
   @Public()
   @UseGuards(DeviceAuthGuard)
-  @Post('me/group/next')
+  @Post('devices/current/group/next')
   async cycleNext(@CurrentDevice() dev: DeviceContext): Promise<DeviceStateT> {
     const result = await this.groups.cycleDeviceGroup(dev.deviceId, 'next');
     return this.devices.buildState(dev.deviceId, { group: result });
@@ -71,7 +71,7 @@ export class DevicesProtocolController {
 
   @Public()
   @UseGuards(DeviceAuthGuard)
-  @Post('me/group/prev')
+  @Post('devices/current/group/prev')
   async cyclePrev(@CurrentDevice() dev: DeviceContext): Promise<DeviceStateT> {
     const result = await this.groups.cycleDeviceGroup(dev.deviceId, 'prev');
     return this.devices.buildState(dev.deviceId, { group: result });

@@ -34,7 +34,7 @@ src/
 
 ## 设备鉴权约定
 
-- 注册：`POST /api/v1/devices/register`，无鉴权，body `{mac}`；同 mac 二次进来一律走 reset 路径（清 owner、清相册、轮换 secret + pair_code）。
+- 注册：`POST /api/v1/devices`，无鉴权，body `{mac}`；同 mac 二次进来一律走 reset 路径（清 owner、清相册、轮换 secret + pair_code）。
 - 注册响应一次性下发 `device_secret`（64 字符 hex），固件 NVS 持久化，DB 只存 `sha256(secret)`。
 - 后续受保护端点全部 `Authorization: Bearer <device_secret>`。
 

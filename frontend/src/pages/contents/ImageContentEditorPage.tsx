@@ -29,7 +29,7 @@ export function ImageContentEditorPage() {
   }
 
   const content = isEdit
-    ? contents.data?.find((f) => f.content_id === contentId && f.kind === 'image')
+    ? contents.data?.find((f) => f.id === contentId && f.kind === 'image')
     : undefined;
 
   if (isEdit && !content) {

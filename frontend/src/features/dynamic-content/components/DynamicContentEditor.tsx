@@ -1,9 +1,9 @@
 // 动态内容编辑器 —— 创建 + 编辑共用。
 //
-// 创建：选类型 → 填配置 → 保存（POST /groups/:gid/contents/dynamic）
+// 创建：选类型 → 填配置 → 保存（POST /groups/:gid/contents）
 // 编辑：直接进配置面板（type 不可改）→ 保存（PATCH /contents/:contentId）
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUp, Sparkles } from 'lucide-react';
 import {
   DynamicConfig,
@@ -71,12 +71,12 @@ export function DynamicContentEditor({
   useEffect(() => {
     if (!isEdit || !content || !initialConfig) return;
     if (
-      initializedContentIdRef.current === content.content_id &&
+      initializedContentIdRef.current === content.id &&
       initializedConfigKeyRef.current === initialConfigKey
     ) {
       return;
     }
-    initializedContentIdRef.current = content.content_id;
+    initializedContentIdRef.current = content.id;
     initializedConfigKeyRef.current = initialConfigKey;
 
     const nextConfig = initialConfig;
@@ -93,18 +93,33 @@ export function DynamicContentEditor({
     }
   }, [type, isEdit, config]);
 
-  const savedPreviewEnabled = !!content?.content_id && !!content?.image_etag;
+  const savedPreviewEnabled = !!content?.id && !!content?.image_etag;
   const savedPreview = useContentImage(
-    content?.content_id ?? '',
+    content?.id ?? '',
     savedPreviewEnabled ? content!.image_etag : ''
   );
 
   // 实时预览（创建/编辑模式均支持）
   const livePreviewEnabled = !!(type && config);
-  const preview = usePreviewDynamicContent(content?.content_id);
+  const preview = usePreviewDynamicContent(content?.id);
+  const { mutate: previewMutate } = preview;
   const [livePreviewData, setLivePreviewData] = useState<ArrayBuffer | null>(null);
   const previewSeq = useRef(0);
   const visibleConfig = config ? hasVisibleDynamicConfig(config) : false;
+
+  const triggerPreview = useCallback(
+    (parsed: DynamicConfigT, currentType: DynamicTypeT, currentFrameName: string, seq: number) => {
+      previewMutate(
+        { config: parsed, frameName: effectiveFrameName(currentType, parsed, currentFrameName) },
+        {
+          onSuccess: (data) => {
+            if (seq === previewSeq.current) setLivePreviewData(data);
+          },
+        }
+      );
+    },
+    [previewMutate]
+  );
 
   useEffect(() => {
     if (!livePreviewEnabled || !config) {
@@ -120,18 +135,10 @@ export function DynamicContentEditor({
     }
     const seq = ++previewSeq.current;
     const t = setTimeout(() => {
-      preview.mutate(
-        { config: parsed.data, frameName: effectiveFrameName(type, parsed.data, frameName) },
-        {
-          onSuccess: (data) => {
-            if (seq === previewSeq.current) setLivePreviewData(data);
-          },
-        }
-      );
+      triggerPreview(parsed.data, type, frameName, seq);
     }, 800);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, frameName, livePreviewEnabled, type]);
+  }, [config, frameName, livePreviewEnabled, type, triggerPreview]);
 
   async function onSubmit() {
     if (!type || !config) return;
@@ -147,7 +154,7 @@ export function DynamicContentEditor({
     try {
       if (isEdit) {
         await update.mutateAsync({
-          contentId: content!.content_id,
+          contentId: content!.id,
           frameName: effectiveFrameName(type, parsed.data, frameName),
           config: parsed.data,
         });
@@ -155,7 +162,6 @@ export function DynamicContentEditor({
       } else {
         await create.mutateAsync({
           kind: 'dynamic',
-          dynamic_type: type,
           config: parsed.data,
           frame_name: effectiveFrameName(type, parsed.data, frameName),
         });
@@ -245,7 +251,7 @@ export function DynamicContentEditor({
                   }
                   setConfig(next);
                 }}
-                contentId={content?.content_id}
+                contentId={content?.id}
               />
             )}
 
