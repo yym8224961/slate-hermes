@@ -11,6 +11,7 @@ import {
 import { BITMAP_1BPP_FONT_DIR } from '../../infra/assets/asset-paths';
 import { traditionalFestivalShortName } from '../dynamic-content/traditional-festivals';
 import { timezoneFromConfig } from '../dynamic-content/timezone';
+import { parseHistoryTodayData } from '../dynamic-content/history-today.data';
 import { BitmapCanvas, PIXEL_BLACK, PIXEL_WHITE, type BitmapMask } from './bitmap-canvas';
 import {
   DEVICE_FONT_CATALOG,
@@ -361,33 +362,44 @@ export class DynamicFrameRendererService implements OnModuleInit {
 
   private renderHistoryToday(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
     const data = ctx.data ?? {};
-    const lines = [data.line0, data.line1, data.line2, data.line3, data.line4]
-      .map((v) => pickText(v, ''))
-      .filter((v) => v.length > 0);
-    const source = lines.length > 0 ? lines : [FALLBACK_TEXT];
-    const timelineTop = CONTENT_SAFE_TOP + 18;
-    const timelineX = 54;
-    const rowStep = 48;
+    const items = readHistoryItems(data);
+    const source = items.length > 0 ? items : [{ year: null, text: FALLBACK_TEXT }];
     const rows = source.slice(0, 5);
-    c.drawVLine(timelineX, timelineTop, rowStep * (rows.length - 1) + 14, PIXEL_BLACK);
+    const timelineX = 58;
+    const textX = timelineX + 18;
+    const rowStep = rows.length >= 5 ? 49 : rows.length === 4 ? 58 : rows.length === 3 ? 70 : 82;
+    const firstCenterY = CONTENT_SAFE_TOP + 36;
+    const dotSize = 7;
+    const dotRadius = Math.floor(dotSize / 2);
+    const timelinePad = 18;
+    const timelineTop = firstCenterY - timelinePad;
+    const timelineBottom = firstCenterY + rowStep * (rows.length - 1) + timelinePad;
+    c.drawVLine(timelineX, timelineTop, timelineBottom - timelineTop + 1, PIXEL_BLACK);
 
-    let y = CONTENT_SAFE_TOP + 20;
-    for (const line of rows) {
-      const split = splitHistoryLine(line);
-      if (split.year) {
-        this.drawText(c, fonts.sans16, split.year, timelineX - 9, y - 2, {
-          align: 'right',
-          maxWidth: 42,
-        });
+    for (const [index, item] of rows.entries()) {
+      const centerY = firstCenterY + index * rowStep;
+      const textY = centerY - Math.round((fonts.sans16.lineHeight * 2 + 2) / 2);
+      if (item.year) {
+        this.drawText(
+          c,
+          fonts.sans16,
+          item.year,
+          timelineX - 12,
+          centerY - Math.round(fonts.sans16.lineHeight / 2),
+          {
+            align: 'right',
+            maxWidth: 42,
+            ellipsis: true,
+          }
+        );
       }
-      c.fillRect(timelineX - 3, y + 6, 7, 7, PIXEL_BLACK);
-      this.drawText(c, fonts.sans16, split.text, timelineX + 16, y - 2, {
-        maxWidth: CONTENT_RIGHT - timelineX - 16,
+      c.fillRect(timelineX - dotRadius, centerY - dotRadius, dotSize, dotSize, PIXEL_BLACK);
+      this.drawText(c, fonts.sans16, item.text, textX, textY, {
+        maxWidth: CONTENT_RIGHT - textX,
         maxLines: 2,
         ellipsis: true,
         lineGap: 2,
       });
-      y += rowStep;
     }
   }
 
@@ -969,6 +981,13 @@ function readStringArray(value: unknown): string[] {
     .filter((v) => v.length > 0);
 }
 
+function readHistoryItems(data: Record<string, unknown>): Array<{ year: string; text: string }> {
+  // Render accepts only the current history_today contract; invalid data renders as fallback.
+  const parsed = parseHistoryTodayData(data);
+  if (!parsed) return [];
+  return parsed.items.map((item) => ({ year: item.year, text: item.display }));
+}
+
 function readNumberArray(value: unknown): number[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -1313,12 +1332,6 @@ function drawTextLine(
     penX += c.drawGlyph(drawFont, cp, penX, baselineY, color);
   }
   return penX - x;
-}
-
-function splitHistoryLine(line: string): { year: string | null; text: string } {
-  const m = line.match(/^(\d{1,4})\s*[·.-]\s*(.+)$/);
-  if (!m) return { year: null, text: line };
-  return { year: m[1]!, text: m[2]! };
 }
 
 function formatDatePart(

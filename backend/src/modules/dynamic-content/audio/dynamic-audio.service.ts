@@ -12,6 +12,11 @@ import { PrismaService } from '../../../infra/prisma/prisma.service';
 import { audioBlobContentId } from '../../audio/audio-blob-id';
 import { GroupsService } from '../../groups/groups.service';
 import { TtsAudioCacheService, TtsService } from '../../tts/tts.service';
+import {
+  normalizeHistoryYear,
+  parseHistoryTodayData,
+  type HistoryTodayProviderData,
+} from '../history-today.data';
 import { datePartsInTz, timezoneFromConfig } from '../timezone';
 import { claimLeaseJobs } from '../lease-claim';
 
@@ -412,12 +417,11 @@ function buildWeatherAudio(data: unknown, config: DynamicConfigT): string {
 }
 
 function buildHistoryTodayAudio(data: unknown, config: DynamicConfigT, now: Date): string {
-  const label =
-    valueText(recordValue(data, 'dateLabel')) ?? cnMonthDay(now, timezoneFromConfig(config));
-  const lines = ['line0', 'line1', 'line2', 'line3', 'line4']
-    .map((key) => valueText(recordValue(data, key)))
-    .filter((line): line is string => !!line);
-  return compactSentence([`历史上的${label.replace(/\s+/g, '')}`, ...lines]);
+  const parsed = parseHistoryTodayData(data);
+  if (!parsed) return '';
+  const label = parsed.dateLabel || cnMonthDay(now, timezoneFromConfig(config));
+  const items = historyAudioItems(parsed);
+  return compactSentence([`历史上的${label.replace(/\s+/g, '')}`, ...items]);
 }
 
 function recordValue(value: unknown, key: string): unknown {
@@ -430,6 +434,16 @@ function valueText(value: unknown): string | null {
   if (value === null || value === undefined) return null;
   const text = String(value).trim();
   return text ? text : null;
+}
+
+function historyAudioItems(data: HistoryTodayProviderData): string[] {
+  return data.items.map((item) => `${formatSpokenYear(item.year)}，${item.display}`);
+}
+
+function formatSpokenYear(year: string): string {
+  const text = normalizeHistoryYear(year) ?? year.trim();
+  if (text.startsWith('前')) return `公元前${text.slice(1)}年`;
+  return `公元${text}年`;
 }
 
 function compactSentence(parts: string[]): string {

@@ -2,17 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { HistoryTodayConfig, type HistoryTodayConfigT } from 'shared';
 import { AiService } from '../../ai/ai.service';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
-
-export interface HistoryTodayProviderData {
-  /** "5月13日" */
-  dateLabel: string;
-  /** 5 行预格式化字符串："1492 · 哥伦布到达新大陆"；不够则后面为空串 */
-  line0: string;
-  line1: string;
-  line2: string;
-  line3: string;
-  line4: string;
-}
+import {
+  normalizeHistoryYear,
+  parseHistoryTodayData,
+  type HistoryTodayProviderData,
+} from '../history-today.data';
 
 const FETCH_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 86_400_000;
@@ -25,7 +19,7 @@ const RAW_LANG = 'zh-cn';
  * GET https://zh.wikipedia.org/api/rest_v1/feed/onthisday/events/{MM}/{DD}?variant=zh-cn
  * 请求简体变体。
  *
- * AI 优化是强约束：失败时抛错，renderer 只能保留旧 AI 数据，不能渲染 raw events。
+ * AI 是强约束：负责筛选、简繁转换和压缩；失败时抛错，不能渲染 raw events。
  */
 @Injectable()
 export class HistoryTodayProvider implements DataProvider<
@@ -35,7 +29,7 @@ export class HistoryTodayProvider implements DataProvider<
   readonly type = 'history_today';
   private readonly rawCache = new Map<
     string,
-    { events: Array<{ year: number; text: string }>; fetchedAt: number }
+    { events: HistoryTodayRawEvent[]; fetchedAt: number }
   >();
   private readonly aiCache = new Map<
     string,
@@ -99,18 +93,21 @@ export class HistoryTodayProvider implements DataProvider<
     const dateLabel = `${month}月${day}日`;
     const aiData = await this.ai.optimizeHistoryToday({
       dateLabel,
-      events,
+      events: events.map((event) => ({
+        year: event.year,
+        yearLabel: yearLabel(event.year),
+        text: event.text,
+        pages: event.pages?.slice(0, 3),
+      })),
     });
-    if (!aiData) {
+    const normalized = aiData ? normalizeHistoryTodayAiData(aiData, dateLabel) : null;
+    if (!normalized) {
       throw new Error('history_today AI 优化失败');
     }
-    return aiData;
+    return normalized;
   }
 
-  private async fetchRawEvents(
-    month: number,
-    day: number
-  ): Promise<Array<{ year: number; text: string }>> {
+  private async fetchRawEvents(month: number, day: number): Promise<HistoryTodayRawEvent[]> {
     const url = `https://zh.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}?variant=zh-cn`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -118,20 +115,86 @@ export class HistoryTodayProvider implements DataProvider<
       const resp = await fetch(url, { signal: controller.signal });
       if (!resp.ok) throw new Error(`history HTTP ${resp.status}`);
       const json = (await resp.json()) as {
-        events?: Array<{ year?: number; text?: string }>;
+        events?: Array<{
+          year?: number;
+          text?: string;
+          pages?: Array<{ title?: string; description?: string; extract?: string }>;
+        }>;
       };
       const evs = json.events ?? [];
       return evs
-        .filter((event): event is { year: number; text: string } => {
-          return typeof event.year === 'number' && typeof event.text === 'string' && !!event.text;
-        })
-        .map((event) => ({ year: event.year, text: event.text }));
+        .filter(
+          (
+            event
+          ): event is {
+            year: number;
+            text: string;
+            pages?: Array<{ title?: string; description?: string; extract?: string }>;
+          } => {
+            return typeof event.year === 'number' && typeof event.text === 'string' && !!event.text;
+          }
+        )
+        .map((event) => ({
+          year: event.year,
+          text: event.text,
+          pages: Array.isArray(event.pages)
+            ? event.pages
+                .map((page) => ({
+                  title: textOrEmpty(page.title),
+                  description: textOrEmpty(page.description),
+                  extract: textOrEmpty(page.extract),
+                }))
+                .filter((page) => page.title || page.description || page.extract)
+            : [],
+        }));
     } finally {
       clearTimeout(timer);
     }
   }
 }
 
+interface HistoryTodayRawEvent {
+  year: number;
+  text: string;
+  pages?: Array<{ title: string; description?: string; extract?: string }>;
+}
+
 function mmdd(month: number, day: number): string {
   return `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function yearLabel(year: number): string {
+  return year < 0 ? `前${Math.abs(year)}` : String(year);
+}
+
+export function normalizeHistoryTodayAiData(
+  data: { dateLabel: string; items: Array<{ year: string; display: string }> },
+  fallbackDateLabel: string
+): HistoryTodayProviderData | null {
+  const items = data.items
+    .map((item) => ({
+      year: normalizeHistoryYear(item.year),
+      display: normalizeDisplay(item.display),
+    }))
+    .filter((item): item is { year: string; display: string } => {
+      return !!item.year && !!item.display;
+    })
+    .slice(0, 5);
+
+  return parseHistoryTodayData({
+    dateLabel: textOrEmpty(data.dateLabel) || fallbackDateLabel,
+    items,
+  });
+}
+
+function normalizeDisplay(value: string): string {
+  return value
+    .trim()
+    .replace(/^[\d前公元\s]+年?\s*[·.。:：、-]\s*/, '')
+    .replace(/[。；;]+$/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+function textOrEmpty(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
 }

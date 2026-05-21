@@ -91,4 +91,47 @@ describe('buildDynamicAudioTextForContent', () => {
     expect(text).toBe('北京今天天气，晴。26度。体感27度。湿度35%。东南风2级');
     expect(text).not.toContain('未来三天');
   });
+
+  it('history_today speaks years as years instead of bare numbers', () => {
+    const text = buildDynamicAudioTextForContent(
+      'history_today',
+      {
+        type: 'history_today',
+        tz: 'Asia/Shanghai',
+        audio_enabled: true,
+        audio_voice: DEFAULT_TTS_VOICE,
+      },
+      {
+        dateLabel: '5月21日',
+        items: [
+          { year: '前221', display: '秦统一六国，建立中国历史上首个统一王朝' },
+          { year: '1904', display: '国际足联在巴黎成立，现代足球治理体系成形' },
+        ],
+      },
+      new Date('2026-05-21T10:00:00+08:00')
+    );
+
+    expect(text).toBe(
+      '历史上的5月21日。公元前221年，秦统一六国，建立中国历史上首个统一王朝。公元1904年，国际足联在巴黎成立，现代足球治理体系成形'
+    );
+  });
+
+  it('history_today rejects non-current payloads', () => {
+    const text = buildDynamicAudioTextForContent(
+      'history_today',
+      {
+        type: 'history_today',
+        tz: 'Asia/Shanghai',
+        audio_enabled: true,
+        audio_voice: DEFAULT_TTS_VOICE,
+      },
+      {
+        dateLabel: '5月21日',
+        entries: [{ year: '1904', display: '国际足联在巴黎成立' }],
+      },
+      new Date('2026-05-21T10:00:00+08:00')
+    );
+
+    expect(text).toBe('');
+  });
 });

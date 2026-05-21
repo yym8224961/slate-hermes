@@ -76,11 +76,13 @@ describe('DynamicFrameRendererService', () => {
         config: { tz: 'Asia/Shanghai' },
         data: {
           dateLabel: '5 月 17 日',
-          line0: '1792 · 纽约证券交易所成立',
-          line1: '1865 · 国际电信联盟在巴黎成立',
-          line2: '1949 · 中国人民解放军解放武汉三镇',
-          line3: '1995 · Java 编程语言正式发布',
-          line4: '2008 · 中国商飞公司在上海成立',
+          items: [
+            { year: '1792', display: '纽约证券交易所成立，现代金融市场制度逐步成形' },
+            { year: '1865', display: '国际电信联盟在巴黎成立，推动全球通信协作' },
+            { year: '1949', display: '中国人民解放军解放武汉三镇，华中局势改变' },
+            { year: '1995', display: 'Java 编程语言正式发布，互联网软件生态扩张' },
+            { year: '2008', display: '中国商飞公司在上海成立，国产大飞机项目提速' },
+          ],
         },
         renderedAt,
       },

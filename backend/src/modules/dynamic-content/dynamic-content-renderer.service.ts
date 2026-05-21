@@ -130,8 +130,10 @@ export class DynamicContentRendererService {
         lastData: content.dynamicData ?? undefined,
       });
     } catch (err) {
-      if (!content.dynamicData && content.imageSize === 0) throw err;
-      data = content.dynamicData ?? { _error: '数据暂不可用' };
+      if (!canReuseDynamicData(content.dynamicType, content.dynamicData, content.imageSize)) {
+        throw err;
+      }
+      data = content.dynamicData;
     }
     const frameName = frameNameOverride === undefined ? content.frameName : frameNameOverride;
     return this.renderAndValidate({
@@ -183,13 +185,10 @@ export class DynamicContentRendererService {
         `dynamic fetchData failed content=${contentId} type=${content.dynamicType}: ${message}`
       );
       await this.markError(content, message, now);
-      if (!content.dynamicData && content.imageSize === 0) {
+      if (!canReuseDynamicData(content.dynamicType, content.dynamicData, content.imageSize)) {
         throw err;
       }
-      if (content.dynamicType === 'history_today' && !content.dynamicData) {
-        throw err;
-      }
-      data = content.dynamicData ?? { _error: '数据暂不可用' };
+      data = content.dynamicData;
     }
 
     const rendered = await this.renderAndValidate({
@@ -314,6 +313,16 @@ export class DynamicContentRendererService {
     if (dueMs <= now.getTime()) return new Date(now.getTime() + MIN_REFRESH_DUE_DELAY_MS);
     return new Date(dueMs);
   }
+}
+
+function canReuseDynamicData(
+  dynamicType: string,
+  dynamicData: Prisma.JsonValue | null,
+  imageSize: number
+): boolean {
+  if (!dynamicData || imageSize === 0) return false;
+  if (dynamicType === 'history_today') return false;
+  return true;
 }
 
 function isCalendarLikeDynamicType(dynamicType: string): boolean {
