@@ -2,7 +2,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { FONT_TEST_FONTS, FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
+import { DEFAULT_TTS_VOICE, FONT_TEST_FONTS, FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
 import {
   DynamicFrameRendererService,
   type DynamicRenderContext,
@@ -24,14 +24,19 @@ const contexts: DynamicRenderContext[] = [
   {
     type: 'daily_calendar',
     frameName: '日历',
-    config: { tz },
-    data: asRecord(await daily.fetchData({ type: 'daily_calendar', tz }, { now: renderedAt })),
+    config: { tz, audio_enabled: false, audio_voice: DEFAULT_TTS_VOICE },
+    data: asRecord(
+      await daily.fetchData(
+        { type: 'daily_calendar', tz, audio_enabled: false, audio_voice: DEFAULT_TTS_VOICE },
+        { now: renderedAt }
+      )
+    ),
     renderedAt,
   },
   {
     type: 'month_calendar',
     frameName: '月历',
-    config: { tz },
+    config: { tz, audio_enabled: false, audio_voice: DEFAULT_TTS_VOICE },
     data: asRecord(calendar.buildCurrentAndNextMonth(renderedAt, tz)),
     renderedAt,
   },
@@ -43,6 +48,8 @@ const contexts: DynamicRenderContext[] = [
       location_id: '101010100',
       location_label: '北京',
       tz,
+      audio_enabled: false,
+      audio_voice: DEFAULT_TTS_VOICE,
     },
     data: {
       tempC: 24,
@@ -65,9 +72,9 @@ const contexts: DynamicRenderContext[] = [
   {
     type: 'history_today',
     frameName: '历史',
-    config: { tz },
+    config: { tz, audio_enabled: false, audio_voice: DEFAULT_TTS_VOICE },
     data: {
-      dateLabel: '5 月 17 日',
+      dateLabel: '5月17日',
       line0: '1792 · 纽约证券交易所成立',
       line1: '1865 · 国际电信联盟在巴黎成立',
       line2: '1949 · 中国人民解放军解放武汉三镇',

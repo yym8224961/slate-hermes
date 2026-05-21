@@ -68,13 +68,16 @@ void FrameScene::OnEnter(SceneContext& ctx) {
     ApplyEmptyState();
 
     if (!gid_.empty() && content_count_ > 0) {
-        LoadFrame(ctx, idx_, /*force_full*/ first_load_full_refresh_);
+        LoadFrame(ctx, idx_, /*force_full*/ first_load_full_refresh_,
+                  AudioBehavior::RestartIfAvailable);
     } else {
+        if (ctx.audio) ctx.audio->Stop();
         SyncRender(ctx, /*force_full*/ first_load_full_refresh_);
     }
 }
 
 void FrameScene::OnExit(SceneContext& ctx) {
+    if (ctx.audio) ctx.audio->Stop();
     if (!ctx.epd->Lock(500)) return;
     frame_view_.reset();
     status_bar_.reset();
@@ -178,8 +181,11 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             }
             ApplyEmptyState();
             if (content_count_ > 0) {
-                LoadFrame(ctx, idx_, /*force_full*/ true);
+                LoadFrame(ctx, idx_, /*force_full*/ true,
+                          same_group ? AudioBehavior::StopIfUnavailable
+                                     : AudioBehavior::RestartIfAvailable);
             } else {
+                if (ctx.audio) ctx.audio->Stop();
                 SyncRender(ctx, /*force_full*/ true);
             }
             break;
@@ -201,13 +207,13 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
 void FrameScene::NextFrame(SceneContext& ctx) {
     if (content_count_ <= 0) return;
     idx_ = (idx_ + 1) % content_count_;
-    LoadFrame(ctx, idx_, /*force_full*/ false);
+    LoadFrame(ctx, idx_, /*force_full*/ false, AudioBehavior::RestartIfAvailable);
 }
 
 void FrameScene::PrevFrame(SceneContext& ctx) {
     if (content_count_ <= 0) return;
     idx_ = (idx_ - 1 + content_count_) % content_count_;
-    LoadFrame(ctx, idx_, /*force_full*/ false);
+    LoadFrame(ctx, idx_, /*force_full*/ false, AudioBehavior::RestartIfAvailable);
 }
 
 void FrameScene::CycleGroup(SceneContext& ctx, bool next) {
@@ -230,7 +236,7 @@ void FrameScene::RebindGroup(SceneContext& ctx, const char* gid, int content_cou
     ESP_LOGI(kTag, "Rebind group: gid=%s count=%d", gid_.c_str(), content_count_);
 }
 
-void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full) {
+void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full, AudioBehavior audio_behavior) {
     if (gid_.empty() || idx < 0 || content_count_ <= 0 || idx >= content_count_) return;
 
     std::vector<uint8_t> raw;
@@ -261,9 +267,15 @@ void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full) {
 
     ESP_LOGI(kTag, "LoadFrame %d: status_bar_text=%s%s", idx, meta.status_bar_text.c_str(), full ? " (full)" : "");
 
-    std::vector<uint8_t> pcm;
-    if (ctx.audio && cache::ReadFrameAudio(gid_, idx, pcm) && !pcm.empty()) {
-        ctx.audio->Play(pcm.data(), pcm.size());
+    if (ctx.audio) {
+        std::vector<uint8_t> pcm;
+        if (cache::ReadFrameAudio(gid_, idx, pcm) && !pcm.empty()) {
+            if (audio_behavior == AudioBehavior::RestartIfAvailable) {
+                ctx.audio->Play(pcm.data(), pcm.size());
+            }
+        } else {
+            ctx.audio->Stop();
+        }
     }
 
     power_state::CurrentFrameSchedule schedule;

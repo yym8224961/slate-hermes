@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
 import { GroupsModule } from '../groups/groups.module';
-import { DynamicContentModule } from '../dynamic-content/dynamic-content.module';
+import { ContentsModule } from '../contents/contents.module';
 import { DevicesService } from './devices.service';
 import { DevicesProtocolController } from './devices-protocol.controller';
 import { DevicesAdminController } from './devices-admin.controller';
 
 @Module({
-  imports: [GroupsModule, DynamicContentModule],
+  imports: [GroupsModule, ContentsModule],
   controllers: [DevicesProtocolController, DevicesAdminController],
   providers: [DevicesService],
   exports: [DevicesService],

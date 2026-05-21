@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { HistoryTodayConfig, type HistoryTodayConfigT } from 'shared';
+import { AiService } from '../../ai/ai.service';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 
 export interface HistoryTodayProviderData {
-  /** "5 月 13 日" */
+  /** "5月13日" */
   dateLabel: string;
   /** 5 行预格式化字符串："1492 · 哥伦布到达新大陆"；不够则后面为空串 */
   line0: string;
@@ -15,8 +16,7 @@ export interface HistoryTodayProviderData {
 
 const FETCH_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 86_400_000;
-const MAX_EVENTS = 5;
-const MAX_TEXT_LEN = 84;
+const RAW_LANG = 'zh-cn';
 
 /**
  * 历史上的今天。
@@ -25,7 +25,7 @@ const MAX_TEXT_LEN = 84;
  * GET https://zh.wikipedia.org/api/rest_v1/feed/onthisday/events/{MM}/{DD}?variant=zh-cn
  * 请求简体变体。
  *
- * 失败回退由 renderer 处理：抛错 → 用 lastData 或占位渲染。
+ * AI 优化是强约束：失败时抛错，renderer 只能保留旧 AI 数据，不能渲染 raw events。
  */
 @Injectable()
 export class HistoryTodayProvider implements DataProvider<
@@ -33,8 +33,17 @@ export class HistoryTodayProvider implements DataProvider<
   HistoryTodayProviderData
 > {
   readonly type = 'history_today';
-  private readonly cache = new Map<string, { data: HistoryTodayProviderData; fetchedAt: number }>();
+  private readonly rawCache = new Map<
+    string,
+    { events: Array<{ year: number; text: string }>; fetchedAt: number }
+  >();
+  private readonly aiCache = new Map<
+    string,
+    { data: HistoryTodayProviderData; fetchedAt: number }
+  >();
   private readonly inflight = new Map<string, Promise<HistoryTodayProviderData>>();
+
+  constructor(private readonly ai: AiService) {}
 
   validateConfig(raw: unknown): HistoryTodayConfigT {
     return HistoryTodayConfig.parse(raw);
@@ -53,26 +62,55 @@ export class HistoryTodayProvider implements DataProvider<
     const parts = fmt.formatToParts(ctx.now);
     const month = parseInt(parts.find((p) => p.type === 'month')!.value, 10);
     const day = parseInt(parts.find((p) => p.type === 'day')!.value, 10);
-    const key = `${tz}:${month}:${day}`;
-    const nowMs = Date.now();
-    const cached = this.cache.get(key);
+    const rawKey = `${mmdd(month, day)}:${RAW_LANG}`;
+    const aiKey = `${rawKey}:${this.ai.modelKey()}:${this.ai.historyTodayPromptVersion()}`;
+    const nowMs = ctx.now.getTime();
+    const cached = this.aiCache.get(aiKey);
     if (cached && nowMs - cached.fetchedAt < CACHE_TTL_MS) return cached.data;
-    if (cached) this.cache.delete(key);
+    if (cached) this.aiCache.delete(aiKey);
 
-    const existing = this.inflight.get(key);
+    const existing = this.inflight.get(aiKey);
     if (existing) return existing;
 
-    const p = this.fetchFromWikipedia(month, day)
+    const p = this.fetchOptimized(month, day, rawKey)
       .then((data) => {
-        this.cache.set(key, { data, fetchedAt: Date.now() });
+        this.aiCache.set(aiKey, { data, fetchedAt: nowMs });
         return data;
       })
-      .finally(() => this.inflight.delete(key));
-    this.inflight.set(key, p);
+      .finally(() => this.inflight.delete(aiKey));
+    this.inflight.set(aiKey, p);
     return p;
   }
 
-  private async fetchFromWikipedia(month: number, day: number): Promise<HistoryTodayProviderData> {
+  private async fetchOptimized(
+    month: number,
+    day: number,
+    rawKey: string
+  ): Promise<HistoryTodayProviderData> {
+    const cachedRaw = this.rawCache.get(rawKey);
+    const nowMs = Date.now();
+    const events =
+      cachedRaw && nowMs - cachedRaw.fetchedAt < CACHE_TTL_MS
+        ? cachedRaw.events
+        : await this.fetchRawEvents(month, day);
+    if (!cachedRaw || nowMs - cachedRaw.fetchedAt >= CACHE_TTL_MS) {
+      this.rawCache.set(rawKey, { events, fetchedAt: nowMs });
+    }
+    const dateLabel = `${month}月${day}日`;
+    const aiData = await this.ai.optimizeHistoryToday({
+      dateLabel,
+      events,
+    });
+    if (!aiData) {
+      throw new Error('history_today AI 优化失败');
+    }
+    return aiData;
+  }
+
+  private async fetchRawEvents(
+    month: number,
+    day: number
+  ): Promise<Array<{ year: number; text: string }>> {
     const url = `https://zh.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}?variant=zh-cn`;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -83,37 +121,17 @@ export class HistoryTodayProvider implements DataProvider<
         events?: Array<{ year?: number; text?: string }>;
       };
       const evs = json.events ?? [];
-      // 选 5 条「年份均匀分布」的事件，兼顾信息量与 400x300 可读性。
-      const lines: string[] = [];
-      const idxs =
-        evs.length <= MAX_EVENTS
-          ? evs.map((_, i) => i)
-          : [
-              0,
-              Math.floor(evs.length / 4),
-              Math.floor(evs.length / 2),
-              Math.floor((evs.length * 3) / 4),
-              evs.length - 1,
-            ];
-      for (const i of idxs) {
-        const e = evs[i];
-        if (!e?.text || !e.year) continue;
-        const text =
-          e.text.length > MAX_TEXT_LEN ? `${e.text.slice(0, MAX_TEXT_LEN - 1)}…` : e.text;
-        lines.push(`${e.year} · ${text}`);
-      }
-      while (lines.length < MAX_EVENTS) lines.push('');
-      const dateLabel = `${month} 月 ${day} 日`;
-      return {
-        dateLabel,
-        line0: lines[0]!,
-        line1: lines[1]!,
-        line2: lines[2]!,
-        line3: lines[3]!,
-        line4: lines[4]!,
-      };
+      return evs
+        .filter((event): event is { year: number; text: string } => {
+          return typeof event.year === 'number' && typeof event.text === 'string' && !!event.text;
+        })
+        .map((event) => ({ year: event.year, text: event.text }));
     } finally {
       clearTimeout(timer);
     }
   }
+}
+
+function mmdd(month: number, day: number): string {
+  return `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }

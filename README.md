@@ -38,15 +38,15 @@ slate/
  └─ NVS 写 device_secret（明文，固件唯一持有）
  └─ SyncService 周期 POST /api/v1/devices/current/poll（Authorization: Bearer <device_secret>）
        ├ 上报 telemetry（battery / rssi / fw_version / current_group / current_frame_seq）
-       └ 拿 DeviceState{device, group:{etag, content_count, ...}}
+       └ 拿 DeviceState{device, group:{structure_etag, manifest_etag, content_count, ...}}
 
 设备绑定
  └─ 屏幕显示 pair_code（6 位 [A-Z2-9]）
  └─ 用户在 Web 端输入 pair_code → 后端 claim → 立即轮换 pair_code（防截图复用）
 
 内容下发
- └─ group_etag 变 → GET /manifest（If-None-Match，命中 304 零流量）
-                 → 增量拉缺失的 400x300 1bpp image / audio 写 LittleFS
+ └─ manifest_etag 变 → GET /manifest（If-None-Match，命中 304 零流量）
+                    → 增量拉缺失的 400x300 1bpp image / audio 写 LittleFS
 
 按键翻页
  └─ FrameScene 本地命中 cache → EPD partial refresh + I²S DMA 同步播音
@@ -81,6 +81,7 @@ docker run -d --name slate-mysql -p 3306:3306 \
 ```bash
 bun install
 cp backend/.env.example backend/.env       # 改 DATABASE_URL / JWT_SECRET
+                                            # 按需配置 QWeather / AI / TTS
 bun run --cwd backend prisma:generate
 bun run --cwd backend prisma:migrate       # 首次会创建 dev migration
 
@@ -90,7 +91,7 @@ bun run dev:frontend                        # http://localhost:5173（proxy /api
 
 首次启动后访问 `http://localhost:5173/register` 注册第一个账号。
 
-> `.env` 必须放在 `backend/` 目录而非仓库根 —— Prisma CLI 与 Bun runtime 都从 cwd 读取。docker 部署不依赖此文件，所有配置内联在 `compose.yml`。
+> 本地后端开发使用 `backend/.env`。仓库根 `.env` 只给 Docker Compose 做变量替换，不会被 Bun/Nest 后端读取。
 
 ### 固件
 
@@ -118,21 +119,19 @@ bun run --cwd frontend build                # 出 dist
 
 backend 与 frontend 打到**单镜像**：frontend dist 由 `@fastify/static` 同域托管，`/api/v1/*` 走 NestJS。镜像走 GHCR 公有源（`ghcr.io/qiujun8023/slate:latest`），无需登录即可 pull。
 
-部署不需要 clone 整个仓库，只要一个 `compose.yml` 就够了。
+部署不需要 clone 整个仓库，只要 `compose.yml` 和根目录 `.env` 就够了。
 
 ### 首次部署
 
 ```bash
 # 1. 拿 compose 样例（自带 MySQL）
 curl -fLO https://raw.githubusercontent.com/qiujun8023/slate/master/compose.yml
+curl -fLo .env.example https://raw.githubusercontent.com/qiujun8023/slate/master/.env.example
 
-# 2. 生成两条 secret，填进 compose.yml
-openssl rand -hex 32                        # → 替换 JWT_SECRET 占位符
-openssl rand -hex 32                        # → 替换 MYSQL_PASSWORD 占位符
-                                            # MySQL 密码改了同时改 3 处：
-                                            #   - MYSQL_PASSWORD
-                                            #   - DATABASE_URL 里 slate:slate 的第二个 slate
-                                            #   - healthcheck 的 -pslate
+# 2. 创建 Docker 部署专用 .env，只改这个文件
+cp .env.example .env
+openssl rand -hex 32                        # → 填到 .env 的 MYSQL_PASSWORD
+openssl rand -hex 64                        # → 填到 .env 的 JWT_SECRET
 
 # 3. 创建数据目录并授权给容器用户（uid/gid 1000:1000）
 mkdir -p slate/blobs mysql

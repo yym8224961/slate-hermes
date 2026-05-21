@@ -10,8 +10,11 @@ export interface TelemetryInput {
   battery_pct?: number;
   rssi_dbm?: number;
   fw_version?: string;
+  wake_reason?: 'timer' | 'button' | 'power_on' | 'other';
   current_group?: string | null;
   current_content_seq?: number;
+  current_content_etag?: string;
+  manifest_etag?: string;
   free_heap?: number;
   fw_build_ts?: string;
 }
@@ -175,7 +178,8 @@ export class DevicesService {
       group: resolvedGroup.groupId
         ? {
             id: resolvedGroup.groupId,
-            etag: resolvedGroup.etag!,
+            structure_etag: resolvedGroup.structureEtag!,
+            manifest_etag: resolvedGroup.manifestEtag!,
             name: resolvedGroup.name!,
             content_count: resolvedGroup.contentCount,
             sort_order: resolvedGroup.sortOrder!,

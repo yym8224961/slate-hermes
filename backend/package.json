@@ -5,9 +5,8 @@
   "type": "module",
   "main": "src/main.ts",
   "scripts": {
-    "dev": "bun --watch src/main.ts",
+    "dev": "prisma generate && prisma migrate deploy && bun --watch src/main.ts",
     "start": "bun run src/main.ts",
-    "build": "bun run scripts/build.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings 0",
     "lint:fix": "eslint . --fix",
@@ -16,8 +15,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "test": "bun test",
-    "test:e2e": "bun test test/e2e",
-    "smoke:svg": "bun run scripts/smoke-svg.ts"
+    "test:e2e": "bun test test/e2e"
   },
   "dependencies": {
     "@fastify/cookie": "^11",

@@ -8,11 +8,18 @@
 
 import { useState, useRef } from 'react';
 import { ArrowLeft, ArrowUp, Image as ImageIcon } from 'lucide-react';
-import { FRAME_WIDTH, FRAME_HEIGHT, BW_THRESHOLD_DEFAULT, DEFAULT_DITHER_MODE } from 'shared';
-import type { ContentSummaryT, DitherMode } from 'shared';
+import {
+  FRAME_WIDTH,
+  FRAME_HEIGHT,
+  BW_THRESHOLD_DEFAULT,
+  DEFAULT_DITHER_MODE,
+  DEFAULT_TTS_VOICE,
+} from 'shared';
+import type { ContentDetailT, DitherMode, TtsVoiceT } from 'shared';
 import {
   useContentImage,
   useCreateImageContent,
+  useGenerateContentTts,
   useUpdateImageContent,
 } from '@/features/contents/queries';
 import { useToast } from '@/components/feedback/Toast';
@@ -21,16 +28,18 @@ import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { DoubleRule } from '@/components/ui/DoubleRule';
+import { FormSection } from '@/components/ui/FormSection';
 import { PreviewCanvas } from './PreviewCanvas';
 import { ImageDropzone } from './ImageDropzone';
-import { AudioDropzone } from './AudioDropzone';
 import { DitherControls } from './DitherControls';
+import { ImageAudioBlock, type ImageAudioMode } from './ImageAudioBlock';
+import { TYPE_META } from '../create/type-meta';
 import { getApiErrorMessage } from '@/lib/api-error';
 
 interface ImageContentEditorProps {
   gid: string;
   /** edit 模式传现有 content；create 模式不传 */
-  content?: ContentSummaryT;
+  content?: ContentDetailT;
   onDone: () => void;
 }
 
@@ -38,11 +47,21 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
   const isEdit = !!content;
   const createImageContent = useCreateImageContent(gid);
   const updateImageContent = useUpdateImageContent(gid);
-  const submitting = isEdit ? updateImageContent.isPending : createImageContent.isPending;
+  const generateTts = useGenerateContentTts(gid);
+  const submitting = isEdit
+    ? updateImageContent.isPending || generateTts.isPending
+    : createImageContent.isPending || generateTts.isPending;
   const toast = useToast();
 
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioMode, setAudioMode] = useState<ImageAudioMode>(
+    isEdit && content.audio_source === 'tts' ? 'tts' : 'upload'
+  );
+  const [ttsText, setTtsText] = useState(isEdit ? (content.audio_text ?? '') : '');
+  const [ttsVoice, setTtsVoice] = useState<TtsVoiceT>(
+    isEdit && content.audio_voice ? content.audio_voice : DEFAULT_TTS_VOICE
+  );
   const [threshold, setThreshold] = useState(BW_THRESHOLD_DEFAULT);
   const [mode, setMode] = useState<DitherMode>(DEFAULT_DITHER_MODE);
   const [frameName, setFrameName] = useState(isEdit ? (content.frame_name ?? '') : '');
@@ -56,7 +75,20 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
   );
 
   const frameNameChanged = isEdit && frameName !== (content.frame_name ?? '');
-  const canSubmit = isEdit ? !!imageFile || !!audioFile || frameNameChanged : !!imageFile;
+  const trimmedTtsText = ttsText.trim();
+  const existingTtsText = content?.audio_text?.trim() ?? '';
+  const hasExistingTts = isEdit && content?.audio_source === 'tts';
+  const wantsTts =
+    audioMode === 'tts' &&
+    trimmedTtsText.length > 0 &&
+    (!hasExistingTts ||
+      content?.audio_status === 'failed' ||
+      trimmedTtsText !== existingTtsText ||
+      ttsVoice !== content?.audio_voice);
+  const canSubmit = isEdit
+    ? (!!imageFile || !!audioFile || frameNameChanged || wantsTts) &&
+      (audioMode !== 'tts' || trimmedTtsText.length > 0)
+    : !!imageFile && (audioMode !== 'tts' || trimmedTtsText.length > 0);
 
   function resetCrop() {
     setScale(1);
@@ -88,12 +120,30 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
     fd.append('frame_name', frameName.trim());
 
     try {
+      let targetContentId = content?.id ?? null;
+      const hasImagePatch = !!imageFile || !!audioFile || frameNameChanged;
       if (isEdit) {
-        await updateImageContent.mutateAsync({ contentId: content!.id, form: fd });
+        if (hasImagePatch) {
+          await updateImageContent.mutateAsync({ contentId: content!.id, form: fd });
+        }
+        targetContentId = content!.id;
         toast.success('内容已保存');
       } else {
-        await createImageContent.mutateAsync(fd);
+        const created = await createImageContent.mutateAsync(fd);
+        targetContentId = created.id;
         toast.success('内容已新建');
+      }
+      if (wantsTts && targetContentId) {
+        try {
+          await generateTts.mutateAsync({
+            contentId: targetContentId,
+            body: { text: trimmedTtsText, voice: ttsVoice },
+          });
+        } catch (err) {
+          toast.error('内容已保存，TTS 生成失败', getApiErrorMessage(err));
+          onDone();
+          return;
+        }
       }
       onDone();
     } catch (err) {
@@ -133,11 +183,9 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
           {/* 预览(desktop 左 / mobile 排在控件下) */}
           <div className="order-2 lg:order-1">
             <div>
-              <div className="flex items-baseline justify-between mb-2 ml-0.5">
-                <p className="font-sans text-[12px] text-stone">
-                  预览 · 1bpp · {FRAME_WIDTH}×{FRAME_HEIGHT}
-                </p>
-              </div>
+              <p className="font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] ml-0.5 mb-2">
+                预览 · 1bpp · {FRAME_WIDTH}×{FRAME_HEIGHT}
+              </p>
               <PreviewCanvas
                 canvasRef={previewRef}
                 imageFile={imageFile}
@@ -154,45 +202,68 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
             </div>
           </div>
 
-          {/* 控件:① 标题 ② 图(含裁剪/抖动/阈值) ③ 音频 */}
-          <div className="order-1 lg:order-2 space-y-6">
-            <Input
-              label="标题（选填，最多 64 字）"
-              type="text"
-              maxLength={64}
-              value={frameName}
-              onChange={(e) => setFrameName(e.target.value)}
-              placeholder="如：挖掘机"
-              autoFocus={!isEdit}
-            />
+          {/* 控件 */}
+          <div className="order-1 lg:order-2 lg:mt-7 space-y-6">
+            {/* 编辑模式类型描述块（描述 + 分隔线，间距 12px）*/}
+            {isEdit && (
+              <div className="space-y-3">
+                <p className="font-sans text-[12px] text-stone leading-relaxed">
+                  {TYPE_META.image.description}
+                </p>
+                <div className="border-t border-line" />
+              </div>
+            )}
 
-            <div className="space-y-4">
-              <p className="font-sans text-[12px] text-stone ml-0.5">
-                图片{isEdit ? ' · 不传则保留原图' : ''}
-              </p>
-              <ImageDropzone isEdit={isEdit} imageFile={imageFile} onPick={onImagePick} />
-              <DitherControls
-                mode={mode}
-                onModeChange={setMode}
-                threshold={threshold}
-                onThresholdChange={setThreshold}
-                hasImage={!!imageFile}
-                scale={scale}
-                onScaleChange={setScale}
-                onResetCrop={resetCrop}
+            {/* 帧名称 */}
+            <FormSection label="帧名称（选填，最多 64 字）">
+              <Input
+                type="text"
+                maxLength={64}
+                value={frameName}
+                onChange={(e) => setFrameName(e.target.value)}
+                placeholder="如：挖掘机"
+                autoFocus={!isEdit}
               />
-            </div>
+            </FormSection>
 
-            <AudioDropzone
-              gid={gid}
-              hasExistingAudio={isEdit && !!content!.audio_etag}
-              editingContentId={isEdit ? content!.id : null}
-              audioFile={audioFile}
-              onPick={setAudioFile}
-            />
+            {/* 类型参数（图片本体） */}
+            <FormSection label="类型参数" hint={isEdit ? '不传图片则保留原图。' : undefined}>
+              <div className="space-y-4">
+                <ImageDropzone isEdit={isEdit} imageFile={imageFile} onPick={onImagePick} />
+                <DitherControls
+                  mode={mode}
+                  onModeChange={setMode}
+                  threshold={threshold}
+                  onThresholdChange={setThreshold}
+                  hasImage={!!imageFile}
+                  scale={scale}
+                  onScaleChange={setScale}
+                  onResetCrop={resetCrop}
+                />
+              </div>
+            </FormSection>
 
-            {/* 操作按钮：粘在表单列底部，手机上全宽好点按 */}
-            <div className="flex gap-3 pt-5 border-t border-line sticky bottom-0 bg-paper pb-4">
+            {/* 音频 */}
+            <FormSection label="音频">
+              <ImageAudioBlock
+                gid={gid}
+                mode={audioMode}
+                onModeChange={setAudioMode}
+                audioFile={audioFile}
+                onAudioFileChange={setAudioFile}
+                ttsText={ttsText}
+                onTtsTextChange={setTtsText}
+                ttsVoice={ttsVoice}
+                onTtsVoiceChange={setTtsVoice}
+                hasExistingAudio={isEdit && !!content!.audio_etag}
+                editingContentId={isEdit ? content!.id : null}
+                audioStatus={content?.audio_status}
+                audioError={content?.audio_error}
+              />
+            </FormSection>
+
+            {/* 操作按钮 */}
+            <div className="flex gap-3 pt-6 border-t border-line sticky bottom-0 bg-paper pb-6">
               <Button variant="outline" onClick={onDone} className="flex-1">
                 取消
               </Button>

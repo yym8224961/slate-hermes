@@ -6,13 +6,17 @@
 #include <sys/stat.h>
 
 #include <cerrno>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <unistd.h>
 
+#include "config.h"
+
 namespace {
 constexpr char kTag[]  = "Cache";
 constexpr char kRoot[] = "/littlefs";
+constexpr long kMaxReadBytes = AUDIO_MAX_PCM_BYTES;
 }  // namespace
 
 namespace {
@@ -64,6 +68,11 @@ bool ReadAll(const std::string& path, std::vector<uint8_t>& out) {
         fclose(f);
         return false;
     }
+    if (len > kMaxReadBytes) {
+        ESP_LOGW(kTag, "Read %s refused: %ld B exceeds limit", path.c_str(), len);
+        fclose(f);
+        return false;
+    }
     if (fseek(f, 0, SEEK_SET) != 0) {
         fclose(f);
         return false;
@@ -74,8 +83,18 @@ bool ReadAll(const std::string& path, std::vector<uint8_t>& out) {
     return r == static_cast<size_t>(len);
 }
 
+std::string SafePathComponent(const std::string& raw) {
+    std::string out;
+    out.reserve(raw.size());
+    for (unsigned char ch : raw) {
+        if (std::isalnum(ch) || ch == '-' || ch == '_') out.push_back(static_cast<char>(ch));
+        else out.push_back('_');
+    }
+    return out.empty() ? "_" : out;
+}
+
 std::string GroupDir(const std::string& gid) {
-    return std::string(kRoot) + "/groups/" + gid;
+    return std::string(kRoot) + "/groups/" + SafePathComponent(gid);
 }
 std::string FramesDir(const std::string& gid) {
     return GroupDir(gid) + "/frames";
@@ -181,12 +200,18 @@ bool WriteStateMeta(const std::string& selected_group_id, const std::string& eta
     return ok;
 }
 
-bool WriteManifest(const std::string& gid, const std::string& group_etag, int content_count) {
+std::string ReadCurrentManifestEtag() {
+    std::string gid, etag;
+    if (!ReadStateMeta(gid, etag)) return "";
+    return etag;
+}
+
+bool WriteManifest(const std::string& gid, const std::string& manifest_etag, int content_count) {
     DirEnsure(std::string(kRoot) + "/groups");
     DirEnsure(GroupDir(gid));
     DirEnsure(FramesDir(gid));
     cJSON* root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "group_etag", group_etag.c_str());
+    cJSON_AddStringToObject(root, "manifest_etag", manifest_etag.c_str());
     cJSON_AddNumberToObject(root, "content_count", content_count);
     char* s = cJSON_PrintUnformatted(root);
     bool  ok = s && WriteAll(GroupDir(gid) + "/manifest.json", s, std::strlen(s));
@@ -269,6 +294,7 @@ bool WriteFrameMeta(const std::string& gid, int idx, const FrameMeta& meta) {
     DirEnsure(FramesDir(gid));
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "status_bar_text", meta.status_bar_text.c_str());
+    cJSON_AddStringToObject(root, "content_etag", meta.content_etag.c_str());
     if (meta.has_ttl) {
         cJSON_AddNumberToObject(root, "ttl_sec", static_cast<double>(meta.ttl_sec));
     } else {
@@ -291,8 +317,10 @@ bool ReadFrameMeta(const std::string& gid, int idx, FrameMeta& out) {
     cJSON* root = cJSON_Parse(json.c_str());
     if (!root) return false;
     cJSON* cap = cJSON_GetObjectItemCaseSensitive(root, "status_bar_text");
+    cJSON* etag = cJSON_GetObjectItemCaseSensitive(root, "content_etag");
     cJSON* ttl = cJSON_GetObjectItemCaseSensitive(root, "ttl_sec");
     if (cJSON_IsString(cap) && cap->valuestring) out.status_bar_text = cap->valuestring;
+    if (cJSON_IsString(etag) && etag->valuestring) out.content_etag = etag->valuestring;
     if (cJSON_IsNumber(ttl)) {
         out.has_ttl = true;
         out.ttl_sec = static_cast<uint32_t>(ttl->valueint);

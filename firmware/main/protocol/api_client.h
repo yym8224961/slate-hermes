@@ -16,33 +16,10 @@
 
 namespace api {
 
-struct DeviceState {
-    std::string id;
-    std::string device_name;
-    bool        bound = false;
-    std::string pair_code;
-    std::string server_time;
-
-    bool        has_group = false;
-    std::string group_id;
-    std::string group_name;
-    std::string group_etag;
-    int         content_count    = 0;
-    int         group_sort_order = 0;
-    int         position_current = 0;
-    int         position_total   = 0;
-};
-
-struct RegisterResult {
-    std::string id;
-    std::string device_secret;
-    std::string pair_code;
-    bool        reclaimed = false;
-};
-
 struct ContentMeta {
     int         seq = 0;
     std::string id;
+    std::string content_etag;
     std::string device_status_bar_text;
     std::string image_etag;
     std::string audio_etag;
@@ -53,10 +30,38 @@ struct ContentMeta {
     int         next_wake_sec     = 0;
 };
 
+struct DeviceState {
+    std::string id;
+    std::string device_name;
+    bool        bound = false;
+    std::string pair_code;
+    std::string server_time;
+
+    bool        has_group = false;
+    std::string group_id;
+    std::string group_name;
+    std::string structure_etag;
+    std::string manifest_etag;
+    int         content_count    = 0;
+    int         group_sort_order = 0;
+    int         position_current = 0;
+    int         position_total   = 0;
+
+    bool        has_current_content = false;
+    ContentMeta current_content;
+};
+
+struct RegisterResult {
+    std::string id;
+    std::string device_secret;
+    std::string pair_code;
+    bool        reclaimed = false;
+};
+
 struct Manifest {
     std::string              group_id;
     std::string              group_name;
-    std::string              group_etag;
+    std::string              manifest_etag;
     std::vector<ContentMeta> contents;
 };
 
@@ -66,8 +71,11 @@ struct Telemetry {
     std::string fw_version;
     int         free_heap = -1;
     std::string fw_build_ts;
+    std::string wake_reason;
     std::string current_group;
     int         current_content_seq = -1;
+    std::string current_content_etag;
+    std::string manifest_etag;
 };
 
 void Init(const std::string& server_url, const std::string& mac, const std::string& device_secret);

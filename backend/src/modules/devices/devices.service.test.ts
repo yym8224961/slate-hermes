@@ -208,7 +208,8 @@ function createClaimService(
         {
           id: 'group-1',
           name: 'Group 1',
-          etag: 'etag-1',
+          structureEtag: 'structure-1',
+          manifestEtag: 'manifest-1',
           sortOrder: 0,
           _count: { contents: 0 },
         },

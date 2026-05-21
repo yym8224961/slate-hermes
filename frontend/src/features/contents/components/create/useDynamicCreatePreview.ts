@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { DynamicConfig, type DynamicConfigT } from 'shared';
 import type { UseMutationResult } from '@tanstack/react-query';
 import type { AllContentType } from './content-create-types';
@@ -23,11 +23,12 @@ export function useDynamicCreatePreview({
 }) {
   const [livePreviewData, setLivePreviewData] = useState<ArrayBuffer | null>(null);
   const previewSeq = useRef(0);
+  const { mutate } = preview;
 
-  function invalidatePreview() {
+  const invalidatePreview = useCallback(() => {
     previewSeq.current++;
     setLivePreviewData(null);
-  }
+  }, []);
 
   useEffect(() => {
     if (!config || type === 'image' || type === null) {
@@ -41,7 +42,7 @@ export function useDynamicCreatePreview({
     }
     const seq = ++previewSeq.current;
     const timer = setTimeout(() => {
-      preview.mutate(
+      mutate(
         { config: parsed.data, frameName: effectiveFrameName(type, parsed.data, frameName) },
         {
           onSuccess: (data) => {
@@ -51,8 +52,7 @@ export function useDynamicCreatePreview({
       );
     }, 800);
     return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config, frameName, type]);
+  }, [config, frameName, invalidatePreview, mutate, type]);
 
   return { livePreviewData, invalidatePreview };
 }

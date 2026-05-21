@@ -53,7 +53,7 @@ export function GroupCardSortable({
                 {group.name}
               </h3>
               <p className="font-mono text-[11px] text-stone-light mt-1.5 truncate">
-                {formatBytes(group.total_bytes)} · {group.etag.slice(0, 12)}
+                {formatBytes(group.total_bytes)} · {group.manifest_etag.slice(0, 12)}
               </p>
             </div>
             <div className="flex items-baseline gap-1 flex-shrink-0">

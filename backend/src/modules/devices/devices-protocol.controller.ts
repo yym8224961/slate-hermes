@@ -8,7 +8,7 @@ import {
 } from '../../common/decorators/current-device.decorator';
 import { DevicesService } from './devices.service';
 import { GroupsService } from '../groups/groups.service';
-import { DynamicContentRefreshService } from '../dynamic-content/dynamic-content-refresh.service';
+import { ContentsService } from '../contents/contents.service';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 import { PollDto } from './dto/poll.dto';
 import { SelectGroupByDeviceDto } from './dto/select-group.dto';
@@ -18,7 +18,7 @@ export class DevicesProtocolController {
   constructor(
     private readonly devices: DevicesService,
     private readonly groups: GroupsService,
-    private readonly dynamicContentRefresh: DynamicContentRefreshService
+    private readonly contents: ContentsService
   ) {}
 
   // ── register / reset（无鉴权）────────────────────────────
@@ -44,10 +44,15 @@ export class DevicesProtocolController {
   @Post('devices/current/poll')
   async poll(@CurrentDevice() dev: DeviceContext, @Body() body: PollDto): Promise<DeviceStateT> {
     await this.devices.recordTelemetry(dev.deviceId, body.telemetry);
-    if (body.telemetry?.current_group && body.telemetry.current_content_seq !== undefined) {
-      await this.dynamicContentRefresh.refreshDeviceCurrentFrame(dev.deviceId, body.telemetry);
+    const telemetry = body.telemetry;
+    if (telemetry?.wake_reason === 'timer') {
+      await this.contents.refreshCurrentContentForDeviceIfDue(dev.deviceId, telemetry);
     }
-    return this.devices.buildState(dev.deviceId);
+    const state = await this.devices.buildState(dev.deviceId);
+    if (telemetry?.wake_reason === 'timer' && state.group) {
+      state.current_content = await this.contents.currentContentForDevice(dev.deviceId, telemetry);
+    }
+    return state;
   }
 
   @Public()

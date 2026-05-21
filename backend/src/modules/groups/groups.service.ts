@@ -1,15 +1,18 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { GroupSummaryT } from 'shared';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { BlobService } from '../../infra/blob/blob.service';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
+import { audioBlobContentId } from '../audio/audio-blob-id';
+import { deviceStatusBarText } from '../contents/content-status-bar';
 
 interface GroupListEntry {
   id: string;
   name: string;
-  etag: string;
+  structureEtag: string;
+  manifestEtag: string;
   sortOrder: number;
   _count: { contents: number };
 }
@@ -17,10 +20,16 @@ interface GroupListEntry {
 export interface CycleResult {
   groupId: string | null;
   name: string | null;
-  etag: string | null;
+  structureEtag: string | null;
+  manifestEtag: string | null;
   sortOrder: number | null;
   contentCount: number;
   position: { current: number; total: number } | null;
+}
+
+export interface GroupEtags {
+  structureEtag: string;
+  manifestEtag: string;
 }
 
 @Injectable()
@@ -34,11 +43,23 @@ export class GroupsService {
 
   // ── etag ──────────────────────────────────────────────────
 
-  /** etag 覆盖 manifest 结构：内容顺序、图片/audio/frame_name/动态类型变化都会 bump。 */
-  async recomputeGroupEtag(
+  /** content_etag 覆盖单帧摘要；structure_etag 只覆盖顺序/增删；manifest_etag 覆盖完整 manifest。 */
+  async recomputeManifestEtag(
     groupId: string,
-    client: Prisma.TransactionClient | PrismaService = this.prisma
+    client?: Prisma.TransactionClient | PrismaService
   ): Promise<string> {
+    const etags = await this.recomputeGroupEtags(groupId, client);
+    return etags.manifestEtag;
+  }
+
+  async recomputeGroupEtags(
+    groupId: string,
+    client?: Prisma.TransactionClient | PrismaService
+  ): Promise<GroupEtags> {
+    if (!client) {
+      return this.prisma.$transaction((tx) => this.recomputeGroupEtags(groupId, tx));
+    }
+
     const group = await client.group.findUnique({
       where: { id: groupId },
       include: {
@@ -53,34 +74,73 @@ export class GroupsService {
             imageSize: true,
             audioEtag: true,
             audioSize: true,
+            audioStatus: true,
+            audioSource: true,
+            audioVoice: true,
             frameName: true,
-            dynamicNextRunAt: true,
+            dynamicConfig: true,
+            dynamicData: true,
+            dynamicLastRunAt: true,
           },
         },
       },
     });
     if (!group) throw new NotFoundError(`相册 ${groupId} 不存在`);
 
-    const parts = [
+    const contentRows = group.contents.map((content) => ({
+      id: content.id,
+      sortOrder: content.sortOrder,
+      kind: content.kind,
+      dynamicType: content.dynamicType ?? '',
+      imageEtag: content.imageEtag,
+      imageSize: content.imageSize,
+      audioEtag: content.audioEtag ?? '',
+      audioSize: content.audioSize ?? '',
+      audioStatus: content.audioStatus,
+      audioSource: content.audioSource ?? '',
+      audioVoice: content.audioVoice ?? '',
+      frameName: content.frameName ?? '',
+      statusBarText: deviceStatusBarText({ ...content, renderedAt: content.dynamicLastRunAt }),
+    }));
+    const contentEtags = contentRows.map((content) => ({
+      id: content.id,
+      etag: hashParts([
+        'content',
+        content.id,
+        content.sortOrder,
+        content.kind,
+        content.dynamicType,
+        content.imageEtag,
+        content.imageSize,
+        content.audioEtag,
+        content.audioSize,
+        content.audioStatus,
+        content.audioSource,
+        content.audioVoice,
+        content.frameName,
+        content.statusBarText,
+      ]),
+    }));
+    const structureEtag = hashParts([
+      'structure',
+      ...contentRows.map((content) =>
+        [content.id, content.sortOrder, content.kind, content.dynamicType].join(':')
+      ),
+    ]);
+    const manifestEtag = hashParts([
+      'manifest',
       group.name,
-      ...group.contents.map((content) => {
-        return [
-          content.id,
-          content.sortOrder,
-          content.kind,
-          content.dynamicType ?? '',
-          content.imageEtag,
-          content.imageSize,
-          content.audioEtag ?? '',
-          content.audioSize ?? '',
-          content.frameName ?? '',
-          content.dynamicNextRunAt?.toISOString() ?? '',
-        ].join(':');
-      }),
-    ];
-    const etag = createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 32);
-    await client.group.update({ where: { id: groupId }, data: { etag } });
-    return etag;
+      group.sortOrder,
+      structureEtag,
+      ...contentEtags.map((content) => `${content.id}:${content.etag}`),
+    ]);
+
+    await bulkSetContentEtags(client, contentEtags);
+    await client.group.update({
+      where: { id: groupId },
+      data: { structureEtag, manifestEtag },
+    });
+    return { structureEtag, manifestEtag };
   }
 
   // ── 设备 cycle / select / describe ─────────────────────────
@@ -95,7 +155,8 @@ export class GroupsService {
       select: {
         id: true,
         name: true,
-        etag: true,
+        structureEtag: true,
+        manifestEtag: true,
         sortOrder: true,
         _count: { select: { contents: true } },
       },
@@ -160,7 +221,8 @@ export class GroupsService {
     return {
       groupId: target.id,
       name: target.name,
-      etag: target.etag,
+      structureEtag: target.structureEtag,
+      manifestEtag: target.manifestEtag,
       sortOrder: target.sortOrder,
       contentCount: target._count.contents,
       position: { current: nextIdx + 1, total: groups.length },
@@ -182,7 +244,8 @@ export class GroupsService {
     return {
       groupId: g.id,
       name: g.name,
-      etag: g.etag,
+      structureEtag: g.structureEtag,
+      manifestEtag: g.manifestEtag,
       sortOrder: g.sortOrder,
       contentCount: g._count.contents,
       position: { current: idx + 1, total: groups.length },
@@ -198,7 +261,8 @@ export class GroupsService {
       select: {
         id: true,
         name: true,
-        etag: true,
+        structureEtag: true,
+        manifestEtag: true,
         sortOrder: true,
         _count: { select: { contents: true } },
       },
@@ -210,7 +274,15 @@ export class GroupsService {
   async getOwned(gid: string, ownerUserId: string): Promise<GroupSummaryT> {
     const g = await this.prisma.group.findUnique({
       where: { id: gid },
-      include: { _count: { select: { contents: true } } },
+      select: {
+        id: true,
+        name: true,
+        ownerUserId: true,
+        structureEtag: true,
+        manifestEtag: true,
+        sortOrder: true,
+        _count: { select: { contents: true } },
+      },
     });
     if (!g || g.ownerUserId !== ownerUserId) {
       throw new NotFoundError('相册不存在');
@@ -224,7 +296,8 @@ export class GroupsService {
     const created = await this.prisma.group.create({
       data: {
         name: body.name,
-        etag: 'empty',
+        structureEtag: 'empty',
+        manifestEtag: 'empty',
         ownerUserId,
         sortOrder,
       },
@@ -249,7 +322,7 @@ export class GroupsService {
   }
 
   async update(gid: string, ownerUserId: string, body: { name?: string }): Promise<GroupSummaryT> {
-    // 校验 + 更新 + recomputeGroupEtag 收进同一事务；name 没变直接跳过 update。
+    // 校验 + 更新 + recomputeManifestEtag 收进同一事务；name 没变直接跳过 update。
     await this.prisma.$transaction(async (tx) => {
       const g = await tx.group.findUnique({
         where: { id: gid },
@@ -260,7 +333,7 @@ export class GroupsService {
       }
       if (body.name === undefined || body.name === g.name) return;
       await tx.group.update({ where: { id: gid }, data: { name: body.name } });
-      await this.recomputeGroupEtag(gid, tx);
+      await this.recomputeManifestEtag(gid, tx);
     });
     return this.getOwned(gid, ownerUserId);
   }
@@ -269,21 +342,25 @@ export class GroupsService {
     const g = await this.prisma.group.findUnique({
       where: { id: gid },
       include: {
-        contents: { select: { id: true } },
+        contents: { select: { id: true, audioEtag: true } },
       },
     });
     if (!g || g.ownerUserId !== ownerUserId) {
       throw new NotFoundError('相册不存在');
     }
-    await Promise.all(
+    await this.prisma.group.delete({ where: { id: gid } });
+    const deleted = await Promise.allSettled(
       g.contents.flatMap((content) => {
         return [
           this.blob.delete(gid, content.id, 'image'),
-          this.blob.delete(gid, content.id, 'audio'),
+          content.audioEtag
+            ? this.blob.delete(gid, audioBlobContentId(content.id, content.audioEtag), 'audio')
+            : Promise.resolve(),
         ];
       })
     );
-    await this.prisma.group.delete({ where: { id: gid } });
+    const failed = deleted.filter((result) => result.status === 'rejected').length;
+    if (failed > 0) this.logger.warn(`group ${gid} deleted with ${failed} blob cleanup failure(s)`);
   }
 
   async nextGroupSortOrder(ownerUserId: string): Promise<number> {
@@ -312,20 +389,12 @@ export class GroupsService {
       });
     }
 
-    await this.prisma.$transaction([
-      ...order.map((id, idx) =>
-        this.prisma.group.update({
-          where: { id },
-          data: { sortOrder: -(idx + 1) },
-        })
-      ),
-      ...order.map((id, idx) =>
-        this.prisma.group.update({
-          where: { id },
-          data: { sortOrder: idx },
-        })
-      ),
-    ]);
+    await this.prisma.$transaction(async (tx) => {
+      await bulkSetGroupSortOrders(tx, ownerUserId, order);
+      for (const groupId of order) {
+        await this.recomputeManifestEtag(groupId, tx);
+      }
+    });
   }
 
   // ── 内部 helpers ──────────────────────────────────────────
@@ -359,7 +428,8 @@ function emptyCycle(): CycleResult {
   return {
     groupId: null,
     name: null,
-    etag: null,
+    structureEtag: null,
+    manifestEtag: null,
     sortOrder: null,
     contentCount: 0,
     position: null,
@@ -370,7 +440,8 @@ function toSummary(
   g: {
     id: string;
     name: string;
-    etag: string;
+    structureEtag: string;
+    manifestEtag: string;
     sortOrder: number;
     _count: { contents: number };
   },
@@ -379,9 +450,61 @@ function toSummary(
   return {
     id: g.id,
     name: g.name,
-    etag: g.etag,
+    structure_etag: g.structureEtag,
+    manifest_etag: g.manifestEtag,
     sort_order: g.sortOrder,
     content_count: g._count.contents,
     total_bytes: totalBytes,
   };
+}
+
+function hashParts(parts: Array<string | number>): string {
+  return createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 32);
+}
+
+async function bulkSetContentEtags(
+  client: Prisma.TransactionClient | PrismaService,
+  updates: Array<{ id: string; etag: string }>
+): Promise<void> {
+  if (updates.length === 0) return;
+  const ids = Prisma.join(updates.map((update) => update.id));
+  await client.$executeRaw`
+    UPDATE \`contents\`
+    SET \`content_etag\` = CASE \`id\`
+      ${Prisma.join(
+        updates.map((update) => Prisma.sql`WHEN ${update.id} THEN ${update.etag}`),
+        ' '
+      )}
+    END
+    WHERE \`id\` IN (${ids})
+  `;
+}
+
+async function bulkSetGroupSortOrders(
+  tx: Prisma.TransactionClient,
+  ownerUserId: string,
+  order: string[]
+): Promise<void> {
+  if (order.length === 0) return;
+  const ids = Prisma.join(order);
+  await tx.$executeRaw`
+    UPDATE \`groups\`
+    SET \`sort_order\` = CASE \`id\`
+      ${Prisma.join(
+        order.map((id, idx) => Prisma.sql`WHEN ${id} THEN ${-(idx + 1)}`),
+        ' '
+      )}
+    END
+    WHERE \`owner_user_id\` = ${ownerUserId} AND \`id\` IN (${ids})
+  `;
+  await tx.$executeRaw`
+    UPDATE \`groups\`
+    SET \`sort_order\` = CASE \`id\`
+      ${Prisma.join(
+        order.map((id, idx) => Prisma.sql`WHEN ${id} THEN ${idx}`),
+        ' '
+      )}
+    END
+    WHERE \`owner_user_id\` = ${ownerUserId} AND \`id\` IN (${ids})
+  `;
 }

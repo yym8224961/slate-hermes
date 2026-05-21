@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { Content } from '@prisma/client';
 import { Prisma } from '@prisma/client';
+import { FRAME_BYTES } from 'shared';
 import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeETag } from '../../common/etag/etag.util';
@@ -8,7 +9,12 @@ import { NotFoundError, ValidationError } from '../../common/errors';
 import { GroupsService } from '../groups/groups.service';
 import { DynamicFrameRendererService } from '../frame-renderer/dynamic-frame-renderer.service';
 import { DynamicContentRegistry } from './dynamic-content-registry';
+import { DynamicAudioService } from './audio/dynamic-audio.service';
 import { nextLocalMidnight, timezoneFromConfig } from './timezone';
+
+const REFRESH_LEAD_MS = 90_000;
+const MIN_REFRESH_DUE_DELAY_MS = 10_000;
+const CALENDAR_WAKE_LAG_MS = 60_000;
 
 export interface RenderDynamicContentOptions {
   force?: boolean;
@@ -35,7 +41,8 @@ export class DynamicContentRendererService {
     private readonly blob: BlobService,
     private readonly registry: DynamicContentRegistry,
     private readonly renderer: DynamicFrameRendererService,
-    private readonly groups: GroupsService
+    private readonly groups: GroupsService,
+    private readonly dynamicAudio: DynamicAudioService
   ) {}
 
   renderDynamicContent(
@@ -98,6 +105,7 @@ export class DynamicContentRendererService {
       select: {
         id: true,
         frameName: true,
+        imageSize: true,
         kind: true,
         dynamicType: true,
         dynamicData: true,
@@ -115,10 +123,16 @@ export class DynamicContentRendererService {
     if (!entry) throw new ValidationError(`未知动态类型: ${content.dynamicType}`);
     const config = entry.provider.validateConfig(configOverride);
     const now = new Date();
-    const data = await entry.provider.fetchData(config, {
-      now,
-      lastData: content.dynamicData ?? undefined,
-    });
+    let data: unknown;
+    try {
+      data = await entry.provider.fetchData(config, {
+        now,
+        lastData: content.dynamicData ?? undefined,
+      });
+    } catch (err) {
+      if (!content.dynamicData && content.imageSize === 0) throw err;
+      data = content.dynamicData ?? { _error: '数据暂不可用' };
+    }
     const frameName = frameNameOverride === undefined ? content.frameName : frameNameOverride;
     return this.renderAndValidate({
       type: content.dynamicType,
@@ -168,8 +182,14 @@ export class DynamicContentRendererService {
       this.logger.warn(
         `dynamic fetchData failed content=${contentId} type=${content.dynamicType}: ${message}`
       );
-      data = content.dynamicData ?? { _error: '数据暂不可用' };
       await this.markError(content, message, now);
+      if (!content.dynamicData && content.imageSize === 0) {
+        throw err;
+      }
+      if (content.dynamicType === 'history_today' && !content.dynamicData) {
+        throw err;
+      }
+      data = content.dynamicData ?? { _error: '数据暂不可用' };
     }
 
     const rendered = await this.renderAndValidate({
@@ -181,6 +201,7 @@ export class DynamicContentRendererService {
     });
     const imageEtag = computeETag(rendered);
     const nextRunAt = this.computeNextRunAt(content.dynamicType, config, now);
+    const refreshDueAt = this.computeRefreshDueAt(content.dynamicType, nextRunAt, now);
 
     if (!opts.force && imageEtag === content.imageEtag) {
       await this.prisma.content.update({
@@ -189,32 +210,47 @@ export class DynamicContentRendererService {
           ...(data != null ? { dynamicData: data as Prisma.InputJsonValue } : {}),
           dynamicLastRunAt: now,
           dynamicNextRunAt: nextRunAt,
+          dynamicRefreshDueAt: refreshDueAt,
+          dynamicRefreshLeaseUntil: null,
+          dynamicRefreshAttempts: 0,
           dynamicLastError: fetchErrorMessage ? fetchErrorMessage.slice(0, 512) : null,
         },
       });
-      const groupEtag = await this.groups.recomputeGroupEtag(content.groupId);
+      const audioChanged = await this.dynamicAudio.sync(contentId, { now });
+      const groupEtag = await this.groups.recomputeManifestEtag(content.groupId);
       return {
         contentId,
         imageEtag,
         groupEtag,
         renderedAt: now,
-        unchanged: true,
+        unchanged: !audioChanged,
       };
     }
 
+    const previousImage = await this.blob.read(content.groupId, content.id, 'image');
     await this.blob.write(content.groupId, content.id, 'image', rendered);
-    await this.prisma.content.update({
-      where: { id: contentId },
-      data: {
-        imageEtag,
-        imageSize: rendered.byteLength,
-        dynamicData: data == null ? Prisma.JsonNull : (data as Prisma.InputJsonValue),
-        dynamicLastRunAt: now,
-        dynamicNextRunAt: nextRunAt,
-        dynamicLastError: fetchErrorMessage ? fetchErrorMessage.slice(0, 512) : null,
-      },
-    });
-    const groupEtag = await this.groups.recomputeGroupEtag(content.groupId);
+    try {
+      await this.prisma.content.update({
+        where: { id: contentId },
+        data: {
+          imageEtag,
+          imageSize: rendered.byteLength,
+          dynamicData: data == null ? Prisma.JsonNull : (data as Prisma.InputJsonValue),
+          dynamicLastRunAt: now,
+          dynamicNextRunAt: nextRunAt,
+          dynamicRefreshDueAt: refreshDueAt,
+          dynamicRefreshLeaseUntil: null,
+          dynamicRefreshAttempts: 0,
+          dynamicLastError: fetchErrorMessage ? fetchErrorMessage.slice(0, 512) : null,
+        },
+      });
+    } catch (err) {
+      if (previousImage) await this.blob.write(content.groupId, content.id, 'image', previousImage);
+      else await this.blob.delete(content.groupId, content.id, 'image').catch(() => {});
+      throw err;
+    }
+    await this.dynamicAudio.sync(contentId, { now });
+    const groupEtag = await this.groups.recomputeManifestEtag(content.groupId);
     return {
       contentId,
       imageEtag,
@@ -228,7 +264,7 @@ export class DynamicContentRendererService {
     input: Parameters<DynamicFrameRendererService['render']>[0]
   ): Promise<Buffer> {
     const rendered = await this.renderer.render(input);
-    if (rendered.byteLength !== 15000) {
+    if (rendered.byteLength !== FRAME_BYTES) {
       throw new Error(`动态帧大小不匹配: ${rendered.byteLength}`);
     }
     return rendered;
@@ -249,15 +285,48 @@ export class DynamicContentRendererService {
   }
 
   private computeNextRunAt(dynamicType: string, config: unknown, now: Date): Date | null {
+    if (dynamicType === 'weather') {
+      const configured = refreshIntervalSec(config);
+      if (configured !== null) return new Date(now.getTime() + configured * 1000);
+    }
     if (
       dynamicType === 'daily_calendar' ||
       dynamicType === 'month_calendar' ||
       dynamicType === 'history_today'
     ) {
-      return nextLocalMidnight(now, timezoneFromConfig(config));
+      const midnight = nextLocalMidnight(now, timezoneFromConfig(config));
+      return new Date(midnight.getTime() + CALENDAR_WAKE_LAG_MS);
     }
     const ttl = this.registry.defaultTtlSec(dynamicType);
     if (ttl === null) return null;
     return new Date(now.getTime() + ttl * 1000);
   }
+
+  private computeRefreshDueAt(dynamicType: string, nextRunAt: Date | null, now: Date): Date | null {
+    if (!nextRunAt) return null;
+    if (isCalendarLikeDynamicType(dynamicType)) {
+      const dueMs = nextRunAt.getTime() - CALENDAR_WAKE_LAG_MS;
+      if (dueMs <= now.getTime()) return new Date(now.getTime() + MIN_REFRESH_DUE_DELAY_MS);
+      return new Date(dueMs);
+    }
+    if (dynamicType === 'weather') return nextRunAt;
+    const dueMs = nextRunAt.getTime() - REFRESH_LEAD_MS;
+    if (dueMs <= now.getTime()) return new Date(now.getTime() + MIN_REFRESH_DUE_DELAY_MS);
+    return new Date(dueMs);
+  }
+}
+
+function isCalendarLikeDynamicType(dynamicType: string): boolean {
+  return (
+    dynamicType === 'daily_calendar' ||
+    dynamicType === 'month_calendar' ||
+    dynamicType === 'history_today'
+  );
+}
+
+function refreshIntervalSec(config: unknown): number | null {
+  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
+  const raw = (config as Record<string, unknown>).refresh_interval_sec;
+  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
+  return Math.max(Math.floor(raw), 300);
 }

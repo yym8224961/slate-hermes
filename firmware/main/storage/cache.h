@@ -2,7 +2,7 @@
 
 // LittleFS 缓存:挂在 /littlefs,目录布局:
 //   /littlefs/state.json                 {selected_group_id, last_etag}
-//   /littlefs/groups/{gid}/manifest.json {group_etag, content_count}
+//   /littlefs/groups/{gid}/manifest.json {manifest_etag, content_count}
 //   /littlefs/groups/{gid}/frames/{idx}.img  15000 字节 1bpp
 //   /littlefs/groups/{gid}/frames/{idx}.pcm  16k mono raw PCM
 
@@ -17,8 +17,9 @@ bool FormatAll();
 
 bool ReadStateMeta(std::string& selected_group_id, std::string& last_etag);
 bool WriteStateMeta(const std::string& selected_group_id, const std::string& etag);
+std::string ReadCurrentManifestEtag();
 
-bool WriteManifest(const std::string& gid, const std::string& group_etag, int content_count);
+bool WriteManifest(const std::string& gid, const std::string& manifest_etag, int content_count);
 bool ReadManifestContentCount(const std::string& gid, int& out);
 
 bool FrameImageExists(const std::string& gid, int idx, const std::string& expected_etag);
@@ -33,6 +34,7 @@ void DeleteFrameFiles(const std::string& gid, int idx);
 
 struct FrameMeta {
     std::string status_bar_text;
+    std::string content_etag;
     bool        has_ttl = false;
     uint32_t    ttl_sec = 0;
 };

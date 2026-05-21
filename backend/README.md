@@ -65,7 +65,7 @@ Device  id mac(unique) secret_hash(sha256) pair_code(unique, 6 位 [A-Z2-9])
         name? owner_user_id? selected_group_id? sort_order
         last_seen_at? battery_pct? rssi_dbm? fw_version?
 
-Group   id name etag owner_user_id? sort_order
+Group   id name structure_etag manifest_etag owner_user_id? sort_order
         └ contents: Content[]（cascade delete）
 
 Content id (group_id, sort_order) unique 复合键
@@ -78,7 +78,7 @@ Content id (group_id, sort_order) unique 复合键
 
 - **Device.mac** unique，物理重置后凭 mac 重新走 `POST /devices` 拿回新的 `device_secret + pair_code`，实现「物理控制权 = 数字所有权」
 - **Device.secret_hash** = `sha256(device_secret)`，明文 secret 仅注册响应里返回一次，固件 NVS 持久化；丢了只能工厂重置
-- **Group.etag** = 所有 content 的 image/audio/title/动态类型 拼接后 hash，便于固件 manifest 304
+- **Group.structure_etag** = 顺序/增删变化摘要；**Group.manifest_etag** = 完整 manifest 摘要，便于固件 manifest 304
 - **Content** 唯一键 `(group_id, sort_order)`，删/重排时整组重写 sort_order
 
 ## API 全景
@@ -151,7 +151,7 @@ POST /api/v1/devices/current/group/prev   环回切上一组 → DeviceState
 ```ts
 {
   device: { id, mac, name, bound, pair_code: string|null, server_time },
-  group:  { id, etag, name, content_count, sort_order, position: {current, total} } | null
+  group:  { id, structure_etag, manifest_etag, name, content_count, sort_order, position: {current, total} } | null
 }
 ```
 
@@ -182,7 +182,7 @@ POST /api/v1/devices/current/group/prev   环回切上一组 → DeviceState
                                     两层 hex 前缀分桶避免单目录爆 inode
 ```
 
-ETag 算法：`computeETag(buf) = sha256(buf).slice(0, 16)`。manifest 的 `group.etag` 会随内容图片、音频、标题或动态类型变化而更新。
+ETag 算法：`computeETag(buf) = sha256(buf).slice(0, 16)`。manifest 的 `group.manifest_etag` 会随内容图片、音频、标题或动态类型变化而更新。
 
 ## 图片渲染管线（`ImageRendererService`）
 
@@ -224,8 +224,16 @@ backend/scripts/generate-font-test-assets.sh
 | `BLOB_DIR` | `./blobs` | docker 镜像内固定 `/data/blobs` |
 | `QWEATHER_API_KEY` | —— | 可选，天气动态帧使用；从 QWeather 控制台创建 API KEY |
 | `QWEATHER_API_HOST` | —— | 可选，天气动态帧使用；从 QWeather 控制台「设置」复制 API Host，需带 `https://` |
+| `AI_API_KEY` | —— | 可选，历史上的今天 AI 筛选/改写使用 |
+| `AI_BASE_URL` | —— | 可选，OpenAI-compatible chat completions base URL，需带 `https://` |
+| `AI_MODEL` | `gpt-4o-mini` | AI 内容优化模型 |
+| `TTS_API_KEY` | —— | 可选，动态内容语音生成使用 |
+| `TTS_BASE_URL` | —— | 可选，OpenAI-compatible audio/chat completions base URL，需带 `https://` |
+| `TTS_MODEL` | `mimo-v2.5-tts` | TTS 模型 |
+| `TTS_DEFAULT_VOICE` | `冰糖` | 默认音色，需在共享 `TTS_VOICES` 列表中 |
+| `BACKGROUND_WORKERS` | `true` | 是否启动动态内容定时刷新与 TTS 后台 worker |
 
-本地开发：放 `backend/.env`（**不是仓库根**，Prisma CLI 与 Bun runtime 都从 cwd 读取）。docker 部署：所有值内联在 `compose.yml` 的 `environment:`，不依赖 `.env`。
+本地开发：放 `backend/.env`（**不是仓库根**，Prisma CLI 与 Bun runtime 都从 cwd 读取）。docker 部署：使用根目录 `.env.example` 复制出的 `.env`；`compose.yml` 会通过 `env_file` 传入后端运行时变量，并自动从 `MYSQL_PASSWORD` 拼出容器内的 `DATABASE_URL`。
 
 动态内容的外部数据会在 provider 内存中做缓存和并发去重：天气实时/三日预报缓存 10 分钟，QWeather 城市 ID 查询缓存 24 小时；「历史上的今天」按时区和日期缓存 24 小时。渲染失败时会优先回退到上次已落库的数据，避免设备端显示空白。
 
@@ -234,6 +242,7 @@ backend/scripts/generate-font-test-assets.sh
 ```bash
 bun install
 cp backend/.env.example backend/.env       # 改 DATABASE_URL / JWT_SECRET
+                                            # 按需配置 QWeather / AI / TTS
 bun run --cwd backend prisma:generate
 bun run --cwd backend prisma:migrate       # 首次会创建 dev migration
 

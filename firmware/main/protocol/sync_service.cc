@@ -188,8 +188,11 @@ static api::Telemetry BuildTelemetry(const SyncDeps& deps, const std::string& cu
     tel.fw_version        = CONFIG_APP_PROJECT_VER;
     tel.free_heap         = static_cast<int>(esp_get_free_heap_size());
     tel.fw_build_ts       = __DATE__ " " __TIME__;
+    if (deps.wake_reason) tel.wake_reason = deps.wake_reason();
     tel.current_group     = current_group;
     if (deps.current_content_seq) tel.current_content_seq = deps.current_content_seq();
+    if (deps.current_content_etag) tel.current_content_etag = deps.current_content_etag();
+    if (deps.manifest_etag) tel.manifest_etag = deps.manifest_etag();
     return tel;
 }
 
@@ -277,6 +280,7 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
 
         cache::FrameMeta fm;
         fm.status_bar_text = f.device_status_bar_text;
+        fm.content_etag = f.content_etag;
         fm.has_ttl = f.has_next_wake_sec && f.next_wake_sec >= 0;
         fm.ttl_sec = f.next_wake_sec > 0 ? static_cast<uint32_t>(f.next_wake_sec) : 0;
         cache::WriteFrameMeta(gid, f.seq, fm);
@@ -292,13 +296,63 @@ void SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     for (int idx = total; idx < old_content_count; ++idx) {
         cache::DeleteFrameFiles(gid, idx);
     }
-    cache::WriteManifest(gid, mf.group_etag, mf.contents.size());
-    cache::WriteStateMeta(gid, mf.group_etag);
+    cache::WriteManifest(gid, mf.manifest_etag, mf.contents.size());
+    cache::WriteStateMeta(gid, mf.manifest_etag);
     SetCurrentGroupLocked(gid);
     group_changed   = true;
     // 真有内容变化(新增/修改/删除帧),让 FrameScene 重读当前帧并触发 EPD 刷新。
     PostGroupReady(gid, mf.group_name, static_cast<int>(mf.contents.size()),
                    /*content_changed=*/true);
+}
+
+bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentMeta& f) {
+    if (gid.empty() || f.id.empty() || f.seq < 0) return false;
+
+    cache::FrameMeta old_meta;
+    cache::ReadFrameMeta(gid, f.seq, old_meta);
+    cache::FrameMeta next_meta;
+    next_meta.status_bar_text = f.device_status_bar_text;
+    next_meta.content_etag = f.content_etag;
+    next_meta.has_ttl = f.has_next_wake_sec && f.next_wake_sec >= 0;
+    next_meta.ttl_sec = f.next_wake_sec > 0 ? static_cast<uint32_t>(f.next_wake_sec) : 0;
+
+    if (!f.content_etag.empty() && old_meta.content_etag == f.content_etag &&
+        cache::FrameImageExists(gid, f.seq, f.image_etag) &&
+        (f.audio_etag.empty() || cache::FrameAudioExists(gid, f.seq, f.audio_etag))) {
+        if (old_meta.status_bar_text != next_meta.status_bar_text ||
+            old_meta.has_ttl != next_meta.has_ttl ||
+            old_meta.ttl_sec != next_meta.ttl_sec) {
+            cache::WriteFrameMeta(gid, f.seq, next_meta);
+        }
+        return false;
+    }
+
+    bool changed = false;
+    if (!cache::FrameImageExists(gid, f.seq, f.image_etag)) {
+        std::vector<uint8_t> buf;
+        bool                 nm = false;
+        if (api::DownloadContentImage(f.id, "", buf, nm)) {
+            cache::WriteFrameImage(gid, f.seq, buf, f.image_etag);
+            changed = true;
+        } else {
+            return false;
+        }
+    }
+    if (f.audio_etag.empty()) {
+        cache::DeleteFrameAudio(gid, f.seq);
+    } else if (!cache::FrameAudioExists(gid, f.seq, f.audio_etag)) {
+        std::vector<uint8_t> buf;
+        bool                 nm = false;
+        if (api::DownloadContentAudio(f.id, "", buf, nm)) {
+            cache::WriteFrameAudio(gid, f.seq, buf, f.audio_etag);
+            changed = true;
+        } else {
+            ESP_LOGW(kTag, "Frame %d audio download failed", f.seq);
+        }
+    }
+
+    cache::WriteFrameMeta(gid, f.seq, next_meta);
+    return changed || old_meta.content_etag != f.content_etag;
 }
 
 void SyncService::SyncOnce(SyncMode mode) {
@@ -369,11 +423,28 @@ void SyncService::SyncOnce(SyncMode mode) {
     // bound + has_group 不发 boot_stage,SyncManifestAndFrames 走 kGroupReady。
 
     bool group_changed = false;
-    if (state.has_group) {
-        SyncManifestAndFrames(state.group_id, state.group_etag, group_changed);
+    if (mode == SyncMode::kDynamicWake && state.has_group && state.has_current_content) {
+        const bool changed = SyncCurrentContent(state.group_id, state.current_content);
+        group_changed = changed;
+        if (changed) {
+            PostGroupReady(state.group_id, state.group_name, state.content_count,
+                           /*content_changed=*/true);
+        }
+    } else if (mode == SyncMode::kDynamicWake && state.has_group) {
+        if (tel.manifest_etag != state.manifest_etag) {
+            ESP_LOGI(kTag, "Timer wake manifest mismatch; full sync");
+            SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
+        } else {
+            ESP_LOGI(kTag, "Timer wake has no current_content and manifest unchanged; skip sync");
+        }
+    } else if (mode == SyncMode::kDynamicWake) {
+        ESP_LOGI(kTag, "Timer wake has no group; skip full manifest sync");
+    } else if (state.has_group) {
+        SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
     } else {
         // 没选组:清掉 current_group_(scene 等下一次 GroupReady)
         ClearCurrentGroupLocked();
+        cache::WriteStateMeta("", "");
     }
 
     UiEvent e{};
@@ -405,10 +476,11 @@ void SyncService::DoCycle(const std::string& direction) {
     if (state.has_group) {
         ESP_LOGI(kTag, "Cycled %s -> %s (pos %d/%d)", direction.c_str(),
                  state.group_id.c_str(), state.position_current, state.position_total);
-        SyncManifestAndFrames(state.group_id, state.group_etag, group_changed);
+        SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
     } else {
         ESP_LOGI(kTag, "Cycle %s: no groups available", direction.c_str());
         ClearCurrentGroupLocked();
+        cache::WriteStateMeta("", "");
     }
 
     UiEvent e{};

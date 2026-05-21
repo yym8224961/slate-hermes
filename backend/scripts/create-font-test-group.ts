@@ -37,7 +37,7 @@ try {
   const generated = await upsertFontFrames(contents, group.id, user.id);
   const finalRows = await contents.list(group.id, { userId: user.id });
   const orderedIds = orderedContentIds(finalRows);
-  const { group_etag } = await contents.reorder(group.id, user.id, orderedIds);
+  const { manifest_etag } = await contents.reorder(group.id, user.id, orderedIds);
 
   process.stdout.write(
     [
@@ -45,7 +45,7 @@ try {
       `  user: ${user.email}${user.username ? ` (${user.username})` : ''}`,
       `  group_id: ${group.id}`,
       `  frames: ${generated.length}`,
-      `  group_etag: ${group_etag}`,
+      `  manifest_etag: ${manifest_etag}`,
     ].join('\n') + '\n'
   );
 } finally {

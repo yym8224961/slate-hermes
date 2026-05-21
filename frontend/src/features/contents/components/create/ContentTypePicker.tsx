@@ -124,8 +124,8 @@ export function ContentTypePicker({
                   onClick={() => onChange(it.type)}
                   aria-pressed={selected}
                   className={cn(
-                    'h-10 min-w-[128px] shrink-0 border px-4 inline-flex items-center justify-center gap-2 font-sans text-[12px] transition-colors',
-                    selected ? 'bg-ink text-paper border-ink' : 'hover:bg-cream'
+                    'h-10 min-w-[140px] shrink-0 border border-ink px-4 inline-flex items-center justify-center gap-2 font-sans text-[12px] transition-colors',
+                    selected ? 'bg-ink text-paper' : 'hover:bg-cream'
                   )}
                 >
                   <it.Icon size={15} className="shrink-0" />

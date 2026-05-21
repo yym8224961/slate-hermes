@@ -52,6 +52,15 @@ struct ComboState {
 };
 ComboState g_combo;
 
+const char* WakeReasonString() {
+    switch (power_state::Classify()) {
+        case power_state::WakeCause::kRtcTimer: return "timer";
+        case power_state::WakeCause::kButton: return "button";
+        case power_state::WakeCause::kColdBoot: return "power_on";
+        default: return "other";
+    }
+}
+
 void TryFireCombo() {
     if (!g_combo.up_held || !g_combo.down_held) return;
     if (g_combo.up_consumed && g_combo.down_consumed) return;  // 已触发过
@@ -423,6 +432,20 @@ void App::InitNetwork() {
             return power_state::CurrentFrameNeedsTimerWake()
                        ? power_state::GetCurrentFrameSeq()
                        : -1;
+        };
+        deps.current_content_etag = []() -> std::string {
+            std::string gid;
+            std::string manifest_etag;
+            if (!cache::ReadStateMeta(gid, manifest_etag) || gid.empty()) return "";
+            cache::FrameMeta meta;
+            if (!cache::ReadFrameMeta(gid, power_state::GetCurrentFrameSeq(), meta)) return "";
+            return meta.content_etag;
+        };
+        deps.manifest_etag = []() -> std::string {
+            return cache::ReadCurrentManifestEtag();
+        };
+        deps.wake_reason = []() -> std::string {
+            return WakeReasonString();
         };
         SyncService::Get().Start(std::move(deps));
 

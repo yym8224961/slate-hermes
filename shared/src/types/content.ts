@@ -1,9 +1,15 @@
 import { z } from 'zod';
 import { DITHER_MODES } from '../dither.js';
-import { DynamicConfig, DynamicType } from './dynamic.js';
+import { DynamicConfig, DynamicType, TtsVoice } from './dynamic.js';
 
 export const ContentKind = z.enum(['image', 'dynamic']);
 export type ContentKindT = z.infer<typeof ContentKind>;
+
+export const ContentAudioStatus = z.enum(['none', 'pending', 'generating', 'ready', 'failed']);
+export type ContentAudioStatusT = z.infer<typeof ContentAudioStatus>;
+
+export const ContentAudioSource = z.enum(['upload', 'tts']);
+export type ContentAudioSourceT = z.infer<typeof ContentAudioSource>;
 
 export const PatchContentRequest = z.object({
   frame_name: z.string().max(64).nullable().optional(),
@@ -18,12 +24,16 @@ export type ReorderContentsRequestT = z.infer<typeof ReorderContentsRequest>;
 export const ContentSummary = z.object({
   id: z.string(),
   seq: z.number().int().nonnegative(),
+  content_etag: z.string(),
   frame_name: z.string().nullable(),
   device_status_bar_text: z.string(),
   image_etag: z.string(),
   audio_etag: z.string().nullable(),
   image_size: z.number().int().nonnegative(),
   audio_size: z.number().int().nonnegative().nullable(),
+  audio_status: ContentAudioStatus,
+  audio_source: ContentAudioSource.nullable(),
+  audio_voice: TtsVoice.nullable(),
   kind: ContentKind,
   dynamic_type: DynamicType.nullable(),
   next_wake_sec: z.number().int().nonnegative().nullable(),
@@ -37,15 +47,19 @@ export const ContentDetail = ContentSummary.extend({
   dynamic_last_rendered_at: z.string().datetime().nullable(),
   dynamic_next_render_at: z.string().datetime().nullable(),
   dynamic_render_error: z.string().nullable(),
+  audio_text: z.string().nullable(),
+  audio_error: z.string().nullable(),
+  audio_updated_at: z.string().datetime().nullable(),
 });
 export type ContentDetailT = z.infer<typeof ContentDetail>;
 
 export const ContentMutationResponse = z.object({
   id: z.string(),
   seq: z.number().int().nonnegative(),
+  content_etag: z.string(),
   image_etag: z.string(),
   audio_etag: z.string().nullable(),
-  group_etag: z.string(),
+  manifest_etag: z.string(),
 });
 export type ContentMutationResponseT = z.infer<typeof ContentMutationResponse>;
 
@@ -68,10 +82,17 @@ export const PreviewDynamicContentRequest = z.object({
 });
 export type PreviewDynamicContentRequestT = z.infer<typeof PreviewDynamicContentRequest>;
 
+export const GenerateContentTtsRequest = z.object({
+  text: z.string().trim().min(1).max(500),
+  voice: TtsVoice,
+});
+export type GenerateContentTtsRequestT = z.infer<typeof GenerateContentTtsRequest>;
+
 export const ManifestResponse = z.object({
   group: z.object({
     id: z.string(),
-    etag: z.string(),
+    structure_etag: z.string(),
+    manifest_etag: z.string(),
     name: z.string(),
     sort_order: z.number().int(),
     position: z.object({

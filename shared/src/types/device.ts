@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ContentSummary } from './content.js';
 
 export const MacAddress = z
   .string()
@@ -16,7 +17,8 @@ export const PairCode = z
 // name 让设备 UI 文案具体化（"切换到「日常风景」" 而非 "切到第 3 个相册"）。
 export const DeviceStateGroup = z.object({
   id: z.string(),
-  etag: z.string(),
+  structure_etag: z.string(),
+  manifest_etag: z.string(),
   name: z.string(),
   content_count: z.number().int().nonnegative(),
   sort_order: z.number().int(),
@@ -39,6 +41,7 @@ export const DeviceState = z.object({
     server_time: z.string().datetime(),
   }),
   group: DeviceStateGroup.nullable(),
+  current_content: ContentSummary.nullable().optional(),
 });
 export type DeviceStateT = z.infer<typeof DeviceState>;
 
@@ -49,8 +52,11 @@ export const PollRequest = z.object({
       battery_pct: z.number().int().min(0).max(100).optional(),
       rssi_dbm: z.number().int().optional(),
       fw_version: z.string().max(32).optional(),
+      wake_reason: z.enum(['timer', 'button', 'power_on', 'other']).optional(),
       current_group: z.string().nullable().optional(),
       current_content_seq: z.number().int().nonnegative().optional(),
+      current_content_etag: z.string().max(64).optional(),
+      manifest_etag: z.string().max(64).optional(),
       free_heap: z.number().int().nonnegative().optional(),
       fw_build_ts: z.string().max(32).optional(),
     })

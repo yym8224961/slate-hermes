@@ -27,7 +27,7 @@ export class ContentDataController {
     return {
       id: r.id,
       image_etag: r.image_etag,
-      group_etag: r.group_etag,
+      manifest_etag: r.manifest_etag,
       rendered_at: r.updatedAt.toISOString(),
     };
   }
@@ -42,7 +42,7 @@ export class ContentDataController {
     return {
       id: r.id,
       image_etag: r.image_etag,
-      group_etag: r.group_etag,
+      manifest_etag: r.manifest_etag,
       rendered_at: r.updatedAt.toISOString(),
     };
   }

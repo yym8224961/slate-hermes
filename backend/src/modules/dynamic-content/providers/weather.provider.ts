@@ -76,7 +76,7 @@ interface QWeatherCityLookupResponse {
   }>;
 }
 
-const CACHE_TTL_MS = 600_000;
+const DEFAULT_CACHE_TTL_MS = 600_000;
 const LOOKUP_CACHE_TTL_MS = 86_400_000;
 const FETCH_TIMEOUT_MS = 5000;
 const FC_LABELS = ['今日', '明日', '后天'];
@@ -104,9 +104,11 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
     ctx: DynamicContentFetchCtx
   ): Promise<WeatherProviderData> {
     const key = this.cacheKey(config);
-    const now = Date.now();
+    const now = ctx.now.getTime();
+    const ttlSec = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_MS / 1000, 300);
+    const ttlMs = ttlSec * 1000;
     const cached = this.cache.get(key);
-    if (cached && now - cached.fetchedAt < CACHE_TTL_MS) return cached.data;
+    if (cached && now - cached.fetchedAt < ttlMs) return cached.data;
     if (cached) this.cache.delete(key);
 
     const existing = this.inflight.get(key);
@@ -114,7 +116,7 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
 
     const p = this.fetchFromQWeather(config, ctx)
       .then((data) => {
-        this.cache.set(key, { data, fetchedAt: Date.now() });
+        this.cache.set(key, { data, fetchedAt: now });
         return data;
       })
       .finally(() => this.inflight.delete(key));
@@ -128,18 +130,23 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
   ): Promise<WeatherProviderData> {
     const apiKey = this.config.qweatherApiKey;
     if (!apiKey) {
-      const fallback = this.fallbackFromLastData(ctx.lastData);
+      const fallback = this.fallbackFromLastData(ctx.lastData, ctx.now);
       if (fallback) return fallback;
       throw new Error('QWEATHER_API_KEY 未配置');
     }
     if (!this.config.qweatherApiHost) {
-      const fallback = this.fallbackFromLastData(ctx.lastData);
+      const fallback = this.fallbackFromLastData(ctx.lastData, ctx.now);
       if (fallback) return fallback;
       throw new Error('QWEATHER_API_HOST 未配置，请在和风天气控制台-设置中复制你的 API Host');
     }
 
     const host = this.config.qweatherApiHost.replace(/\/+$/, '');
-    const locationId = await this.resolveLocationId(host, apiKey, config.location_id);
+    const locationId = await this.resolveLocationId(
+      host,
+      apiKey,
+      config.location_id,
+      ctx.now.getTime()
+    );
     const location = encodeURIComponent(locationId);
     const lang = 'zh';
     const nowUrl = `${host}/v7/weather/now?location=${location}&lang=${lang}&unit=m`;
@@ -204,11 +211,11 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
   private async resolveLocationId(
     host: string,
     apiKey: string,
-    locationId: string
+    locationId: string,
+    now: number
   ): Promise<string> {
     if (/^\d+$/.test(locationId)) return locationId;
     const cached = this.lookupCache.get(locationId);
-    const now = Date.now();
     if (cached && now - cached.fetchedAt < LOOKUP_CACHE_TTL_MS) return cached.id;
     if (cached) this.lookupCache.delete(locationId);
 
@@ -217,7 +224,7 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
 
     const p = this.fetchLocationId(host, apiKey, locationId)
       .then((id) => {
-        this.lookupCache.set(locationId, { id, fetchedAt: Date.now() });
+        this.lookupCache.set(locationId, { id, fetchedAt: now });
         return id;
       })
       .finally(() => this.lookupInflight.delete(locationId));
@@ -236,7 +243,7 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
     return id;
   }
 
-  private fallbackFromLastData(lastData: unknown): WeatherProviderData | null {
+  private fallbackFromLastData(lastData: unknown, now: Date): WeatherProviderData | null {
     if (!lastData || typeof lastData !== 'object' || Array.isArray(lastData)) return null;
     const data = lastData as Partial<WeatherProviderData>;
     if (!data.summary && data.tempC === undefined) return null;
@@ -248,8 +255,8 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
       windDisplay: data.windDisplay ?? '--',
       summary: data.summary ?? '--',
       code: typeof data.code === 'number' ? data.code : 999,
-      obsTime: data.obsTime ?? new Date().toISOString(),
-      updatedAt: data.updatedAt ?? new Date().toISOString(),
+      obsTime: data.obsTime ?? now.toISOString(),
+      updatedAt: data.updatedAt ?? now.toISOString(),
       fc: Array.isArray(data.fc) ? data.fc.slice(0, 3) : [],
     };
   }

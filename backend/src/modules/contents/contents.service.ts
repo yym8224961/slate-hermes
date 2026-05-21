@@ -1,10 +1,12 @@
 import { createId } from '@paralleldrive/cuid2';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { ContentKind } from '@prisma/client';
+import type { ContentAudioStatus, ContentKind } from '@prisma/client';
 import {
   DynamicConfig,
-  FONT_TEST_FONTS,
+  TTS_VOICES,
+  TtsVoice,
+  isAudioDynamicConfig,
   type ContentDetailT,
   type ContentMutationResponseT,
   type ContentSummaryT,
@@ -18,22 +20,38 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeETag } from '../../common/etag/etag.util';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/errors';
 import { AudioService } from '../audio/audio.service';
+import { audioBlobContentId } from '../audio/audio-blob-id';
+import { TtsAudioCacheService, TtsService } from '../tts/tts.service';
 import { GroupsService } from '../groups/groups.service';
 import { ImageRendererService } from '../image-renderer/image-renderer.service';
 import { DynamicContentRegistry } from '../dynamic-content/dynamic-content-registry';
 import { DynamicContentRendererService } from '../dynamic-content/dynamic-content-renderer.service';
-import { datePartsInTz, timezoneFromConfig } from '../dynamic-content/timezone';
+import type { RenderDynamicContentResult } from '../dynamic-content/dynamic-content-renderer.service';
+import {
+  deviceStatusBarText,
+  fontTestStatusBarText,
+  weatherStatusBarText,
+} from './content-status-bar';
 import type { ParsedContentUpload } from './multipart.parser';
+
+type TtsVoiceValue = (typeof TTS_VOICES)[number];
 
 interface ContentRow {
   id: string;
   groupId?: string;
   sortOrder: number;
   frameName: string | null;
+  contentEtag: string;
   imageEtag: string;
   audioEtag: string | null;
   imageSize: number;
   audioSize: number | null;
+  audioStatus: ContentAudioStatus;
+  audioSource: 'upload' | 'tts' | null;
+  audioVoice: string | null;
+  audioText?: string | null;
+  audioLastError?: string | null;
+  audioUpdatedAt?: Date | null;
   kind: ContentKind;
   dynamicType: string | null;
   dynamicNextRunAt?: Date | null;
@@ -43,28 +61,33 @@ interface ContentRow {
   dynamicLastError?: string | null;
 }
 
-interface StatusBarTextSource {
-  kind: ContentKind;
-  frameName: string | null;
-  dynamicType: string | null;
-  dynamicConfig?: Prisma.JsonValue | null;
-  dynamicData?: Prisma.JsonValue | null;
-}
+type RenderDynamicContentResultExt = RenderDynamicContentResult & {
+  contentEtag: string;
+  audioEtag: string | null;
+};
 
 const CONTENT_SELECT = {
   id: true,
   groupId: true,
   sortOrder: true,
   frameName: true,
+  contentEtag: true,
   imageEtag: true,
   audioEtag: true,
   imageSize: true,
   audioSize: true,
+  audioStatus: true,
+  audioSource: true,
+  audioVoice: true,
   kind: true,
   dynamicType: true,
   dynamicNextRunAt: true,
+  dynamicRefreshDueAt: true,
   dynamicConfig: true,
   dynamicData: true,
+  dynamicLastRunAt: true,
+  audioLastError: true,
+  audioUpdatedAt: true,
 } as const;
 
 @Injectable()
@@ -77,6 +100,8 @@ export class ContentsService {
     private readonly groups: GroupsService,
     private readonly imageRenderer: ImageRendererService,
     private readonly audio: AudioService,
+    private readonly tts: TtsService,
+    private readonly ttsCache: TtsAudioCacheService,
     private readonly dynamicContentRegistry: DynamicContentRegistry,
     private readonly dynamicRenderer: DynamicContentRendererService
   ) {}
@@ -107,7 +132,7 @@ export class ContentsService {
   async manifest(
     gid: string,
     scope: { userId?: string; deviceId?: string }
-  ): Promise<ManifestResponseT & { etag: string }> {
+  ): Promise<ManifestResponseT & { manifestEtag: string }> {
     await this.assertReadable(gid, scope);
     const group = await this.prisma.group.findUnique({
       where: { id: gid },
@@ -132,7 +157,8 @@ export class ContentsService {
     return {
       group: {
         id: group.id,
-        etag: group.etag,
+        structure_etag: group.structureEtag,
+        manifest_etag: group.manifestEtag,
         name: group.name,
         sort_order: group.sortOrder,
         position: {
@@ -141,8 +167,72 @@ export class ContentsService {
         },
       },
       contents: group.contents.map((content) => this.toSummary(content)),
-      etag: group.etag,
+      manifestEtag: group.manifestEtag,
     };
+  }
+
+  async currentContentForDevice(
+    deviceId: string,
+    telemetry:
+      | {
+          current_group?: string | null;
+          current_content_seq?: number;
+          manifest_etag?: string;
+        }
+      | undefined
+  ): Promise<ContentSummaryT | null> {
+    const seq = telemetry?.current_content_seq;
+    if (seq === undefined || !Number.isInteger(seq) || seq < 0) return null;
+    const device = await this.prisma.device.findUnique({
+      where: { id: deviceId },
+      select: { selectedGroupId: true, selectedGroup: { select: { manifestEtag: true } } },
+    });
+    const groupId = device?.selectedGroupId;
+    if (!groupId) return null;
+    if (telemetry?.current_group && telemetry.current_group !== groupId) return null;
+    if (!telemetry?.manifest_etag || telemetry.manifest_etag !== device.selectedGroup?.manifestEtag)
+      return null;
+    const content = await this.prisma.content.findUnique({
+      where: { groupId_sortOrder: { groupId, sortOrder: seq } },
+      select: CONTENT_SELECT,
+    });
+    return content ? this.toSummary(content) : null;
+  }
+
+  async refreshCurrentContentForDeviceIfDue(
+    deviceId: string,
+    telemetry:
+      | {
+          current_group?: string | null;
+          current_content_seq?: number;
+          manifest_etag?: string;
+        }
+      | undefined
+  ): Promise<void> {
+    const seq = telemetry?.current_content_seq;
+    if (seq === undefined || !Number.isInteger(seq) || seq < 0) return;
+    const device = await this.prisma.device.findUnique({
+      where: { id: deviceId },
+      select: { selectedGroupId: true, selectedGroup: { select: { manifestEtag: true } } },
+    });
+    const groupId = device?.selectedGroupId;
+    if (!groupId) return;
+    if (telemetry?.current_group && telemetry.current_group !== groupId) return;
+    if (!telemetry?.manifest_etag || telemetry.manifest_etag !== device.selectedGroup?.manifestEtag)
+      return;
+    const content = await this.prisma.content.findUnique({
+      where: { groupId_sortOrder: { groupId, sortOrder: seq } },
+      select: {
+        id: true,
+        kind: true,
+        dynamicType: true,
+        dynamicNextRunAt: true,
+        dynamicRefreshDueAt: true,
+      },
+    });
+    if (content && this.isCurrentDynamicDue(content)) {
+      await this.dynamicRenderer.renderDynamicContent(content.id);
+    }
   }
 
   async list(
@@ -157,6 +247,7 @@ export class ContentsService {
         ...CONTENT_SELECT,
         dynamicLastRunAt: true,
         dynamicLastError: true,
+        audioText: true,
       },
     });
     return rows.map((row) => this.toDetail(row));
@@ -172,6 +263,7 @@ export class ContentsService {
         ...CONTENT_SELECT,
         dynamicLastRunAt: true,
         dynamicLastError: true,
+        audioText: true,
       },
     });
     if (!content) throw new NotFoundError('内容不存在');
@@ -200,13 +292,25 @@ export class ContentsService {
   ): Promise<{ data: Buffer; etag: string }> {
     const content = await this.prisma.content.findUnique({
       where: { id: contentId },
-      select: { id: true, groupId: true, audioEtag: true, audioSize: true },
+      select: {
+        id: true,
+        groupId: true,
+        audioEtag: true,
+        audioSize: true,
+        audioStatus: true,
+        audioSource: true,
+        audioText: true,
+        audioVoice: true,
+      },
     });
     if (!content) throw new NotFoundError('内容不存在');
     await this.assertReadable(content.groupId, scope);
     if (!content.audioEtag || !content.audioSize) throw new NotFoundError('该内容没有音频');
-    const data = await this.blob.read(content.groupId, content.id, 'audio');
-    if (!data) throw new NotFoundError('音频文件丢失');
+    const data = await this.readAudioBlob(content);
+    if (!data) {
+      await this.handleMissingAudioBlob(content);
+      throw new NotFoundError('音频文件丢失');
+    }
     return { data, etag: content.audioEtag };
   }
 
@@ -259,6 +363,8 @@ export class ContentsService {
 
     const contentId = createId();
     const placeholderEtag = computeETag(`dynamic-init:${contentId}`);
+    const audioEnabled = isAudioDynamicConfig(validatedConfig) && validatedConfig.audio_enabled;
+    const audioVoice = isAudioDynamicConfig(validatedConfig) ? validatedConfig.audio_voice : null;
     let created: { seq: number; didCreate: boolean } = { seq: -1, didCreate: false };
     try {
       const seq = await this.prisma.$transaction(async (tx) => {
@@ -279,14 +385,25 @@ export class ContentsService {
             dynamicConfig: validatedConfig as unknown as Prisma.InputJsonValue,
             imageEtag: placeholderEtag,
             imageSize: 0,
+            audioStatus: audioEnabled ? 'pending' : 'none',
+            audioSource: audioEnabled ? 'tts' : null,
+            audioVoice: audioEnabled ? audioVoice : null,
             dynamicNextRunAt: new Date(0),
+            dynamicRefreshDueAt: new Date(0),
           },
         });
         return nextSeq;
       });
       created = { seq, didCreate: true };
-      const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, { force: true });
-      return this.toMutationResponse(contentId, seq, rendered.imageEtag, null, rendered.groupEtag);
+      const rendered = await this.renderDynamicAndReadEtag(contentId);
+      return this.toMutationResponse(
+        contentId,
+        seq,
+        rendered.imageEtag,
+        null,
+        rendered.groupEtag,
+        rendered.contentEtag
+      );
     } catch (err) {
       await this.blob.delete(gid, contentId, 'image').catch(() => {});
       if (created.didCreate) {
@@ -295,7 +412,7 @@ export class ContentsService {
             await this.lockGroupForContentOrder(tx, gid);
             await tx.content.delete({ where: { id: contentId } });
             await this.compactSortOrders(tx, gid);
-            await this.groups.recomputeGroupEtag(gid, tx);
+            await this.groups.recomputeManifestEtag(gid, tx);
           })
           .catch((rollbackErr: unknown) => {
             this.logger.warn(
@@ -316,10 +433,17 @@ export class ContentsService {
   ): Promise<ContentMutationResponseT> {
     const content = await this.requireContent(contentId);
     await this.groups.assertOwned(content.groupId, ownerUserId);
-    if (content.kind !== 'image' && (parsed.hasImage || parsed.hasAudio)) {
-      throw new ValidationError('动态内容由服务端生成，不支持上传图片或音频');
+    if (content.kind !== 'image') {
+      throw new ValidationError('动态内容请使用 JSON 更新');
     }
-    return this.updateImage(content.groupId, content.sortOrder, contentId, parsed);
+    return this.updateImage(
+      content.groupId,
+      content.sortOrder,
+      contentId,
+      parsed,
+      content.audioEtag,
+      content.audioSource
+    );
   }
 
   async patchDynamic(
@@ -336,6 +460,8 @@ export class ContentsService {
         kind: true,
         dynamicType: true,
         audioEtag: true,
+        audioStatus: true,
+        audioSource: true,
       },
     });
     if (!content) throw new NotFoundError('内容不存在');
@@ -347,6 +473,7 @@ export class ContentsService {
     }
 
     const data: Prisma.ContentUpdateInput = {};
+    let configChanged = false;
     if (body.frame_name !== undefined) data.frameName = body.frame_name;
     if (body.config !== undefined) {
       const validated = DynamicConfig.parse(body.config);
@@ -357,18 +484,33 @@ export class ContentsService {
         );
       }
       data.dynamicConfig = validated as unknown as Prisma.InputJsonValue;
+      data.dynamicRefreshDueAt = new Date();
+      data.dynamicRefreshLeaseUntil = null;
+      configChanged = true;
       if (body.frame_name === undefined && currentType !== 'dashboard') {
         data.frameName = defaultFrameName(currentType, validated);
       }
     }
     await this.prisma.content.update({ where: { id: contentId }, data });
-    const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, { force: true });
+    if (configChanged) {
+      const rendered = await this.renderDynamicAndReadEtag(contentId);
+      return this.toMutationResponse(
+        contentId,
+        content.sortOrder,
+        rendered.imageEtag,
+        rendered.audioEtag,
+        rendered.groupEtag,
+        rendered.contentEtag
+      );
+    }
+    const rendered = await this.renderDynamicAndReadEtag(contentId);
     return this.toMutationResponse(
       contentId,
       content.sortOrder,
       rendered.imageEtag,
-      content.audioEtag,
-      rendered.groupEtag
+      rendered.audioEtag,
+      rendered.groupEtag,
+      rendered.contentEtag
     );
   }
 
@@ -384,22 +526,25 @@ export class ContentsService {
     }
     await this.prisma.content.update({ where: { id: contentId }, data: { frameName } });
     if (content.kind === 'dynamic') {
-      const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, { force: true });
+      const rendered = await this.renderDynamicAndReadEtag(contentId);
       return this.toMutationResponse(
         contentId,
         content.sortOrder,
         rendered.imageEtag,
-        content.audioEtag,
-        rendered.groupEtag
+        rendered.audioEtag,
+        rendered.groupEtag,
+        rendered.contentEtag
       );
     }
-    const groupEtag = await this.groups.recomputeGroupEtag(content.groupId);
+    const groupEtag = await this.groups.recomputeManifestEtag(content.groupId);
+    const contentEtag = await this.readContentEtag(contentId);
     return this.toMutationResponse(
       contentId,
       content.sortOrder,
       content.imageEtag,
       content.audioEtag,
-      groupEtag
+      groupEtag,
+      contentEtag
     );
   }
 
@@ -421,7 +566,7 @@ export class ContentsService {
     if (!content || content.kind !== 'dynamic' || content.dynamicType !== 'dashboard') {
       throw new NotFoundError('dashboard 内容不存在');
     }
-    const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, {
+    const rendered = await this.renderDynamicAndReadEtag(contentId, {
       force: true,
       dataOverride: data,
     });
@@ -430,8 +575,9 @@ export class ContentsService {
         contentId,
         content.sortOrder,
         rendered.imageEtag,
-        content.audioEtag,
-        rendered.groupEtag
+        rendered.audioEtag,
+        rendered.groupEtag,
+        rendered.contentEtag
       ),
       updatedAt: rendered.renderedAt,
     };
@@ -457,14 +603,15 @@ export class ContentsService {
     if (content.kind !== 'dynamic' || !content.dynamicType)
       throw new ValidationError('非动态内容不支持手动刷新');
     if (content.group.ownerUserId !== ownerUserId) throw new NotFoundError('内容不存在');
-    const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, { force: true });
+    const rendered = await this.renderDynamicAndReadEtag(contentId);
     return {
       ...this.toMutationResponse(
         contentId,
         content.sortOrder,
         rendered.imageEtag,
-        content.audioEtag,
-        rendered.groupEtag
+        rendered.audioEtag,
+        rendered.groupEtag,
+        rendered.contentEtag
       ),
       updatedAt: rendered.renderedAt,
     };
@@ -474,43 +621,79 @@ export class ContentsService {
     const content = await this.requireContent(contentId);
     await this.groups.assertOwned(content.groupId, ownerUserId);
     const previousImage = await this.blob.read(content.groupId, contentId, 'image');
-    const previousAudio = await this.blob.read(content.groupId, contentId, 'audio');
+    const previousAudio =
+      content.audioSource === 'upload'
+        ? await this.readOwnedAudioBlob(content.groupId, contentId, content.audioEtag)
+        : null;
     await Promise.all([
       this.blob.delete(content.groupId, contentId, 'image'),
-      this.blob.delete(content.groupId, contentId, 'audio'),
+      this.deleteOwnedAudioBlob(content.groupId, contentId, content.audioEtag, content.audioSource),
     ]);
     try {
       await this.prisma.$transaction(async (tx) => {
         await this.lockGroupForContentOrder(tx, content.groupId);
         await tx.content.delete({ where: { id: contentId } });
         await this.compactSortOrders(tx, content.groupId);
-        await this.groups.recomputeGroupEtag(content.groupId, tx);
+        await this.groups.recomputeManifestEtag(content.groupId, tx);
       });
     } catch (err) {
       if (previousImage)
         await this.blob.write(content.groupId, contentId, 'image', previousImage).catch(() => {});
-      if (previousAudio)
-        await this.blob.write(content.groupId, contentId, 'audio', previousAudio).catch(() => {});
+      if (previousAudio && content.audioEtag) {
+        await this.blob
+          .write(
+            content.groupId,
+            audioBlobContentId(contentId, content.audioEtag),
+            'audio',
+            previousAudio
+          )
+          .catch(() => {});
+      }
       throw err;
     }
   }
 
-  async deleteAudio(contentId: string, ownerUserId: string): Promise<{ group_etag: string }> {
+  async deleteAudio(contentId: string, ownerUserId: string): Promise<{ manifest_etag: string }> {
     const content = await this.requireContent(contentId);
     await this.groups.assertOwned(content.groupId, ownerUserId);
-    const previousAudioBytes = await this.blob.read(content.groupId, contentId, 'audio');
-    await this.blob.delete(content.groupId, contentId, 'audio');
+    const previousAudioEtag = content.audioEtag;
+    const previousAudioBytes =
+      content.audioSource === 'upload'
+        ? await this.readOwnedAudioBlob(content.groupId, contentId, previousAudioEtag)
+        : null;
     try {
       await this.prisma.content.update({
         where: { id: contentId },
-        data: { audioEtag: null, audioSize: null },
+        data: {
+          audioEtag: null,
+          audioSize: null,
+          audioStatus: 'none',
+          audioSource: null,
+          audioVoice: null,
+          audioText: null,
+          audioLastError: null,
+          audioUpdatedAt: new Date(),
+          audioLeaseUntil: null,
+          audioAttempts: 0,
+        },
       });
-      const group_etag = await this.groups.recomputeGroupEtag(content.groupId);
-      return { group_etag };
+      const manifest_etag = await this.groups.recomputeManifestEtag(content.groupId);
+      await this.deleteOwnedAudioBlob(
+        content.groupId,
+        contentId,
+        previousAudioEtag,
+        content.audioSource
+      );
+      return { manifest_etag };
     } catch (err) {
-      if (previousAudioBytes) {
+      if (previousAudioBytes && previousAudioEtag) {
         await this.blob
-          .write(content.groupId, contentId, 'audio', previousAudioBytes)
+          .write(
+            content.groupId,
+            audioBlobContentId(contentId, previousAudioEtag),
+            'audio',
+            previousAudioBytes
+          )
           .catch((restoreErr: unknown) => {
             this.logger.warn(`恢复音频文件失败 content=${contentId}: ${String(restoreErr)}`);
           });
@@ -519,13 +702,59 @@ export class ContentsService {
     }
   }
 
+  async generateImageTts(
+    contentId: string,
+    ownerUserId: string,
+    raw: { text: string; voice: string }
+  ): Promise<ContentMutationResponseT> {
+    const content = await this.requireContent(contentId);
+    if (content.kind !== 'image') throw new ValidationError('只有图片内容支持手动输入 TTS 文案');
+    await this.groups.assertOwned(content.groupId, ownerUserId);
+    const text = raw.text.trim().slice(0, 500);
+    if (!text) throw new ValidationError('TTS 文案不能为空');
+    const voice = this.tts.normalizeVoice(raw.voice);
+
+    const previousAudioEtag = content.audioEtag;
+    await this.prisma.content.update({
+      where: { id: contentId },
+      data: {
+        audioEtag: null,
+        audioSize: null,
+        audioStatus: 'pending',
+        audioSource: 'tts',
+        audioVoice: voice,
+        audioText: text,
+        audioLastError: null,
+        audioUpdatedAt: new Date(),
+        audioLeaseUntil: null,
+        audioAttempts: 0,
+      },
+    });
+    const groupEtag = await this.groups.recomputeManifestEtag(content.groupId);
+    await this.deleteOwnedAudioBlob(
+      content.groupId,
+      contentId,
+      previousAudioEtag,
+      content.audioSource
+    );
+    const contentEtag = await this.readContentEtag(contentId);
+    return this.toMutationResponse(
+      contentId,
+      content.sortOrder,
+      content.imageEtag,
+      null,
+      groupEtag,
+      contentEtag
+    );
+  }
+
   async reorder(
     gid: string,
     ownerUserId: string,
     order: string[]
-  ): Promise<{ group_etag: string }> {
+  ): Promise<{ manifest_etag: string }> {
     await this.groups.assertOwned(gid, ownerUserId);
-    const group_etag = await this.prisma.$transaction(async (tx) => {
+    const manifest_etag = await this.prisma.$transaction(async (tx) => {
       await this.lockGroupForContentOrder(tx, gid);
       const all = await tx.content.findMany({
         where: { groupId: gid },
@@ -542,15 +771,10 @@ export class ContentsService {
           code: 'order_mismatch',
         });
       }
-      for (let i = 0; i < order.length; i++) {
-        await tx.content.update({ where: { id: order[i]! }, data: { sortOrder: -(i + 1) } });
-      }
-      for (let i = 0; i < order.length; i++) {
-        await tx.content.update({ where: { id: order[i]! }, data: { sortOrder: i } });
-      }
-      return this.groups.recomputeGroupEtag(gid, tx);
+      await bulkSetContentSortOrders(tx, gid, order);
+      return this.groups.recomputeManifestEtag(gid, tx);
     });
-    return { group_etag };
+    return { manifest_etag };
   }
 
   private toSummary(row: ContentRow): ContentSummaryT {
@@ -558,12 +782,18 @@ export class ContentsService {
     return {
       id: row.id,
       seq: row.sortOrder,
+      content_etag: row.contentEtag,
       frame_name: row.frameName,
-      device_status_bar_text: deviceStatusBarText(row),
+      device_status_bar_text: deviceStatusBarText({ ...row, renderedAt: row.dynamicLastRunAt }),
       image_etag: row.imageEtag,
       audio_etag: row.audioEtag,
       image_size: row.imageSize,
       audio_size: row.audioSize,
+      audio_status: row.audioStatus,
+      audio_source: row.audioSource,
+      audio_voice: TtsVoice.safeParse(row.audioVoice).success
+        ? (row.audioVoice as TtsVoiceValue)
+        : null,
       kind: row.kind === 'dynamic' ? 'dynamic' : 'image',
       dynamic_type: (row.dynamicType as DynamicTypeT | null) ?? null,
       next_wake_sec: nextWakeSec(row.dynamicNextRunAt ?? null),
@@ -577,14 +807,20 @@ export class ContentsService {
       dynamicLastError?: string | null;
     }
   ): ContentDetailT {
+    const config = row.dynamicConfig ? DynamicConfig.safeParse(row.dynamicConfig) : null;
     return {
       ...this.toSummary(row),
       group_id: row.groupId,
-      dynamic_config: (row.dynamicConfig as DynamicConfigT | null) ?? null,
+      dynamic_config: config?.success
+        ? config.data
+        : ((row.dynamicConfig as DynamicConfigT | null) ?? null),
       dynamic_data: row.dynamicData ?? null,
       dynamic_last_rendered_at: row.dynamicLastRunAt?.toISOString() ?? null,
       dynamic_next_render_at: row.dynamicNextRunAt?.toISOString() ?? null,
       dynamic_render_error: row.dynamicLastError ?? null,
+      audio_text: row.audioText ?? null,
+      audio_error: row.audioLastError ?? null,
+      audio_updated_at: row.audioUpdatedAt?.toISOString() ?? null,
     };
   }
 
@@ -598,7 +834,8 @@ export class ContentsService {
     let seq: number;
     try {
       await this.blob.write(gid, contentId, 'image', image.bytes);
-      if (audio) await this.blob.write(gid, contentId, 'audio', audio.bytes);
+      if (audio)
+        await this.blob.write(gid, audioBlobContentId(contentId, audio.etag), 'audio', audio.bytes);
       seq = await this.prisma.$transaction(async (tx) => {
         await this.lockGroupForContentOrder(tx, gid);
         const maxSeq = await tx.content.aggregate({
@@ -616,6 +853,11 @@ export class ContentsService {
             imageSize: image.size,
             audioEtag: audio?.etag ?? null,
             audioSize: audio?.size ?? null,
+            audioStatus: audio ? 'ready' : 'none',
+            audioSource: audio ? 'upload' : null,
+            audioUpdatedAt: audio ? new Date() : null,
+            audioLeaseUntil: null,
+            audioAttempts: 0,
             kind: 'image',
           },
         });
@@ -624,27 +866,45 @@ export class ContentsService {
     } catch (err) {
       await Promise.all([
         this.blob.delete(gid, contentId, 'image').catch(() => {}),
-        this.blob.delete(gid, contentId, 'audio').catch(() => {}),
+        audio
+          ? this.blob
+              .delete(gid, audioBlobContentId(contentId, audio.etag), 'audio')
+              .catch(() => {})
+          : Promise.resolve(),
       ]);
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')
         throw new ConflictError('内容序号已存在');
       throw err;
     }
-    const groupEtag = await this.groups.recomputeGroupEtag(gid);
-    return this.toMutationResponse(contentId, seq, image.etag, audio?.etag ?? null, groupEtag);
+    const groupEtag = await this.groups.recomputeManifestEtag(gid);
+    const contentEtag = await this.readContentEtag(contentId);
+    return this.toMutationResponse(
+      contentId,
+      seq,
+      image.etag,
+      audio?.etag ?? null,
+      groupEtag,
+      contentEtag
+    );
   }
 
   private async updateImage(
     gid: string,
     seq: number,
     contentId: string,
-    parsed: ParsedContentUpload
+    parsed: ParsedContentUpload,
+    previousAudioEtag: string | null,
+    previousAudioSource: 'upload' | 'tts' | null
   ): Promise<ContentMutationResponseT> {
     const { image, audio } = await this.renderUpload(parsed);
     const data: Prisma.ContentUpdateInput = {};
     if (parsed.hasFrameName) data.frameName = parsed.frameName;
     const previousImageBytes = image ? await this.blob.read(gid, contentId, 'image') : null;
-    const previousAudioBytes = audio ? await this.blob.read(gid, contentId, 'audio') : null;
+    const shouldClearStaleAudio = Boolean(image && !audio && previousAudioEtag);
+    const previousAudioBytes =
+      previousAudioSource === 'upload' && (audio || shouldClearStaleAudio)
+        ? await this.readOwnedAudioBlob(gid, contentId, previousAudioEtag)
+        : null;
     if (parsed.hasFrameName === false && !image && !audio) {
       throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
     }
@@ -655,11 +915,31 @@ export class ContentsService {
         await this.blob.write(gid, contentId, 'image', image.bytes);
         data.imageEtag = image.etag;
         data.imageSize = image.size;
+        if (!audio) {
+          data.audioEtag = null;
+          data.audioSize = null;
+          data.audioStatus = 'none';
+          data.audioSource = null;
+          data.audioVoice = null;
+          data.audioText = null;
+          data.audioLastError = null;
+          data.audioUpdatedAt = new Date();
+          data.audioLeaseUntil = null;
+          data.audioAttempts = 0;
+        }
       }
       if (audio) {
-        await this.blob.write(gid, contentId, 'audio', audio.bytes);
+        await this.blob.write(gid, audioBlobContentId(contentId, audio.etag), 'audio', audio.bytes);
         data.audioEtag = audio.etag;
         data.audioSize = audio.size;
+        data.audioStatus = 'ready';
+        data.audioSource = 'upload';
+        data.audioVoice = null;
+        data.audioText = null;
+        data.audioLastError = null;
+        data.audioUpdatedAt = new Date();
+        data.audioLeaseUntil = null;
+        data.audioAttempts = 0;
       }
       const updated = await this.prisma.content.update({
         where: { id: contentId },
@@ -667,13 +947,18 @@ export class ContentsService {
         select: { imageEtag: true, audioEtag: true },
       });
       dbUpdated = true;
-      const groupEtag = await this.groups.recomputeGroupEtag(gid);
+      const groupEtag = await this.groups.recomputeManifestEtag(gid);
+      if (audio || shouldClearStaleAudio) {
+        await this.deleteOwnedAudioBlob(gid, contentId, previousAudioEtag, previousAudioSource);
+      }
+      const contentEtag = await this.readContentEtag(contentId);
       return this.toMutationResponse(
         contentId,
         seq,
         updated.imageEtag,
         updated.audioEtag,
-        groupEtag
+        groupEtag,
+        contentEtag
       );
     } catch (err) {
       if (!dbUpdated) {
@@ -690,12 +975,25 @@ export class ContentsService {
           restoreBlob(
             this.blob,
             gid,
-            contentId,
+            audio ? audioBlobContentId(contentId, audio.etag) : contentId,
             'audio',
-            previousAudioBytes,
+            null,
             Boolean(audio),
             this.logger
           ).catch(() => {}),
+          previousAudioSource === 'upload' &&
+          previousAudioEtag &&
+          (audio || shouldClearStaleAudio) &&
+          previousAudioBytes
+            ? this.blob
+                .write(
+                  gid,
+                  audioBlobContentId(contentId, previousAudioEtag),
+                  'audio',
+                  previousAudioBytes
+                )
+                .catch(() => {})
+            : Promise.resolve(),
         ]);
       }
       throw err;
@@ -741,12 +1039,11 @@ export class ContentsService {
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       select: { id: true },
     });
-    for (let i = 0; i < rows.length; i++) {
-      await tx.content.update({ where: { id: rows[i]!.id }, data: { sortOrder: -(i + 1) } });
-    }
-    for (let i = 0; i < rows.length; i++) {
-      await tx.content.update({ where: { id: rows[i]!.id }, data: { sortOrder: i } });
-    }
+    await bulkSetContentSortOrders(
+      tx,
+      gid,
+      rows.map((row) => row.id)
+    );
   }
 
   private async requireContent(contentId: string): Promise<{
@@ -756,6 +1053,7 @@ export class ContentsService {
     kind: ContentKind;
     imageEtag: string;
     audioEtag: string | null;
+    audioSource: 'upload' | 'tts' | null;
   }> {
     const content = await this.prisma.content.findUnique({
       where: { id: contentId },
@@ -766,10 +1064,70 @@ export class ContentsService {
         kind: true,
         imageEtag: true,
         audioEtag: true,
+        audioSource: true,
       },
     });
     if (!content) throw new NotFoundError('内容不存在');
     return content;
+  }
+
+  private async renderDynamicAndReadEtag(
+    contentId: string,
+    opts: Parameters<DynamicContentRendererService['renderDynamicContent']>[1] = { force: true }
+  ): Promise<RenderDynamicContentResultExt> {
+    const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, opts);
+    const row = await this.prisma.content.findUnique({
+      where: { id: contentId },
+      select: { contentEtag: true, audioEtag: true },
+    });
+    if (!row) throw new NotFoundError('内容不存在');
+    return { ...rendered, contentEtag: row.contentEtag, audioEtag: row.audioEtag };
+  }
+
+  private isCurrentDynamicDue(content: {
+    kind: ContentKind;
+    dynamicType: string | null;
+    dynamicNextRunAt?: Date | null;
+    dynamicRefreshDueAt?: Date | null;
+  }): boolean {
+    if (content.kind !== 'dynamic' || !content.dynamicType) return false;
+    const dueAt = content.dynamicRefreshDueAt ?? content.dynamicNextRunAt ?? null;
+    return dueAt !== null && dueAt.getTime() <= Date.now();
+  }
+
+  private async clearContentAudio(
+    content: {
+      id: string;
+      groupId: string;
+      audioEtag: string | null;
+      audioStatus: ContentAudioStatus;
+      audioSource: 'upload' | 'tts' | null;
+    },
+    status: 'none' | 'failed'
+  ): Promise<void> {
+    if (!content.audioEtag && content.audioStatus === status) return;
+    const previousAudioEtag = content.audioEtag;
+    await this.prisma.content.update({
+      where: { id: content.id },
+      data: {
+        audioEtag: null,
+        audioSize: null,
+        audioStatus: status,
+        audioSource: status === 'failed' ? content.audioSource : null,
+        audioVoice: null,
+        audioText: null,
+        audioLastError: status === 'failed' ? '音频文件丢失，请重新上传' : null,
+        audioUpdatedAt: new Date(),
+        audioLeaseUntil: null,
+        audioAttempts: 0,
+      },
+    });
+    await this.deleteOwnedAudioBlob(
+      content.groupId,
+      content.id,
+      previousAudioEtag,
+      content.audioSource
+    );
   }
 
   private toMutationResponse(
@@ -777,15 +1135,108 @@ export class ContentsService {
     seq: number,
     imageEtag: string,
     audioEtag: string | null,
-    groupEtag: string
+    groupEtag: string,
+    contentEtag: string
   ): ContentMutationResponseT {
     return {
       id: contentId,
       seq,
+      content_etag: contentEtag,
       image_etag: imageEtag,
       audio_etag: audioEtag,
-      group_etag: groupEtag,
+      manifest_etag: groupEtag,
     };
+  }
+
+  private async readContentEtag(contentId: string): Promise<string> {
+    const row = await this.prisma.content.findUnique({
+      where: { id: contentId },
+      select: { contentEtag: true },
+    });
+    if (!row) throw new NotFoundError('内容不存在');
+    return row.contentEtag;
+  }
+
+  private async deleteAudioBlob(
+    groupId: string,
+    contentId: string,
+    audioEtag: string | null
+  ): Promise<void> {
+    if (!audioEtag) return;
+    await this.blob
+      .delete(groupId, audioBlobContentId(contentId, audioEtag), 'audio')
+      .catch(() => {});
+  }
+
+  private async deleteOwnedAudioBlob(
+    groupId: string,
+    contentId: string,
+    audioEtag: string | null,
+    audioSource?: 'upload' | 'tts' | null
+  ): Promise<void> {
+    if (audioSource === 'tts') return;
+    await this.deleteAudioBlob(groupId, contentId, audioEtag);
+  }
+
+  private async readAudioBlob(content: {
+    id: string;
+    groupId: string;
+    audioEtag: string | null;
+    audioSource?: 'upload' | 'tts' | null;
+  }): Promise<Buffer | null> {
+    if (!content.audioEtag) return null;
+    if (content.audioSource === 'tts') {
+      return this.ttsCache.readByEtag(content.audioEtag);
+    }
+    return this.readOwnedAudioBlob(content.groupId, content.id, content.audioEtag);
+  }
+
+  private async readOwnedAudioBlob(
+    groupId: string,
+    contentId: string,
+    audioEtag: string | null
+  ): Promise<Buffer | null> {
+    if (!audioEtag) return null;
+    return this.blob.read(groupId, audioBlobContentId(contentId, audioEtag), 'audio');
+  }
+
+  private async handleMissingAudioBlob(content: {
+    id: string;
+    groupId: string;
+    audioEtag: string | null;
+    audioStatus: ContentAudioStatus;
+    audioSource: 'upload' | 'tts' | null;
+    audioText: string | null;
+    audioVoice: string | null;
+  }): Promise<void> {
+    if (!content.audioEtag) return;
+    if (content.audioSource === 'tts' && content.audioText && content.audioVoice) {
+      await this.prisma.content.update({
+        where: { id: content.id },
+        data: {
+          audioEtag: null,
+          audioSize: null,
+          audioStatus: 'pending',
+          audioLastError: 'TTS 音频文件丢失，已重新排队',
+          audioUpdatedAt: new Date(),
+          audioLeaseUntil: null,
+        },
+      });
+    } else {
+      await this.prisma.content.update({
+        where: { id: content.id },
+        data: {
+          audioEtag: null,
+          audioSize: null,
+          audioStatus: content.audioSource === 'upload' ? 'failed' : 'none',
+          audioSource: content.audioSource === 'upload' ? 'upload' : null,
+          audioLastError: content.audioSource === 'upload' ? '上传音频文件丢失，请重新上传' : null,
+          audioUpdatedAt: new Date(),
+          audioLeaseUntil: null,
+        },
+      });
+    }
+    await this.groups.recomputeManifestEtag(content.groupId);
   }
 }
 
@@ -813,75 +1264,33 @@ function defaultFrameName(dynamicType: string | null, config?: unknown): string 
   }
 }
 
-function deviceStatusBarText(row: StatusBarTextSource): string {
-  if (row.kind !== 'dynamic') return row.frameName ?? '';
-  switch (row.dynamicType) {
-    case 'daily_calendar':
-      return dailyCalendarStatusBarText(row.dynamicData, row.dynamicConfig);
-    case 'month_calendar':
-      return monthCalendarStatusBarText(row.dynamicConfig);
-    case 'history_today':
-      return historyTodayStatusBarText(row.dynamicData, row.dynamicConfig);
-    case 'weather':
-      return weatherStatusBarText(row.dynamicConfig);
-    case 'dashboard':
-      return row.frameName ?? '数据看板';
-    case 'font_test':
-      return fontTestStatusBarText(row.dynamicConfig);
-    default:
-      return row.frameName ?? '';
-  }
-}
-
-function dailyCalendarStatusBarText(
-  data: Prisma.JsonValue | null | undefined,
-  config: Prisma.JsonValue | null | undefined
-): string {
-  const parts = datePartsInTz(new Date(), timezoneFromConfig(config));
-  const month = valueText(recordValue(data, 'month')) ?? String(parts.month);
-  const day = valueText(recordValue(data, 'day')) ?? String(parts.day);
-  return `${Number(month)}月${Number(day)}日`;
-}
-
-function monthCalendarStatusBarText(config: Prisma.JsonValue | null | undefined): string {
-  const parts = datePartsInTz(new Date(), timezoneFromConfig(config));
-  return `${parts.year}年${parts.month}月`;
-}
-
-function historyTodayStatusBarText(
-  data: Prisma.JsonValue | null | undefined,
-  config: Prisma.JsonValue | null | undefined
-): string {
-  const label =
-    valueText(recordValue(data, 'dateLabel')) ?? cnMonthDay(new Date(), timezoneFromConfig(config));
-  return `历史上的${label.replace(/\s+/g, '')}`;
-}
-
-function weatherStatusBarText(config: unknown): string {
-  const location = valueText(recordValue(config, 'location_label')) ?? '天气';
-  return location === '天气' ? '天气' : `${location}天气`;
-}
-
-function fontTestStatusBarText(config: unknown): string {
-  const id = valueText(recordValue(config, 'font_id'));
-  return id ? (FONT_TEST_FONTS.find((font) => font.id === id)?.label ?? '字体测试') : '字体测试';
-}
-
-function recordValue(value: unknown, key: string): unknown {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)[key]
-    : undefined;
-}
-
-function valueText(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const text = String(value).trim();
-  return text ? text : null;
-}
-
-function cnMonthDay(date: Date, timeZone: string): string {
-  const parts = datePartsInTz(date, timeZone);
-  return `${parts.month}月${parts.day}日`;
+async function bulkSetContentSortOrders(
+  tx: Prisma.TransactionClient,
+  groupId: string,
+  order: string[]
+): Promise<void> {
+  if (order.length === 0) return;
+  const ids = Prisma.join(order);
+  await tx.$executeRaw`
+    UPDATE \`contents\`
+    SET \`sort_order\` = CASE \`id\`
+      ${Prisma.join(
+        order.map((id, idx) => Prisma.sql`WHEN ${id} THEN ${-(idx + 1)}`),
+        ' '
+      )}
+    END
+    WHERE \`group_id\` = ${groupId} AND \`id\` IN (${ids})
+  `;
+  await tx.$executeRaw`
+    UPDATE \`contents\`
+    SET \`sort_order\` = CASE \`id\`
+      ${Prisma.join(
+        order.map((id, idx) => Prisma.sql`WHEN ${id} THEN ${idx}`),
+        ' '
+      )}
+    END
+    WHERE \`group_id\` = ${groupId} AND \`id\` IN (${ids})
+  `;
 }
 
 async function restoreBlob(

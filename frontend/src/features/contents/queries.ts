@@ -4,6 +4,7 @@ import type {
   ContentMutationResponseT,
   CreateDynamicContentRequestT,
   DynamicConfigT,
+  GenerateContentTtsRequestT,
   IngestResponseT,
   PatchContentRequestT,
   ReorderContentsRequestT,
@@ -20,6 +21,14 @@ export function useGroupContents(gid: string | undefined) {
       return data;
     },
     enabled: !!gid,
+    refetchInterval: (query) => {
+      const rows = query.state.data;
+      return rows?.some(
+        (row) => row.audio_status === 'pending' || row.audio_status === 'generating'
+      )
+        ? 2500
+        : false;
+    },
   });
 }
 
@@ -104,7 +113,7 @@ export function usePatchContent(gid: string) {
   });
 }
 
-export function useContentAudio(contentId: string, etag: string | null) {
+export function useContentAudio(contentId: string, etag: string | null, enabled = true) {
   return useQuery({
     queryKey: ['content-audio', contentId, etag],
     queryFn: async () => {
@@ -114,7 +123,7 @@ export function useContentAudio(contentId: string, etag: string | null) {
       return data;
     },
     staleTime: Infinity,
-    enabled: !!contentId && !!etag,
+    enabled: enabled && !!contentId && !!etag,
   });
 }
 
@@ -123,6 +132,29 @@ export function useDeleteContentAudio(gid: string) {
   return useMutation({
     mutationFn: async (contentId: string) => {
       await api.delete(`${V1}/contents/${contentId}/audio`);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['contents', gid] });
+      qc.invalidateQueries({ queryKey: ['groups'] });
+    },
+  });
+}
+
+export function useGenerateContentTts(gid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      contentId,
+      body,
+    }: {
+      contentId: string;
+      body: GenerateContentTtsRequestT;
+    }) => {
+      const { data } = await api.post<ContentMutationResponseT>(
+        `${V1}/contents/${contentId}/audio/tts`,
+        body
+      );
+      return data;
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['contents', gid] });
@@ -156,7 +188,7 @@ export function useReorderContents(gid: string) {
     onError: (_err, _vars, ctx) => {
       if (ctx?.previous) qc.setQueryData(['contents', gid], ctx.previous);
     },
-    // 后端 reorder 会重算 group.etag，所以 groups 缓存也要 invalidate。
+    // 后端 reorder 会重算 manifest_etag，所以 groups 缓存也要 invalidate。
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ['contents', gid] });
       void qc.invalidateQueries({ queryKey: ['groups'] });
@@ -250,7 +282,9 @@ export function useRefreshDynamicContent(gid: string) {
     },
     onSuccess: (_data, contentId) => {
       qc.invalidateQueries({ queryKey: ['contents', gid] });
+      qc.invalidateQueries({ queryKey: ['groups'] });
       qc.removeQueries({ queryKey: ['content-image', contentId] });
+      qc.removeQueries({ queryKey: ['content-audio', contentId] });
     },
   });
 }

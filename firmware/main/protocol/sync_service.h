@@ -14,11 +14,16 @@
 #include <freertos/event_groups.h>
 #include <freertos/semphr.h>
 
+#include "api_client.h"
+
 struct SyncDeps {
     std::function<bool(int* mv, int* pct)> read_battery;
     std::function<int()>                   read_rssi;
+    std::function<std::string()>           wake_reason;
     std::function<std::string()>           current_group;
     std::function<int()>                   current_content_seq;
+    std::function<std::string()>           current_content_etag;
+    std::function<std::string()>           manifest_etag;
 };
 
 class SyncService {
@@ -51,6 +56,7 @@ class SyncService {
     void SyncOnce(SyncMode mode);
     void DoCycle(const std::string& direction);
     void SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, bool& group_changed);
+    bool SyncCurrentContent(const std::string& gid, const api::ContentMeta& content);
     void PostGroupReady(const std::string& gid, const std::string& name, int content_count, bool content_changed);
     std::string GetCurrentGroupLocked() const;
     void        SetCurrentGroupLocked(const std::string& gid);

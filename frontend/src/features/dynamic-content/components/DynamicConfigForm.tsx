@@ -1,6 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, Check } from 'lucide-react';
-import { FONT_TEST_FONTS, type DynamicConfigT, type FontTestFontIdT } from 'shared';
+import {
+  FONT_TEST_FONTS,
+  TTS_VOICES,
+  type DynamicConfigT,
+  type FontTestFontIdT,
+  type TtsVoiceT,
+} from 'shared';
 import { inputCls, fieldBaseCls } from '@/lib/styles';
 import { searchCities } from '@/lib/cities';
 import { Select, SelectItem } from '@/components/ui/Select';
@@ -19,6 +25,7 @@ export function DynamicConfigForm({
   switch (config.type) {
     case 'daily_calendar':
     case 'month_calendar':
+    case 'history_today':
       return null;
     case 'weather':
       return (
@@ -34,28 +41,11 @@ export function DynamicConfigForm({
               })
             }
           />
-          <p className="font-sans text-[12px] text-stone italic">天气数据来自 QWeather。</p>
-        </div>
-      );
-    case 'history_today':
-      return (
-        <div className="space-y-4">
-          <p className="font-sans text-[13px] text-stone">
-            自动显示今日历史事件，数据来自维基百科中文版。
-          </p>
+          <DynamicRefreshSettings config={config} onChange={onChange} />
         </div>
       );
     case 'dashboard':
-      return (
-        <div className="space-y-4">
-          {contentId && <DashboardPushPanel contentId={contentId} />}
-          {!contentId && (
-            <p className="font-sans text-[11px] text-stone italic">
-              创建后这里会显示「数据推送 URL」与示例 curl。
-            </p>
-          )}
-        </div>
-      );
+      return contentId ? <DashboardPushPanel contentId={contentId} /> : null;
     case 'font_test': {
       const font = FONT_TEST_FONTS.find((item) => item.id === config.font_id);
       return (
@@ -102,6 +92,72 @@ export function DynamicConfigForm({
 }
 
 // ─── 私有辅助组件 ──────────────────────────────────────────────────────────────
+
+type AudioDynamicConfig = Extract<
+  DynamicConfigT,
+  { type: 'daily_calendar' | 'month_calendar' | 'weather' | 'history_today' }
+>;
+
+export function DynamicAudioSection({
+  config,
+  onChange,
+}: {
+  config: AudioDynamicConfig;
+  onChange: (c: DynamicConfigT) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <Checkbox
+        label="生成音频"
+        checked={config.audio_enabled}
+        onChange={(v) => onChange({ ...config, audio_enabled: v })}
+      />
+      <div>
+        <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">音色</p>
+        <Select
+          value={config.audio_voice}
+          onValueChange={(v) => onChange({ ...config, audio_voice: v as TtsVoiceT })}
+          disabled={!config.audio_enabled}
+        >
+          {TTS_VOICES.map((voice) => (
+            <SelectItem key={voice} value={voice}>
+              {voice}
+            </SelectItem>
+          ))}
+        </Select>
+      </div>
+    </div>
+  );
+}
+
+export type DynamicAudioConfig = AudioDynamicConfig;
+
+function DynamicRefreshSettings({
+  config,
+  onChange,
+}: {
+  config: AudioDynamicConfig;
+  onChange: (c: DynamicConfigT) => void;
+}) {
+  const current = config.refresh_interval_sec ?? defaultRefreshInterval(config.type);
+  return (
+    <div>
+      <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
+        数据刷新
+      </p>
+      <Select
+        value={String(current)}
+        onValueChange={(v) => onChange({ ...config, refresh_interval_sec: Number(v) })}
+      >
+        {refreshOptions(config.type).map((item) => (
+          <SelectItem key={item.value} value={String(item.value)} hint={item.hint}>
+            {item.label}
+          </SelectItem>
+        ))}
+      </Select>
+    </div>
+  );
+}
 
 function UnsupportedConfigNotice({ config }: { config: DynamicConfigT }) {
   const type = (config as { type?: unknown }).type;
@@ -214,6 +270,25 @@ function Checkbox({
   );
 }
 
+function defaultRefreshInterval(_type: AudioDynamicConfig['type']): number {
+  return 600;
+}
+
+function refreshOptions(type: AudioDynamicConfig['type']): Array<{
+  value: number;
+  label: string;
+  hint: string;
+}> {
+  const _type = type;
+  void _type;
+  return [
+    { value: 300, label: '5 分钟', hint: '更实时' },
+    { value: 600, label: '10 分钟', hint: '推荐' },
+    { value: 1800, label: '30 分钟', hint: '省电' },
+    { value: 3600, label: '1 小时', hint: '低频' },
+  ];
+}
+
 function DashboardPushPanel({ contentId }: { contentId: string }) {
   const [copied, setCopied] = useState(false);
   const url = useMemo(
@@ -231,7 +306,7 @@ function DashboardPushPanel({ contentId }: { contentId: string }) {
     setTimeout(() => setCopied(false), 1500);
   }
   return (
-    <div className="space-y-3 border-t border-line pt-4">
+    <div className="space-y-3">
       <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em]">数据推送 URL</p>
       <div className="flex gap-2 items-start">
         <code className={`${fieldBaseCls} ${inputCls} text-[11px] break-all flex-1 py-1.5`}>

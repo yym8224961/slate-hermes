@@ -17,6 +17,7 @@ import {
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
   CreateDynamicContentRequest,
+  GenerateContentTtsRequest,
   PatchDynamicContentRequest,
   PreviewDynamicContentRequest,
   DynamicConfig,
@@ -59,8 +60,8 @@ export class ContentsController {
       deviceId: device?.deviceId,
     });
     const ifNoneMatch = req.headers['if-none-match'];
-    const headerEtag = `"${m.etag}"`;
-    if (typeof ifNoneMatch === 'string' && etagMatches(ifNoneMatch, m.etag)) {
+    const headerEtag = `"${m.manifestEtag}"`;
+    if (typeof ifNoneMatch === 'string' && etagMatches(ifNoneMatch, m.manifestEtag)) {
       void reply
         .status(304)
         .header('ETag', headerEtag)
@@ -121,7 +122,7 @@ export class ContentsController {
     @Param('groupId') groupId: string,
     @CurrentUser() user: WebUserContext,
     @Body() body: ReorderContentsDto
-  ): Promise<{ group_etag: string }> {
+  ): Promise<{ manifest_etag: string }> {
     return this.contents.reorder(groupId, user.userId, body.order);
   }
 
@@ -219,8 +220,21 @@ export class ContentsController {
   deleteAudio(
     @Param('contentId') contentId: string,
     @CurrentUser() user: WebUserContext
-  ): Promise<{ group_etag: string }> {
+  ): Promise<{ manifest_etag: string }> {
     return this.contents.deleteAudio(contentId, user.userId);
+  }
+
+  @Post('contents/:contentId/audio/tts')
+  generateTtsAudio(
+    @Param('contentId') contentId: string,
+    @CurrentUser() user: WebUserContext,
+    @Body() body: unknown
+  ): Promise<ContentMutationResponseT> {
+    const parsed = GenerateContentTtsRequest.safeParse(body);
+    if (!parsed.success) {
+      throw new BadRequestException(parsed.error.issues[0]?.message ?? '参数非法');
+    }
+    return this.contents.generateImageTts(contentId, user.userId, parsed.data);
   }
 
   @Post('contents/preview')

@@ -3,10 +3,11 @@
 // 创建：选类型 → 填配置 → 保存（POST /groups/:gid/contents）
 // 编辑：直接进配置面板（type 不可改）→ 保存（PATCH /contents/:contentId）
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUp, Sparkles } from 'lucide-react';
 import {
   DynamicConfig,
+  isAudioDynamicConfig,
   type ContentSummaryT,
   type DynamicConfigT,
   type DynamicTypeT,
@@ -23,17 +24,22 @@ import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { DoubleRule } from '@/components/ui/DoubleRule';
+import { FormSection } from '@/components/ui/FormSection';
 import { DynamicTypePicker } from '@/features/dynamic-content/components/DynamicTypePicker';
 import { getApiErrorMessage } from '@/lib/api-error';
 import { defaultConfig } from '@/features/dynamic-content/model/default-config';
-import { DynamicConfigForm } from '@/features/dynamic-content/components/DynamicConfigForm';
+import {
+  DynamicConfigForm,
+  DynamicAudioSection,
+} from '@/features/dynamic-content/components/DynamicConfigForm';
 import { FrameBitmapPreview } from '@/features/contents/components/FrameBitmapPreview';
 import {
   defaultFrameName,
   effectiveFrameName,
   effectiveStatusBarText,
-  hasVisibleDynamicConfig,
 } from '@/features/contents/components/create/frame-name';
+import { TYPE_META, shouldRenderParams } from '@/features/contents/components/create/type-meta';
+import { useDynamicCreatePreview } from '@/features/contents/components/create/useDynamicCreatePreview';
 
 interface DynamicContentEditorProps {
   gid: string;
@@ -100,45 +106,8 @@ export function DynamicContentEditor({
   );
 
   // 实时预览（创建/编辑模式均支持）
-  const livePreviewEnabled = !!(type && config);
   const preview = usePreviewDynamicContent(content?.id);
-  const { mutate: previewMutate } = preview;
-  const [livePreviewData, setLivePreviewData] = useState<ArrayBuffer | null>(null);
-  const previewSeq = useRef(0);
-  const visibleConfig = config ? hasVisibleDynamicConfig(config) : false;
-
-  const triggerPreview = useCallback(
-    (parsed: DynamicConfigT, currentType: DynamicTypeT, currentFrameName: string, seq: number) => {
-      previewMutate(
-        { config: parsed, frameName: effectiveFrameName(currentType, parsed, currentFrameName) },
-        {
-          onSuccess: (data) => {
-            if (seq === previewSeq.current) setLivePreviewData(data);
-          },
-        }
-      );
-    },
-    [previewMutate]
-  );
-
-  useEffect(() => {
-    if (!livePreviewEnabled || !config) {
-      previewSeq.current++;
-      setLivePreviewData(null);
-      return;
-    }
-    const parsed = DynamicConfig.safeParse(config);
-    if (!parsed.success) {
-      previewSeq.current++;
-      setLivePreviewData(null);
-      return;
-    }
-    const seq = ++previewSeq.current;
-    const t = setTimeout(() => {
-      triggerPreview(parsed.data, type, frameName, seq);
-    }, 800);
-    return () => clearTimeout(t);
-  }, [config, frameName, livePreviewEnabled, type, triggerPreview]);
+  const { livePreviewData } = useDynamicCreatePreview({ type, config, frameName, preview });
 
   async function onSubmit() {
     if (!type || !config) return;
@@ -204,7 +173,9 @@ export function DynamicContentEditor({
         <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr] gap-6 lg:gap-8">
           {/* 预览 */}
           <div className="order-2 lg:order-1">
-            <p className="font-sans text-[12px] text-stone mb-2 ml-0.5">设备预览</p>
+            <p className="font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] ml-0.5 mb-2">
+              设备预览
+            </p>
             <DynamicPreview
               savedData={savedPreview.data}
               savedCacheKey={savedPreviewEnabled ? content!.image_etag : null}
@@ -217,50 +188,60 @@ export function DynamicContentEditor({
           </div>
 
           {/* 表单 */}
-          <div className="order-1 lg:order-2 space-y-6">
-            {!isEdit && (
-              <div>
-                <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-2">
-                  类型
+          <div className="order-1 lg:order-2 lg:mt-7 space-y-6">
+            {/* 类型块 — 12px 等距：picker/chip · description · divider */}
+            <div className="space-y-3">
+              {!isEdit && <DynamicTypePicker value={type} onChange={setType} />}
+              {type && (
+                <p className="font-sans text-[12px] text-stone leading-relaxed">
+                  {TYPE_META[type].description}
                 </p>
-                <DynamicTypePicker value={type} onChange={setType} disabled={isEdit} />
-              </div>
-            )}
+              )}
+              {type && <div className="border-t border-line" />}
+            </div>
 
+            {/* 帧名称（仅 dashboard）*/}
             {type === 'dashboard' && (
-              <Input
-                label="帧名称（选填，最多 64 字）"
-                type="text"
-                maxLength={64}
-                value={frameName}
-                onChange={(e) => setFrameName(e.target.value)}
-                placeholder="如：运营数据"
-              />
+              <FormSection label="帧名称（选填，最多 64 字）">
+                <Input
+                  type="text"
+                  maxLength={64}
+                  value={frameName}
+                  onChange={(e) => setFrameName(e.target.value)}
+                  placeholder="如：运营数据"
+                />
+              </FormSection>
             )}
 
-            {config && visibleConfig && (
-              <DynamicConfigForm
-                config={config}
-                onChange={(next) => {
-                  if (
-                    next.type === 'weather' &&
-                    config?.type === 'weather' &&
-                    next.location_label !== config.location_label
-                  ) {
-                    setFrameName(defaultFrameName(next.type, next));
-                  }
-                  setConfig(next);
-                }}
-                contentId={content?.id}
-              />
+            {/* 类型参数 */}
+            {type && shouldRenderParams(type, { contentId: content?.id }) && config && (
+              <FormSection label="类型参数">
+                <DynamicConfigForm
+                  config={config}
+                  onChange={(next) => {
+                    if (
+                      next.type === 'weather' &&
+                      config?.type === 'weather' &&
+                      next.location_label !== config.location_label
+                    ) {
+                      setFrameName(defaultFrameName(next.type, next));
+                    }
+                    setConfig(next);
+                  }}
+                  contentId={content?.id}
+                />
+              </FormSection>
             )}
 
-            {/* 操作按钮：粘在表单列底部，手机上全宽好点按 */}
-            <div
-              className={`flex gap-3 pt-5 border-t border-line sticky bottom-0 bg-paper pb-4 ${
-                visibleConfig ? '' : 'lg:mt-[28px]'
-              }`}
-            >
+            {/* 音频 */}
+            {type && TYPE_META[type].supportsAudio && config && isAudioDynamicConfig(config) && (
+              <FormSection label="音频">
+                <DynamicAudioSection config={config} onChange={setConfig} />
+              </FormSection>
+            )}
+
+            {/* 操作按钮 */}
+            <div className="flex gap-3 pt-6 border-t border-line sticky bottom-0 bg-paper pb-6">
               <Button variant="outline" onClick={onDone} className="flex-1">
                 取消
               </Button>

@@ -6,10 +6,12 @@
 #include <esp_log.h>
 
 #include <atomic>
+#include <cstdio>
 #include <cstring>
 #include <mutex>
 #include <utility>
 
+#include "config.h"
 #include "protocol_keys.h"
 
 namespace {
@@ -86,6 +88,25 @@ void LogErrorEnvelope(const std::string& path, int status, const std::vector<uin
     ESP_LOGW(kTag, "%s -> HTTP %d error=%s code=%s message=%s",
              path.c_str(), status, klass, code, msg);
     cJSON_Delete(root);
+}
+
+std::string UrlEncodePathSegment(const std::string& value) {
+    static constexpr char kHex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(value.size());
+    for (unsigned char ch : value) {
+        const bool safe = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                          (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' ||
+                          ch == '.' || ch == '~';
+        if (safe) {
+            out.push_back(static_cast<char>(ch));
+        } else {
+            out.push_back('%');
+            out.push_back(kHex[ch >> 4]);
+            out.push_back(kHex[ch & 0x0F]);
+        }
+    }
+    return out;
 }
 
 }  // namespace
@@ -180,10 +201,9 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
 
     body_out.clear();
     if (status != 304) {
-        // 防止异常响应耗尽堆内存。
-        // JSON API 端点响应通常 < 64 KB；二进制资源端点（1bpp 图 15 KB、PCM 音频最大约数百 KB）
-        // 也走此函数，统一限 1 MB 作为安全上界。
-        constexpr size_t kMaxResponseBytes = 1u * 1024 * 1024;
+        // 防止异常响应耗尽堆内存。上限与后端音频转码 60 秒 PCM 上限对齐；
+        // JSON API 与 1bpp 图片远小于这个值，音频资源也不会被合法 TTS 误拦截。
+        constexpr size_t kMaxResponseBytes = static_cast<size_t>(AUDIO_MAX_PCM_BYTES);
         if (content_length < 0) {
             ESP_LOGW(kTag, "%s: fetch headers failed: %lld", path.c_str(), (long long)content_length);
             esp_http_client_close(client);
@@ -191,8 +211,8 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
             return false;
         }
         if (content_length > static_cast<int64_t>(kMaxResponseBytes)) {
-            ESP_LOGW(kTag, "%s: Content-Length %lld exceeds 1 MB limit",
-                     path.c_str(), (long long)content_length);
+            ESP_LOGW(kTag, "%s: Content-Length %lld exceeds %u B limit",
+                     path.c_str(), (long long)content_length, (unsigned)kMaxResponseBytes);
             esp_http_client_close(client);
             esp_http_client_cleanup(client);
             return false;
@@ -204,7 +224,8 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
             if (n <= 0) break;
             body_out.insert(body_out.end(), buf, buf + n);
             if (body_out.size() > kMaxResponseBytes) {
-                ESP_LOGW(kTag, "%s: response body exceeded 1 MB, aborting", path.c_str());
+                ESP_LOGW(kTag, "%s: response body exceeded %u B, aborting",
+                         path.c_str(), (unsigned)kMaxResponseBytes);
                 esp_http_client_close(client);
                 esp_http_client_cleanup(client);
                 return false;
@@ -268,6 +289,21 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
         if (cJSON_IsBool(v)) return cJSON_IsTrue(v);
         return def;
     };
+    auto parse_content = [&](cJSON* item, ContentMeta& f) {
+        f.seq           = get_int(item, proto::kSeq, 0);
+        f.id            = get_str(item, proto::kId);
+        f.content_etag  = get_str(item, proto::kContentEtag);
+        f.device_status_bar_text = get_str(item, proto::kDeviceStatusBarText);
+        f.image_etag    = get_str(item, proto::kImageEtag);
+        f.audio_etag    = get_str(item, proto::kAudioEtag);
+        f.image_size    = get_int(item, proto::kImageSize, 0);
+        f.audio_size    = get_int(item, proto::kAudioSize, 0);
+        f.kind          = get_str(item, proto::kKind);
+        cJSON* next_wake = cJSON_GetObjectItemCaseSensitive(item, proto::kNextWakeSec);
+        f.has_next_wake_sec = cJSON_IsNumber(next_wake);
+        f.next_wake_sec = f.has_next_wake_sec ? next_wake->valueint : 0;
+        if (f.kind.empty()) f.kind = "image";
+    };
 
     cJSON* dev = cJSON_GetObjectItemCaseSensitive(root, proto::kDevice);
     if (cJSON_IsObject(dev)) {
@@ -283,7 +319,13 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
         out.has_group         = true;
         out.group_id          = get_str(group, proto::kId);
         out.group_name        = get_str(group, proto::kName);
-        out.group_etag        = get_str(group, proto::kEtag);
+        out.structure_etag    = get_str(group, proto::kStructureEtag);
+        out.manifest_etag     = get_str(group, proto::kManifestEtag);
+        if (out.manifest_etag.empty()) {
+            ESP_LOGW(kTag, "DeviceState group missing manifest_etag");
+            cJSON_Delete(root);
+            return false;
+        }
         out.content_count     = get_int(group, proto::kContentCount, 0);
         out.group_sort_order  = get_int(group, proto::kSortOrder, 0);
         cJSON* pos = cJSON_GetObjectItemCaseSensitive(group, proto::kPosition);
@@ -293,6 +335,14 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
         }
     } else {
         out.has_group = false;
+    }
+
+    cJSON* current = cJSON_GetObjectItemCaseSensitive(root, proto::kCurrentContent);
+    if (cJSON_IsObject(current)) {
+        out.has_current_content = true;
+        parse_content(current, out.current_content);
+    } else {
+        out.has_current_content = false;
     }
 
     cJSON_Delete(root);
@@ -351,7 +401,8 @@ bool Poll(const Telemetry& tel, DeviceState& out) {
         tel.battery_pct >= 0 || tel.rssi_dbm != 0 ||
         !tel.fw_version.empty() || tel.free_heap >= 0 ||
         !tel.fw_build_ts.empty() || !tel.current_group.empty() ||
-        tel.current_content_seq >= 0;
+        tel.current_content_seq >= 0 || !tel.wake_reason.empty() ||
+        !tel.current_content_etag.empty() || !tel.manifest_etag.empty();
     if (has_telemetry) {
         cJSON* t = cJSON_CreateObject();
         if (tel.battery_pct >= 0) cJSON_AddNumberToObject(t, proto::kBatteryPct, tel.battery_pct);
@@ -362,10 +413,16 @@ bool Poll(const Telemetry& tel, DeviceState& out) {
             cJSON_AddNumberToObject(t, proto::kFreeHeap, tel.free_heap);
         if (!tel.fw_build_ts.empty())
             cJSON_AddStringToObject(t, proto::kFwBuildTs, tel.fw_build_ts.c_str());
+        if (!tel.wake_reason.empty())
+            cJSON_AddStringToObject(t, proto::kWakeReason, tel.wake_reason.c_str());
         if (!tel.current_group.empty())
             cJSON_AddStringToObject(t, proto::kCurrentGroup, tel.current_group.c_str());
         if (tel.current_content_seq >= 0)
             cJSON_AddNumberToObject(t, proto::kCurrentContentSeq, tel.current_content_seq);
+        if (!tel.current_content_etag.empty())
+            cJSON_AddStringToObject(t, proto::kCurrentContentEtag, tel.current_content_etag.c_str());
+        if (!tel.manifest_etag.empty())
+            cJSON_AddStringToObject(t, proto::kManifestEtag, tel.manifest_etag.c_str());
         cJSON_AddItemToObject(root, proto::kTelemetry, t);
     }
 
@@ -405,7 +462,8 @@ bool SelectGroup(const std::string& gid, DeviceState& out) {
 bool GetManifest(const std::string& group_id, const std::string& if_none_match,
                  Manifest& out, bool& not_modified) {
     not_modified = false;
-    std::string          path = std::string(kApiPrefix) + "/groups/" + group_id + "/manifest";
+    std::string          path = std::string(kApiPrefix) + "/groups/" +
+                       UrlEncodePathSegment(group_id) + "/manifest";
     std::vector<uint8_t> bytes;
     int                  status   = 0;
     std::string          etag_out;
@@ -429,12 +487,20 @@ bool GetManifest(const std::string& group_id, const std::string& if_none_match,
         cJSON* v = cJSON_GetObjectItemCaseSensitive(obj, k);
         return cJSON_IsNumber(v) ? v->valueint : def;
     };
-    // 协议 v3：group 子对象 { id, etag, name, sort_order, position }
-    cJSON* group  = cJSON_GetObjectItemCaseSensitive(root, proto::kGroup);
-    if (cJSON_IsObject(group)) {
-        out.group_id   = json_str(group, proto::kId);
-        out.group_name = json_str(group, proto::kName);
-        out.group_etag = json_str(group, proto::kEtag);
+    // 协议 v3：group 子对象 { id, structure_etag, manifest_etag, name, sort_order, position }
+    cJSON* group = cJSON_GetObjectItemCaseSensitive(root, proto::kGroup);
+    if (!cJSON_IsObject(group)) {
+        ESP_LOGW(kTag, "GetManifest: response missing group");
+        cJSON_Delete(root);
+        return false;
+    }
+    out.group_id      = json_str(group, proto::kId);
+    out.group_name    = json_str(group, proto::kName);
+    out.manifest_etag = json_str(group, proto::kManifestEtag);
+    if (out.manifest_etag.empty()) {
+        ESP_LOGW(kTag, "GetManifest: response missing manifest_etag");
+        cJSON_Delete(root);
+        return false;
     }
     cJSON* contents = cJSON_GetObjectItemCaseSensitive(root, proto::kContents);
     if (cJSON_IsArray(contents)) {
@@ -443,6 +509,7 @@ bool GetManifest(const std::string& group_id, const std::string& if_none_match,
             ContentMeta f;
             f.seq           = json_int(item, proto::kSeq, 0);
             f.id            = json_str(item, proto::kId);
+            f.content_etag  = json_str(item, proto::kContentEtag);
             f.device_status_bar_text = json_str(item, proto::kDeviceStatusBarText);
             f.image_etag    = json_str(item, proto::kImageEtag);
             f.audio_etag    = json_str(item, proto::kAudioEtag);
@@ -476,13 +543,13 @@ static bool DownloadBinary(const std::string& path, const std::string& if_none_m
 
 bool DownloadContentImage(const std::string& id, const std::string& if_none_match,
                           std::vector<uint8_t>& out, bool& not_modified) {
-    std::string path = std::string(kApiPrefix) + "/contents/" + id + "/image";
+    std::string path = std::string(kApiPrefix) + "/contents/" + UrlEncodePathSegment(id) + "/image";
     return DownloadBinary(path, if_none_match, out, not_modified);
 }
 
 bool DownloadContentAudio(const std::string& id, const std::string& if_none_match,
                           std::vector<uint8_t>& out, bool& not_modified) {
-    std::string path = std::string(kApiPrefix) + "/contents/" + id + "/audio";
+    std::string path = std::string(kApiPrefix) + "/contents/" + UrlEncodePathSegment(id) + "/audio";
     return DownloadBinary(path, if_none_match, out, not_modified);
 }
 

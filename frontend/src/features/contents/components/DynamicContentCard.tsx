@@ -1,6 +1,7 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { AlertCircle, GripVertical, Pencil, RefreshCw, Trash2 } from 'lucide-react';
+import { useMemo } from 'react';
 import type { ContentDetailT } from 'shared';
 import {
   useContentImage,
@@ -9,6 +10,8 @@ import {
 } from '@/features/contents/queries';
 import { useConfirm } from '@/components/feedback/Confirm';
 import { useToast } from '@/components/feedback/Toast';
+import { AudioPlayPreview } from './AudioPlayPreview';
+import { AudioStatusBadge } from './AudioStatusBadge';
 import { ContentCardShell } from './content-card/ContentCardShell';
 import { FrameBitmapPreview } from '@/features/contents/components/FrameBitmapPreview';
 
@@ -31,11 +34,14 @@ export function DynamicContentCard({ gid, content, onEdit }: DynamicContentCardP
     id: content.id,
     animateLayoutChanges: () => false,
   });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition: 'none',
-    zIndex: isDragging ? 10 : undefined,
-  };
+  const style = useMemo(
+    () => ({
+      transform: CSS.Transform.toString(transform),
+      transition: 'none',
+      zIndex: isDragging ? 10 : undefined,
+    }),
+    [isDragging, transform]
+  );
 
   async function onDelete() {
     const ok = await confirm({
@@ -78,11 +84,11 @@ export function DynamicContentCard({ gid, content, onEdit }: DynamicContentCardP
         />
       }
       topRight={
-        content.audio_etag ? (
-          <span className="absolute top-2 right-2 bg-paper border border-ink text-ink px-1.5 font-mono text-[10px] pointer-events-none">
-            ♪
-          </span>
-        ) : undefined
+        <AudioStatusBadge
+          status={content.audio_status}
+          etag={content.audio_etag}
+          error={content.audio_error}
+        />
       }
       titleMeta={
         hasRenderError ? (
@@ -116,6 +122,10 @@ export function DynamicContentCard({ gid, content, onEdit }: DynamicContentCardP
           >
             <RefreshCw size={14} className={refresh.isPending ? 'animate-spin' : undefined} />
           </button>
+
+          {content.audio_etag && (
+            <AudioPlayPreview contentId={content.id} etag={content.audio_etag} />
+          )}
 
           <span className="flex-1" />
 

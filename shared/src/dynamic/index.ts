@@ -14,33 +14,63 @@ export type DynamicTypeT = z.infer<typeof DynamicType>;
 // IANA 时区。前端默认用浏览器 Intl.DateTimeFormat().resolvedOptions().timeZone。
 const Tz = z.string().min(1).max(48);
 
+export const TTS_VOICES = ['冰糖', '茉莉', '苏打', '白桦', 'Mia', 'Chloe', 'Milo', 'Dean'] as const;
+export const DEFAULT_TTS_VOICE = '冰糖';
+export const TtsVoice = z.enum(TTS_VOICES);
+export type TtsVoiceT = z.infer<typeof TtsVoice>;
+
+export function isTtsVoice(value: string): value is TtsVoiceT {
+  return (TTS_VOICES as readonly string[]).includes(value);
+}
+
+const DynamicAudioOptions = z.object({
+  audio_enabled: z.boolean().default(false),
+  audio_voice: TtsVoice.default(DEFAULT_TTS_VOICE),
+});
+
+const DynamicRefreshOptions = z.object({
+  refresh_interval_sec: z.coerce.number().int().min(300).max(86400).optional(),
+});
+
 // 各动态内容类型的 config schema。discriminated union 让前后端共用同一份校验。
 
-export const DailyCalendarConfig = z.object({
-  type: z.literal('daily_calendar'),
-  tz: Tz,
-});
+export const DailyCalendarConfig = z
+  .object({
+    type: z.literal('daily_calendar'),
+    tz: Tz,
+  })
+  .merge(DynamicAudioOptions)
+  .merge(DynamicRefreshOptions);
 export type DailyCalendarConfigT = z.infer<typeof DailyCalendarConfig>;
 
-export const MonthCalendarConfig = z.object({
-  type: z.literal('month_calendar'),
-  tz: Tz,
-});
+export const MonthCalendarConfig = z
+  .object({
+    type: z.literal('month_calendar'),
+    tz: Tz,
+  })
+  .merge(DynamicAudioOptions)
+  .merge(DynamicRefreshOptions);
 export type MonthCalendarConfigT = z.infer<typeof MonthCalendarConfig>;
 
-export const WeatherConfig = z.object({
-  type: z.literal('weather'),
-  tz: Tz,
-  provider: z.enum(['qweather']).default('qweather'),
-  location_id: z.string().min(1).max(32),
-  location_label: z.string().min(1).max(32),
-});
+export const WeatherConfig = z
+  .object({
+    type: z.literal('weather'),
+    tz: Tz,
+    provider: z.enum(['qweather']).default('qweather'),
+    location_id: z.string().min(1).max(32),
+    location_label: z.string().min(1).max(32),
+  })
+  .merge(DynamicAudioOptions)
+  .merge(DynamicRefreshOptions);
 export type WeatherConfigT = z.infer<typeof WeatherConfig>;
 
-export const HistoryTodayConfig = z.object({
-  type: z.literal('history_today'),
-  tz: Tz,
-});
+export const HistoryTodayConfig = z
+  .object({
+    type: z.literal('history_today'),
+    tz: Tz,
+  })
+  .merge(DynamicAudioOptions)
+  .merge(DynamicRefreshOptions);
 export type HistoryTodayConfigT = z.infer<typeof HistoryTodayConfig>;
 
 export const DashboardConfig = z.object({
@@ -392,6 +422,20 @@ export const DynamicConfig = z.discriminatedUnion('type', [
 ]);
 export type DynamicConfigT = z.infer<typeof DynamicConfig>;
 
+export function isAudioDynamicConfig(
+  config: DynamicConfigT
+): config is Extract<
+  DynamicConfigT,
+  { type: 'daily_calendar' | 'month_calendar' | 'weather' | 'history_today' }
+> {
+  return (
+    config.type === 'daily_calendar' ||
+    config.type === 'month_calendar' ||
+    config.type === 'weather' ||
+    config.type === 'history_today'
+  );
+}
+
 const DeviceRect = z.object({
   x: z.number().int().min(0).max(399),
   y: z.number().int().min(24).max(299),
@@ -480,7 +524,7 @@ export type IngestPayloadT = z.infer<typeof IngestPayload>;
 export const IngestResponse = z.object({
   id: z.string(),
   image_etag: z.string(),
-  group_etag: z.string(),
+  manifest_etag: z.string(),
   rendered_at: z.string().datetime(),
 });
 export type IngestResponseT = z.infer<typeof IngestResponse>;

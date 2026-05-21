@@ -26,12 +26,13 @@ services:
       - "3001:3001"
     volumes:
       - ./slate:/data
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=mysql://slate:${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}@mysql:3306/slate
-      - JWT_SECRET=${JWT_SECRET:?set JWT_SECRET in .env}
-      # 可选：天气动态帧。API Host 需从 QWeather 控制台「设置」复制。
-      # - QWEATHER_API_KEY=
-      # - QWEATHER_API_HOST=
+      - NODE_ENV=production
+      - PORT=${PORT:-3001}
+      - BLOB_DIR=/data/blobs
 
   mysql:
     image: mysql:8

@@ -3,7 +3,8 @@ import { z } from 'zod';
 export const GroupSummary = z.object({
   id: z.string(),
   name: z.string(),
-  etag: z.string(),
+  structure_etag: z.string(),
+  manifest_etag: z.string(),
   sort_order: z.number().int(),
   content_count: z.number().int().nonnegative(),
   /** image + audio 总和(字节)。约等于设备拉到本地后的资源占用。 */

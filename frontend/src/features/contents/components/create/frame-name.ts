@@ -41,7 +41,3 @@ export function effectiveStatusBarText(
   if (type === 'dashboard') return frameName.trim() || '数据看板';
   return dynamicStatusTitle(config);
 }
-
-export function hasVisibleDynamicConfig(config: DynamicConfigT): boolean {
-  return !['daily_calendar', 'month_calendar', 'history_today'].includes(config.type);
-}

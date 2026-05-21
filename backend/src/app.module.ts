@@ -12,6 +12,8 @@ import { GroupsModule } from './modules/groups/groups.module';
 import { ContentsModule } from './modules/contents/contents.module';
 import { ImageRendererModule } from './modules/image-renderer/image-renderer.module';
 import { AudioModule } from './modules/audio/audio.module';
+import { AiModule } from './modules/ai/ai.module';
+import { TtsModule } from './modules/tts/tts.module';
 import { DynamicContentModule } from './modules/dynamic-content/dynamic-content.module';
 import { AppExceptionFilter } from './common/filters/app-exception.filter';
 import { RequestIdInterceptor } from './common/interceptors/request-id.interceptor';
@@ -24,15 +26,17 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
     LoggerModule,
     PrismaModule,
     BlobModule,
+    GroupsModule,
+    ImageRendererModule,
+    AudioModule,
+    AiModule,
+    TtsModule,
+    DynamicContentModule,
+    ContentsModule,
     HealthModule,
     AuthModule,
     UsersModule,
-    GroupsModule,
     DevicesModule,
-    ImageRendererModule,
-    AudioModule,
-    ContentsModule,
-    DynamicContentModule,
   ],
   providers: [
     { provide: APP_FILTER, useClass: AppExceptionFilter },

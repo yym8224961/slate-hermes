@@ -1,9 +1,11 @@
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Pencil, Trash2 } from 'lucide-react';
+import { useMemo } from 'react';
 import type { ContentSummaryT } from 'shared';
 import { useContentImage, useDeleteContent } from '@/features/contents/queries';
 import { AudioPlayPreview } from './AudioPlayPreview';
+import { AudioStatusBadge } from './AudioStatusBadge';
 import { useConfirm } from '@/components/feedback/Confirm';
 import { useToast } from '@/components/feedback/Toast';
 import { ContentCardShell } from './content-card/ContentCardShell';
@@ -25,11 +27,14 @@ export function ImageContentCard({ gid, content, onEdit }: ImageContentCardProps
     id: content.id,
     animateLayoutChanges: () => false,
   });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition: 'none',
-    zIndex: isDragging ? 10 : undefined,
-  };
+  const style = useMemo(
+    () => ({
+      transform: CSS.Transform.toString(transform),
+      transition: 'none',
+      zIndex: isDragging ? 10 : undefined,
+    }),
+    [isDragging, transform]
+  );
 
   async function onDelete() {
     const ok = await confirm({
@@ -64,13 +69,7 @@ export function ImageContentCard({ gid, content, onEdit }: ImageContentCardProps
           showStatusBar={false}
         />
       }
-      topRight={
-        content.audio_etag ? (
-          <span className="absolute top-2 right-2 bg-paper border border-ink text-ink px-1.5 font-mono text-[10px] pointer-events-none">
-            ♪
-          </span>
-        ) : undefined
-      }
+      topRight={<AudioStatusBadge status={content.audio_status} etag={content.audio_etag} />}
       actions={
         <>
           <button

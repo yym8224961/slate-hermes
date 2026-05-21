@@ -9,12 +9,16 @@ import {
   BW_THRESHOLD_DEFAULT,
   DEFAULT_DITHER_MODE,
   DynamicConfig,
+  DEFAULT_TTS_VOICE,
+  isAudioDynamicConfig,
   type DynamicConfigT,
   type DitherMode,
+  type TtsVoiceT,
 } from 'shared';
 import {
   useCreateImageContent,
   useCreateDynamicContent,
+  useGenerateContentTts,
   usePreviewDynamicContent,
 } from '@/features/contents/queries';
 import { useToast } from '@/components/feedback/Toast';
@@ -23,23 +27,22 @@ import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { DoubleRule } from '@/components/ui/DoubleRule';
+import { FormSection } from '@/components/ui/FormSection';
 import { PreviewCanvas } from './image-editor/PreviewCanvas';
 import { ImageDropzone } from './image-editor/ImageDropzone';
 import { DitherControls } from './image-editor/DitherControls';
-import { AudioDropzone } from './image-editor/AudioDropzone';
+import { ImageAudioBlock, type ImageAudioMode } from './image-editor/ImageAudioBlock';
 import { defaultConfig } from '@/features/dynamic-content/model/default-config';
-import { DynamicConfigForm } from '@/features/dynamic-content/components/DynamicConfigForm';
+import {
+  DynamicConfigForm,
+  DynamicAudioSection,
+} from '@/features/dynamic-content/components/DynamicConfigForm';
 import { getApiErrorMessage } from '@/lib/api-error';
-import { cn } from '@/lib/cn';
 import type { AllContentType } from './create/content-create-types';
 import { ContentTypeCardGrid, ContentTypePicker } from './create/ContentTypePicker';
 import { DynamicCreatePreview } from './create/DynamicCreatePreview';
-import {
-  defaultFrameName,
-  effectiveFrameName,
-  effectiveStatusBarText,
-  hasVisibleDynamicConfig,
-} from './create/frame-name';
+import { defaultFrameName, effectiveFrameName, effectiveStatusBarText } from './create/frame-name';
+import { TYPE_META, shouldRenderParams } from './create/type-meta';
 import { useDynamicCreatePreview } from './create/useDynamicCreatePreview';
 
 // ─── 主编辑器 ──────────────────────────────────────────────────────────────────
@@ -52,12 +55,16 @@ interface ContentCreateEditorProps {
 export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
   const createImage = useCreateImageContent(gid);
   const createDynamic = useCreateDynamicContent(gid);
+  const generateTts = useGenerateContentTts(gid);
   const toast = useToast();
 
   // 通用
   const [type, setType] = useState<AllContentType | null>(null);
   const [frameName, setFrameName] = useState('');
   const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [imageAudioMode, setImageAudioMode] = useState<ImageAudioMode>('upload');
+  const [ttsText, setTtsText] = useState('');
+  const [ttsVoice, setTtsVoice] = useState<TtsVoiceT>(DEFAULT_TTS_VOICE);
 
   // 图片专属
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -106,14 +113,18 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
     setConfig(null);
   }
 
-  const submitting = createImage.isPending || createDynamic.isPending;
-  const canSubmit = type === 'image' ? !!imageFile : !!(type && config);
+  const submitting = createImage.isPending || createDynamic.isPending || generateTts.isPending;
+  const canSubmit =
+    type === 'image'
+      ? !!imageFile && (imageAudioMode !== 'tts' || ttsText.trim().length > 0)
+      : !!(type && config);
 
   async function onSubmit() {
     if (!type) return;
     try {
       if (type === 'image') {
         if (!imageFile) return;
+        const trimmedTtsText = ttsText.trim();
         const fd = new FormData();
         const canvas = previewRef.current;
         if (canvas) {
@@ -127,9 +138,21 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
         }
         fd.append('threshold', String(threshold));
         fd.append('mode', mode);
-        if (audioFile) fd.append('audio', audioFile);
+        if (imageAudioMode === 'upload' && audioFile) fd.append('audio', audioFile);
         fd.append('frame_name', frameName.trim());
-        await createImage.mutateAsync(fd);
+        const created = await createImage.mutateAsync(fd);
+        if (imageAudioMode === 'tts' && trimmedTtsText) {
+          try {
+            await generateTts.mutateAsync({
+              contentId: created.id,
+              body: { text: trimmedTtsText, voice: ttsVoice },
+            });
+          } catch (err) {
+            toast.error('内容已新建，TTS 生成失败', getApiErrorMessage(err));
+            onDone();
+            return;
+          }
+        }
         toast.success('内容已新建');
       } else {
         if (!config) return;
@@ -157,8 +180,6 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
 
   const frameNamePlaceholder =
     type === 'image' ? '如：挖掘机' : type === 'weather' ? '如：北京天气' : '';
-  const sectionLabelCls =
-    'h-5 font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] mb-2';
 
   return (
     <div>
@@ -191,7 +212,7 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
           {/* 预览（desktop 左侧 / mobile 排在控件下方）*/}
           <div className="order-2 min-w-0 lg:order-1">
-            <p className={cn(sectionLabelCls, 'ml-0.5')}>
+            <p className="font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] ml-0.5 mb-2">
               {type === 'image' ? `预览 · 1bpp · ${FRAME_WIDTH}×${FRAME_HEIGHT}` : '设备预览'}
             </p>
             {type === 'image' ? (
@@ -218,10 +239,9 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
           </div>
 
           {/* 表单 */}
-          <div className="order-1 min-w-0 lg:order-2 space-y-5">
-            {/* 类型选择 */}
-            <div>
-              <p className={sectionLabelCls}>类型</p>
+          <div className="order-1 min-w-0 lg:order-2 lg:mt-7 space-y-6">
+            {/* 类型块（chip + 描述 + 分隔线，内部 12px 等距）*/}
+            <div className="space-y-3">
               {type ? (
                 <ContentTypePicker
                   value={type}
@@ -231,80 +251,105 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
               ) : (
                 <ContentTypeCardGrid onChange={handleTypeChange} />
               )}
+              {type && (
+                <p className="font-sans text-[12px] text-stone leading-relaxed">
+                  {TYPE_META[type].description}
+                </p>
+              )}
+              {type && <div className="border-t border-line" />}
             </div>
 
             {type && (
               <>
+                {/* 帧名称（仅 image / dashboard）*/}
                 {(type === 'image' || type === 'dashboard') && (
-                  <Input
-                    label="帧名称（选填，最多 64 字）"
-                    type="text"
-                    maxLength={64}
-                    value={frameName}
-                    onChange={(e) => setFrameName(e.target.value)}
-                    placeholder={frameNamePlaceholder}
-                  />
-                )}
-
-                {/* 图片控件 */}
-                {type === 'image' && (
-                  <div className="space-y-4">
-                    <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em]">
-                      图片参数
-                    </p>
-                    <ImageDropzone
-                      isEdit={false}
-                      imageFile={imageFile}
-                      onPick={(f) => {
-                        setImageFile(f);
-                        setScale(1);
-                        setOffset({ x: 0, y: 0 });
-                      }}
+                  <FormSection label="帧名称（选填，最多 64 字）">
+                    <Input
+                      type="text"
+                      maxLength={64}
+                      value={frameName}
+                      onChange={(e) => setFrameName(e.target.value)}
+                      placeholder={frameNamePlaceholder}
                     />
-                    <DitherControls
-                      mode={mode}
-                      onModeChange={setMode}
-                      threshold={threshold}
-                      onThresholdChange={setThreshold}
-                      hasImage={!!imageFile}
-                      scale={scale}
-                      onScaleChange={setScale}
-                      onResetCrop={() => {
-                        setScale(1);
-                        setOffset({ x: 0, y: 0 });
-                      }}
-                    />
-                  </div>
+                  </FormSection>
                 )}
 
-                {/* 动态配置表单 */}
-                {config && type !== 'image' && hasVisibleDynamicConfig(config) && (
-                  <div className="space-y-4">
-                    <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em]">
-                      类型参数
-                    </p>
-                    <DynamicConfigForm
-                      config={config}
-                      onChange={(next) => {
-                        setConfig(next);
-                        if (next.type === 'weather')
-                          setFrameName(defaultFrameName(next.type, next));
-                      }}
-                    />
-                  </div>
+                {/* 类型参数 */}
+                {shouldRenderParams(type) && (
+                  <FormSection label="类型参数">
+                    {type === 'image' ? (
+                      <div className="space-y-4">
+                        <ImageDropzone
+                          isEdit={false}
+                          imageFile={imageFile}
+                          onPick={(f) => {
+                            setImageFile(f);
+                            setScale(1);
+                            setOffset({ x: 0, y: 0 });
+                          }}
+                        />
+                        <DitherControls
+                          mode={mode}
+                          onModeChange={setMode}
+                          threshold={threshold}
+                          onThresholdChange={setThreshold}
+                          hasImage={!!imageFile}
+                          scale={scale}
+                          onScaleChange={setScale}
+                          onResetCrop={() => {
+                            setScale(1);
+                            setOffset({ x: 0, y: 0 });
+                          }}
+                        />
+                      </div>
+                    ) : (
+                      config && (
+                        <DynamicConfigForm
+                          config={config}
+                          onChange={(next) => {
+                            if (
+                              next.type === 'weather' &&
+                              config?.type === 'weather' &&
+                              next.location_label !== config.location_label
+                            ) {
+                              setFrameName(defaultFrameName(next.type, next));
+                            }
+                            setConfig(next);
+                          }}
+                        />
+                      )
+                    )}
+                  </FormSection>
                 )}
 
-                {type === 'image' && (
-                  <AudioDropzone
-                    gid={gid}
-                    hasExistingAudio={false}
-                    editingContentId={null}
-                    audioFile={audioFile}
-                    onPick={setAudioFile}
-                  />
+                {/* 音频 */}
+                {TYPE_META[type].supportsAudio && (
+                  <FormSection label="音频">
+                    {type === 'image' ? (
+                      <ImageAudioBlock
+                        gid={gid}
+                        mode={imageAudioMode}
+                        onModeChange={setImageAudioMode}
+                        audioFile={audioFile}
+                        onAudioFileChange={setAudioFile}
+                        ttsText={ttsText}
+                        onTtsTextChange={setTtsText}
+                        ttsVoice={ttsVoice}
+                        onTtsVoiceChange={setTtsVoice}
+                        hasExistingAudio={false}
+                        editingContentId={null}
+                      />
+                    ) : (
+                      config &&
+                      isAudioDynamicConfig(config) && (
+                        <DynamicAudioSection config={config} onChange={setConfig} />
+                      )
+                    )}
+                  </FormSection>
                 )}
 
-                <div className="flex gap-3 pt-5 border-t border-line sticky bottom-0 bg-paper pb-4">
+                {/* 操作按钮：粘在表单列底部 */}
+                <div className="flex gap-3 pt-6 border-t border-line sticky bottom-0 bg-paper pb-6">
                   <Button variant="outline" onClick={onDone} className="flex-1">
                     取消
                   </Button>

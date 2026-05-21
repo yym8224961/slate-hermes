@@ -29,7 +29,12 @@ class FrameScene : public Scene {
     }
 
    private:
-    void LoadFrame(SceneContext& ctx, int idx, bool force_full);
+    enum class AudioBehavior {
+        RestartIfAvailable,
+        StopIfUnavailable,
+    };
+
+    void LoadFrame(SceneContext& ctx, int idx, bool force_full, AudioBehavior audio_behavior);
     void NextFrame(SceneContext& ctx);
     void PrevFrame(SceneContext& ctx);
     void CycleGroup(SceneContext& ctx, bool next);
