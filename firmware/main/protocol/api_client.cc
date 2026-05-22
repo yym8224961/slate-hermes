@@ -399,8 +399,7 @@ bool Poll(const Telemetry& tel, DeviceState& out) {
     // 仅在有非默认值的字段时构造 telemetry 对象。
     bool has_telemetry =
         tel.battery_pct >= 0 || tel.rssi_dbm != 0 ||
-        !tel.fw_version.empty() || tel.free_heap >= 0 ||
-        !tel.fw_build_ts.empty() || !tel.current_group.empty() ||
+        !tel.fw_version.empty() || !tel.current_group.empty() ||
         tel.current_content_seq >= 0 || !tel.wake_reason.empty() ||
         !tel.current_content_etag.empty() || !tel.manifest_etag.empty();
     if (has_telemetry) {
@@ -409,10 +408,6 @@ bool Poll(const Telemetry& tel, DeviceState& out) {
         if (tel.rssi_dbm != 0)    cJSON_AddNumberToObject(t, proto::kRssiDbm, tel.rssi_dbm);
         if (!tel.fw_version.empty())
             cJSON_AddStringToObject(t, proto::kFwVersion, tel.fw_version.c_str());
-        if (tel.free_heap >= 0)
-            cJSON_AddNumberToObject(t, proto::kFreeHeap, tel.free_heap);
-        if (!tel.fw_build_ts.empty())
-            cJSON_AddStringToObject(t, proto::kFwBuildTs, tel.fw_build_ts.c_str());
         if (!tel.wake_reason.empty())
             cJSON_AddStringToObject(t, proto::kWakeReason, tel.wake_reason.c_str());
         if (!tel.current_group.empty())

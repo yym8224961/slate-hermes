@@ -18,7 +18,7 @@ export class DeviceAuthGuard implements CanActivate {
       throw new AuthError('missing Authorization: Bearer <device_secret>');
     }
     const hash = createHash('sha256').update(secret).digest('hex');
-    const device = await this.prisma.device.findFirst({
+    const device = await this.prisma.device.findUnique({
       where: { secretHash: hash },
       select: { id: true, mac: true },
     });

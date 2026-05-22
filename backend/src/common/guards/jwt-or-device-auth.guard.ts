@@ -8,14 +8,7 @@ import { AuthError } from '../errors';
 import { CURRENT_USER_KEY, type WebUserContext } from '../decorators/current-user.decorator';
 import { CURRENT_DEVICE_KEY, type DeviceContext } from '../decorators/current-device.decorator';
 import { readDeviceSecret } from './device-auth.guard';
-
-interface JwtPayload {
-  sub: string;
-  email: string;
-  username: string;
-  iat?: number;
-  exp?: number;
-}
+import type { JwtPayload } from '../../modules/auth/jwt-token.service';
 
 @Injectable()
 export class JwtOrDeviceAuthGuard implements CanActivate {
@@ -60,7 +53,7 @@ export class JwtOrDeviceAuthGuard implements CanActivate {
     const secret = readDeviceSecret(req);
     if (!secret) return false;
     const hash = createHash('sha256').update(secret).digest('hex');
-    const d = await this.prisma.device.findFirst({
+    const d = await this.prisma.device.findUnique({
       where: { secretHash: hash },
       select: { id: true, mac: true },
     });

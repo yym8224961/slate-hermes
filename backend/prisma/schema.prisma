@@ -53,7 +53,7 @@ model Device {
   // 设备身份指纹（eFuse MAC，重置时作为 Device 行的稳定锚点；不参与 HTTP 鉴权）
   mac              String    @unique @db.VarChar(17)
   // sha256(device_secret) hex；secret 明文仅在 register 响应里返回一次，丢了只能工厂重置
-  secretHash       String    @map("secret_hash") @db.Char(64)
+  secretHash       String    @unique(map: "devices_secret_hash_key") @map("secret_hash") @db.Char(64)
   // 6 位 [A-Z0-9] 配对码；用户在 Web 端输入此码 claim 设备，解绑/物理重置时轮换
   pairCode         String    @unique @map("pair_code") @db.Char(6)
   name             String?   @db.VarChar(64)
@@ -65,16 +65,13 @@ model Device {
   batteryPct       Int?      @map("battery_pct")
   rssiDbm          Int?      @map("rssi_dbm")
   fwVersion        String?   @map("fw_version") @db.VarChar(32)
-  freeHeap         Int?      @map("free_heap")
-  fwBuildTs        String?   @map("fw_build_ts") @db.VarChar(32)
   createdAt        DateTime  @default(now()) @map("created_at")
   updatedAt        DateTime  @updatedAt @map("updated_at")
 
   owner         User?  @relation("DeviceOwner", fields: [ownerUserId], references: [id], onDelete: SetNull)
   selectedGroup Group? @relation("DeviceSelectedGroup", fields: [selectedGroupId], references: [id], onDelete: SetNull)
 
-  @@index([ownerUserId, sortOrder])
-  @@index([secretHash])
+  @@unique([ownerUserId, sortOrder], map: "devices_owner_user_id_sort_order_key")
   @@index([selectedGroupId])
   @@index([lastSeenAt])
   @@map("devices")
@@ -94,7 +91,7 @@ model Group {
   contents         Content[]
   selectingDevices Device[]  @relation("DeviceSelectedGroup")
 
-  @@index([ownerUserId, sortOrder])
+  @@unique([ownerUserId, sortOrder], map: "groups_owner_user_id_sort_order_key")
   @@map("groups")
 }
 
@@ -135,26 +132,8 @@ model Content {
 
   @@unique([groupId, sortOrder])
   @@index([groupId, kind])
-  @@index([audioStatus, audioLeaseUntil])
-  @@index([dynamicNextRunAt])
-  @@index([dynamicRefreshDueAt])
-  @@index([kind, dynamicRefreshDueAt])
+  @@index([audioSource, audioStatus, audioLeaseUntil, audioUpdatedAt], map: "contents_audio_worker_idx")
+  @@index([kind, dynamicRefreshDueAt, dynamicRefreshLeaseUntil], map: "contents_dynamic_refresh_worker_idx")
   @@index([kind, dynamicType])
   @@map("contents")
-}
-
-model TtsAudioCache {
-  id        String   @id @default(cuid())
-  cacheKey  String   @unique @map("cache_key") @db.Char(64)
-  text      String   @db.VarChar(512)
-  voice     String   @db.VarChar(32)
-  model     String   @db.VarChar(64)
-  style     String   @default("") @db.VarChar(128)
-  etag      String   @db.VarChar(64)
-  size      Int
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  @@index([etag])
-  @@map("tts_audio_cache")
 }

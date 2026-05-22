@@ -69,8 +69,6 @@ struct Telemetry {
     int         battery_pct = -1;
     int         rssi_dbm    = 0;
     std::string fw_version;
-    int         free_heap = -1;
-    std::string fw_build_ts;
     std::string wake_reason;
     std::string current_group;
     int         current_content_seq = -1;

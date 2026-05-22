@@ -1,11 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { createHash } from 'node:crypto';
 import { DEFAULT_TTS_VOICE, TTS_VOICES, isTtsVoice, type TtsVoiceT } from 'shared';
-import { computeETag } from '../../common/etag/etag.util';
 import { ValidationError } from '../../common/errors';
-import { BlobService } from '../../infra/blob/blob.service';
 import { AppConfig } from '../../infra/config/app.config';
-import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AudioService } from '../audio/audio.service';
 
 const SOURCE_SAMPLE_RATE = 24000;
@@ -109,102 +105,6 @@ export class TtsService {
       clearTimeout(timer);
     }
   }
-}
-
-export interface TtsCacheInput {
-  text: string;
-  voice: TtsVoiceT;
-  model?: string;
-  style?: string;
-}
-
-export interface TtsCacheHit {
-  etag: string;
-  size: number;
-}
-
-@Injectable()
-export class TtsAudioCacheService {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly blob: BlobService,
-    private readonly config: AppConfig,
-    private readonly tts: TtsService
-  ) {}
-
-  key(input: TtsCacheInput): string {
-    return createHash('sha256')
-      .update(
-        JSON.stringify({
-          text: input.text.trim().slice(0, 500),
-          voice: input.voice,
-          model: input.model ?? this.config.ttsModel,
-          style: input.style ?? '',
-        })
-      )
-      .digest('hex');
-  }
-
-  async findReady(input: TtsCacheInput): Promise<TtsCacheHit | null> {
-    const row = await this.prisma.ttsAudioCache.findUnique({
-      where: { cacheKey: this.key(input) },
-      select: { etag: true, size: true },
-    });
-    if (!row) return null;
-    const bytes = await this.blob.readGlobal(ttsCacheBlobId(row.etag), 'audio');
-    if (!bytes || bytes.byteLength !== row.size) {
-      await this.prisma.ttsAudioCache
-        .delete({ where: { cacheKey: this.key(input) } })
-        .catch(() => undefined);
-      return null;
-    }
-    return row;
-  }
-
-  async getOrCreate(input: TtsCacheInput): Promise<TtsCacheHit> {
-    const cached = await this.findReady(input);
-    if (cached) return cached;
-
-    const normalized = {
-      text: input.text.trim().slice(0, 500),
-      voice: input.voice,
-      model: input.model ?? this.config.ttsModel,
-      style: input.style ?? '',
-    };
-    const key = this.key(normalized);
-    const bytes = await this.tts.synthesizeToDevicePcm(normalized);
-    const etag = computeETag(bytes);
-    await this.blob.writeGlobal(ttsCacheBlobId(etag), 'audio', bytes);
-    return this.prisma.ttsAudioCache.upsert({
-      where: { cacheKey: key },
-      create: {
-        cacheKey: key,
-        text: normalized.text,
-        voice: normalized.voice,
-        model: normalized.model,
-        style: normalized.style,
-        etag,
-        size: bytes.byteLength,
-      },
-      update: {
-        text: normalized.text,
-        voice: normalized.voice,
-        model: normalized.model,
-        style: normalized.style,
-        etag,
-        size: bytes.byteLength,
-      },
-      select: { etag: true, size: true },
-    });
-  }
-
-  async readByEtag(etag: string): Promise<Buffer | null> {
-    return this.blob.readGlobal(ttsCacheBlobId(etag), 'audio');
-  }
-}
-
-export function ttsCacheBlobId(etag: string): string {
-  return `tts.${etag}`;
 }
 
 async function* parseSseJson(

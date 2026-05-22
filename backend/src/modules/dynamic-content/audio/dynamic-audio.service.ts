@@ -9,9 +9,11 @@ import {
 import { BlobService } from '../../../infra/blob/blob.service';
 import { AppConfig } from '../../../infra/config/app.config';
 import { PrismaService } from '../../../infra/prisma/prisma.service';
+import { computeETag } from '../../../common/etag/etag.util';
+import { formatError, recordValue, valueText, cnMonthDay } from '../../../common/utils';
 import { audioBlobContentId } from '../../audio/audio-blob-id';
 import { GroupsService } from '../../groups/groups.service';
-import { TtsAudioCacheService, TtsService } from '../../tts/tts.service';
+import { TtsService } from '../../tts/tts.service';
 import {
   normalizeHistoryYear,
   parseHistoryTodayData,
@@ -38,8 +40,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
     private readonly blob: BlobService,
     private readonly config: AppConfig,
     private readonly groups: GroupsService,
-    private readonly tts: TtsService,
-    private readonly ttsCache: TtsAudioCacheService
+    private readonly tts: TtsService
   ) {}
 
   onModuleInit(): void {
@@ -94,7 +95,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
       content.audioStatus === 'ready' &&
       content.audioVoice === voice &&
       content.audioText === text &&
-      (await this.ttsCache.readByEtag(content.audioEtag))
+      (await this.readAudioBlob(content.groupId, content.id, content.audioEtag))
     ) {
       return false;
     }
@@ -207,11 +208,20 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
     voice: TtsVoiceValue;
     leaseUntil: Date;
   }): Promise<void> {
+    let pendingCleanupEtag: string | null = null;
     try {
-      const cached = await this.ttsCache.getOrCreate({
+      const bytes = await this.tts.synthesizeToDevicePcm({
         text: input.text,
         voice: input.voice,
       });
+      const generatedEtag = computeETag(bytes);
+      pendingCleanupEtag = generatedEtag;
+      await this.blob.write(
+        input.groupId,
+        audioBlobContentId(input.contentId, generatedEtag),
+        'audio',
+        bytes
+      );
       const updated = await this.prisma.content.updateMany({
         where: {
           id: input.contentId,
@@ -223,8 +233,8 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
           audioLeaseUntil: input.leaseUntil,
         },
         data: {
-          audioEtag: cached.etag,
-          audioSize: cached.size,
+          audioEtag: generatedEtag,
+          audioSize: bytes.byteLength,
           audioStatus: 'ready',
           audioSource: 'tts',
           audioVoice: input.voice,
@@ -235,13 +245,34 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
           audioAttempts: 0,
         },
       });
-      if (updated.count !== 1) return;
+      if (updated.count === 1) return;
+      // CAS 失败：lease 已被其它 worker 抢走（120s 超时后）。如果 TTS 对相同 text/voice 是确定性
+      // 的，对方写到同一路径同一字节；这种情况绝不能删，否则会把已经 ready 的 blob 抽走。
+      await this.cleanupOrphanBlob(input.groupId, input.contentId, generatedEtag);
     } catch (err) {
+      await this.cleanupOrphanBlob(input.groupId, input.contentId, pendingCleanupEtag);
       this.logger.warn(`dynamic TTS failed content=${input.contentId}: ${formatError(err)}`);
       await this.markFailedOrRetry(input, err);
     } finally {
       await this.groups.recomputeManifestEtag(input.groupId);
     }
+  }
+
+  // 仅当目标 etag 不再被任何 content 行引用时才删。规避 race：worker A 的 lease 过期、worker B
+  // 抢占后用相同的 text/voice 重合成出相同 etag，会写到同一 blob 路径；A 的 CAS 失败后若无脑删
+  // 路径，B 刚成功提交的 ready 行立刻指向不存在的文件。
+  private async cleanupOrphanBlob(
+    groupId: string,
+    contentId: string,
+    etag: string | null
+  ): Promise<void> {
+    if (!etag) return;
+    const row = await this.prisma.content.findUnique({
+      where: { id: contentId },
+      select: { audioEtag: true },
+    });
+    if (row?.audioEtag === etag) return;
+    await this.deleteAudioBlob(groupId, contentId, etag);
   }
 
   private async markFailedOrRetry(
@@ -331,6 +362,14 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
     await this.blob
       .delete(groupId, audioBlobContentId(contentId, audioEtag), 'audio')
       .catch(() => {});
+  }
+
+  private async readAudioBlob(
+    groupId: string,
+    contentId: string,
+    audioEtag: string
+  ): Promise<Buffer | null> {
+    return this.blob.read(groupId, audioBlobContentId(contentId, audioEtag), 'audio');
   }
 }
 
@@ -424,18 +463,6 @@ function buildHistoryTodayAudio(data: unknown, config: DynamicConfigT, now: Date
   return compactSentence([`历史上的${label.replace(/\s+/g, '')}`, ...items]);
 }
 
-function recordValue(value: unknown, key: string): unknown {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)[key]
-    : undefined;
-}
-
-function valueText(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const text = String(value).trim();
-  return text ? text : null;
-}
-
 function historyAudioItems(data: HistoryTodayProviderData): string[] {
   return data.items.map((item) => `${formatSpokenYear(item.year)}，${item.display}`);
 }
@@ -454,11 +481,3 @@ function compactSentence(parts: string[]): string {
     .slice(0, 500);
 }
 
-function cnMonthDay(date: Date, timeZone: string): string {
-  const parts = datePartsInTz(date, timeZone);
-  return `${parts.month}月${parts.day}日`;
-}
-
-function formatError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}

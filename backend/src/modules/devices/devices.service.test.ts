@@ -45,40 +45,46 @@ function createService(record?: DeviceRecord): {
   let current = record;
   const updates: UpdateArgs[] = [];
   const creates: CreateArgs[] = [];
-  const prisma = {
-    device: {
-      findUnique: async (args: FindUniqueArgs) => {
-        if (args.where.mac !== undefined) {
-          if (!current || current.mac !== args.where.mac) return null;
-          return {
-            id: current.id,
-            ownerUserId: current.ownerUserId,
-            lastRegisteredAt: current.lastRegisteredAt,
-          };
-        }
-        if (args.where.pairCode !== undefined) return null;
-        return null;
-      },
-      update: async (args: UpdateArgs) => {
-        updates.push(args);
-        if (!current || current.mac !== args.where.mac) throw new Error('missing device');
-        current = { ...current, ...args.data };
-        return current;
-      },
-      create: async (args: CreateArgs) => {
-        creates.push(args);
-        current = {
-          id: 'new-device',
-          mac: args.data.mac,
-          secretHash: args.data.secretHash,
-          pairCode: args.data.pairCode,
-          ownerUserId: null,
-          selectedGroupId: null,
-          lastRegisteredAt: args.data.lastRegisteredAt,
+  const deviceApi = {
+    findUnique: async (args: FindUniqueArgs) => {
+      if (args.where.mac !== undefined) {
+        if (!current || current.mac !== args.where.mac) return null;
+        return {
+          id: current.id,
+          ownerUserId: current.ownerUserId,
+          lastRegisteredAt: current.lastRegisteredAt,
         };
-        return { id: current.id };
-      },
+      }
+      if (args.where.pairCode !== undefined) return null;
+      return null;
     },
+    update: async (args: UpdateArgs) => {
+      updates.push(args);
+      if (!current || current.mac !== args.where.mac) throw new Error('missing device');
+      current = { ...current, ...args.data };
+      return current;
+    },
+    create: async (args: CreateArgs) => {
+      creates.push(args);
+      current = {
+        id: 'new-device',
+        mac: args.data.mac,
+        secretHash: args.data.secretHash,
+        pairCode: args.data.pairCode,
+        ownerUserId: null,
+        selectedGroupId: null,
+        lastRegisteredAt: args.data.lastRegisteredAt,
+      };
+      return { id: current.id };
+    },
+  };
+  const txApi = {
+    device: deviceApi,
+    $queryRaw: async () => [{ id: current?.ownerUserId ?? 'user-1' }],
+  };
+  const prisma = {
+    device: deviceApi,
+    $transaction: async <T>(fn: (tx: typeof txApi) => Promise<T>) => fn(txApi),
   };
   return {
     service: new DevicesService(prisma as unknown as PrismaService, {} as GroupsService),
@@ -158,7 +164,11 @@ describe('DevicesService.registerOrReset', () => {
 
 function createClaimService(
   record?: DeviceRecord,
-  opts: { raceOnUpdate?: 'P2025' | 'P2002'; ownerGroups?: { id: string }[] } = {}
+  opts: {
+    raceOnUpdate?: 'P2025' | 'P2002';
+    raceTarget?: string[];
+    ownerGroups?: { id: string }[];
+  } = {}
 ): {
   service: DevicesService;
   updates: { where: unknown; data: Partial<DeviceRecord> }[];
@@ -181,6 +191,7 @@ function createClaimService(
         throw new Prisma.PrismaClientKnownRequestError('Record not found', {
           code: opts.raceOnUpdate,
           clientVersion: 'test',
+          meta: opts.raceTarget ? { target: opts.raceTarget } : undefined,
         });
       }
       if (
@@ -197,10 +208,13 @@ function createClaimService(
       return current;
     },
   };
+  const txApi = {
+    device: deviceApi,
+    $queryRaw: async () => [{ id: 'user-2' }],
+  };
   const prisma = {
     device: deviceApi,
-    $transaction: async <T>(fn: (tx: { device: typeof deviceApi }) => Promise<T>) =>
-      fn({ device: deviceApi }),
+    $transaction: async <T>(fn: (tx: typeof txApi) => Promise<T>) => fn(txApi),
   };
   const groups = {
     listOwnerGroups: async () =>
@@ -290,6 +304,7 @@ describe('DevicesService.claimByPairCode', () => {
   it('maps pair_code unique-constraint collisions (P2002) to conflict as well', async () => {
     const { service } = createClaimService(device({ ownerUserId: null, selectedGroupId: null }), {
       raceOnUpdate: 'P2002',
+      raceTarget: ['pair_code'],
     });
 
     await expect(service.claimByPairCode('ABC234', 'user-2')).rejects.toThrow(ConflictError);

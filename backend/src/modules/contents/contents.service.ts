@@ -1,7 +1,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { ContentAudioStatus, ContentKind } from '@prisma/client';
+import type { ContentAudioSource, ContentAudioStatus, ContentKind } from '@prisma/client';
 import {
   DynamicConfig,
   TTS_VOICES,
@@ -19,9 +19,12 @@ import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeETag } from '../../common/etag/etag.util';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/errors';
+import { lockGroupRow } from '../../common/db/row-locks';
+import { bulkSetContentSortOrder } from '../../common/db/bulk-sort-order';
+import { formatError } from '../../common/utils';
 import { AudioService } from '../audio/audio.service';
 import { audioBlobContentId } from '../audio/audio-blob-id';
-import { TtsAudioCacheService, TtsService } from '../tts/tts.service';
+import { TtsService } from '../tts/tts.service';
 import { GroupsService } from '../groups/groups.service';
 import { ImageRendererService } from '../image-renderer/image-renderer.service';
 import { DynamicContentRegistry } from '../dynamic-content/dynamic-content-registry';
@@ -47,7 +50,7 @@ interface ContentRow {
   imageSize: number;
   audioSize: number | null;
   audioStatus: ContentAudioStatus;
-  audioSource: 'upload' | 'tts' | null;
+  audioSource: ContentAudioSource | null;
   audioVoice: string | null;
   audioText?: string | null;
   audioLastError?: string | null;
@@ -101,7 +104,6 @@ export class ContentsService {
     private readonly imageRenderer: ImageRendererService,
     private readonly audio: AudioService,
     private readonly tts: TtsService,
-    private readonly ttsCache: TtsAudioCacheService,
     private readonly dynamicContentRegistry: DynamicContentRegistry,
     private readonly dynamicRenderer: DynamicContentRendererService
   ) {}
@@ -306,7 +308,7 @@ export class ContentsService {
     if (!content) throw new NotFoundError('内容不存在');
     await this.assertReadable(content.groupId, scope);
     if (!content.audioEtag || !content.audioSize) throw new NotFoundError('该内容没有音频');
-    const data = await this.readAudioBlob(content);
+    const data = await this.readAudioBlob(content.groupId, content.id, content.audioEtag);
     if (!data) {
       await this.handleMissingAudioBlob(content);
       throw new NotFoundError('音频文件丢失');
@@ -368,7 +370,7 @@ export class ContentsService {
     let created: { seq: number; didCreate: boolean } = { seq: -1, didCreate: false };
     try {
       const seq = await this.prisma.$transaction(async (tx) => {
-        await this.lockGroupForContentOrder(tx, gid);
+        await lockGroupRow(tx, gid);
         const maxSeq = await tx.content.aggregate({
           where: { groupId: gid },
           _max: { sortOrder: true },
@@ -409,7 +411,7 @@ export class ContentsService {
       if (created.didCreate) {
         await this.prisma
           .$transaction(async (tx) => {
-            await this.lockGroupForContentOrder(tx, gid);
+            await lockGroupRow(tx, gid);
             await tx.content.delete({ where: { id: contentId } });
             await this.compactSortOrders(tx, gid);
             await this.groups.recomputeManifestEtag(gid, tx);
@@ -441,8 +443,7 @@ export class ContentsService {
       content.sortOrder,
       contentId,
       parsed,
-      content.audioEtag,
-      content.audioSource
+      content.audioEtag
     );
   }
 
@@ -459,9 +460,6 @@ export class ContentsService {
         sortOrder: true,
         kind: true,
         dynamicType: true,
-        audioEtag: true,
-        audioStatus: true,
-        audioSource: true,
       },
     });
     if (!content) throw new NotFoundError('内容不存在');
@@ -473,7 +471,6 @@ export class ContentsService {
     }
 
     const data: Prisma.ContentUpdateInput = {};
-    let configChanged = false;
     if (body.frame_name !== undefined) data.frameName = body.frame_name;
     if (body.config !== undefined) {
       const validated = DynamicConfig.parse(body.config);
@@ -486,23 +483,11 @@ export class ContentsService {
       data.dynamicConfig = validated as unknown as Prisma.InputJsonValue;
       data.dynamicRefreshDueAt = new Date();
       data.dynamicRefreshLeaseUntil = null;
-      configChanged = true;
       if (body.frame_name === undefined && currentType !== 'dashboard') {
         data.frameName = defaultFrameName(currentType, validated);
       }
     }
     await this.prisma.content.update({ where: { id: contentId }, data });
-    if (configChanged) {
-      const rendered = await this.renderDynamicAndReadEtag(contentId);
-      return this.toMutationResponse(
-        contentId,
-        content.sortOrder,
-        rendered.imageEtag,
-        rendered.audioEtag,
-        rendered.groupEtag,
-        rendered.contentEtag
-      );
-    }
     const rendered = await this.renderDynamicAndReadEtag(contentId);
     return this.toMutationResponse(
       contentId,
@@ -621,17 +606,18 @@ export class ContentsService {
     const content = await this.requireContent(contentId);
     await this.groups.assertOwned(content.groupId, ownerUserId);
     const previousImage = await this.blob.read(content.groupId, contentId, 'image');
+    // 仅 upload 音频备份字节用于回滚 —— TTS 音频可在 worker 重排时自动重建，不必扛 IO。
     const previousAudio =
       content.audioSource === 'upload'
-        ? await this.readOwnedAudioBlob(content.groupId, contentId, content.audioEtag)
+        ? await this.readAudioBlob(content.groupId, contentId, content.audioEtag)
         : null;
     await Promise.all([
       this.blob.delete(content.groupId, contentId, 'image'),
-      this.deleteOwnedAudioBlob(content.groupId, contentId, content.audioEtag, content.audioSource),
+      this.deleteAudioBlob(content.groupId, contentId, content.audioEtag),
     ]);
     try {
       await this.prisma.$transaction(async (tx) => {
-        await this.lockGroupForContentOrder(tx, content.groupId);
+        await lockGroupRow(tx, content.groupId);
         await tx.content.delete({ where: { id: contentId } });
         await this.compactSortOrders(tx, content.groupId);
         await this.groups.recomputeManifestEtag(content.groupId, tx);
@@ -657,10 +643,11 @@ export class ContentsService {
     const content = await this.requireContent(contentId);
     await this.groups.assertOwned(content.groupId, ownerUserId);
     const previousAudioEtag = content.audioEtag;
-    const previousAudioBytes =
-      content.audioSource === 'upload'
-        ? await this.readOwnedAudioBlob(content.groupId, contentId, previousAudioEtag)
-        : null;
+    const previousAudioBytes = await this.readAudioBlob(
+      content.groupId,
+      contentId,
+      previousAudioEtag
+    );
     try {
       await this.prisma.content.update({
         where: { id: contentId },
@@ -678,12 +665,7 @@ export class ContentsService {
         },
       });
       const manifest_etag = await this.groups.recomputeManifestEtag(content.groupId);
-      await this.deleteOwnedAudioBlob(
-        content.groupId,
-        contentId,
-        previousAudioEtag,
-        content.audioSource
-      );
+      await this.deleteAudioBlob(content.groupId, contentId, previousAudioEtag);
       return { manifest_etag };
     } catch (err) {
       if (previousAudioBytes && previousAudioEtag) {
@@ -731,12 +713,7 @@ export class ContentsService {
       },
     });
     const groupEtag = await this.groups.recomputeManifestEtag(content.groupId);
-    await this.deleteOwnedAudioBlob(
-      content.groupId,
-      contentId,
-      previousAudioEtag,
-      content.audioSource
-    );
+    await this.deleteAudioBlob(content.groupId, contentId, previousAudioEtag);
     const contentEtag = await this.readContentEtag(contentId);
     return this.toMutationResponse(
       contentId,
@@ -755,7 +732,7 @@ export class ContentsService {
   ): Promise<{ manifest_etag: string }> {
     await this.groups.assertOwned(gid, ownerUserId);
     const manifest_etag = await this.prisma.$transaction(async (tx) => {
-      await this.lockGroupForContentOrder(tx, gid);
+      await lockGroupRow(tx, gid);
       const all = await tx.content.findMany({
         where: { groupId: gid },
         select: { id: true },
@@ -771,7 +748,7 @@ export class ContentsService {
           code: 'order_mismatch',
         });
       }
-      await bulkSetContentSortOrders(tx, gid, order);
+      await bulkSetContentSortOrder(tx, gid, order);
       return this.groups.recomputeManifestEtag(gid, tx);
     });
     return { manifest_etag };
@@ -837,7 +814,7 @@ export class ContentsService {
       if (audio)
         await this.blob.write(gid, audioBlobContentId(contentId, audio.etag), 'audio', audio.bytes);
       seq = await this.prisma.$transaction(async (tx) => {
-        await this.lockGroupForContentOrder(tx, gid);
+        await lockGroupRow(tx, gid);
         const maxSeq = await tx.content.aggregate({
           where: { groupId: gid },
           _max: { sortOrder: true },
@@ -893,8 +870,7 @@ export class ContentsService {
     seq: number,
     contentId: string,
     parsed: ParsedContentUpload,
-    previousAudioEtag: string | null,
-    previousAudioSource: 'upload' | 'tts' | null
+    previousAudioEtag: string | null
   ): Promise<ContentMutationResponseT> {
     const { image, audio } = await this.renderUpload(parsed);
     const data: Prisma.ContentUpdateInput = {};
@@ -902,8 +878,8 @@ export class ContentsService {
     const previousImageBytes = image ? await this.blob.read(gid, contentId, 'image') : null;
     const shouldClearStaleAudio = Boolean(image && !audio && previousAudioEtag);
     const previousAudioBytes =
-      previousAudioSource === 'upload' && (audio || shouldClearStaleAudio)
-        ? await this.readOwnedAudioBlob(gid, contentId, previousAudioEtag)
+      audio || shouldClearStaleAudio
+        ? await this.readAudioBlob(gid, contentId, previousAudioEtag)
         : null;
     if (parsed.hasFrameName === false && !image && !audio) {
       throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
@@ -949,7 +925,7 @@ export class ContentsService {
       dbUpdated = true;
       const groupEtag = await this.groups.recomputeManifestEtag(gid);
       if (audio || shouldClearStaleAudio) {
-        await this.deleteOwnedAudioBlob(gid, contentId, previousAudioEtag, previousAudioSource);
+        await this.deleteAudioBlob(gid, contentId, previousAudioEtag);
       }
       const contentEtag = await this.readContentEtag(contentId);
       return this.toMutationResponse(
@@ -981,10 +957,7 @@ export class ContentsService {
             Boolean(audio),
             this.logger
           ).catch(() => {}),
-          previousAudioSource === 'upload' &&
-          previousAudioEtag &&
-          (audio || shouldClearStaleAudio) &&
-          previousAudioBytes
+          previousAudioEtag && (audio || shouldClearStaleAudio) && previousAudioBytes
             ? this.blob
                 .write(
                   gid,
@@ -1026,20 +999,13 @@ export class ContentsService {
     return { image, audio };
   }
 
-  private async lockGroupForContentOrder(tx: Prisma.TransactionClient, gid: string): Promise<void> {
-    const rows = await tx.$queryRaw<Array<{ id: string }>>`
-      SELECT id FROM \`groups\` WHERE id = ${gid} FOR UPDATE
-    `;
-    if (rows.length === 0) throw new NotFoundError('相册不存在');
-  }
-
   private async compactSortOrders(tx: Prisma.TransactionClient, gid: string): Promise<void> {
     const rows = await tx.content.findMany({
       where: { groupId: gid },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
       select: { id: true },
     });
-    await bulkSetContentSortOrders(
+    await bulkSetContentSortOrder(
       tx,
       gid,
       rows.map((row) => row.id)
@@ -1053,7 +1019,7 @@ export class ContentsService {
     kind: ContentKind;
     imageEtag: string;
     audioEtag: string | null;
-    audioSource: 'upload' | 'tts' | null;
+    audioSource: ContentAudioSource | null;
   }> {
     const content = await this.prisma.content.findUnique({
       where: { id: contentId },
@@ -1095,41 +1061,6 @@ export class ContentsService {
     return dueAt !== null && dueAt.getTime() <= Date.now();
   }
 
-  private async clearContentAudio(
-    content: {
-      id: string;
-      groupId: string;
-      audioEtag: string | null;
-      audioStatus: ContentAudioStatus;
-      audioSource: 'upload' | 'tts' | null;
-    },
-    status: 'none' | 'failed'
-  ): Promise<void> {
-    if (!content.audioEtag && content.audioStatus === status) return;
-    const previousAudioEtag = content.audioEtag;
-    await this.prisma.content.update({
-      where: { id: content.id },
-      data: {
-        audioEtag: null,
-        audioSize: null,
-        audioStatus: status,
-        audioSource: status === 'failed' ? content.audioSource : null,
-        audioVoice: null,
-        audioText: null,
-        audioLastError: status === 'failed' ? '音频文件丢失，请重新上传' : null,
-        audioUpdatedAt: new Date(),
-        audioLeaseUntil: null,
-        audioAttempts: 0,
-      },
-    });
-    await this.deleteOwnedAudioBlob(
-      content.groupId,
-      content.id,
-      previousAudioEtag,
-      content.audioSource
-    );
-  }
-
   private toMutationResponse(
     contentId: string,
     seq: number,
@@ -1168,30 +1099,7 @@ export class ContentsService {
       .catch(() => {});
   }
 
-  private async deleteOwnedAudioBlob(
-    groupId: string,
-    contentId: string,
-    audioEtag: string | null,
-    audioSource?: 'upload' | 'tts' | null
-  ): Promise<void> {
-    if (audioSource === 'tts') return;
-    await this.deleteAudioBlob(groupId, contentId, audioEtag);
-  }
-
-  private async readAudioBlob(content: {
-    id: string;
-    groupId: string;
-    audioEtag: string | null;
-    audioSource?: 'upload' | 'tts' | null;
-  }): Promise<Buffer | null> {
-    if (!content.audioEtag) return null;
-    if (content.audioSource === 'tts') {
-      return this.ttsCache.readByEtag(content.audioEtag);
-    }
-    return this.readOwnedAudioBlob(content.groupId, content.id, content.audioEtag);
-  }
-
-  private async readOwnedAudioBlob(
+  private async readAudioBlob(
     groupId: string,
     contentId: string,
     audioEtag: string | null
@@ -1205,37 +1113,35 @@ export class ContentsService {
     groupId: string;
     audioEtag: string | null;
     audioStatus: ContentAudioStatus;
-    audioSource: 'upload' | 'tts' | null;
+    audioSource: ContentAudioSource | null;
     audioText: string | null;
     audioVoice: string | null;
   }): Promise<void> {
     if (!content.audioEtag) return;
+
+    const data: Prisma.ContentUpdateInput = {
+      audioEtag: null,
+      audioSize: null,
+      audioUpdatedAt: new Date(),
+      audioLeaseUntil: null,
+    };
+
     if (content.audioSource === 'tts' && content.audioText && content.audioVoice) {
-      await this.prisma.content.update({
-        where: { id: content.id },
-        data: {
-          audioEtag: null,
-          audioSize: null,
-          audioStatus: 'pending',
-          audioLastError: 'TTS 音频文件丢失，已重新排队',
-          audioUpdatedAt: new Date(),
-          audioLeaseUntil: null,
-        },
-      });
+      // TTS 重排：worker 会重新合成。同时把 attempts 清零，避免之前已经撞到 MAX_AUDIO_ATTEMPTS
+      // 让 claim filter 永远跳过这一行。
+      data.audioStatus = 'pending';
+      data.audioLastError = 'TTS 音频文件丢失，已重新排队';
+      data.audioAttempts = 0;
+    } else if (content.audioSource === 'upload') {
+      data.audioStatus = 'failed';
+      data.audioLastError = '上传音频文件丢失，请重新上传';
     } else {
-      await this.prisma.content.update({
-        where: { id: content.id },
-        data: {
-          audioEtag: null,
-          audioSize: null,
-          audioStatus: content.audioSource === 'upload' ? 'failed' : 'none',
-          audioSource: content.audioSource === 'upload' ? 'upload' : null,
-          audioLastError: content.audioSource === 'upload' ? '上传音频文件丢失，请重新上传' : null,
-          audioUpdatedAt: new Date(),
-          audioLeaseUntil: null,
-        },
-      });
+      data.audioStatus = 'none';
+      data.audioSource = null;
+      data.audioLastError = null;
     }
+
+    await this.prisma.content.update({ where: { id: content.id }, data });
     await this.groups.recomputeManifestEtag(content.groupId);
   }
 }
@@ -1264,35 +1170,6 @@ function defaultFrameName(dynamicType: string | null, config?: unknown): string 
   }
 }
 
-async function bulkSetContentSortOrders(
-  tx: Prisma.TransactionClient,
-  groupId: string,
-  order: string[]
-): Promise<void> {
-  if (order.length === 0) return;
-  const ids = Prisma.join(order);
-  await tx.$executeRaw`
-    UPDATE \`contents\`
-    SET \`sort_order\` = CASE \`id\`
-      ${Prisma.join(
-        order.map((id, idx) => Prisma.sql`WHEN ${id} THEN ${-(idx + 1)}`),
-        ' '
-      )}
-    END
-    WHERE \`group_id\` = ${groupId} AND \`id\` IN (${ids})
-  `;
-  await tx.$executeRaw`
-    UPDATE \`contents\`
-    SET \`sort_order\` = CASE \`id\`
-      ${Prisma.join(
-        order.map((id, idx) => Prisma.sql`WHEN ${id} THEN ${idx}`),
-        ' '
-      )}
-    END
-    WHERE \`group_id\` = ${groupId} AND \`id\` IN (${ids})
-  `;
-}
-
 async function restoreBlob(
   blob: BlobService,
   groupId: string,
@@ -1310,8 +1187,4 @@ async function restoreBlob(
     logger.warn(`恢复 ${kind} blob 失败 content=${contentId}: ${formatError(err)}`);
     throw err;
   }
-}
-
-function formatError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

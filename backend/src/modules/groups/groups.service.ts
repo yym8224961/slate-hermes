@@ -5,6 +5,8 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { BlobService } from '../../infra/blob/blob.service';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
+import { lockUserRow } from '../../common/db/row-locks';
+import { bulkSetGroupSortOrder } from '../../common/db/bulk-sort-order';
 import { audioBlobContentId } from '../audio/audio-blob-id';
 import { deviceStatusBarText } from '../contents/content-status-bar';
 
@@ -292,32 +294,37 @@ export class GroupsService {
   }
 
   async create(ownerUserId: string, body: { name: string }): Promise<GroupSummaryT> {
-    const sortOrder = await this.nextGroupSortOrder(ownerUserId);
-    const created = await this.prisma.group.create({
-      data: {
-        name: body.name,
-        structureEtag: 'empty',
-        manifestEtag: 'empty',
-        ownerUserId,
-        sortOrder,
-      },
-      include: { _count: { select: { contents: true } } },
-    });
-    // 反向自动绑定：这是 owner 的第一个相册时，把所有 selectedGroupId=null 的已绑设备都指过来。
-    // 配合 claim 时的「已有相册则自动绑第一个」，新用户全程不需要再去设备详情手动「分配相册」。
-    // 仅在 count==1 时触发，避免后续创建相册时覆盖用户主动留空的设备。
-    const groupCount = await this.prisma.group.count({ where: { ownerUserId } });
-    if (groupCount === 1) {
-      const result = await this.prisma.device.updateMany({
-        where: { ownerUserId, selectedGroupId: null },
-        data: { selectedGroupId: created.id },
+    const created = await this.prisma.$transaction(async (tx) => {
+      await lockUserRow(tx, ownerUserId);
+      const sortOrder = await this.nextGroupSortOrder(ownerUserId, tx);
+      const group = await tx.group.create({
+        data: {
+          name: body.name,
+          structureEtag: 'empty',
+          manifestEtag: 'empty',
+          ownerUserId,
+          sortOrder,
+        },
+        include: { _count: { select: { contents: true } } },
       });
-      if (result.count > 0) {
-        this.logger.log(
-          `first group ${created.id} created → auto-bound ${result.count} pending device(s)`
-        );
+
+      // 反向自动绑定：这是 owner 的第一个相册时，把所有 selectedGroupId=null 的已绑设备都指过来。
+      // 配合 claim 时的「已有相册则自动绑第一个」，新用户全程不需要再去设备详情手动「分配相册」。
+      // 仅在 count==1 时触发，避免后续创建相册时覆盖用户主动留空的设备。
+      const groupCount = await tx.group.count({ where: { ownerUserId } });
+      if (groupCount === 1) {
+        const result = await tx.device.updateMany({
+          where: { ownerUserId, selectedGroupId: null },
+          data: { selectedGroupId: group.id },
+        });
+        if (result.count > 0) {
+          this.logger.log(
+            `first group ${group.id} created → auto-bound ${result.count} pending device(s)`
+          );
+        }
       }
-    }
+      return group;
+    });
     return toSummary(created, 0);
   }
 
@@ -339,16 +346,20 @@ export class GroupsService {
   }
 
   async delete(gid: string, ownerUserId: string): Promise<void> {
-    const g = await this.prisma.group.findUnique({
-      where: { id: gid },
-      include: {
-        contents: { select: { id: true, audioEtag: true } },
-      },
+    const g = await this.prisma.$transaction(async (tx) => {
+      await lockUserRow(tx, ownerUserId);
+      const group = await tx.group.findUnique({
+        where: { id: gid },
+        include: {
+          contents: { select: { id: true, audioEtag: true } },
+        },
+      });
+      if (!group || group.ownerUserId !== ownerUserId) {
+        throw new NotFoundError('相册不存在');
+      }
+      await tx.group.delete({ where: { id: gid } });
+      return group;
     });
-    if (!g || g.ownerUserId !== ownerUserId) {
-      throw new NotFoundError('相册不存在');
-    }
-    await this.prisma.group.delete({ where: { id: gid } });
     const deleted = await Promise.allSettled(
       g.contents.flatMap((content) => {
         return [
@@ -363,8 +374,11 @@ export class GroupsService {
     if (failed > 0) this.logger.warn(`group ${gid} deleted with ${failed} blob cleanup failure(s)`);
   }
 
-  async nextGroupSortOrder(ownerUserId: string): Promise<number> {
-    const top = await this.prisma.group.findFirst({
+  async nextGroupSortOrder(
+    ownerUserId: string,
+    client: Prisma.TransactionClient | PrismaService = this.prisma
+  ): Promise<number> {
+    const top = await client.group.findFirst({
       where: { ownerUserId },
       orderBy: { sortOrder: 'desc' },
       select: { sortOrder: true },
@@ -373,25 +387,29 @@ export class GroupsService {
   }
 
   async reorderGroups(ownerUserId: string, order: string[]): Promise<void> {
-    const owned = await this.prisma.group.findMany({
-      where: { ownerUserId },
-      select: { id: true },
-    });
-    const ownedSet = new Set(owned.map((g) => g.id));
-    const orderSet = new Set(order);
-    if (
-      order.length !== ownedSet.size ||
-      orderSet.size !== order.length ||
-      !order.every((id) => ownedSet.has(id))
-    ) {
-      throw new ValidationError('排序列表须包含所有相册且不重复', {
-        code: 'order_mismatch',
-      });
-    }
-
     await this.prisma.$transaction(async (tx) => {
-      await bulkSetGroupSortOrders(tx, ownerUserId, order);
-      for (const groupId of order) {
+      await lockUserRow(tx, ownerUserId);
+      const owned = await tx.group.findMany({
+        where: { ownerUserId },
+        select: { id: true, sortOrder: true },
+      });
+      const sortOrderById = new Map(owned.map((g) => [g.id, g.sortOrder]));
+      const orderSet = new Set(order);
+      if (
+        order.length !== sortOrderById.size ||
+        orderSet.size !== order.length ||
+        !order.every((id) => sortOrderById.has(id))
+      ) {
+        throw new ValidationError('排序列表须包含所有相册且不重复', {
+          code: 'order_mismatch',
+        });
+      }
+      // manifestEtag 包含 group.sortOrder，所以只为位置真正变化的 group 重算；位置没动的跳过，
+      // 避免 reorder 1 个 group 时把所有 group 的 manifest 都刷一遍（每次刷会扫该 group 全部 content）。
+      const changed = order.filter((id, idx) => sortOrderById.get(id) !== idx);
+      if (changed.length === 0) return;
+      await bulkSetGroupSortOrder(tx, ownerUserId, order);
+      for (const groupId of changed) {
         await this.recomputeManifestEtag(groupId, tx);
       }
     });
@@ -477,34 +495,5 @@ async function bulkSetContentEtags(
       )}
     END
     WHERE \`id\` IN (${ids})
-  `;
-}
-
-async function bulkSetGroupSortOrders(
-  tx: Prisma.TransactionClient,
-  ownerUserId: string,
-  order: string[]
-): Promise<void> {
-  if (order.length === 0) return;
-  const ids = Prisma.join(order);
-  await tx.$executeRaw`
-    UPDATE \`groups\`
-    SET \`sort_order\` = CASE \`id\`
-      ${Prisma.join(
-        order.map((id, idx) => Prisma.sql`WHEN ${id} THEN ${-(idx + 1)}`),
-        ' '
-      )}
-    END
-    WHERE \`owner_user_id\` = ${ownerUserId} AND \`id\` IN (${ids})
-  `;
-  await tx.$executeRaw`
-    UPDATE \`groups\`
-    SET \`sort_order\` = CASE \`id\`
-      ${Prisma.join(
-        order.map((id, idx) => Prisma.sql`WHEN ${id} THEN ${idx}`),
-        ' '
-      )}
-    END
-    WHERE \`owner_user_id\` = ${ownerUserId} AND \`id\` IN (${ids})
   `;
 }

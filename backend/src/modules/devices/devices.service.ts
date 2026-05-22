@@ -4,6 +4,8 @@ import { Prisma } from '@prisma/client';
 import type { DeviceStateT, DeviceSummaryT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
+import { lockUserRow } from '../../common/db/row-locks';
+import { bulkSetDeviceSortOrder } from '../../common/db/bulk-sort-order';
 import { GroupsService, type CycleResult } from '../groups/groups.service';
 
 export interface TelemetryInput {
@@ -15,8 +17,6 @@ export interface TelemetryInput {
   current_content_seq?: number;
   current_content_etag?: string;
   manifest_etag?: string;
-  free_heap?: number;
-  fw_build_ts?: string;
 }
 
 // toSummary 只需要 admin 端要展示的字段，pairCode/secretHash 不在其中。
@@ -31,8 +31,6 @@ interface DeviceRow {
   batteryPct: number | null;
   rssiDbm: number | null;
   fwVersion: string | null;
-  freeHeap?: number | null;
-  fwBuildTs?: string | null;
   ownerUserId: string | null;
   sortOrder: number;
 }
@@ -40,6 +38,13 @@ interface DeviceRow {
 // 配对码字母表去掉视觉易混的 0/O/1/I/L，降低用户对屏抄码出错率。
 const PAIR_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const REGISTER_RESET_THROTTLE_MS = 60_000;
+
+interface RegisterResetOutcome {
+  deviceId: string;
+  reclaimed: boolean;
+  previousOwnerUserId: string | null;
+  isFirstRegister: boolean;
+}
 
 @Injectable()
 export class DevicesService {
@@ -62,64 +67,103 @@ export class DevicesService {
     reclaimed: boolean;
     serverTime: string;
   }> {
+    const now = new Date();
+
+    // 预检：节流命中时直接拒绝，避免白白消耗熵 + 一次 pair_code 唯一性查询。
+    // 事务内还会复检一次（行锁后），所以这里允许漏检（preExisting 视图陈旧）。
+    const preExisting = await this.prisma.device.findUnique({
+      where: { mac },
+      select: { ownerUserId: true, lastRegisteredAt: true },
+    });
+    if (preExisting?.ownerUserId !== null && preExisting?.lastRegisteredAt) {
+      const elapsedMs = now.getTime() - preExisting.lastRegisteredAt.getTime();
+      if (elapsedMs < REGISTER_RESET_THROTTLE_MS) {
+        throw throttleError(elapsedMs);
+      }
+    }
+
     const secret = generateSecret();
     const secretHash = hashSecret(secret);
     const pairCode = await this.generateUniquePairCode();
 
-    const now = new Date();
-    const existing = await this.prisma.device.findUnique({
-      where: { mac },
-      select: { id: true, ownerUserId: true, lastRegisteredAt: true },
-    });
-
-    let deviceId: string;
-    let reclaimed: boolean;
-    if (existing) {
-      const elapsedMs = existing.lastRegisteredAt
-        ? now.getTime() - existing.lastRegisteredAt.getTime()
-        : Number.POSITIVE_INFINITY;
-      if (existing.ownerUserId !== null && elapsedMs < REGISTER_RESET_THROTTLE_MS) {
-        const retryAfterSec = Math.max(
-          Math.ceil((REGISTER_RESET_THROTTLE_MS - elapsedMs) / 1000),
-          1
-        );
-        throw new ConflictError('设备刚刚注册过，请稍后再重置', {
-          code: 'register_throttled',
-          retry_after_sec: retryAfterSec,
+    const outcome = await this.prisma
+      .$transaction(async (tx): Promise<RegisterResetOutcome> => {
+        const current = await tx.device.findUnique({
+          where: { mac },
+          select: { id: true, ownerUserId: true, lastRegisteredAt: true },
         });
-      }
-      await this.prisma.device.update({
-        where: { mac },
-        data: {
-          secretHash,
-          pairCode,
-          ownerUserId: null,
-          selectedGroupId: null,
-          lastRegisteredAt: now,
-        },
+
+        if (!current) {
+          const created = await tx.device.create({
+            data: { mac, secretHash, pairCode, lastRegisteredAt: now },
+            select: { id: true },
+          });
+          return {
+            deviceId: created.id,
+            reclaimed: false,
+            previousOwnerUserId: null,
+            isFirstRegister: true,
+          };
+        }
+
+        if (current.ownerUserId !== null) {
+          await lockUserRow(tx, current.ownerUserId);
+          const elapsedMs = current.lastRegisteredAt
+            ? now.getTime() - current.lastRegisteredAt.getTime()
+            : Number.POSITIVE_INFINITY;
+          if (elapsedMs < REGISTER_RESET_THROTTLE_MS) {
+            throw throttleError(elapsedMs);
+          }
+        }
+
+        await tx.device.update({
+          where: { mac },
+          data: {
+            secretHash,
+            pairCode,
+            ownerUserId: null,
+            selectedGroupId: null,
+            lastRegisteredAt: now,
+          },
+        });
+        return {
+          deviceId: current.id,
+          reclaimed: current.ownerUserId !== null,
+          previousOwnerUserId: current.ownerUserId,
+          isFirstRegister: false,
+        };
+      })
+      .catch((err: unknown) => {
+        // 并发场景：两个同 mac 的 register 都看到 current=null，第一个 create 后第二个撞 mac
+        // 唯一约束 P2002。让客户端短延迟重试，避免在 reset 路径上暴露 5xx。
+        if (
+          err instanceof Prisma.PrismaClientKnownRequestError &&
+          err.code === 'P2002' &&
+          isUniqueTarget(err, 'mac')
+        ) {
+          throw new ConflictError('设备并发注册中，请重试', {
+            code: 'register_race',
+            retry_after_sec: 1,
+          });
+        }
+        throw err;
       });
-      deviceId = existing.id;
-      reclaimed = existing.ownerUserId !== null;
+
+    if (outcome.isFirstRegister) {
+      this.logger.log(`device first registered: mac=${mac} id=${outcome.deviceId}`);
+    } else if (outcome.reclaimed) {
       this.logger.log(
-        reclaimed
-          ? `device reclaimed (physical reset): mac=${mac} id=${deviceId} prev_owner=${existing.ownerUserId}`
-          : `device re-registered (was unowned): mac=${mac} id=${deviceId}`
+        `device reclaimed (physical reset): mac=${mac} id=${outcome.deviceId} prev_owner=${maskId(outcome.previousOwnerUserId)}`
       );
     } else {
-      const created = await this.prisma.device.create({
-        data: { mac, secretHash, pairCode, lastRegisteredAt: now },
-        select: { id: true },
-      });
-      deviceId = created.id;
-      reclaimed = false;
-      this.logger.log(`device first registered: mac=${mac} id=${deviceId}`);
+      this.logger.log(`device re-registered (was unowned): mac=${mac} id=${outcome.deviceId}`);
     }
 
     return {
-      deviceId,
+      deviceId: outcome.deviceId,
       deviceSecret: secret,
       pairCode,
-      reclaimed,
+      reclaimed: outcome.reclaimed,
       serverTime: now.toISOString(),
     };
   }
@@ -127,7 +171,7 @@ export class DevicesService {
   // DeviceAuthGuard 用：Bearer secret → 找对应 device（sha256 比对）。
   async findDeviceIdBySecret(secret: string): Promise<string | null> {
     const hash = hashSecret(secret);
-    const row = await this.prisma.device.findFirst({
+    const row = await this.prisma.device.findUnique({
       where: { secretHash: hash },
       select: { id: true },
     });
@@ -142,8 +186,6 @@ export class DevicesService {
         ...(t?.battery_pct !== undefined ? { batteryPct: t.battery_pct } : {}),
         ...(t?.rssi_dbm !== undefined ? { rssiDbm: t.rssi_dbm } : {}),
         ...(t?.fw_version !== undefined ? { fwVersion: t.fw_version } : {}),
-        ...(t?.free_heap !== undefined ? { freeHeap: t.free_heap } : {}),
-        ...(t?.fw_build_ts !== undefined ? { fwBuildTs: t.fw_build_ts } : {}),
       },
     });
   }
@@ -243,6 +285,7 @@ export class DevicesService {
           });
         }
 
+        await lockUserRow(tx, ownerUserId);
         const sortOrder = await this.nextDeviceSortOrder(ownerUserId, tx);
         const newPairCode = await this.generateUniquePairCode(tx);
         const ownerGroups = await this.groups.listOwnerGroups(ownerUserId, tx);
@@ -258,11 +301,15 @@ export class DevicesService {
       .catch((err: unknown) => {
         if (err instanceof Prisma.PrismaClientKnownRequestError) {
           // P2025: CAS 落空 —— 另一个事务已抢占。
-          // P2002: 极小概率两并发事务生成同一新 pairCode。两种都用同一 conflict 提示，
-          //        让前端引导用户重新对屏抄码。
-          if (err.code === 'P2025' || err.code === 'P2002') {
+          // P2002: 极小概率两并发事务生成同一新 pairCode。
+          if (err.code === 'P2025' || isUniqueTarget(err, 'pair_code')) {
             throw new ConflictError('配对码已被使用，请查看设备屏幕上的最新配对码', {
               code: 'pair_code_already_claimed',
+            });
+          }
+          if (isUniqueTarget(err, 'owner_user_id', 'sort_order')) {
+            throw new ConflictError('设备排序冲突，请重试', {
+              code: 'device_sort_order_conflict',
             });
           }
         }
@@ -272,7 +319,7 @@ export class DevicesService {
     const { device, freshlyClaimed } = result;
     if (freshlyClaimed) {
       this.logger.log(
-        `device claimed by pair code: id=${device.id} owner=${ownerUserId}` +
+        `device claimed by pair code: id=${device.id} owner=${maskId(ownerUserId)}` +
           (device.selectedGroupId
             ? ` auto-bound to group ${device.selectedGroupId}`
             : ' (owner has no group yet)')
@@ -284,54 +331,52 @@ export class DevicesService {
   }
 
   async unbind(deviceId: string, ownerUserId: string): Promise<void> {
-    await this.requireOwned(deviceId, ownerUserId);
-    // 解绑同时轮换 pair_code，防截图泄漏的旧码被人立即抢 claim。
-    // secret 不轮换：让设备 poll 看到 owner=null 自然 emit kUnbound 切回 splash 显示新码，
-    // 不强制 401 重启，体验更顺。攻击者拿过 secret 还能继续看 unowned 状态，但要 claim
-    // 仍需在用户之前用新 pair_code，并且自己得有 Web 账号。
-    const newPairCode = await this.generateUniquePairCode();
-    await this.prisma.device.update({
-      where: { id: deviceId },
-      data: {
-        ownerUserId: null,
-        selectedGroupId: null,
-        pairCode: newPairCode,
-      },
+    await this.prisma.$transaction(async (tx) => {
+      const device = await tx.device.findUnique({
+        where: { id: deviceId },
+        select: { ownerUserId: true },
+      });
+      if (!device || device.ownerUserId !== ownerUserId) {
+        throw new NotFoundError('设备不存在');
+      }
+      await lockUserRow(tx, ownerUserId);
+      // 解绑同时轮换 pair_code，防截图泄漏的旧码被人立即抢 claim。
+      // secret 不轮换：让设备 poll 看到 owner=null 自然 emit kUnbound 切回 splash 显示新码，
+      // 不强制 401 重启，体验更顺。攻击者拿过 secret 还能继续看 unowned 状态，但要 claim
+      // 仍需在用户之前用新 pair_code，并且自己得有 Web 账号。
+      const newPairCode = await this.generateUniquePairCode(tx);
+      await tx.device.update({
+        where: { id: deviceId },
+        data: {
+          ownerUserId: null,
+          selectedGroupId: null,
+          pairCode: newPairCode,
+        },
+      });
     });
     this.logger.log(`device unbound: id=${deviceId} new_pair_code=***`);
   }
 
   async reorderDevices(ownerUserId: string, order: string[]): Promise<void> {
-    const owned = await this.prisma.device.findMany({
-      where: { ownerUserId },
-      select: { id: true },
-    });
-    const ownedSet = new Set(owned.map((d) => d.id));
-    const orderSet = new Set(order);
-    if (
-      order.length !== ownedSet.size ||
-      orderSet.size !== order.length ||
-      !order.every((id) => ownedSet.has(id))
-    ) {
-      throw new ValidationError('排序列表须包含所有设备且不重复', {
-        code: 'order_mismatch',
+    await this.prisma.$transaction(async (tx) => {
+      await lockUserRow(tx, ownerUserId);
+      const owned = await tx.device.findMany({
+        where: { ownerUserId },
+        select: { id: true },
       });
-    }
-
-    await this.prisma.$transaction([
-      ...order.map((id, idx) =>
-        this.prisma.device.update({
-          where: { id },
-          data: { sortOrder: -(idx + 1) },
-        })
-      ),
-      ...order.map((id, idx) =>
-        this.prisma.device.update({
-          where: { id },
-          data: { sortOrder: idx },
-        })
-      ),
-    ]);
+      const ownedSet = new Set(owned.map((d) => d.id));
+      const orderSet = new Set(order);
+      if (
+        order.length !== ownedSet.size ||
+        orderSet.size !== order.length ||
+        !order.every((id) => ownedSet.has(id))
+      ) {
+        throw new ValidationError('排序列表须包含所有设备且不重复', {
+          code: 'order_mismatch',
+        });
+      }
+      await bulkSetDeviceSortOrder(tx, ownerUserId, order);
+    });
   }
 
   // ── 内部 helpers ────────────────────────────────────────────
@@ -387,8 +432,6 @@ export function toSummary(d: DeviceRow): DeviceSummaryT {
     battery_pct: d.batteryPct,
     rssi_dbm: d.rssiDbm,
     fw_version: d.fwVersion,
-    free_heap: d.freeHeap ?? null,
-    fw_build_ts: d.fwBuildTs ?? null,
     owner_user_id: d.ownerUserId,
     sort_order: d.sortOrder,
   };
@@ -400,4 +443,30 @@ function generateSecret(): string {
 }
 function hashSecret(secret: string): string {
   return createHash('sha256').update(secret).digest('hex');
+}
+
+function throttleError(elapsedMs: number): ConflictError {
+  const retryAfterSec = Math.max(Math.ceil((REGISTER_RESET_THROTTLE_MS - elapsedMs) / 1000), 1);
+  return new ConflictError('设备刚刚注册过，请稍后再重置', {
+    code: 'register_throttled',
+    retry_after_sec: retryAfterSec,
+  });
+}
+
+function isUniqueTarget(err: Prisma.PrismaClientKnownRequestError, ...fields: string[]): boolean {
+  if (err.code !== 'P2002') return false;
+  const target = err.meta?.target;
+  if (Array.isArray(target)) {
+    return fields.every((field) => target.includes(field));
+  }
+  if (typeof target === 'string') {
+    return fields.every((field) => target.includes(field));
+  }
+  return false;
+}
+
+// 日志里保留 id 末四位，便于排查；不泄露完整 id。
+function maskId(id: string | null): string {
+  if (!id) return 'null';
+  return `***${id.slice(-4)}`;
 }

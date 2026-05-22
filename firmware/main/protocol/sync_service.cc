@@ -2,7 +2,6 @@
 
 #include <cstring>
 #include <esp_log.h>
-#include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
@@ -186,8 +185,6 @@ static api::Telemetry BuildTelemetry(const SyncDeps& deps, const std::string& cu
     }
     if (deps.read_rssi) tel.rssi_dbm = deps.read_rssi();
     tel.fw_version        = CONFIG_APP_PROJECT_VER;
-    tel.free_heap         = static_cast<int>(esp_get_free_heap_size());
-    tel.fw_build_ts       = __DATE__ " " __TIME__;
     if (deps.wake_reason) tel.wake_reason = deps.wake_reason();
     tel.current_group     = current_group;
     if (deps.current_content_seq) tel.current_content_seq = deps.current_content_seq();

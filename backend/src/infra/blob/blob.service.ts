@@ -21,10 +21,6 @@ export class BlobService {
     return p;
   }
 
-  globalPath(contentId: string, kind: BlobKind): string {
-    return this.path('_global', contentId, kind);
-  }
-
   async write(
     groupId: string,
     contentId: string,
@@ -49,34 +45,6 @@ export class BlobService {
   async delete(groupId: string, contentId: string, kind: BlobKind): Promise<void> {
     try {
       await unlink(this.path(groupId, contentId, kind));
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-    }
-  }
-
-  async writeGlobal(
-    contentId: string,
-    kind: BlobKind,
-    data: Uint8Array | Buffer
-  ): Promise<{ path: string; size: number }> {
-    const p = this.globalPath(contentId, kind);
-    await mkdir(dirname(p), { recursive: true });
-    await writeFile(p, data);
-    return { path: p, size: data.byteLength };
-  }
-
-  async readGlobal(contentId: string, kind: BlobKind): Promise<Buffer | null> {
-    try {
-      return await readFile(this.globalPath(contentId, kind));
-    } catch (err: unknown) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      throw err;
-    }
-  }
-
-  async deleteGlobal(contentId: string, kind: BlobKind): Promise<void> {
-    try {
-      await unlink(this.globalPath(contentId, kind));
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }

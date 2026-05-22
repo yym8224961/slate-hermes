@@ -28,7 +28,7 @@ import { useConfirm } from '@/components/feedback/Confirm';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { Select, SelectItem, SelectSeparator } from '@/components/ui/Select';
-import { formatBytes, isOnline, timeAgo, rssiLabel } from '@/lib/format';
+import { isOnline, timeAgo, rssiLabel } from '@/lib/format';
 import { inputCls, dialogContentWideCls, dialogOverlayCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
 import { useInlineRename } from '@/lib/hooks';
@@ -192,7 +192,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
               <h3 className="font-sans text-[12px] uppercase tracking-wide text-stone mb-2">
                 状态
               </h3>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
                 <MetaCard
                   icon={<BatteryIcon size={16} />}
                   label="电量"
@@ -208,13 +208,6 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
                   stale={!online}
                 />
                 <MetaCard label="固件" value={device.fw_version ?? '—'} mono />
-                <MetaCard label="构建" value={device.fw_build_ts ?? '—'} mono stale={!online} />
-                <MetaCard
-                  label="空闲堆"
-                  value={online && device.free_heap != null ? formatBytes(device.free_heap) : '—'}
-                  mono
-                  stale={!online}
-                />
                 <MetaCard label="心跳" value={online ? '刚刚' : timeAgo(device.last_seen_at)} />
               </div>
             </section>

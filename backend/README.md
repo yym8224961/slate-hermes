@@ -69,9 +69,11 @@ Group   id name structure_etag manifest_etag owner_user_id? sort_order
         └ contents: Content[]（cascade delete）
 
 Content id (group_id, sort_order) unique 复合键
-        title? caption? kind dynamic_type? dynamic_config? dynamic_data?
-        image_etag image_size audio_etag? audio_size?
-        dynamic_last_run_at? dynamic_next_run_at? dynamic_last_error?
+        frame_name? kind image_etag image_size content_etag
+        audio_etag? audio_size? audio_status audio_source? audio_voice?
+        audio_text? audio_last_error? audio_updated_at? audio_lease_until? audio_attempts
+        dynamic_type? dynamic_config? dynamic_data?
+        dynamic_last_run_at? dynamic_next_run_at? dynamic_refresh_due_at? dynamic_last_error?
 ```
 
 关键约束：
@@ -174,12 +176,12 @@ POST /api/v1/devices/current/group/prev   环回切上一组 → DeviceState
 ## Blob 与渲染缓存
 
 ```
-{BLOB_DIR}/                 默认 ./blobs（dev）或 /data/blobs（docker）
-├── {groupId}/{contentId}.img 1bpp packed，15000 字节
-├── {groupId}/{contentId}.pcm 16 kHz mono s16le raw PCM
+{BLOB_DIR}/                                   默认 ./blobs（dev）或 /data/blobs（docker）
+├── {groupId}/{contentId}.img                 1bpp packed，15000 字节
+├── {groupId}/{contentId}_{audioEtag}.pcm     16 kHz mono s16le raw PCM
 └── image-render-cache/{key0..2}/{key}.bin
-                                    sharp 渲染产物 key = sha1(sourceEtag|w|h|threshold|mode|...)
-                                    两层 hex 前缀分桶避免单目录爆 inode
+                                              sharp 渲染产物 key = sha1(sourceEtag|w|h|threshold|mode|...)
+                                              两层 hex 前缀分桶避免单目录爆 inode
 ```
 
 ETag 算法：`computeETag(buf) = sha256(buf).slice(0, 16)`。manifest 的 `group.manifest_etag` 会随内容图片、音频、标题或动态类型变化而更新。

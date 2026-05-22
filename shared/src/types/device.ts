@@ -57,8 +57,6 @@ export const PollRequest = z.object({
       current_content_seq: z.number().int().nonnegative().optional(),
       current_content_etag: z.string().max(64).optional(),
       manifest_etag: z.string().max(64).optional(),
-      free_heap: z.number().int().nonnegative().optional(),
-      fw_build_ts: z.string().max(32).optional(),
     })
     .optional(),
 });
@@ -120,8 +118,6 @@ export const DeviceSummary = z.object({
   battery_pct: z.number().int().nullable(),
   rssi_dbm: z.number().int().nullable(),
   fw_version: z.string().nullable(),
-  free_heap: z.number().int().nullable(),
-  fw_build_ts: z.string().nullable(),
   owner_user_id: z.string().nullable(),
   sort_order: z.number().int(),
 });
