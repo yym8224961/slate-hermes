@@ -16,7 +16,7 @@ void ChargeStatus::Init(gpio_num_t detect_gpio, gpio_num_t full_gpio, int64_t no
     cfg.pull_down_en  = GPIO_PULLDOWN_DISABLE;
     ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_config(&cfg));
 
-    UpdateSnapshot(State::kNoPower, false, false, false);
+    UpdateSnapshot(State::kNoPower, false, false);
     Tick(now_ms);
 }
 
@@ -82,11 +82,12 @@ void ChargeStatus::Tick(int64_t now_ms) {
         state = State::kCharging;
     }
 
-    UpdateSnapshot(state, power_present, state == State::kFull, no_battery);
+    UpdateSnapshot(state, power_present, no_battery);
 }
 
-void ChargeStatus::UpdateSnapshot(State state, bool power_present, bool full, bool no_battery) {
+void ChargeStatus::UpdateSnapshot(State state, bool power_present, bool no_battery) {
     const bool     charging = (state == State::kCharging || state == State::kNoBattery);
+    const bool     full     = (state == State::kFull);
     const uint32_t packed   = Pack(state, power_present, charging, full, no_battery);
     const uint32_t old      = snapshot_.exchange(packed, std::memory_order_relaxed);
     if (old != packed && on_state_changed_) {

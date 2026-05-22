@@ -2,6 +2,8 @@ import { ArgumentMetadata, Injectable, PipeTransform } from '@nestjs/common';
 import { ZodError, ZodType } from 'zod';
 import { ValidationError } from '../errors';
 
+// DTO classes keep only static schema metadata. Properties are declared with `declare`
+// so Nest can pass the parsed Zod result through without creating runtime fields.
 @Injectable()
 export class ZodValidationPipe implements PipeTransform {
   transform(value: unknown, metadata: ArgumentMetadata): unknown {

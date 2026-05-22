@@ -55,8 +55,8 @@ class SyncService {
     enum class SyncMode { kUserActive, kDynamicWake };
     void SyncOnce(SyncMode mode);
     void DoCycle(const std::string& direction);
-    void SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, bool& group_changed);
-    bool SyncCurrentContent(const std::string& gid, const api::ContentMeta& content);
+    bool SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, bool& group_changed);
+    bool SyncCurrentContent(const std::string& gid, const api::ContentMeta& content, bool& changed);
     void PostGroupReady(const std::string& gid, const std::string& name, int content_count, bool content_changed);
     std::string GetCurrentGroupLocked() const;
     void        SetCurrentGroupLocked(const std::string& gid);

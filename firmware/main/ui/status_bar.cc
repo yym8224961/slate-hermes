@@ -7,20 +7,30 @@
 namespace {
 
 const char* WifiIcon(bool connected, int rssi) {
-    if (!connected) return FONT_AWESOME_WIFI_SLASH;
-    if (rssi >= -65) return FONT_AWESOME_WIFI;
-    if (rssi >= -75) return FONT_AWESOME_WIFI_FAIR;
+    if (!connected)
+        return FONT_AWESOME_WIFI_SLASH;
+    if (rssi >= -65)
+        return FONT_AWESOME_WIFI;
+    if (rssi >= -75)
+        return FONT_AWESOME_WIFI_FAIR;
     return FONT_AWESOME_WIFI_WEAK;
 }
 
 const char* BatteryIcon(int pct, bool charging, bool full) {
-    if (full)     return FONT_AWESOME_BATTERY_FULL;
-    if (charging) return FONT_AWESOME_BATTERY_BOLT;
-    if (pct < 0)  return FONT_AWESOME_BATTERY_EMPTY;
-    if (pct >= 80) return FONT_AWESOME_BATTERY_FULL;
-    if (pct >= 60) return FONT_AWESOME_BATTERY_THREE_QUARTERS;
-    if (pct >= 40) return FONT_AWESOME_BATTERY_HALF;
-    if (pct >= 20) return FONT_AWESOME_BATTERY_QUARTER;
+    if (full)
+        return FONT_AWESOME_BATTERY_FULL;
+    if (charging)
+        return FONT_AWESOME_BATTERY_BOLT;
+    if (pct < 0)
+        return FONT_AWESOME_BATTERY_EMPTY;
+    if (pct >= 80)
+        return FONT_AWESOME_BATTERY_FULL;
+    if (pct >= 60)
+        return FONT_AWESOME_BATTERY_THREE_QUARTERS;
+    if (pct >= 40)
+        return FONT_AWESOME_BATTERY_HALF;
+    if (pct >= 20)
+        return FONT_AWESOME_BATTERY_QUARTER;
     return FONT_AWESOME_BATTERY_EMPTY;
 }
 
@@ -78,7 +88,8 @@ StatusBar::StatusBar(lv_obj_t* parent) {
 
 bool StatusBar::SetWifi(bool connected, int rssi) {
     const char* icon = WifiIcon(connected, rssi);
-    if (icon == shown_wifi_) return false;
+    if (icon == shown_wifi_)
+        return false;
     shown_wifi_ = icon;
     lv_label_set_text(wifi_label_, icon);
     return true;
@@ -109,7 +120,7 @@ bool StatusBar::SetBattery(int pct, bool charging, bool full) {
         const int clamped = pct > 100 ? 100 : pct;
         std::snprintf(buf, sizeof(buf), "%d%%", clamped);
     }
-    if (buf != shown_pct_text_) {
+    if (shown_pct_text_ != buf) {
         shown_pct_text_ = buf;
         lv_label_set_text(battery_pct_lbl_, buf);
         lv_obj_align(battery_pct_lbl_, LV_ALIGN_RIGHT_MID, -26, 0);
@@ -119,7 +130,8 @@ bool StatusBar::SetBattery(int pct, bool charging, bool full) {
 }
 
 bool StatusBar::SetCaption(const std::string& text) {
-    if (text == shown_title_) return false;
+    if (text == shown_title_)
+        return false;
     shown_title_ = text;
     lv_label_set_text(title_label_, text.c_str());
     lv_obj_align(title_label_, LV_ALIGN_CENTER, 0, 0);
@@ -127,9 +139,11 @@ bool StatusBar::SetCaption(const std::string& text) {
 }
 
 void StatusBar::Show() {
-    if (root_) lv_obj_clear_flag(root_, LV_OBJ_FLAG_HIDDEN);
+    if (root_)
+        lv_obj_clear_flag(root_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void StatusBar::Hide() {
-    if (root_) lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);
+    if (root_)
+        lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);
 }

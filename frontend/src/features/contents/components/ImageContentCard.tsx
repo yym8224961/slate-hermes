@@ -1,7 +1,4 @@
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import { GripVertical, Pencil, Trash2 } from 'lucide-react';
-import { useMemo } from 'react';
 import type { ContentSummaryT } from 'shared';
 import { useContentImage, useDeleteContent } from '@/features/contents/queries';
 import { AudioPlayPreview } from './AudioPlayPreview';
@@ -10,6 +7,7 @@ import { useConfirm } from '@/components/feedback/Confirm';
 import { useToast } from '@/components/feedback/Toast';
 import { ContentCardShell } from './content-card/ContentCardShell';
 import { FrameBitmapPreview } from '@/features/contents/components/FrameBitmapPreview';
+import { useSortableStyle } from '@/lib/dnd';
 
 interface ImageContentCardProps {
   gid: string;
@@ -23,18 +21,7 @@ export function ImageContentCard({ gid, content, onEdit }: ImageContentCardProps
   const toast = useToast();
   const img = useContentImage(content.id, content.image_etag);
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: content.id,
-    animateLayoutChanges: () => false,
-  });
-  const style = useMemo(
-    () => ({
-      transform: CSS.Transform.toString(transform),
-      transition: 'none',
-      zIndex: isDragging ? 10 : undefined,
-    }),
-    [isDragging, transform]
-  );
+  const { attributes, listeners, setNodeRef, style, isDragging } = useSortableStyle(content.id);
 
   async function onDelete() {
     const ok = await confirm({

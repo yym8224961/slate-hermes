@@ -45,6 +45,7 @@ backend/prisma/migrations/dev.db
 backend/blobs/
 
 # === 其他 ===
+references/
 *.bak
 *.tmp
 *.temp

@@ -58,8 +58,18 @@ export class DevicesService {
   // ── 注册 / telemetry ────────────────────────────────────────
 
   // 无鉴权路由唯一行为：固件 NVS 没 secret 时调一次。
-  // 同 mac 二次进来走 reset 路径；已绑定设备带 60s 保护窗口，避免一次 NVS 写盘失败
-  // 被放大成连续 reset 丢所有权。
+  //
+  // ⚠️ 设计决定（不要改）：同 mac 二次进来一律走 reset 路径，清 owner、清相册、轮换
+  // secret + pair_code —— 即「物理重置即转移」语义。已知代价是 mac 可被嗅探/伪造，
+  // 攻击者拿到 mac 即可夺取设备所有权；当前用户基数极小（个位数），权衡后选了可用性：
+  //   - 设备 NVS 损坏、刷固件、二手转手、忘记 owner 账号密码 等场景下不会把用户锁死；
+  //   - 持有者本人想换网络/重置配对，无需先登 Web 端解绑，物理控制即可。
+  // 60s 节流仅用于防一次 NVS 写盘失败被放大成连续 reset 丢所有权，不是安全机制。
+  //
+  // 请勿"修复"成 require-unbind（已绑定就 409）：上一版试过，会把"NVS 坏掉的合法持有者"
+  // 永久锁在 409 错误里，必须先能登 Web 端才能解开 —— 反而让设备失去物理控制权这条最后
+  // 兜底。若未来用户量上来要堵 mac 后门，应通过物理重置 + 屏显 challenge + Web 端确认
+  // 的方式重做，而不是简单拒绝 mac-only 注册。
   async registerOrReset(mac: string): Promise<{
     deviceId: string;
     deviceSecret: string; // 明文，仅本次返回，落库只存 sha256

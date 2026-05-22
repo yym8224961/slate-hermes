@@ -1,14 +1,12 @@
 // 内容组卡片：可拖拽排序 + 内容数展示 + 底部操作行。
 
-import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { Layers, Trash2, GripVertical } from 'lucide-react';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import type { GroupSummaryT } from 'shared';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { useSortableStyle } from '@/lib/dnd';
 
 export function GroupCardSortable({
   group,
@@ -17,18 +15,7 @@ export function GroupCardSortable({
   group: GroupSummaryT;
   onDelete: () => void;
 }) {
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: group.id,
-    animateLayoutChanges: () => false,
-  });
-  const style = useMemo(
-    () => ({
-      transform: CSS.Transform.toString(transform),
-      transition: 'none' as const,
-      zIndex: isDragging ? 10 : undefined,
-    }),
-    [transform, isDragging]
-  );
+  const { attributes, listeners, setNodeRef, style, isDragging } = useSortableStyle(group.id);
 
   return (
     <div

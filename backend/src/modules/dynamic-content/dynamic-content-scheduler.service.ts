@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { AppConfig } from '../../infra/config/app.config';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { formatError } from '../../common/utils';
 import { DynamicContentRendererService } from './dynamic-content-renderer.service';
 import { claimLeaseJobs } from './lease-claim';
 
@@ -129,8 +130,4 @@ export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDes
       },
     });
   }
-}
-
-function formatError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

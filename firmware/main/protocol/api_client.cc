@@ -15,9 +15,9 @@
 #include "protocol_keys.h"
 
 namespace {
-constexpr char kTag[] = "Api";
+constexpr char kTag[]                      = "Api";
 constexpr int  kUnauthorizedResetThreshold = 5;
-}
+}  // namespace
 
 namespace api {
 
@@ -25,8 +25,8 @@ static std::string s_url;
 static std::string s_mac;
 static std::string s_secret;
 // 统一保护可变全局配置，避免后台同步线程与设置线程并发 data race。
-static std::mutex s_state_mutex;
-static UnauthorizedCb s_unauth_cb;
+static std::mutex       s_state_mutex;
+static UnauthorizedCb   s_unauth_cb;
 static std::atomic<int> s_consecutive_401{0};
 
 void Init(const std::string& url, const std::string& mac, const std::string& device_secret) {
@@ -69,7 +69,7 @@ void LogErrorEnvelope(const std::string& path, int status, const std::vector<uin
         return;
     }
     std::string text(body.begin(), body.end());
-    cJSON* root = cJSON_Parse(text.c_str());
+    cJSON*      root = cJSON_Parse(text.c_str());
     if (!root) {
         ESP_LOGW(kTag, "%s -> HTTP %d: %.160s", path.c_str(), status, text.c_str());
         return;
@@ -78,26 +78,24 @@ void LogErrorEnvelope(const std::string& path, int status, const std::vector<uin
         cJSON* v = cJSON_GetObjectItemCaseSensitive(obj, key);
         return (cJSON_IsString(v) && v->valuestring) ? v->valuestring : "";
     };
-    const char* klass = get_str(root, proto::kError);
-    const char* msg   = get_str(root, proto::kMessage);
-    const char* code  = "";
-    cJSON* detail = cJSON_GetObjectItemCaseSensitive(root, proto::kDetail);
+    const char* klass  = get_str(root, proto::kError);
+    const char* msg    = get_str(root, proto::kMessage);
+    const char* code   = "";
+    cJSON*      detail = cJSON_GetObjectItemCaseSensitive(root, proto::kDetail);
     if (cJSON_IsObject(detail)) {
         code = get_str(detail, proto::kCode);
     }
-    ESP_LOGW(kTag, "%s -> HTTP %d error=%s code=%s message=%s",
-             path.c_str(), status, klass, code, msg);
+    ESP_LOGW(kTag, "%s -> HTTP %d error=%s code=%s message=%s", path.c_str(), status, klass, code, msg);
     cJSON_Delete(root);
 }
 
 std::string UrlEncodePathSegment(const std::string& value) {
     static constexpr char kHex[] = "0123456789ABCDEF";
-    std::string out;
+    std::string           out;
     out.reserve(value.size());
     for (unsigned char ch : value) {
-        const bool safe = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-                          (ch >= '0' && ch <= '9') || ch == '-' || ch == '_' ||
-                          ch == '.' || ch == '~';
+        const bool safe = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') ||
+                          ch == '-' || ch == '_' || ch == '.' || ch == '~';
         if (safe) {
             out.push_back(static_cast<char>(ch));
         } else {
@@ -123,12 +121,9 @@ constexpr char kApiPrefix[] = "/api/v1";
 //   need_auth           - true:加 Authorization: Bearer s_secret。register 端点设 false。
 //
 // 401:仅对 need_auth=true 的请求触发 unauth_cb (注册路径无鉴权,401 没意义)。
-static bool DoRequest(const std::string& path, esp_http_client_method_t method,
-                      const std::string& body_in, std::vector<uint8_t>& body_out,
-                      int* status_out                = nullptr,
-                      const std::string& if_none_match = "",
-                      std::string* etag_out          = nullptr,
-                      bool need_auth                 = true) {
+static bool DoRequest(const std::string& path, esp_http_client_method_t method, const std::string& body_in,
+                      std::vector<uint8_t>& body_out, int* status_out = nullptr, const std::string& if_none_match = "",
+                      std::string* etag_out = nullptr, bool need_auth = true) {
     std::string base_url;
     {
         std::lock_guard<std::mutex> lock(s_state_mutex);
@@ -139,20 +134,22 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
         return false;
     }
     std::string full = base_url;
-    if (!full.empty() && full.back() == '/') full.pop_back();
+    if (!full.empty() && full.back() == '/')
+        full.pop_back();
     full += path;
 
     esp_http_client_config_t cfg = {};
-    cfg.url                       = full.c_str();
-    cfg.method                    = method;
-    cfg.timeout_ms                = 8000;
-    cfg.disable_auto_redirect     = false;
+    cfg.url                      = full.c_str();
+    cfg.method                   = method;
+    cfg.timeout_ms               = 8000;
+    cfg.disable_auto_redirect    = false;
     // 挂 IDF 内置 root CA bundle:HTTPS 必备(否则 TLS 握手无 CA 校验失败)。
     // 注意调用方需要确保系统时间已对时(SNTP),否则证书 NotBefore/NotAfter 校验过不去。
-    cfg.crt_bundle_attach         = esp_crt_bundle_attach;
+    cfg.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client) return false;
+    if (!client)
+        return false;
 
     if (need_auth) {
         // 锁里只复制 secret 字符串，拼接放到锁外，缩短临界区。
@@ -195,47 +192,60 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
     }
 
     int64_t content_length = esp_http_client_fetch_headers(client);
-    int status             = esp_http_client_get_status_code(client);
-    if (status_out) *status_out = status;
-    if (etag_out) *etag_out     = ReadEtagHeader(client);
+    int     status         = esp_http_client_get_status_code(client);
+    if (status_out)
+        *status_out = status;
+    if (etag_out)
+        *etag_out = ReadEtagHeader(client);
 
     body_out.clear();
     if (status != 304) {
         // 防止异常响应耗尽堆内存。上限与后端音频转码 60 秒 PCM 上限对齐；
         // JSON API 与 1bpp 图片远小于这个值，音频资源也不会被合法 TTS 误拦截。
         constexpr size_t kMaxResponseBytes = static_cast<size_t>(AUDIO_MAX_PCM_BYTES);
-        if (content_length < 0) {
-            ESP_LOGW(kTag, "%s: fetch headers failed: %lld", path.c_str(), (long long)content_length);
-            esp_http_client_close(client);
-            esp_http_client_cleanup(client);
-            return false;
-        }
         if (content_length > static_cast<int64_t>(kMaxResponseBytes)) {
-            ESP_LOGW(kTag, "%s: Content-Length %lld exceeds %u B limit",
-                     path.c_str(), (long long)content_length, (unsigned)kMaxResponseBytes);
+            ESP_LOGW(kTag, "%s: Content-Length %lld exceeds %u B limit", path.c_str(), (long long)content_length,
+                     (unsigned)kMaxResponseBytes);
             esp_http_client_close(client);
             esp_http_client_cleanup(client);
             return false;
         }
-        if (content_length > 0) body_out.reserve(static_cast<size_t>(content_length));
+        if (content_length > 0)
+            body_out.reserve(static_cast<size_t>(content_length));
         char buf[1024];
         while (true) {
             int n = esp_http_client_read(client, buf, sizeof(buf));
-            if (n <= 0) break;
+            if (n < 0) {
+                ESP_LOGW(kTag, "%s: response read failed: %d", path.c_str(), n);
+                esp_http_client_close(client);
+                esp_http_client_cleanup(client);
+                return false;
+            }
+            if (n <= 0)
+                break;
             body_out.insert(body_out.end(), buf, buf + n);
             if (body_out.size() > kMaxResponseBytes) {
-                ESP_LOGW(kTag, "%s: response body exceeded %u B, aborting",
-                         path.c_str(), (unsigned)kMaxResponseBytes);
+                ESP_LOGW(kTag, "%s: response body exceeded %u B, aborting", path.c_str(), (unsigned)kMaxResponseBytes);
                 esp_http_client_close(client);
                 esp_http_client_cleanup(client);
                 return false;
             }
         }
+        if (content_length > 0 && body_out.size() != static_cast<size_t>(content_length)) {
+            ESP_LOGW(kTag, "%s: short response body %u/%lld B", path.c_str(), (unsigned)body_out.size(),
+                     (long long)content_length);
+            esp_http_client_close(client);
+            esp_http_client_cleanup(client);
+            return false;
+        }
     }
     esp_http_client_close(client);
     esp_http_client_cleanup(client);
 
-    if (status == 304) return true;
+    if (status == 304) {
+        s_consecutive_401.store(0, std::memory_order_relaxed);
+        return true;
+    }
     if (status / 100 == 2) {
         s_consecutive_401.store(0, std::memory_order_relaxed);
         return true;
@@ -243,8 +253,7 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
     if (status == 401 && need_auth) {
         const int count = s_consecutive_401.fetch_add(1, std::memory_order_relaxed) + 1;
         LogErrorEnvelope(path, status, body_out);
-        ESP_LOGW(kTag, "%s -> 401 count=%d/%d",
-                 path.c_str(), count, kUnauthorizedResetThreshold);
+        ESP_LOGW(kTag, "%s -> 401 count=%d/%d", path.c_str(), count, kUnauthorizedResetThreshold);
         UnauthorizedCb cb;
         if (count >= kUnauthorizedResetThreshold) {
             std::lock_guard<std::mutex> lock(s_state_mutex);
@@ -260,9 +269,8 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method,
     return false;
 }
 
-static bool DoRequestJson(const std::string& path, esp_http_client_method_t method,
-                          const std::string& body_in, std::string& body_out_str,
-                          bool need_auth = true) {
+static bool DoRequestJson(const std::string& path, esp_http_client_method_t method, const std::string& body_in,
+                          std::string& body_out_str, bool need_auth = true) {
     std::vector<uint8_t> bytes;
     bool                 ok = DoRequest(path, method, body_in, bytes, nullptr, "", nullptr, need_auth);
     body_out_str.assign(bytes.begin(), bytes.end());
@@ -274,7 +282,8 @@ namespace {
 
 bool ParseDeviceState(const std::string& json, DeviceState& out) {
     cJSON* root = cJSON_Parse(json.c_str());
-    if (!root) return false;
+    if (!root)
+        return false;
 
     auto get_str = [](cJSON* obj, const char* k) -> std::string {
         cJSON* v = cJSON_GetObjectItemCaseSensitive(obj, k);
@@ -286,23 +295,25 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
     };
     auto get_bool = [](cJSON* obj, const char* k, bool def) -> bool {
         cJSON* v = cJSON_GetObjectItemCaseSensitive(obj, k);
-        if (cJSON_IsBool(v)) return cJSON_IsTrue(v);
+        if (cJSON_IsBool(v))
+            return cJSON_IsTrue(v);
         return def;
     };
     auto parse_content = [&](cJSON* item, ContentMeta& f) {
-        f.seq           = get_int(item, proto::kSeq, 0);
-        f.id            = get_str(item, proto::kId);
-        f.content_etag  = get_str(item, proto::kContentEtag);
+        f.seq                    = get_int(item, proto::kSeq, 0);
+        f.id                     = get_str(item, proto::kId);
+        f.content_etag           = get_str(item, proto::kContentEtag);
         f.device_status_bar_text = get_str(item, proto::kDeviceStatusBarText);
-        f.image_etag    = get_str(item, proto::kImageEtag);
-        f.audio_etag    = get_str(item, proto::kAudioEtag);
-        f.image_size    = get_int(item, proto::kImageSize, 0);
-        f.audio_size    = get_int(item, proto::kAudioSize, 0);
-        f.kind          = get_str(item, proto::kKind);
-        cJSON* next_wake = cJSON_GetObjectItemCaseSensitive(item, proto::kNextWakeSec);
-        f.has_next_wake_sec = cJSON_IsNumber(next_wake);
-        f.next_wake_sec = f.has_next_wake_sec ? next_wake->valueint : 0;
-        if (f.kind.empty()) f.kind = "image";
+        f.image_etag             = get_str(item, proto::kImageEtag);
+        f.audio_etag             = get_str(item, proto::kAudioEtag);
+        f.image_size             = get_int(item, proto::kImageSize, 0);
+        f.audio_size             = get_int(item, proto::kAudioSize, 0);
+        f.kind                   = get_str(item, proto::kKind);
+        cJSON* next_wake         = cJSON_GetObjectItemCaseSensitive(item, proto::kNextWakeSec);
+        f.has_next_wake_sec      = cJSON_IsNumber(next_wake);
+        f.next_wake_sec          = f.has_next_wake_sec ? next_wake->valueint : 0;
+        if (f.kind.empty())
+            f.kind = "image";
     };
 
     cJSON* dev = cJSON_GetObjectItemCaseSensitive(root, proto::kDevice);
@@ -316,19 +327,19 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
 
     cJSON* group = cJSON_GetObjectItemCaseSensitive(root, proto::kGroup);
     if (cJSON_IsObject(group)) {
-        out.has_group         = true;
-        out.group_id          = get_str(group, proto::kId);
-        out.group_name        = get_str(group, proto::kName);
-        out.structure_etag    = get_str(group, proto::kStructureEtag);
-        out.manifest_etag     = get_str(group, proto::kManifestEtag);
+        out.has_group      = true;
+        out.group_id       = get_str(group, proto::kId);
+        out.group_name     = get_str(group, proto::kName);
+        out.structure_etag = get_str(group, proto::kStructureEtag);
+        out.manifest_etag  = get_str(group, proto::kManifestEtag);
         if (out.manifest_etag.empty()) {
             ESP_LOGW(kTag, "DeviceState group missing manifest_etag");
             cJSON_Delete(root);
             return false;
         }
-        out.content_count     = get_int(group, proto::kContentCount, 0);
-        out.group_sort_order  = get_int(group, proto::kSortOrder, 0);
-        cJSON* pos = cJSON_GetObjectItemCaseSensitive(group, proto::kPosition);
+        out.content_count    = get_int(group, proto::kContentCount, 0);
+        out.group_sort_order = get_int(group, proto::kSortOrder, 0);
+        cJSON* pos           = cJSON_GetObjectItemCaseSensitive(group, proto::kPosition);
         if (cJSON_IsObject(pos)) {
             out.position_current = get_int(pos, proto::kCurrent, 0);
             out.position_total   = get_int(pos, proto::kTotal, 0);
@@ -359,14 +370,23 @@ bool Register(RegisterResult& out) {
         mac = s_mac;
     }
     cJSON* j = cJSON_CreateObject();
+    if (!j) {
+        ESP_LOGW(kTag, "Register: json allocation failed");
+        return false;
+    }
     cJSON_AddStringToObject(j, proto::kMac, mac.c_str());
     char* body = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
+    if (!body) {
+        ESP_LOGW(kTag, "Register: body allocation failed");
+        return false;
+    }
     std::string resp;
     std::string path = std::string(kApiPrefix) + "/devices";
-    bool ok = DoRequestJson(path, HTTP_METHOD_POST, body, resp, /*need_auth=*/false);
+    bool        ok   = DoRequestJson(path, HTTP_METHOD_POST, body, resp, /*need_auth=*/false);
     cJSON_free(body);
-    if (!ok) return false;
+    if (!ok)
+        return false;
 
     cJSON* root = cJSON_Parse(resp.c_str());
     if (!root) {
@@ -380,32 +400,38 @@ bool Register(RegisterResult& out) {
     out.id            = get_str(proto::kId);
     out.device_secret = get_str(proto::kDeviceSecret);
     out.pair_code     = get_str(proto::kPairCode);
-    cJSON* rcl        = cJSON_GetObjectItemCaseSensitive(root, proto::kReclaimed);
-    out.reclaimed     = cJSON_IsTrue(rcl);
     cJSON_Delete(root);
 
     if (out.id.empty() || out.device_secret.empty() || out.pair_code.empty()) {
         ESP_LOGW(kTag, "Register: response missing required fields");
         return false;
     }
-    ESP_LOGI(kTag, "Registered: id=%s pair=%s reclaimed=%d",
-             out.id.c_str(), out.pair_code.c_str(), (int)out.reclaimed);
+    ESP_LOGI(kTag, "Registered: id=%s pair=%s", out.id.c_str(), out.pair_code.c_str());
     return true;
 }
 
 bool Poll(const Telemetry& tel, DeviceState& out) {
     cJSON* root = cJSON_CreateObject();
+    if (!root) {
+        ESP_LOGW(kTag, "Poll: json allocation failed");
+        return false;
+    }
 
     // 仅在有非默认值的字段时构造 telemetry 对象。
-    bool has_telemetry =
-        tel.battery_pct >= 0 || tel.rssi_dbm != 0 ||
-        !tel.fw_version.empty() || !tel.current_group.empty() ||
-        tel.current_content_seq >= 0 || !tel.wake_reason.empty() ||
-        !tel.current_content_etag.empty() || !tel.manifest_etag.empty();
+    bool has_telemetry = tel.battery_pct >= 0 || tel.rssi_dbm != 0 || !tel.fw_version.empty() ||
+                         !tel.current_group.empty() || tel.current_content_seq >= 0 || !tel.wake_reason.empty() ||
+                         !tel.current_content_etag.empty() || !tel.manifest_etag.empty();
     if (has_telemetry) {
         cJSON* t = cJSON_CreateObject();
-        if (tel.battery_pct >= 0) cJSON_AddNumberToObject(t, proto::kBatteryPct, tel.battery_pct);
-        if (tel.rssi_dbm != 0)    cJSON_AddNumberToObject(t, proto::kRssiDbm, tel.rssi_dbm);
+        if (!t) {
+            ESP_LOGW(kTag, "Poll: telemetry allocation failed");
+            cJSON_Delete(root);
+            return false;
+        }
+        if (tel.battery_pct >= 0)
+            cJSON_AddNumberToObject(t, proto::kBatteryPct, tel.battery_pct);
+        if (tel.rssi_dbm != 0)
+            cJSON_AddNumberToObject(t, proto::kRssiDbm, tel.rssi_dbm);
         if (!tel.fw_version.empty())
             cJSON_AddStringToObject(t, proto::kFwVersion, tel.fw_version.c_str());
         if (!tel.wake_reason.empty())
@@ -423,56 +449,73 @@ bool Poll(const Telemetry& tel, DeviceState& out) {
 
     char* body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
+    if (!body) {
+        ESP_LOGW(kTag, "Poll: body allocation failed");
+        return false;
+    }
     std::string resp;
     std::string path = std::string(kApiPrefix) + "/devices/current/poll";
-    bool ok = DoRequestJson(path, HTTP_METHOD_POST, body, resp);
+    bool        ok   = DoRequestJson(path, HTTP_METHOD_POST, body, resp);
     cJSON_free(body);
-    if (!ok) return false;
+    if (!ok)
+        return false;
     return ParseDeviceState(resp, out);
 }
 
 // direction: "next" | "prev" → POST /api/v1/devices/current/group/{direction}
 bool CycleGroup(const std::string& direction, DeviceState& out) {
-    if (direction != "next" && direction != "prev") return false;
+    if (direction != "next" && direction != "prev")
+        return false;
     std::string resp;
     std::string path = std::string(kApiPrefix) + "/devices/current/group/" + direction;
-    bool ok = DoRequestJson(path, HTTP_METHOD_POST, "", resp);
-    if (!ok) return false;
+    bool        ok   = DoRequestJson(path, HTTP_METHOD_POST, "", resp);
+    if (!ok)
+        return false;
     return ParseDeviceState(resp, out);
 }
 
 bool SelectGroup(const std::string& gid, DeviceState& out) {
     cJSON* j = cJSON_CreateObject();
+    if (!j) {
+        ESP_LOGW(kTag, "SelectGroup: json allocation failed");
+        return false;
+    }
     cJSON_AddStringToObject(j, proto::kId, gid.c_str());
     char* body = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
+    if (!body) {
+        ESP_LOGW(kTag, "SelectGroup: body allocation failed");
+        return false;
+    }
     std::string resp;
     std::string path = std::string(kApiPrefix) + "/devices/current/group";
-    bool ok = DoRequestJson(path, HTTP_METHOD_PUT, body, resp);
+    bool        ok   = DoRequestJson(path, HTTP_METHOD_PUT, body, resp);
     cJSON_free(body);
-    if (!ok) return false;
+    if (!ok)
+        return false;
     return ParseDeviceState(resp, out);
 }
 
-bool GetManifest(const std::string& group_id, const std::string& if_none_match,
-                 Manifest& out, bool& not_modified) {
-    not_modified = false;
-    std::string          path = std::string(kApiPrefix) + "/groups/" +
-                       UrlEncodePathSegment(group_id) + "/manifest";
+bool GetManifest(const std::string& group_id, const std::string& if_none_match, Manifest& out, bool& not_modified) {
+    not_modified              = false;
+    out                       = Manifest{};
+    std::string          path = std::string(kApiPrefix) + "/groups/" + UrlEncodePathSegment(group_id) + "/manifest";
     std::vector<uint8_t> bytes;
-    int                  status   = 0;
+    int                  status = 0;
     std::string          etag_out;
-    bool ok = DoRequest(path, HTTP_METHOD_GET, "", bytes, &status, if_none_match, &etag_out,
-                        /*need_auth=*/true);
-    if (!ok) return false;
+    bool                 ok = DoRequest(path, HTTP_METHOD_GET, "", bytes, &status, if_none_match, &etag_out,
+                                        /*need_auth=*/true);
+    if (!ok)
+        return false;
     if (status == 304) {
         not_modified = true;
         return true;
     }
 
-    std::string  resp(bytes.begin(), bytes.end());
-    cJSON* root = cJSON_Parse(resp.c_str());
-    if (!root) return false;
+    std::string resp(bytes.begin(), bytes.end());
+    cJSON*      root = cJSON_Parse(resp.c_str());
+    if (!root)
+        return false;
 
     auto json_str = [](cJSON* obj, const char* k) -> std::string {
         cJSON* v = cJSON_GetObjectItemCaseSensitive(obj, k);
@@ -502,19 +545,20 @@ bool GetManifest(const std::string& group_id, const std::string& if_none_match,
         cJSON* item = nullptr;
         cJSON_ArrayForEach(item, contents) {
             ContentMeta f;
-            f.seq           = json_int(item, proto::kSeq, 0);
-            f.id            = json_str(item, proto::kId);
-            f.content_etag  = json_str(item, proto::kContentEtag);
+            f.seq                    = json_int(item, proto::kSeq, 0);
+            f.id                     = json_str(item, proto::kId);
+            f.content_etag           = json_str(item, proto::kContentEtag);
             f.device_status_bar_text = json_str(item, proto::kDeviceStatusBarText);
-            f.image_etag    = json_str(item, proto::kImageEtag);
-            f.audio_etag    = json_str(item, proto::kAudioEtag);
-            f.image_size    = json_int(item, proto::kImageSize, 0);
-            f.audio_size    = json_int(item, proto::kAudioSize, 0);
-            f.kind          = json_str(item, proto::kKind);
-            cJSON* next_wake = cJSON_GetObjectItemCaseSensitive(item, proto::kNextWakeSec);
-            f.has_next_wake_sec = cJSON_IsNumber(next_wake);
-            f.next_wake_sec = f.has_next_wake_sec ? next_wake->valueint : 0;
-            if (f.kind.empty()) f.kind = "image";
+            f.image_etag             = json_str(item, proto::kImageEtag);
+            f.audio_etag             = json_str(item, proto::kAudioEtag);
+            f.image_size             = json_int(item, proto::kImageSize, 0);
+            f.audio_size             = json_int(item, proto::kAudioSize, 0);
+            f.kind                   = json_str(item, proto::kKind);
+            cJSON* next_wake         = cJSON_GetObjectItemCaseSensitive(item, proto::kNextWakeSec);
+            f.has_next_wake_sec      = cJSON_IsNumber(next_wake);
+            f.next_wake_sec          = f.has_next_wake_sec ? next_wake->valueint : 0;
+            if (f.kind.empty())
+                f.kind = "image";
             out.contents.push_back(f);
         }
     }
@@ -522,13 +566,14 @@ bool GetManifest(const std::string& group_id, const std::string& if_none_match,
     return true;
 }
 
-static bool DownloadBinary(const std::string& path, const std::string& if_none_match,
-                           std::vector<uint8_t>& out, bool& not_modified) {
-    not_modified  = false;
-    int  status   = 0;
-    bool ok       = DoRequest(path, HTTP_METHOD_GET, "", out, &status, if_none_match, nullptr,
-                              /*need_auth=*/true);
-    if (!ok) return false;
+static bool DownloadBinary(const std::string& path, const std::string& if_none_match, std::vector<uint8_t>& out,
+                           bool& not_modified) {
+    not_modified = false;
+    int  status  = 0;
+    bool ok      = DoRequest(path, HTTP_METHOD_GET, "", out, &status, if_none_match, nullptr,
+                             /*need_auth=*/true);
+    if (!ok)
+        return false;
     if (status == 304) {
         not_modified = true;
         return true;
@@ -536,14 +581,14 @@ static bool DownloadBinary(const std::string& path, const std::string& if_none_m
     return !out.empty();
 }
 
-bool DownloadContentImage(const std::string& id, const std::string& if_none_match,
-                          std::vector<uint8_t>& out, bool& not_modified) {
+bool DownloadContentImage(const std::string& id, const std::string& if_none_match, std::vector<uint8_t>& out,
+                          bool& not_modified) {
     std::string path = std::string(kApiPrefix) + "/contents/" + UrlEncodePathSegment(id) + "/image";
     return DownloadBinary(path, if_none_match, out, not_modified);
 }
 
-bool DownloadContentAudio(const std::string& id, const std::string& if_none_match,
-                          std::vector<uint8_t>& out, bool& not_modified) {
+bool DownloadContentAudio(const std::string& id, const std::string& if_none_match, std::vector<uint8_t>& out,
+                          bool& not_modified) {
     std::string path = std::string(kApiPrefix) + "/contents/" + UrlEncodePathSegment(id) + "/audio";
     return DownloadBinary(path, if_none_match, out, not_modified);
 }

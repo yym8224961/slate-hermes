@@ -61,4 +61,6 @@ class CaptivePortal {
     static esp_err_t HandleExit(httpd_req_t* req);
     // captive portal "万能" handler:任何未知 URL 都重定向到 /
     static esp_err_t HandleCatchAll(httpd_req_t* req);
+    static void      FinishTask(void* arg);
+    static void      StopTask(void* arg);
 };

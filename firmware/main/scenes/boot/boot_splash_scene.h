@@ -42,6 +42,7 @@ class BootSplashScene : public Scene {
     }
 
    private:
+    void RenderContent();
     void Render(SceneContext& ctx);
 
     State   state_          = State::kInitializing;

@@ -33,7 +33,6 @@ inline constexpr char kName[]                = "name";
 inline constexpr char kNextWakeSec[]         = "next_wake_sec";
 inline constexpr char kPairCode[]            = "pair_code";
 inline constexpr char kPosition[]            = "position";
-inline constexpr char kReclaimed[]           = "reclaimed";
 inline constexpr char kRssiDbm[]             = "rssi_dbm";
 inline constexpr char kSeq[]                 = "seq";
 inline constexpr char kServerTime[]          = "server_time";

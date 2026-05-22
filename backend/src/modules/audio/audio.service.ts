@@ -5,13 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { unlink, writeFile, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { AppError } from '../../common/errors';
+import { AppError, RateLimitedError } from '../../common/errors';
 
 const execFileAsync = promisify(execFile);
 
 const SAMPLE_RATE = 16000;
 const MAX_DURATION_SEC = 60;
 const MAX_OUTPUT_BYTES = SAMPLE_RATE * 2 * MAX_DURATION_SEC;
+const MAX_FFMPEG_CONCURRENCY = 2;
 
 export class AudioTranscodeError extends AppError {
   readonly code: string;
@@ -25,6 +26,8 @@ export class AudioTranscodeError extends AppError {
 @Injectable()
 export class AudioService {
   private ffmpegAvailable: boolean | null = null;
+  private activeFfmpeg = 0;
+  private readonly ffmpegQueue: Array<() => void> = [];
 
   async checkFfmpegAvailable(): Promise<boolean> {
     if (this.ffmpegAvailable !== null) return this.ffmpegAvailable;
@@ -49,26 +52,22 @@ export class AudioService {
     try {
       await writeFile(inputPath, inputBuffer);
 
-      await execFileAsync(
-        'ffmpeg',
-        [
-          '-i',
-          inputPath,
-          '-f',
-          's16le',
-          '-acodec',
-          'pcm_s16le',
-          '-ac',
-          '1',
-          '-ar',
-          String(SAMPLE_RATE),
-          '-t',
-          String(MAX_DURATION_SEC),
-          '-y',
-          outputPath,
-        ],
-        { timeout: 30_000 }
-      );
+      await this.runFfmpeg([
+        '-i',
+        inputPath,
+        '-f',
+        's16le',
+        '-acodec',
+        'pcm_s16le',
+        '-ac',
+        '1',
+        '-ar',
+        String(SAMPLE_RATE),
+        '-t',
+        String(MAX_DURATION_SEC),
+        '-y',
+        outputPath,
+      ]);
 
       const outputBuffer = await readFile(outputPath);
       if (outputBuffer.length === 0) {
@@ -105,34 +104,30 @@ export class AudioService {
     try {
       await writeFile(inputPath, inputBuffer);
 
-      await execFileAsync(
-        'ffmpeg',
-        [
-          '-f',
-          's16le',
-          '-acodec',
-          'pcm_s16le',
-          '-ac',
-          '1',
-          '-ar',
-          String(inputSampleRate),
-          '-i',
-          inputPath,
-          '-f',
-          's16le',
-          '-acodec',
-          'pcm_s16le',
-          '-ac',
-          '1',
-          '-ar',
-          String(SAMPLE_RATE),
-          '-t',
-          String(MAX_DURATION_SEC),
-          '-y',
-          outputPath,
-        ],
-        { timeout: 30_000 }
-      );
+      await this.runFfmpeg([
+        '-f',
+        's16le',
+        '-acodec',
+        'pcm_s16le',
+        '-ac',
+        '1',
+        '-ar',
+        String(inputSampleRate),
+        '-i',
+        inputPath,
+        '-f',
+        's16le',
+        '-acodec',
+        'pcm_s16le',
+        '-ac',
+        '1',
+        '-ar',
+        String(SAMPLE_RATE),
+        '-t',
+        String(MAX_DURATION_SEC),
+        '-y',
+        outputPath,
+      ]);
 
       const outputBuffer = await readFile(outputPath);
       if (outputBuffer.length === 0) {
@@ -149,5 +144,40 @@ export class AudioService {
       await unlink(inputPath).catch(() => {});
       await unlink(outputPath).catch(() => {});
     }
+  }
+
+  private async runFfmpeg(args: string[]): Promise<void> {
+    const release = await this.acquireFfmpegSlot();
+    try {
+      await execFileAsync('ffmpeg', args, { timeout: 30_000 });
+    } finally {
+      release();
+    }
+  }
+
+  private acquireFfmpegSlot(): Promise<() => void> {
+    if (this.activeFfmpeg < MAX_FFMPEG_CONCURRENCY) {
+      this.activeFfmpeg++;
+      return Promise.resolve(() => this.releaseFfmpegSlot());
+    }
+    // 队列上限 = 并发上限 × 4。超出直接 429 fast-fail，避免突发流量把队列堆爆内存
+    // 或让请求挂死 30s+。客户端按 Retry-After 重试即可。
+    if (this.ffmpegQueue.length >= MAX_FFMPEG_CONCURRENCY * 4) {
+      return Promise.reject(
+        new RateLimitedError('音频转码繁忙，请稍后重试', { retry_after_sec: 5 })
+      );
+    }
+    return new Promise((resolve) => {
+      this.ffmpegQueue.push(() => {
+        this.activeFfmpeg++;
+        resolve(() => this.releaseFfmpegSlot());
+      });
+    });
+  }
+
+  private releaseFfmpegSlot(): void {
+    this.activeFfmpeg = Math.max(0, this.activeFfmpeg - 1);
+    const next = this.ffmpegQueue.shift();
+    if (next) next();
   }
 }

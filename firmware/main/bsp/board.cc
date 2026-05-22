@@ -16,7 +16,7 @@
 #include "i2c_bus_lock.h"
 
 namespace {
-constexpr char     kTag[]         = "Board";
+constexpr char     kTag[]          = "Board";
 constexpr uint16_t kNavLongPressMs = 1000;
 }  // namespace
 
@@ -49,8 +49,8 @@ void Board::InitPower() {
     // 给 PA U5 通电时,CTRL 已稳定 LOW → 消除开机"啵"声(详见 board_power.cc)。
     // EPD_PWR(GPIO6) 由 EpdSsd1683 自管。
     power_ = std::make_unique<BoardPowerBsp>(AUDIO_PWR_PIN, AUDIO_CODEC_PA_PIN, VBAT_PWR_PIN);
-    power_->VbatPowerOn();    // GPIO17=1,自锁电源
-    power_->PowerAudioOn();   // GPIO42=1,AVDD_3V3 起来,I²C 上拉才有效
+    power_->VbatPowerOn();   // GPIO17=1,自锁电源
+    power_->PowerAudioOn();  // GPIO42=1,AVDD_3V3 起来,I²C 上拉才有效
 
     // 等用户松开下键(SW1=GPIO18)。开机时硬件靠 SW1 把 Q5 栅极拉低维持电源,
     // VbatPowerOn 之后软件接管；但按键驱动一启动就会读到下键的「已按」状态而误触
@@ -86,11 +86,18 @@ void Board::InitI2c() {
 void Board::InitChargeStatus() {
     charge_->Init(static_cast<gpio_num_t>(CHARGE_DETECT_GPIO), static_cast<gpio_num_t>(CHARGE_FULL_GPIO), NowMs());
     charge_tick_running_.store(true);
-    xTaskCreatePinnedToCore(&Board::ChargeTickTaskEntry, "charge_tick", 2 * 1024, this, 1, &charge_tick_task_, 0);
+    BaseType_t ok =
+        xTaskCreatePinnedToCore(&Board::ChargeTickTaskEntry, "charge_tick", 2 * 1024, this, 1, &charge_tick_task_, 0);
+    if (ok != pdPASS) {
+        charge_tick_running_.store(false);
+        charge_tick_task_ = nullptr;
+        ESP_LOGE(kTag, "charge_tick task create failed");
+    }
 }
 
 void Board::StopChargeTickTask() {
-    if (!charge_tick_running_.exchange(false)) return;
+    if (!charge_tick_running_.exchange(false))
+        return;
     // 让 task 自己跑完当前周期后退出,避免硬删带锁/带 I²C 状态时 leak。
     if (charge_tick_task_) {
         // 等最多 1s,task 自己 detect 完 vTaskDelete 后我们清空句柄
@@ -101,7 +108,7 @@ void Board::StopChargeTickTask() {
 }
 
 void Board::ChargeTickTaskEntry(void* arg) {
-    auto*            self = static_cast<Board*>(arg);
+    auto* self = static_cast<Board*>(arg);
     // 500 ms 而不是 200 ms：充电 IC 状态变化以秒计，kStableHighMs=400/kAltWindowMs=1500
     // 仍然能正常去抖,但任务唤醒次数减半,light-sleep 期间收益更明显。
     const TickType_t poll = pdMS_TO_TICKS(500);
@@ -124,21 +131,19 @@ void Board::InitButtons() {
     // 第 5 个参数 enable_power_save=true:button 库内部会调 gpio_wakeup_enable,
     // 把 GPIO 注册成 light-sleep 唤醒源。
     constexpr bool kPowerSave = true;
-    up_btn_   = std::make_unique<Button>(static_cast<gpio_num_t>(UP_BUTTON_GPIO), false,
-                                       kNavLongPressMs, 0, kPowerSave);
-    down_btn_ = std::make_unique<Button>(static_cast<gpio_num_t>(DOWN_BUTTON_GPIO), false,
-                                         kNavLongPressMs, 0, kPowerSave);
-    boot_btn_ = std::make_unique<Button>(static_cast<gpio_num_t>(BOOT_BUTTON_GPIO), false,
-                                         kNavLongPressMs, 0, kPowerSave);
+    up_btn_ = std::make_unique<Button>(static_cast<gpio_num_t>(UP_BUTTON_GPIO), false, kNavLongPressMs, 0, kPowerSave);
+    down_btn_ =
+        std::make_unique<Button>(static_cast<gpio_num_t>(DOWN_BUTTON_GPIO), false, kNavLongPressMs, 0, kPowerSave);
+    boot_btn_ =
+        std::make_unique<Button>(static_cast<gpio_num_t>(BOOT_BUTTON_GPIO), false, kNavLongPressMs, 0, kPowerSave);
 }
 
 void Board::InitBatteryAdc() {
     // 一次性创建 ADC handle + 校准 handle。原代码用 static 局部变量+无锁,
     // 多 task 同时调 ReadBattery 会两次 adc_oneshot_new_unit 导致 abort。
     // 这里集中初始化,ReadBattery 只读不写。
-    adc_oneshot_unit_init_cfg_t init_cfg = {.unit_id  = ADC_UNIT_1,
-                                            .clk_src  = ADC_RTC_CLK_SRC_DEFAULT,
-                                            .ulp_mode = ADC_ULP_MODE_DISABLE};
+    adc_oneshot_unit_init_cfg_t init_cfg = {
+        .unit_id = ADC_UNIT_1, .clk_src = ADC_RTC_CLK_SRC_DEFAULT, .ulp_mode = ADC_ULP_MODE_DISABLE};
     if (adc_oneshot_new_unit(&init_cfg, &adc_handle_) != ESP_OK) {
         ESP_LOGE(kTag, "ADC oneshot_new_unit failed");
         return;
@@ -158,7 +163,8 @@ void Board::InitBatteryAdc() {
 }
 
 bool Board::ReadBattery(uint16_t* voltage_mv, uint8_t* percent) {
-    if (!adc_ready_.load()) return false;
+    if (!adc_ready_.load())
+        return false;
 
     // 先看充电状态机:无电池时电压采样不可信,直接返失败。
     if (charge_ && charge_->Get().no_battery) {
@@ -169,8 +175,10 @@ bool Board::ReadBattery(uint16_t* voltage_mv, uint8_t* percent) {
     int n   = 0;
     for (int i = 0; i < 10; ++i) {
         int raw = 0, mv = 0;
-        if (adc_oneshot_read(adc_handle_, ADC_CHANNEL_3, &raw) != ESP_OK) continue;
-        if (adc_cali_raw_to_voltage(cali_handle_, raw, &mv) != ESP_OK) continue;
+        if (adc_oneshot_read(adc_handle_, ADC_CHANNEL_3, &raw) != ESP_OK)
+            continue;
+        if (adc_cali_raw_to_voltage(cali_handle_, raw, &mv) != ESP_OK)
+            continue;
         sum += mv * 2;  // 板上 1:2 分压,×2 还原电池电压
         n++;
     }
@@ -180,9 +188,11 @@ bool Board::ReadBattery(uint16_t* voltage_mv, uint8_t* percent) {
     }
     int avg = sum / n;
     // 二阶多项式拟合:4200mV→100,3800mV→67,3300mV→0(单节锂电放电曲线)
-    int p   = (-1 * avg * avg + 9016 * avg - 19189000) / 10000;
-    p       = p > 100 ? 100 : (p < 0 ? 0 : p);
-    if (voltage_mv) *voltage_mv = static_cast<uint16_t>(avg);
-    if (percent) *percent = static_cast<uint8_t>(p);
+    int p = (-1 * avg * avg + 9016 * avg - 19189000) / 10000;
+    p     = p > 100 ? 100 : (p < 0 ? 0 : p);
+    if (voltage_mv)
+        *voltage_mv = static_cast<uint16_t>(avg);
+    if (percent)
+        *percent = static_cast<uint8_t>(p);
     return true;
 }

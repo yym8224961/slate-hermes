@@ -41,12 +41,16 @@ export function useDynamicCreatePreview({
       return;
     }
     const seq = ++previewSeq.current;
+    setLivePreviewData(null);
     const timer = setTimeout(() => {
       mutate(
         { config: parsed.data, frameName: effectiveFrameName(type, parsed.data, frameName) },
         {
           onSuccess: (data) => {
             if (seq === previewSeq.current) setLivePreviewData(data);
+          },
+          onError: () => {
+            if (seq === previewSeq.current) setLivePreviewData(null);
           },
         }
       );

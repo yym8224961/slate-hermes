@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { createHash } from 'node:crypto';
 import type { GroupSummaryT } from 'shared';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
@@ -8,7 +7,7 @@ import { ForbiddenError, NotFoundError, ValidationError } from '../../common/err
 import { lockUserRow } from '../../common/db/row-locks';
 import { bulkSetGroupSortOrder } from '../../common/db/bulk-sort-order';
 import { audioBlobContentId } from '../audio/audio-blob-id';
-import { deviceStatusBarText } from '../contents/content-status-bar';
+import { computeGroupEtags } from './group-etag';
 
 interface GroupListEntry {
   id: string;
@@ -83,61 +82,19 @@ export class GroupsService {
             dynamicConfig: true,
             dynamicData: true,
             dynamicLastRunAt: true,
+            contentEtag: true,
           },
         },
       },
     });
     if (!group) throw new NotFoundError(`相册 ${groupId} 不存在`);
 
-    const contentRows = group.contents.map((content) => ({
-      id: content.id,
-      sortOrder: content.sortOrder,
-      kind: content.kind,
-      dynamicType: content.dynamicType ?? '',
-      imageEtag: content.imageEtag,
-      imageSize: content.imageSize,
-      audioEtag: content.audioEtag ?? '',
-      audioSize: content.audioSize ?? '',
-      audioStatus: content.audioStatus,
-      audioSource: content.audioSource ?? '',
-      audioVoice: content.audioVoice ?? '',
-      frameName: content.frameName ?? '',
-      statusBarText: deviceStatusBarText({ ...content, renderedAt: content.dynamicLastRunAt }),
-    }));
-    const contentEtags = contentRows.map((content) => ({
-      id: content.id,
-      etag: hashParts([
-        'content',
-        content.id,
-        content.sortOrder,
-        content.kind,
-        content.dynamicType,
-        content.imageEtag,
-        content.imageSize,
-        content.audioEtag,
-        content.audioSize,
-        content.audioStatus,
-        content.audioSource,
-        content.audioVoice,
-        content.frameName,
-        content.statusBarText,
-      ]),
-    }));
-    const structureEtag = hashParts([
-      'structure',
-      ...contentRows.map((content) =>
-        [content.id, content.sortOrder, content.kind, content.dynamicType].join(':')
-      ),
-    ]);
-    const manifestEtag = hashParts([
-      'manifest',
-      group.name,
-      group.sortOrder,
-      structureEtag,
-      ...contentEtags.map((content) => `${content.id}:${content.etag}`),
-    ]);
+    const { structureEtag, manifestEtag, contentEtags } = computeGroupEtags(group);
 
-    await bulkSetContentEtags(client, contentEtags);
+    await bulkSetContentEtags(
+      client,
+      contentEtags.filter((content) => content.etag !== content.previousEtag)
+    );
     await client.group.update({
       where: { id: groupId },
       data: { structureEtag, manifestEtag },
@@ -474,10 +431,6 @@ function toSummary(
     content_count: g._count.contents,
     total_bytes: totalBytes,
   };
-}
-
-function hashParts(parts: Array<string | number>): string {
-  return createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 32);
 }
 
 async function bulkSetContentEtags(

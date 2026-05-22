@@ -3,14 +3,23 @@ import { api } from '@/lib/api';
 
 const V1 = '/api/v1';
 
-export function useMe() {
+export const meQueryKey = ['me'] as const;
+
+export interface CurrentUser {
+  id: string;
+  email: string;
+  username: string;
+}
+
+export async function fetchMe(): Promise<CurrentUser> {
+  const { data } = await api.get<CurrentUser>(`${V1}/users/current`);
+  return data;
+}
+
+export function useMe(enabled = true) {
   return useQuery({
-    queryKey: ['me'],
-    queryFn: async () => {
-      const { data } = await api.get<{ id: string; email: string; username: string }>(
-        `${V1}/users/current`
-      );
-      return data;
-    },
+    queryKey: meQueryKey,
+    queryFn: fetchMe,
+    enabled,
   });
 }

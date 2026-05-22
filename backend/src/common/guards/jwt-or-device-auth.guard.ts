@@ -1,19 +1,18 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
-import jwt from 'jsonwebtoken';
-import { AppConfig } from '../../infra/config/app.config';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AuthError } from '../errors';
 import { CURRENT_USER_KEY, type WebUserContext } from '../decorators/current-user.decorator';
 import { CURRENT_DEVICE_KEY, type DeviceContext } from '../decorators/current-device.decorator';
 import { readDeviceSecret } from './device-auth.guard';
-import type { JwtPayload } from '../../modules/auth/jwt-token.service';
+import { JwtTokenService } from '../../modules/auth/jwt-token.service';
+import { extractWebToken } from '../auth/http-token';
 
 @Injectable()
 export class JwtOrDeviceAuthGuard implements CanActivate {
   constructor(
-    private readonly config: AppConfig,
+    private readonly tokens: JwtTokenService,
     private readonly prisma: PrismaService
   ) {}
 
@@ -31,20 +30,10 @@ export class JwtOrDeviceAuthGuard implements CanActivate {
   }
 
   private tryJwt(req: FastifyRequest & { [CURRENT_USER_KEY]?: WebUserContext }): boolean {
-    const token = extractBearer(req) ?? extractCookieToken(req);
-    if (!token) return false;
-    try {
-      const payload = jwt.verify(token, this.config.jwtSecret) as JwtPayload;
-      if (!payload?.sub) return false;
-      req[CURRENT_USER_KEY] = {
-        userId: payload.sub,
-        email: payload.email,
-        username: payload.username ?? '',
-      };
-      return true;
-    } catch {
-      return false;
-    }
+    const user = this.tokens.tryVerifyUser(extractWebToken(req));
+    if (!user) return false;
+    req[CURRENT_USER_KEY] = user;
+    return true;
   }
 
   private async tryDevice(
@@ -61,19 +50,4 @@ export class JwtOrDeviceAuthGuard implements CanActivate {
     req[CURRENT_DEVICE_KEY] = { deviceId: d.id, mac: d.mac };
     return true;
   }
-}
-
-function extractBearer(req: FastifyRequest): string | null {
-  const auth = req.headers.authorization;
-  if (auth && auth.toLowerCase().startsWith('bearer ')) {
-    return auth.slice(7).trim();
-  }
-  return null;
-}
-
-function extractCookieToken(req: FastifyRequest): string | null {
-  const raw = req.headers.cookie;
-  if (!raw) return null;
-  const m = raw.match(/(?:^|;\s*)auth_token=([^;]+)/);
-  return m ? decodeURIComponent(m[1]) : null;
 }

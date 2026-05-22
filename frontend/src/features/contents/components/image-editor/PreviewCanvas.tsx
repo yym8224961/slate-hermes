@@ -109,14 +109,16 @@ export function PreviewCanvas({
 
     if (existingImage) {
       const bytes = new Uint8Array(existingImage);
-      if (!isValidBppLength(bytes)) return;
+      if (!isValidBppLength(bytes)) {
+        clearCanvas(ctx, canvas);
+        return;
+      }
       const data = decodeBppImage(bytes);
       ctx.putImageData(data, 0, 0);
       return;
     }
 
-    ctx.fillStyle = PAPER_HEX;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    clearCanvas(ctx, canvas);
   }, [imageFile, existingImage, threshold, mode, scale, offset, canvasRef]);
 
   const onPointerDown = useCallback(
@@ -186,4 +188,9 @@ export function PreviewCanvas({
       {showStatusBar && <StatusBarOverlay caption={statusCaption} showSafeArea={showSafeArea} />}
     </div>
   );
+}
+
+function clearCanvas(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
+  ctx.fillStyle = PAPER_HEX;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 }

@@ -20,9 +20,31 @@ constexpr char kTag[] = "Portal";
 
 static CaptivePortal* g_portal = nullptr;
 
+namespace {
+
+std::string WifiSsidToString(const uint8_t ssid[32]) {
+    size_t len = 0;
+    while (len < 32 && ssid[len] != 0)
+        ++len;
+    return std::string(reinterpret_cast<const char*>(ssid), len);
+}
+
+std::string JsonEscape(const std::string& value) {
+    std::string out;
+    out.reserve(value.size() + 8);
+    for (char c : value) {
+        if (c == '"' || c == '\\') {
+            out.push_back('\\');
+        }
+        out.push_back(c);
+    }
+    return out;
+}
+
+}  // namespace
+
 // ─── 工具:将 {{KEY}} 替换为 value(简单字符串替换) ──────────────────
-static std::string Substitute(const std::string& tmpl,
-                              const std::vector<std::pair<std::string, std::string>>& kv) {
+static std::string Substitute(const std::string& tmpl, const std::vector<std::pair<std::string, std::string>>& kv) {
     std::string s = tmpl;
     for (const auto& p : kv) {
         const std::string token = "{{" + p.first + "}}";
@@ -41,13 +63,12 @@ esp_err_t CaptivePortal::HandleRoot(httpd_req_t* req) {
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     char ap_ssid[24];
-    std::snprintf(ap_ssid, sizeof(ap_ssid), "%s-%02X%02X",
-                  CONFIG_SLATE_AP_SSID_PREFIX, mac[4], mac[5]);
+    std::snprintf(ap_ssid, sizeof(ap_ssid), "%s-%02X%02X", CONFIG_SLATE_AP_SSID_PREFIX, mac[4], mac[5]);
 
     std::string html = Substitute(slate::kCaptivePortalHtml, {
-        {"SERVER_URL", CONFIG_SLATE_DEFAULT_SERVER_URL},
-        {"AP_SSID", ap_ssid},
-    });
+                                                                 {"SERVER_URL", CONFIG_SLATE_DEFAULT_SERVER_URL},
+                                                                 {"AP_SSID", ap_ssid},
+                                                             });
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, html.c_str(), html.size());
@@ -67,16 +88,28 @@ esp_err_t CaptivePortal::HandleScan(httpd_req_t* req) {
     }
 
     cJSON* arr = cJSON_CreateArray();
+    if (!arr) {
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, "[]", -1);
+        return ESP_OK;
+    }
     for (auto& r : recs) {
         cJSON* item = cJSON_CreateObject();
-        cJSON_AddStringToObject(item, "ssid", reinterpret_cast<const char*>(r.ssid));
+        if (!item)
+            continue;
+        const std::string ssid = WifiSsidToString(r.ssid);
+        cJSON_AddStringToObject(item, "ssid", ssid.c_str());
         cJSON_AddNumberToObject(item, "rssi", r.rssi);
         cJSON_AddNumberToObject(item, "authmode", r.authmode);
         cJSON_AddItemToArray(arr, item);
     }
     char* out = cJSON_PrintUnformatted(arr);
     httpd_resp_set_type(req, "application/json");
-    httpd_resp_send(req, out, std::strlen(out));
+    if (out) {
+        httpd_resp_send(req, out, std::strlen(out));
+    } else {
+        httpd_resp_send(req, "[]", -1);
+    }
     cJSON_free(out);
     cJSON_Delete(arr);
     return ESP_OK;
@@ -106,23 +139,24 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
 
     auto get = [&](const char* k) -> std::string {
         cJSON* v = cJSON_GetObjectItemCaseSensitive(root, k);
-        if (cJSON_IsString(v) && v->valuestring) return v->valuestring;
+        if (cJSON_IsString(v) && v->valuestring)
+            return v->valuestring;
         return "";
     };
 
     Submission sub;
-    sub.ssid        = get("ssid");
-    sub.password    = get("password");
-    sub.server_url  = get("server_url");
+    sub.ssid       = get("ssid");
+    sub.password   = get("password");
+    sub.server_url = get("server_url");
     cJSON_Delete(root);
 
     // 明文凭据日志由 CONFIG_SLATE_LOG_PLAINTEXT_CRED 门控,详见 wifi.cc。
 #if CONFIG_SLATE_LOG_PLAINTEXT_CRED
-    ESP_LOGW(kTag, "/submit ssid='%s' pwd='%s' server='%s'",
-             sub.ssid.c_str(), sub.password.c_str(), sub.server_url.c_str());
+    ESP_LOGW(kTag, "/submit ssid='%s' pwd='%s' server='%s'", sub.ssid.c_str(), sub.password.c_str(),
+             sub.server_url.c_str());
 #else
-    ESP_LOGI(kTag, "/submit ssid='%s' pwd_len=%u server='%s'",
-             sub.ssid.c_str(), (unsigned)sub.password.size(), sub.server_url.c_str());
+    ESP_LOGI(kTag, "/submit ssid='%s' pwd_len=%u server='%s'", sub.ssid.c_str(), (unsigned)sub.password.size(),
+             sub.server_url.c_str());
 #endif
 
     if (sub.ssid.empty() || sub.server_url.empty()) {
@@ -148,14 +182,7 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
         // 栈 8 KB：Stop 调链含 httpd_stop + esp_wifi_stop + esp_netif_destroy，
         // 以及 esp_restart，4 KB 偏紧。
         if (g_portal->on_finished_) {
-            BaseType_t r = xTaskCreate(
-                [](void* arg) {
-                    vTaskDelay(pdMS_TO_TICKS(2000));
-                    auto* p = static_cast<CaptivePortal*>(arg);
-                    if (p->on_finished_) p->on_finished_(true);
-                    vTaskDelete(nullptr);
-                },
-                "portal_done", 8 * 1024, g_portal, 3, nullptr);
+            BaseType_t r = xTaskCreate(&CaptivePortal::FinishTask, "portal_done", 8 * 1024, g_portal, 3, nullptr);
             if (r != pdPASS) {
                 // 创建失败(堆紧张):同步触发 finished,避免 AP 永远不关。
                 // 缺点是浏览器看不到 success 页(连接随即断),但比 AP 一直开着好。
@@ -166,13 +193,7 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
     } else {
         // 表单失败:回 {success:false, error:中文文案}。
         // err_msg 已是中文,做最简单的 JSON 字符串转义(双引号和反斜杠)。
-        std::string esc;
-        esc.reserve(err_msg.size() + 8);
-        for (char c : err_msg) {
-            if (c == '"' || c == '\\') esc.push_back('\\');
-            esc.push_back(c);
-        }
-        std::string body = "{\"success\":false,\"error\":\"" + esc + "\"}";
+        std::string body = "{\"success\":false,\"error\":\"" + JsonEscape(err_msg) + "\"}";
         httpd_resp_send(req, body.c_str(), body.size());
     }
     return ESP_OK;
@@ -186,7 +207,12 @@ esp_err_t CaptivePortal::HandleDone(httpd_req_t* req) {
 
 esp_err_t CaptivePortal::HandleExit(httpd_req_t* req) {
     httpd_resp_send(req, "ok", -1);
-    if (g_portal) g_portal->Stop();
+    if (g_portal) {
+        BaseType_t r = xTaskCreate(&CaptivePortal::StopTask, "portal_exit", 8 * 1024, g_portal, 3, nullptr);
+        if (r != pdPASS) {
+            ESP_LOGE(kTag, "portal_exit task create failed");
+        }
+    }
     return ESP_OK;
 }
 
@@ -200,7 +226,8 @@ esp_err_t CaptivePortal::HandleCatchAll(httpd_req_t* req) {
 
 // ─── lifecycle ─────────────────────────────────────────────────────
 bool CaptivePortal::Start() {
-    if (running_.load()) return true;
+    if (running_.load())
+        return true;
     g_portal = this;
 
     if (!Wifi::Get().StartAp(CONFIG_SLATE_AP_SSID_PREFIX)) {
@@ -217,13 +244,12 @@ bool CaptivePortal::Start() {
         esp_netif_get_ip_info(ap_netif, &ip_info);
 
         esp_netif_dns_info_t dns = {};
-        dns.ip.u_addr.ip4.addr = ip_info.ip.addr;
-        dns.ip.type            = ESP_IPADDR_TYPE_V4;
+        dns.ip.u_addr.ip4.addr   = ip_info.ip.addr;
+        dns.ip.type              = ESP_IPADDR_TYPE_V4;
         esp_netif_dhcps_stop(ap_netif);
         // option 6 = DNS server
         uint8_t opt = 1;
-        esp_netif_dhcps_option(ap_netif, ESP_NETIF_OP_SET,
-                               ESP_NETIF_DOMAIN_NAME_SERVER, &opt, sizeof(opt));
+        esp_netif_dhcps_option(ap_netif, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &opt, sizeof(opt));
         esp_netif_set_dns_info(ap_netif, ESP_NETIF_DNS_MAIN, &dns);
         esp_netif_dhcps_start(ap_netif);
 
@@ -233,15 +259,17 @@ bool CaptivePortal::Start() {
         ESP_LOGW(kTag, "AP netif not found, DNS hijack skipped");
     }
 
-    httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
+    httpd_config_t cfg   = HTTPD_DEFAULT_CONFIG();
     cfg.max_uri_handlers = 8;
     cfg.uri_match_fn     = httpd_uri_match_wildcard;
     // 默认 4 KB 栈不够：HandleSubmit 里调 Wifi::TryConnect（阻塞等 event）
     // + ESP_LOG（vfprintf 含 UTF-8 中文消耗大），会触发 LoadProhibited panic。
-    cfg.stack_size       = 8192;
+    cfg.stack_size = 8192;
     if (httpd_start(&server_, &cfg) != ESP_OK) {
         ESP_LOGE(kTag, "HTTP server start failed");
+        dns_.Stop();
         Wifi::Get().StopAp();
+        g_portal = nullptr;
         return false;
     }
 
@@ -265,7 +293,8 @@ bool CaptivePortal::Start() {
 }
 
 void CaptivePortal::Stop() {
-    if (!running_.load()) return;
+    if (!running_.load())
+        return;
     dns_.Stop();
     if (server_) {
         httpd_stop(server_);
@@ -283,4 +312,22 @@ void CaptivePortal::OnSubmit(SubmitCb cb) {
 
 void CaptivePortal::OnFinished(FinishedCb cb) {
     on_finished_ = std::move(cb);
+}
+
+void CaptivePortal::FinishTask(void* arg) {
+    vTaskDelay(pdMS_TO_TICKS(2000));
+    auto* p = static_cast<CaptivePortal*>(arg);
+    if (p->on_finished_) {
+        p->on_finished_(true);
+    } else {
+        p->Stop();
+    }
+    vTaskDelete(nullptr);
+}
+
+void CaptivePortal::StopTask(void* arg) {
+    vTaskDelay(pdMS_TO_TICKS(100));
+    auto* p = static_cast<CaptivePortal*>(arg);
+    p->Stop();
+    vTaskDelete(nullptr);
 }

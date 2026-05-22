@@ -1,18 +1,14 @@
 import { createId } from '@paralleldrive/cuid2';
 import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import type { ContentAudioSource, ContentAudioStatus, ContentKind } from '@prisma/client';
+import type { ContentAudioSource, ContentKind } from '@prisma/client';
 import {
   DynamicConfig,
-  TTS_VOICES,
-  TtsVoice,
   isAudioDynamicConfig,
   type ContentDetailT,
   type ContentMutationResponseT,
   type ContentSummaryT,
   type CreateDynamicContentRequestT,
-  type DynamicConfigT,
-  type DynamicTypeT,
   type ManifestResponseT,
 } from 'shared';
 import { BlobService } from '../../infra/blob/blob.service';
@@ -30,39 +26,14 @@ import { ImageRendererService } from '../image-renderer/image-renderer.service';
 import { DynamicContentRegistry } from '../dynamic-content/dynamic-content-registry';
 import { DynamicContentRendererService } from '../dynamic-content/dynamic-content-renderer.service';
 import type { RenderDynamicContentResult } from '../dynamic-content/dynamic-content-renderer.service';
+import { ContentAudioBlobService } from './content-audio-blob.service';
 import {
-  deviceStatusBarText,
-  fontTestStatusBarText,
-  weatherStatusBarText,
-} from './content-status-bar';
+  contentToDetail,
+  contentToSummary,
+  defaultDynamicFrameName,
+  type ContentRow,
+} from './content-presenter';
 import type { ParsedContentUpload } from './multipart.parser';
-
-type TtsVoiceValue = (typeof TTS_VOICES)[number];
-
-interface ContentRow {
-  id: string;
-  groupId?: string;
-  sortOrder: number;
-  frameName: string | null;
-  contentEtag: string;
-  imageEtag: string;
-  audioEtag: string | null;
-  imageSize: number;
-  audioSize: number | null;
-  audioStatus: ContentAudioStatus;
-  audioSource: ContentAudioSource | null;
-  audioVoice: string | null;
-  audioText?: string | null;
-  audioLastError?: string | null;
-  audioUpdatedAt?: Date | null;
-  kind: ContentKind;
-  dynamicType: string | null;
-  dynamicNextRunAt?: Date | null;
-  dynamicConfig?: Prisma.JsonValue | null;
-  dynamicData?: Prisma.JsonValue | null;
-  dynamicLastRunAt?: Date | null;
-  dynamicLastError?: string | null;
-}
 
 type RenderDynamicContentResultExt = RenderDynamicContentResult & {
   contentEtag: string;
@@ -105,7 +76,8 @@ export class ContentsService {
     private readonly audio: AudioService,
     private readonly tts: TtsService,
     private readonly dynamicContentRegistry: DynamicContentRegistry,
-    private readonly dynamicRenderer: DynamicContentRendererService
+    private readonly dynamicRenderer: DynamicContentRendererService,
+    private readonly audioBlobs: ContentAudioBlobService
   ) {}
 
   async assertReadable(gid: string, scope: { userId?: string; deviceId?: string }): Promise<void> {
@@ -168,7 +140,7 @@ export class ContentsService {
           total: Math.max(peers.length, 1),
         },
       },
-      contents: group.contents.map((content) => this.toSummary(content)),
+      contents: group.contents.map((content) => contentToSummary(content)),
       manifestEtag: group.manifestEtag,
     };
   }
@@ -198,7 +170,7 @@ export class ContentsService {
       where: { groupId_sortOrder: { groupId, sortOrder: seq } },
       select: CONTENT_SELECT,
     });
-    return content ? this.toSummary(content) : null;
+    return content ? contentToSummary(content) : null;
   }
 
   async refreshCurrentContentForDeviceIfDue(
@@ -233,7 +205,13 @@ export class ContentsService {
       },
     });
     if (content && this.isCurrentDynamicDue(content)) {
-      await this.dynamicRenderer.renderDynamicContent(content.id);
+      try {
+        await this.dynamicRenderer.renderDynamicContent(content.id);
+      } catch (err) {
+        this.logger.warn(
+          `dynamic current-frame refresh failed content=${content.id}: ${formatError(err)}`
+        );
+      }
     }
   }
 
@@ -252,7 +230,7 @@ export class ContentsService {
         audioText: true,
       },
     });
-    return rows.map((row) => this.toDetail(row));
+    return rows.map((row) => contentToDetail(row));
   }
 
   async get(
@@ -270,7 +248,7 @@ export class ContentsService {
     });
     if (!content) throw new NotFoundError('内容不存在');
     await this.assertReadable(content.groupId, scope);
-    return this.toDetail(content);
+    return contentToDetail(content);
   }
 
   async readImage(
@@ -308,9 +286,9 @@ export class ContentsService {
     if (!content) throw new NotFoundError('内容不存在');
     await this.assertReadable(content.groupId, scope);
     if (!content.audioEtag || !content.audioSize) throw new NotFoundError('该内容没有音频');
-    const data = await this.readAudioBlob(content.groupId, content.id, content.audioEtag);
+    const data = await this.audioBlobs.read(content.groupId, content.id, content.audioEtag);
     if (!data) {
-      await this.handleMissingAudioBlob(content);
+      await this.audioBlobs.handleMissing(content);
       throw new NotFoundError('音频文件丢失');
     }
     return { data, etag: content.audioEtag };
@@ -324,7 +302,7 @@ export class ContentsService {
     return this.dynamicRenderer.renderPreviewDirect(
       config.type,
       config,
-      raw.frame_name ?? defaultFrameName(config.type, config)
+      raw.frame_name ?? defaultDynamicFrameName(config.type, config)
     );
   }
 
@@ -381,7 +359,7 @@ export class ContentsService {
             id: contentId,
             groupId: gid,
             sortOrder: nextSeq,
-            frameName: frame_name ?? defaultFrameName(dynamic_type, validatedConfig),
+            frameName: frame_name ?? defaultDynamicFrameName(dynamic_type, validatedConfig),
             kind: 'dynamic',
             dynamicType: dynamic_type,
             dynamicConfig: validatedConfig as unknown as Prisma.InputJsonValue,
@@ -484,7 +462,7 @@ export class ContentsService {
       data.dynamicRefreshDueAt = new Date();
       data.dynamicRefreshLeaseUntil = null;
       if (body.frame_name === undefined && currentType !== 'dashboard') {
-        data.frameName = defaultFrameName(currentType, validated);
+        data.frameName = defaultDynamicFrameName(currentType, validated);
       }
     }
     await this.prisma.content.update({ where: { id: contentId }, data });
@@ -609,11 +587,11 @@ export class ContentsService {
     // 仅 upload 音频备份字节用于回滚 —— TTS 音频可在 worker 重排时自动重建，不必扛 IO。
     const previousAudio =
       content.audioSource === 'upload'
-        ? await this.readAudioBlob(content.groupId, contentId, content.audioEtag)
+        ? await this.audioBlobs.read(content.groupId, contentId, content.audioEtag)
         : null;
     await Promise.all([
       this.blob.delete(content.groupId, contentId, 'image'),
-      this.deleteAudioBlob(content.groupId, contentId, content.audioEtag),
+      this.audioBlobs.delete(content.groupId, contentId, content.audioEtag),
     ]);
     try {
       await this.prisma.$transaction(async (tx) => {
@@ -643,7 +621,7 @@ export class ContentsService {
     const content = await this.requireContent(contentId);
     await this.groups.assertOwned(content.groupId, ownerUserId);
     const previousAudioEtag = content.audioEtag;
-    const previousAudioBytes = await this.readAudioBlob(
+    const previousAudioBytes = await this.audioBlobs.read(
       content.groupId,
       contentId,
       previousAudioEtag
@@ -665,7 +643,7 @@ export class ContentsService {
         },
       });
       const manifest_etag = await this.groups.recomputeManifestEtag(content.groupId);
-      await this.deleteAudioBlob(content.groupId, contentId, previousAudioEtag);
+      await this.audioBlobs.delete(content.groupId, contentId, previousAudioEtag);
       return { manifest_etag };
     } catch (err) {
       if (previousAudioBytes && previousAudioEtag) {
@@ -713,7 +691,7 @@ export class ContentsService {
       },
     });
     const groupEtag = await this.groups.recomputeManifestEtag(content.groupId);
-    await this.deleteAudioBlob(content.groupId, contentId, previousAudioEtag);
+    await this.audioBlobs.delete(content.groupId, contentId, previousAudioEtag);
     const contentEtag = await this.readContentEtag(contentId);
     return this.toMutationResponse(
       contentId,
@@ -752,53 +730,6 @@ export class ContentsService {
       return this.groups.recomputeManifestEtag(gid, tx);
     });
     return { manifest_etag };
-  }
-
-  private toSummary(row: ContentRow): ContentSummaryT {
-    // DB 字段已经由 schema 收口，列表场景不必每行 zod parse —— 直接断言。
-    return {
-      id: row.id,
-      seq: row.sortOrder,
-      content_etag: row.contentEtag,
-      frame_name: row.frameName,
-      device_status_bar_text: deviceStatusBarText({ ...row, renderedAt: row.dynamicLastRunAt }),
-      image_etag: row.imageEtag,
-      audio_etag: row.audioEtag,
-      image_size: row.imageSize,
-      audio_size: row.audioSize,
-      audio_status: row.audioStatus,
-      audio_source: row.audioSource,
-      audio_voice: TtsVoice.safeParse(row.audioVoice).success
-        ? (row.audioVoice as TtsVoiceValue)
-        : null,
-      kind: row.kind === 'dynamic' ? 'dynamic' : 'image',
-      dynamic_type: (row.dynamicType as DynamicTypeT | null) ?? null,
-      next_wake_sec: nextWakeSec(row.dynamicNextRunAt ?? null),
-    };
-  }
-
-  private toDetail(
-    row: ContentRow & {
-      groupId: string;
-      dynamicLastRunAt?: Date | null;
-      dynamicLastError?: string | null;
-    }
-  ): ContentDetailT {
-    const config = row.dynamicConfig ? DynamicConfig.safeParse(row.dynamicConfig) : null;
-    return {
-      ...this.toSummary(row),
-      group_id: row.groupId,
-      dynamic_config: config?.success
-        ? config.data
-        : ((row.dynamicConfig as DynamicConfigT | null) ?? null),
-      dynamic_data: row.dynamicData ?? null,
-      dynamic_last_rendered_at: row.dynamicLastRunAt?.toISOString() ?? null,
-      dynamic_next_render_at: row.dynamicNextRunAt?.toISOString() ?? null,
-      dynamic_render_error: row.dynamicLastError ?? null,
-      audio_text: row.audioText ?? null,
-      audio_error: row.audioLastError ?? null,
-      audio_updated_at: row.audioUpdatedAt?.toISOString() ?? null,
-    };
   }
 
   private async createImage(
@@ -879,7 +810,7 @@ export class ContentsService {
     const shouldClearStaleAudio = Boolean(image && !audio && previousAudioEtag);
     const previousAudioBytes =
       audio || shouldClearStaleAudio
-        ? await this.readAudioBlob(gid, contentId, previousAudioEtag)
+        ? await this.audioBlobs.read(gid, contentId, previousAudioEtag)
         : null;
     if (parsed.hasFrameName === false && !image && !audio) {
       throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
@@ -925,7 +856,7 @@ export class ContentsService {
       dbUpdated = true;
       const groupEtag = await this.groups.recomputeManifestEtag(gid);
       if (audio || shouldClearStaleAudio) {
-        await this.deleteAudioBlob(gid, contentId, previousAudioEtag);
+        await this.audioBlobs.delete(gid, contentId, previousAudioEtag);
       }
       const contentEtag = await this.readContentEtag(contentId);
       return this.toMutationResponse(
@@ -1088,86 +1019,6 @@ export class ContentsService {
     return row.contentEtag;
   }
 
-  private async deleteAudioBlob(
-    groupId: string,
-    contentId: string,
-    audioEtag: string | null
-  ): Promise<void> {
-    if (!audioEtag) return;
-    await this.blob
-      .delete(groupId, audioBlobContentId(contentId, audioEtag), 'audio')
-      .catch(() => {});
-  }
-
-  private async readAudioBlob(
-    groupId: string,
-    contentId: string,
-    audioEtag: string | null
-  ): Promise<Buffer | null> {
-    if (!audioEtag) return null;
-    return this.blob.read(groupId, audioBlobContentId(contentId, audioEtag), 'audio');
-  }
-
-  private async handleMissingAudioBlob(content: {
-    id: string;
-    groupId: string;
-    audioEtag: string | null;
-    audioStatus: ContentAudioStatus;
-    audioSource: ContentAudioSource | null;
-    audioText: string | null;
-    audioVoice: string | null;
-  }): Promise<void> {
-    if (!content.audioEtag) return;
-
-    const data: Prisma.ContentUpdateInput = {
-      audioEtag: null,
-      audioSize: null,
-      audioUpdatedAt: new Date(),
-      audioLeaseUntil: null,
-    };
-
-    if (content.audioSource === 'tts' && content.audioText && content.audioVoice) {
-      // TTS 重排：worker 会重新合成。同时把 attempts 清零，避免之前已经撞到 MAX_AUDIO_ATTEMPTS
-      // 让 claim filter 永远跳过这一行。
-      data.audioStatus = 'pending';
-      data.audioLastError = 'TTS 音频文件丢失，已重新排队';
-      data.audioAttempts = 0;
-    } else if (content.audioSource === 'upload') {
-      data.audioStatus = 'failed';
-      data.audioLastError = '上传音频文件丢失，请重新上传';
-    } else {
-      data.audioStatus = 'none';
-      data.audioSource = null;
-      data.audioLastError = null;
-    }
-
-    await this.prisma.content.update({ where: { id: content.id }, data });
-    await this.groups.recomputeManifestEtag(content.groupId);
-  }
-}
-
-function nextWakeSec(nextRunAt: Date | null): number | null {
-  if (!nextRunAt) return null;
-  return Math.max(Math.ceil((nextRunAt.getTime() - Date.now()) / 1000), 0);
-}
-
-function defaultFrameName(dynamicType: string | null, config?: unknown): string | null {
-  switch (dynamicType) {
-    case 'daily_calendar':
-      return '日历';
-    case 'month_calendar':
-      return '月历';
-    case 'history_today':
-      return '历史上的今天';
-    case 'weather':
-      return weatherStatusBarText(config);
-    case 'dashboard':
-      return '数据看板';
-    case 'font_test':
-      return fontTestStatusBarText(config);
-    default:
-      return null;
-  }
 }
 
 async function restoreBlob(

@@ -4,16 +4,30 @@ import { ImageRendererModule } from '../image-renderer/image-renderer.module';
 import { AudioModule } from '../audio/audio.module';
 import { TtsModule } from '../tts/tts.module';
 import { DynamicContentModule } from '../dynamic-content/dynamic-content.module';
+import { AuthModule } from '../auth/auth.module';
 import { ContentsController } from './contents.controller';
 import { ContentDataController } from './content-data.controller';
 import { ContentsService } from './contents.service';
 import { IngestLimitGuard } from './ingest-limit.guard';
+import { ContentAudioBlobService } from './content-audio-blob.service';
 import { MultipartParser } from './multipart.parser';
 
 @Module({
-  imports: [GroupsModule, ImageRendererModule, AudioModule, TtsModule, DynamicContentModule],
+  imports: [
+    GroupsModule,
+    ImageRendererModule,
+    AudioModule,
+    TtsModule,
+    DynamicContentModule,
+    AuthModule,
+  ],
   controllers: [ContentsController, ContentDataController],
-  providers: [ContentsService, MultipartParser, IngestLimitGuard],
+  providers: [
+    ContentsService,
+    MultipartParser,
+    IngestLimitGuard,
+    ContentAudioBlobService,
+  ],
   exports: [ContentsService],
 })
 export class ContentsModule {}

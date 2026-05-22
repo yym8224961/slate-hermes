@@ -110,7 +110,7 @@ src/
 
 ## 数据流
 
-- **状态管理**：TanStack Query 一把梭。服务端态按 feature 放在 `features/*/queries.ts`，组件只调 `useDevices()` / `useGroups()` / `useGroupContents(gid)` 这类 hook。`lib/queries.ts` 只做兼容 re-export。mutation 在 `onSuccess` 里 `invalidateQueries` 触发 refetch。
+- **状态管理**：TanStack Query 一把梭。服务端态按 feature 放在 `features/*/queries.ts`，组件只调 `useDevices()` / `useGroups()` / `useGroupContents(gid)` 这类 hook。mutation 在 `onSuccess` 里 `invalidateQueries` 触发 refetch。
 - **缓存策略**：`staleTime: 30s`，`refetchOnWindowFocus: false`（避免 e-ink 调试频繁请求）。设备列表 `refetchInterval: 30s` 保持 `last_seen_at` 新鲜。
 - **content binary**：`useContentImage(contentId, etag)` 的 queryKey 带 etag，`staleTime: Infinity` —— etag 不变就永远不重拉，跟设备端 ETag/304 行为一致。
 

@@ -12,7 +12,7 @@ import { Plus, FolderHeart, MonitorSmartphone, Cpu } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { useDevices, useReorderDevices } from '@/features/devices/queries';
-import { useMe } from '@/features/auth/queries';
+import { useAuth } from '@/features/auth/auth';
 import {
   useCreateGroup,
   useDeleteGroup,
@@ -34,7 +34,7 @@ import { useDndOrder } from '@/lib/dnd';
 import { greeting } from '@/lib/format';
 
 export function Dashboard() {
-  const me = useMe();
+  const { user } = useAuth();
   const devices = useDevices();
   const groups = useGroups();
   const navigate = useNavigate();
@@ -49,7 +49,7 @@ export function Dashboard() {
   // 添加设备弹窗
   const [addOpen, setAddOpen] = useState(false);
 
-  const greetName = me.data?.username ?? '';
+  const greetName = user?.username ?? '';
 
   // 设备拖拽排序
   const reorderDevices = useReorderDevices();
@@ -132,7 +132,7 @@ export function Dashboard() {
       {/* 设备 modal */}
       {openDevice && (
         <DeviceModal
-          open={!!openDevice}
+          open
           onOpenChange={(o) => {
             if (!o) closeDeviceModal();
           }}

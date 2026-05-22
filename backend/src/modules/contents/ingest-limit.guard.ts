@@ -10,16 +10,13 @@ import type { FastifyRequest } from 'fastify';
 /**
  * Ingest 端点的简易限流 + body 大小检查。
  *
- * 为什么不用 @fastify/rate-limit：NestJS + Fastify 适配层不暴露 route-level
+ * 为什么不用 @fastify/rate-limit:NestJS + Fastify 适配层不暴露 route-level
  * Fastify config，全局 rate-limit 配 `global: false` 后无法只对特定 route 启用。
  * 这里手写一份足够保护 ingest 这一个端点。
  *
  * 限制：
  *   - 30 req/min/contentId（固定窗口；每 60s 重置一次计数）
  *   - Content-Length > 64KB → 413
- *
- * 内存模型：Map<contentId, { windowStartMs, currentCount, lastSeenMs }>。
- * 定期清理长期不活跃的 contentId，DoS 防护再用 MAX_BUCKETS 做硬上限。
  */
 @Injectable()
 export class IngestLimitGuard implements CanActivate {
@@ -56,7 +53,7 @@ export class IngestLimitGuard implements CanActivate {
       }
     }
 
-    // 2. 速率限制
+    // 2. 速率限制（按 contentId 维度，capability URL 模型下没有更细粒度的身份）
     const now = Date.now();
     this.cleanupStaleBuckets(now);
     let bucket = this.buckets.get(contentId);
@@ -95,9 +92,9 @@ export class IngestLimitGuard implements CanActivate {
   private cleanupStaleBuckets(now: number): void {
     if (now - this.lastCleanupMs < IngestLimitGuard.WINDOW_MS) return;
     this.lastCleanupMs = now;
-    for (const [contentId, bucket] of this.buckets) {
+    for (const [key, bucket] of this.buckets) {
       if (now - bucket.lastSeenMs >= IngestLimitGuard.STALE_BUCKET_MS) {
-        this.buckets.delete(contentId);
+        this.buckets.delete(key);
       }
     }
   }

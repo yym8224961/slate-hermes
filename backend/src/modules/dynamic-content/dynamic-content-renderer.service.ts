@@ -34,7 +34,7 @@ export interface RenderDynamicContentResult {
 export class DynamicContentRendererService {
   private readonly logger = new Logger(DynamicContentRendererService.name);
   private readonly inflight = new Map<string, Promise<RenderDynamicContentResult>>();
-  private readonly tails = new Map<string, Promise<void>>();
+  private readonly tails = new Map<string, Promise<RenderDynamicContentResult>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -54,15 +54,15 @@ export class DynamicContentRendererService {
     if (existing) return existing;
 
     const previous = this.tails.get(contentId) ?? Promise.resolve();
-    const task = previous.catch(() => undefined).then(() => this.doRender(contentId, opts));
-    const tail = task.then(
-      () => undefined,
-      () => undefined
-    );
-    this.tails.set(contentId, tail);
-    void tail.finally(() => {
-      if (this.tails.get(contentId) === tail) this.tails.delete(contentId);
-    });
+    const task = canDedupe
+      ? previous.then(() => this.doRender(contentId, opts))
+      : previous.catch(() => undefined).then(() => this.doRender(contentId, opts));
+    this.tails.set(contentId, task);
+    void task
+      .finally(() => {
+        if (this.tails.get(contentId) === task) this.tails.delete(contentId);
+      })
+      .catch(() => undefined);
 
     if (canDedupe) {
       this.inflight.set(contentId, task);

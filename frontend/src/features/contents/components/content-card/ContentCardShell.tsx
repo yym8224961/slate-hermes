@@ -49,7 +49,7 @@ export function ContentCardShell({
         )}
 
         <span className="absolute top-2 left-2 bg-paper border border-ink px-1.5 font-mono text-[10px] pointer-events-none">
-          {String(seq).padStart(2, '0')}
+          {String(seq + 1).padStart(2, '0')}
         </span>
 
         {topRight}

@@ -1,4 +1,6 @@
 import { useEffect, type RefObject } from 'react';
+import { FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
+import { PAPER_HEX } from '@/lib/colors';
 import { decodeBppImage, isValidBppLength } from '@/lib/image';
 
 const MAX_CACHE_SIZE = 32;
@@ -29,16 +31,23 @@ function rememberImageData(etag: string, data: ImageData): void {
 
 export function useContentBitmap(
   canvasRef: RefObject<HTMLCanvasElement | null>,
-  data: ArrayBuffer | undefined,
+  data: ArrayBuffer | null | undefined,
   etag: string | null | undefined
 ): void {
   useEffect(() => {
-    if (!data || !canvasRef.current) return;
+    if (!canvasRef.current) return;
     const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return;
+    if (!data) {
+      clearCanvas(ctx);
+      return;
+    }
 
     const bytes = new Uint8Array(data);
-    if (!isValidBppLength(bytes)) return;
+    if (!isValidBppLength(bytes)) {
+      clearCanvas(ctx);
+      return;
+    }
 
     if (etag) {
       const cached = getCachedImageData(etag);
@@ -52,4 +61,9 @@ export function useContentBitmap(
     if (etag) rememberImageData(etag, decoded);
     ctx.putImageData(decoded, 0, 0);
   }, [canvasRef, data, etag]);
+}
+
+function clearCanvas(ctx: CanvasRenderingContext2D) {
+  ctx.fillStyle = PAPER_HEX;
+  ctx.fillRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
 }

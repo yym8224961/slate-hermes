@@ -9,6 +9,7 @@ import {
   ForbiddenError,
   InternalError,
   NotFoundError,
+  RateLimitedError,
   ValidationError,
 } from '../errors';
 import { mapPrismaError } from '../errors/prisma-error.map';
@@ -63,6 +64,10 @@ export class AppExceptionFilter implements ExceptionFilter {
           ? res
           : ((res as { message?: string }).message ?? exception.message);
       const detail = typeof res === 'object' ? res : undefined;
+      const code =
+        typeof res === 'object' && res && typeof (res as { error?: unknown }).error === 'string'
+          ? (res as { error: string }).error
+          : 'http_error';
       switch (status) {
         case 400:
           return new ValidationError(message, detail);
@@ -74,8 +79,12 @@ export class AppExceptionFilter implements ExceptionFilter {
           return new NotFoundError(message, detail);
         case 409:
           return new ConflictError(message, detail);
+        case 429:
+          return new RateLimitedError(message, detail);
         default:
-          return new InternalError(message, detail);
+          return status >= 400 && status < 500
+            ? new HttpAppError(status, code, message, detail)
+            : new InternalError(message, detail);
       }
     }
 
@@ -83,5 +92,16 @@ export class AppExceptionFilter implements ExceptionFilter {
       return new InternalError(exception.message);
     }
     return new InternalError('服务器内部错误');
+  }
+}
+
+class HttpAppError extends AppError {
+  readonly httpStatus: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string, detail?: unknown) {
+    super(message, detail);
+    this.httpStatus = status;
+    this.code = code;
   }
 }

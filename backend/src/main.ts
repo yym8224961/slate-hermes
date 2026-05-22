@@ -18,6 +18,8 @@ async function bootstrap(): Promise<void> {
 
   const config = app.get(AppConfig);
 
+  // Nest FastifyAdapter exposes Fastify's register API with a narrower plugin type than
+  // @fastify/* ESM dynamic imports provide, so the cast is limited to these registrations.
   await app.register(import('@fastify/cookie') as never);
   await app.register(import('@fastify/multipart') as never, {
     limits: { fileSize: 32 * 1024 * 1024 },

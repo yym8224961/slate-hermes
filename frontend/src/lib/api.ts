@@ -1,8 +1,9 @@
-// 共享 axios 实例：自动附加 Bearer JWT，401 时清 token + 跳 /login。
+// 共享 axios 实例：自动附加 Bearer JWT，401 时通知 AuthProvider 清登录态并跳 /login。
 
 import axios, { AxiosError } from 'axios';
 
 const TOKEN_KEY = 'slate_jwt';
+let unauthorizedHandler: (() => void) | null = null;
 
 export const api = axios.create({
   baseURL: '/',
@@ -21,16 +22,34 @@ api.interceptors.response.use(
   (r) => r,
   (err: AxiosError) => {
     if (err.response?.status === 401) {
-      // 不在 /login 才跳转，避免登录页自己 401 时无限循环
-      const path = window.location.pathname;
-      if (path !== '/login') {
+      // 不在拦截器里清 token：AuthProvider 的 handler 会做 tokenStorage.clear() + setToken(null) +
+      // qc.clear() + navigate('/login')，单一职责。handler 未注册（App 启动前的早期 401）时退化为
+      // 硬跳，保证用户不会停留在已失效的页面看到空数据。
+      if (unauthorizedHandler) {
+        unauthorizedHandler();
+      } else {
         localStorage.removeItem(TOKEN_KEY);
-        window.location.href = '/login';
+        if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+          window.location.href = '/login';
+        }
       }
     }
     return Promise.reject(err);
   }
 );
+
+export function setUnauthorizedHandler(handler: () => void): () => void {
+  if (unauthorizedHandler && unauthorizedHandler !== handler) {
+    // 双挂载（StrictMode / HMR）会先卸载再装载，正常应当先看到清理回调把单例清空；
+    // 若到这里 unauthorizedHandler 仍非空，说明上一份 handler 没正确 dispose，可能是
+    // 漏写 useEffect 返回值，开发时尽早暴露出来。
+    console.warn('[api] setUnauthorizedHandler overwriting an existing handler');
+  }
+  unauthorizedHandler = handler;
+  return () => {
+    if (unauthorizedHandler === handler) unauthorizedHandler = null;
+  };
+}
 
 export const tokenStorage = {
   get: () => localStorage.getItem(TOKEN_KEY),

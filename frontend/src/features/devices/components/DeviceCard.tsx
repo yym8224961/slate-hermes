@@ -9,9 +9,6 @@ import {
   Trash2,
   GripVertical,
 } from 'lucide-react';
-import { useMemo } from 'react';
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import { useUnbindDevice } from '@/features/devices/queries';
 import type { DeviceSummaryT, GroupSummaryT } from 'shared';
 import { IconBlock } from '@/components/ui/IconBlock';
@@ -19,6 +16,7 @@ import { useToast } from '@/components/feedback/Toast';
 import { useConfirm } from '@/components/feedback/Confirm';
 import { isOnline, timeAgo, rssiLabel } from '@/lib/format';
 import { cn } from '@/lib/cn';
+import { useSortableStyle } from '@/lib/dnd';
 
 export function DeviceCard({
   device,
@@ -47,18 +45,7 @@ export function DeviceCard({
   const toast = useToast();
   const confirm = useConfirm();
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: device.id,
-    animateLayoutChanges: () => false,
-  });
-  const style = useMemo(
-    () => ({
-      transform: CSS.Transform.toString(transform),
-      transition: 'none' as const,
-      zIndex: isDragging ? 10 : undefined,
-    }),
-    [transform, isDragging]
-  );
+  const { attributes, listeners, setNodeRef, style, isDragging } = useSortableStyle(device.id);
 
   const playingContents = currentGroup?.content_count;
 

@@ -15,6 +15,10 @@ export function DynamicContentEditorPage() {
   const isEdit = !!contentId;
   const contents = useGroupContents(gid);
 
+  if (!gid) {
+    return <EmptyState title="页面不存在" hint="请从总览页进入具体内容组。" />;
+  }
+
   function onDone() {
     navigate(`/groups/${gid}`);
   }
@@ -37,17 +41,17 @@ export function DynamicContentEditorPage() {
   if (isEdit && !content) {
     return <EmptyState title="动态内容不存在或已删除" />;
   }
-  if (isEdit && (!content?.dynamic_type || !content.dynamic_config)) {
+  if (!content?.dynamic_type || !content.dynamic_config) {
     return <EmptyState title="动态内容配置缺失" hint="请返回内容列表后重试。" />;
   }
 
   // ContentDetail 已经带 dynamic_type / dynamic_config，省一次 GET /contents/:id 请求。
   return (
     <DynamicContentEditor
-      gid={gid!}
+      gid={gid}
       content={content}
-      initialType={content?.dynamic_type ?? undefined}
-      initialConfig={content?.dynamic_config ?? undefined}
+      initialType={content.dynamic_type}
+      initialConfig={content.dynamic_config}
       onDone={onDone}
     />
   );

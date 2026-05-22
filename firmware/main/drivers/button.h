@@ -22,7 +22,7 @@ class Button {
     void OnMultipleClick(std::function<void()> callback, uint8_t click_count = 3);
 
    protected:
-    gpio_num_t      gpio_num_;
+    gpio_num_t      gpio_num_      = GPIO_NUM_NC;
     button_handle_t button_handle_ = nullptr;
 
     std::function<void()> on_press_down_;

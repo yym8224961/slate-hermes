@@ -1,7 +1,7 @@
 #include "time_tick.h"
 
-#include <ctime>
 #include <esp_log.h>
+#include <ctime>
 
 #include "event_bus.h"
 
@@ -10,7 +10,8 @@ constexpr char kTag[] = "TimeTick";
 }
 
 void TimeTick::Start() {
-    if (timer_) return;
+    if (timer_)
+        return;
     esp_timer_create_args_t args = {};
     args.callback                = &TimeTick::TickCb;
     args.arg                     = this;
@@ -22,8 +23,12 @@ void TimeTick::Start() {
 }
 
 void TimeTick::Stop() {
-    if (!timer_) return;
-    esp_timer_stop(timer_);
+    if (!timer_)
+        return;
+    esp_err_t err = esp_timer_stop(timer_);
+    if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(kTag, "esp_timer_stop failed: %s", esp_err_to_name(err));
+    }
     esp_timer_delete(timer_);
     timer_ = nullptr;
 }
@@ -32,11 +37,13 @@ void TimeTick::TickCb(void* arg) {
     auto* self = static_cast<TimeTick*>(arg);
 
     time_t now = time(nullptr);
-    if (now < 1577836800) return;  // 2020-01-01 之前视为 SNTP 未同步，跳过
+    if (now < 1577836800)
+        return;  // 2020-01-01 之前视为 SNTP 未同步，跳过
 
     struct tm tm;
     localtime_r(&now, &tm);
-    if (tm.tm_min == self->last_minute_) return;
+    if (tm.tm_min == self->last_minute_)
+        return;
     self->last_minute_ = tm.tm_min;
 
     UiEvent e{};

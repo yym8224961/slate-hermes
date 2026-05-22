@@ -21,6 +21,8 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
+#include <atomic>
+
 class AudioPlayer {
    public:
     static AudioPlayer& Get();
@@ -66,6 +68,6 @@ class AudioPlayer {
     SemaphoreHandle_t notify_       = nullptr;  // binary semaphore,Play 时 give,task wait
     uint8_t*          pending_pcm_  = nullptr;  // 由 Play 拷贝;task 取走置 null
     size_t            pending_len_  = 0;
-    volatile bool     stop_flag_    = false;
-    TaskHandle_t      task_         = nullptr;
+    std::atomic<bool> stop_flag_{false};
+    TaskHandle_t      task_ = nullptr;
 };

@@ -12,6 +12,10 @@ export function ImageContentEditorPage() {
   const contents = useGroupContents(gid);
   const isEdit = contentId !== undefined;
 
+  if (!gid) {
+    return <EmptyState title="页面不存在" hint="请从总览页进入具体内容组。" />;
+  }
+
   function onDone() {
     navigate(`/groups/${gid}`);
   }
@@ -36,5 +40,5 @@ export function ImageContentEditorPage() {
     return <EmptyState title="内容不存在或已删除" />;
   }
 
-  return <ImageContentEditor gid={gid!} content={content} onDone={onDone} />;
+  return <ImageContentEditor gid={gid} content={content} onDone={onDone} />;
 }

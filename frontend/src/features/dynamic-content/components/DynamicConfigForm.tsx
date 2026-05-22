@@ -10,6 +10,7 @@ import {
 import { inputCls, fieldBaseCls } from '@/lib/styles';
 import { searchCities } from '@/lib/cities';
 import { Select, SelectItem } from '@/components/ui/Select';
+import { cn } from '@/lib/cn';
 
 // 按动态类型渲染不同的配置字段集合。
 export function DynamicConfigForm({
@@ -19,7 +20,7 @@ export function DynamicConfigForm({
 }: {
   config: DynamicConfigT;
   onChange: (c: DynamicConfigT) => void;
-  /** dashboard 用：展示 ingest URL */
+  /** dashboard 用：展示 ingest URL（contentId 本身即 capability URL） */
   contentId?: string;
 }) {
   switch (config.type) {
@@ -149,7 +150,7 @@ function DynamicRefreshSettings({
         value={String(current)}
         onValueChange={(v) => onChange({ ...config, refresh_interval_sec: Number(v) })}
       >
-        {refreshOptions(config.type).map((item) => (
+        {refreshOptions().map((item) => (
           <SelectItem key={item.value} value={String(item.value)} hint={item.hint}>
             {item.label}
           </SelectItem>
@@ -204,7 +205,7 @@ function CitySearch({
           城市
         </span>
         <input
-          className={`${inputCls} w-full`}
+          className={cn(inputCls, 'w-full')}
           value={query}
           onChange={(e) => {
             setQuery(e.target.value);
@@ -274,13 +275,11 @@ function defaultRefreshInterval(_type: AudioDynamicConfig['type']): number {
   return 600;
 }
 
-function refreshOptions(type: AudioDynamicConfig['type']): Array<{
+function refreshOptions(): Array<{
   value: number;
   label: string;
   hint: string;
 }> {
-  const _type = type;
-  void _type;
   return [
     { value: 300, label: '5 分钟', hint: '更实时' },
     { value: 600, label: '10 分钟', hint: '推荐' },
@@ -331,8 +330,8 @@ function DashboardPushPanel({ contentId }: { contentId: string }) {
       </details>
       <p className="font-sans text-[11px] text-stone italic leading-snug">
         推送流程：① 复制 URL → ② 由你的系统/脚本 POST 数据 → ③ 设备下次唤醒时拉取并刷新屏幕。
-        content id
-        本身即令牌（cuid），请勿公开。推送后不会立即亮屏，设备按预设周期或按键翻页时生效。
+        URL 中的 contentId 即推送凭证（cuid 不可枚举），请勿公开分享，泄漏后只能删内容重建。
+        推送后不会立即亮屏，设备按预设周期或按键翻页时生效。
       </p>
     </div>
   );

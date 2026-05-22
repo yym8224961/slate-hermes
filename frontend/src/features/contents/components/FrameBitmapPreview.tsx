@@ -1,9 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { useRef } from 'react';
 import { FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
 import { useContentBitmap } from './content-card/useContentBitmap';
 import { cn } from '@/lib/cn';
 import { StatusBarOverlay } from './StatusBarOverlay';
-import { PAPER_HEX } from '@/lib/colors';
 
 interface FrameBitmapPreviewProps {
   data?: ArrayBuffer | null;
@@ -23,17 +22,7 @@ export function FrameBitmapPreview({
   showSafeArea,
 }: FrameBitmapPreviewProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  useContentBitmap(canvasRef, data ?? undefined, cacheKey ?? null);
-
-  useEffect(() => {
-    if (data) return;
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    ctx.fillStyle = PAPER_HEX;
-    ctx.fillRect(0, 0, FRAME_WIDTH, FRAME_HEIGHT);
-  }, [data]);
+  useContentBitmap(canvasRef, data, cacheKey ?? null);
 
   return (
     <div className={cn('relative h-full w-full overflow-hidden bg-paper', className)}>

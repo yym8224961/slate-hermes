@@ -27,11 +27,11 @@ export class GroupsController {
   // 必须放在 /:gid 之前
   @Put('order')
   @HttpCode(204)
-  async reorder(
+  reorder(
     @CurrentUser() user: WebUserContext,
     @Body() body: ReorderGroupsDto
   ): Promise<void> {
-    await this.groups.reorderGroups(user.userId, body.order);
+    return this.groups.reorderGroups(user.userId, body.order);
   }
 
   @Get(':groupId')
@@ -43,7 +43,7 @@ export class GroupsController {
   }
 
   @Patch(':groupId')
-  async patch(
+  patch(
     @CurrentUser() user: WebUserContext,
     @Param('groupId') groupId: string,
     @Body() body: UpdateGroupDto
@@ -53,10 +53,10 @@ export class GroupsController {
 
   @Delete(':groupId')
   @HttpCode(204)
-  async delete(
+  delete(
     @CurrentUser() user: WebUserContext,
     @Param('groupId') groupId: string
   ): Promise<void> {
-    await this.groups.delete(groupId, user.userId);
+    return this.groups.delete(groupId, user.userId);
   }
 }

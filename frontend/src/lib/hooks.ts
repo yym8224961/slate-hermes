@@ -13,6 +13,7 @@ export function useInlineRename(initialName: string, onSave: (name: string) => P
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(initialName);
   const onSaveRef = useRef(onSave);
+  const committingRef = useRef(false);
   useEffect(() => {
     onSaveRef.current = onSave;
   });
@@ -33,6 +34,7 @@ export function useInlineRename(initialName: string, onSave: (name: string) => P
   }, [initialName]);
 
   const commit = useCallback(async () => {
+    if (committingRef.current) return;
     const trimmed = draft.trim();
     if (!trimmed || trimmed === initialName) {
       setEditing(false);
@@ -40,11 +42,14 @@ export function useInlineRename(initialName: string, onSave: (name: string) => P
       return;
     }
 
+    committingRef.current = true;
     try {
       await onSaveRef.current(trimmed);
       setEditing(false);
     } catch {
       // 保存失败：保留编辑态和草稿，让用户可以重试或按 Escape 取消
+    } finally {
+      committingRef.current = false;
     }
   }, [draft, initialName]);
 

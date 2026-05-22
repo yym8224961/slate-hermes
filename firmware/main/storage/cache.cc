@@ -5,27 +5,33 @@
 #include <esp_log.h>
 #include <sys/stat.h>
 
-#include <cerrno>
+#include <unistd.h>
 #include <cctype>
+#include <cerrno>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <unistd.h>
 
 #include "config.h"
+#include "frame_view.h"
 
 namespace {
-constexpr char kTag[]  = "Cache";
-constexpr char kRoot[] = "/littlefs";
-constexpr long kMaxReadBytes = AUDIO_MAX_PCM_BYTES;
+constexpr char kTag[]           = "Cache";
+constexpr char kRoot[]          = "/littlefs";
+constexpr long kMaxReadBytes    = AUDIO_MAX_PCM_BYTES;
+constexpr long kFrameImageBytes = FrameView::kRawBytes;
 }  // namespace
 
 namespace {
 
 bool DirEnsure(const std::string& dir) {
     struct stat st;
-    if (stat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) return true;
-    if (mkdir(dir.c_str(), 0775) == 0) return true;
-    if (errno == EEXIST) return true;
+    if (stat(dir.c_str(), &st) == 0 && S_ISDIR(st.st_mode))
+        return true;
+    if (mkdir(dir.c_str(), 0775) == 0)
+        return true;
+    if (errno == EEXIST)
+        return true;
     ESP_LOGW(kTag, "Mkdir %s failed: %d", dir.c_str(), errno);
     return false;
 }
@@ -34,16 +40,15 @@ bool DirEnsure(const std::string& dir) {
 // 中途断电只会留下 .tmp(下次启动时无人 fopen 会自然忽略)或保持原文件不变。
 bool WriteAll(const std::string& path, const void* data, size_t len) {
     const std::string tmp = path + ".tmp";
-    FILE* f = fopen(tmp.c_str(), "wb");
+    FILE*             f   = fopen(tmp.c_str(), "wb");
     if (!f) {
         ESP_LOGW(kTag, "Open w %s failed: %d", tmp.c_str(), errno);
         return false;
     }
-    size_t w     = fwrite(data, 1, len, f);
-    int    cret  = fclose(f);  // flush 失败(磁盘满)在这里才暴露
+    size_t w    = fwrite(data, 1, len, f);
+    int    cret = fclose(f);  // flush 失败(磁盘满)在这里才暴露
     if (w != len || cret != 0) {
-        ESP_LOGW(kTag, "Write %s short/flush failed (w=%u/%u close=%d)", tmp.c_str(),
-                 (unsigned)w, (unsigned)len, cret);
+        ESP_LOGW(kTag, "Write %s short/flush failed (w=%u/%u close=%d)", tmp.c_str(), (unsigned)w, (unsigned)len, cret);
         unlink(tmp.c_str());
         return false;
     }
@@ -57,7 +62,8 @@ bool WriteAll(const std::string& path, const void* data, size_t len) {
 
 bool ReadAll(const std::string& path, std::vector<uint8_t>& out) {
     FILE* f = fopen(path.c_str(), "rb");
-    if (!f) return false;
+    if (!f)
+        return false;
     if (fseek(f, 0, SEEK_END) != 0) {
         fclose(f);
         return false;
@@ -87,8 +93,10 @@ std::string SafePathComponent(const std::string& raw) {
     std::string out;
     out.reserve(raw.size());
     for (unsigned char ch : raw) {
-        if (std::isalnum(ch) || ch == '-' || ch == '_') out.push_back(static_cast<char>(ch));
-        else out.push_back('_');
+        if (std::isalnum(ch) || ch == '-' || ch == '_')
+            out.push_back(static_cast<char>(ch));
+        else
+            out.push_back('_');
     }
     return out.empty() ? "_" : out;
 }
@@ -111,7 +119,8 @@ std::string EtagPath(const std::string& gid, int idx, const char* ext) {
 
 bool MatchEtag(const std::string& path, const std::string& expected) {
     FILE* f = fopen(path.c_str(), "rb");
-    if (!f) return false;
+    if (!f)
+        return false;
     char buf[128] = {0};
     fread(buf, 1, sizeof(buf) - 1, f);
     fclose(f);
@@ -128,10 +137,10 @@ namespace cache {
 
 bool Init() {
     esp_vfs_littlefs_conf_t cfg = {};
-    cfg.base_path                = kRoot;
-    cfg.partition_label          = "storage";
-    cfg.format_if_mount_failed   = true;
-    cfg.dont_mount               = false;
+    cfg.base_path               = kRoot;
+    cfg.partition_label         = "storage";
+    cfg.format_if_mount_failed  = true;
+    cfg.dont_mount              = false;
 
     esp_err_t err = esp_vfs_littlefs_register(&cfg);
     if (err != ESP_OK) {
@@ -140,8 +149,7 @@ bool Init() {
     }
     size_t total = 0, used = 0;
     esp_littlefs_info(cfg.partition_label, &total, &used);
-    ESP_LOGI(kTag, "Littlefs mounted at %s, %u/%u KB used",
-             kRoot, (unsigned)(used / 1024), (unsigned)(total / 1024));
+    ESP_LOGI(kTag, "Littlefs mounted at %s, %u/%u KB used", kRoot, (unsigned)(used / 1024), (unsigned)(total / 1024));
     DirEnsure(std::string(kRoot) + "/groups");
     return true;
 }
@@ -162,11 +170,11 @@ bool FormatAll() {
     // 重新 mount,让进程后续仍能用 cache(factory_reset 通常紧接 esp_restart,
     // 但 remount 让本函数语义独立 — 不依赖调用方一定重启)。
     esp_vfs_littlefs_conf_t cfg = {};
-    cfg.base_path                = kRoot;
-    cfg.partition_label          = kLabel;
-    cfg.format_if_mount_failed   = true;
-    cfg.dont_mount               = false;
-    err = esp_vfs_littlefs_register(&cfg);
+    cfg.base_path               = kRoot;
+    cfg.partition_label         = kLabel;
+    cfg.format_if_mount_failed  = true;
+    cfg.dont_mount              = false;
+    err                         = esp_vfs_littlefs_register(&cfg);
     if (err != ESP_OK) {
         ESP_LOGE(kTag, "Littlefs remount after format failed: %s", esp_err_to_name(err));
         return false;
@@ -178,22 +186,28 @@ bool FormatAll() {
 
 bool ReadStateMeta(std::string& selected_group_id, std::string& last_etag) {
     std::vector<uint8_t> buf;
-    if (!ReadAll(std::string(kRoot) + "/state.json", buf)) return false;
+    if (!ReadAll(std::string(kRoot) + "/state.json", buf))
+        return false;
     cJSON* root = cJSON_ParseWithLength(reinterpret_cast<const char*>(buf.data()), buf.size());
-    if (!root) return false;
+    if (!root)
+        return false;
     cJSON* g = cJSON_GetObjectItemCaseSensitive(root, "selected_group_id");
     cJSON* e = cJSON_GetObjectItemCaseSensitive(root, "last_etag");
-    if (cJSON_IsString(g)) selected_group_id = g->valuestring;
-    if (cJSON_IsString(e)) last_etag = e->valuestring;
+    if (cJSON_IsString(g))
+        selected_group_id = g->valuestring;
+    if (cJSON_IsString(e))
+        last_etag = e->valuestring;
     cJSON_Delete(root);
     return true;
 }
 
 bool WriteStateMeta(const std::string& selected_group_id, const std::string& etag) {
     cJSON* root = cJSON_CreateObject();
+    if (!root)
+        return false;
     cJSON_AddStringToObject(root, "selected_group_id", selected_group_id.c_str());
     cJSON_AddStringToObject(root, "last_etag", etag.c_str());
-    char* s = cJSON_PrintUnformatted(root);
+    char* s  = cJSON_PrintUnformatted(root);
     bool  ok = s && WriteAll(std::string(kRoot) + "/state.json", s, std::strlen(s));
     cJSON_free(s);
     cJSON_Delete(root);
@@ -202,7 +216,8 @@ bool WriteStateMeta(const std::string& selected_group_id, const std::string& eta
 
 std::string ReadCurrentManifestEtag() {
     std::string gid, etag;
-    if (!ReadStateMeta(gid, etag)) return "";
+    if (!ReadStateMeta(gid, etag))
+        return "";
     return etag;
 }
 
@@ -211,9 +226,11 @@ bool WriteManifest(const std::string& gid, const std::string& manifest_etag, int
     DirEnsure(GroupDir(gid));
     DirEnsure(FramesDir(gid));
     cJSON* root = cJSON_CreateObject();
+    if (!root)
+        return false;
     cJSON_AddStringToObject(root, "manifest_etag", manifest_etag.c_str());
     cJSON_AddNumberToObject(root, "content_count", content_count);
-    char* s = cJSON_PrintUnformatted(root);
+    char* s  = cJSON_PrintUnformatted(root);
     bool  ok = s && WriteAll(GroupDir(gid) + "/manifest.json", s, std::strlen(s));
     cJSON_free(s);
     cJSON_Delete(root);
@@ -222,14 +239,16 @@ bool WriteManifest(const std::string& gid, const std::string& manifest_etag, int
 
 bool ReadManifestContentCount(const std::string& gid, int& out) {
     std::vector<uint8_t> buf;
-    if (!ReadAll(GroupDir(gid) + "/manifest.json", buf)) return false;
+    if (!ReadAll(GroupDir(gid) + "/manifest.json", buf))
+        return false;
     cJSON* root = cJSON_ParseWithLength(reinterpret_cast<const char*>(buf.data()), buf.size());
-    if (!root) return false;
+    if (!root)
+        return false;
     cJSON* fc = cJSON_GetObjectItemCaseSensitive(root, "content_count");
     bool   ok = false;
     if (cJSON_IsNumber(fc)) {
         out = fc->valueint;
-        ok = true;
+        ok  = true;
     }
     cJSON_Delete(root);
     return ok;
@@ -237,15 +256,23 @@ bool ReadManifestContentCount(const std::string& gid, int& out) {
 
 bool FrameImageExists(const std::string& gid, int idx, const std::string& expected_etag) {
     struct stat st;
-    if (stat(ImagePath(gid, idx).c_str(), &st) != 0) return false;
+    if (stat(ImagePath(gid, idx).c_str(), &st) != 0)
+        return false;
+    if (st.st_size != kFrameImageBytes)
+        return false;
     return MatchEtag(EtagPath(gid, idx, "img"), expected_etag);
 }
 
-bool WriteFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes,
-                     const std::string& etag) {
+bool WriteFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag) {
+    if (bytes.size() != kFrameImageBytes) {
+        ESP_LOGW(kTag, "Refuse frame image gid=%s idx=%d: %u B, expected %u B", gid.c_str(), idx,
+                 static_cast<unsigned>(bytes.size()), static_cast<unsigned>(kFrameImageBytes));
+        return false;
+    }
     DirEnsure(GroupDir(gid));
     DirEnsure(FramesDir(gid));
-    if (!WriteAll(ImagePath(gid, idx), bytes.data(), bytes.size())) return false;
+    if (!WriteAll(ImagePath(gid, idx), bytes.data(), bytes.size()))
+        return false;
     return WriteEtag(EtagPath(gid, idx, "img"), etag);
 }
 
@@ -255,15 +282,16 @@ bool ReadFrameImage(const std::string& gid, int idx, std::vector<uint8_t>& out) 
 
 bool FrameAudioExists(const std::string& gid, int idx, const std::string& expected_etag) {
     struct stat st;
-    if (stat(AudioPath(gid, idx).c_str(), &st) != 0) return false;
+    if (stat(AudioPath(gid, idx).c_str(), &st) != 0)
+        return false;
     return MatchEtag(EtagPath(gid, idx, "pcm"), expected_etag);
 }
 
-bool WriteFrameAudio(const std::string& gid, int idx, const std::vector<uint8_t>& bytes,
-                     const std::string& etag) {
+bool WriteFrameAudio(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag) {
     DirEnsure(GroupDir(gid));
     DirEnsure(FramesDir(gid));
-    if (!WriteAll(AudioPath(gid, idx), bytes.data(), bytes.size())) return false;
+    if (!WriteAll(AudioPath(gid, idx), bytes.data(), bytes.size()))
+        return false;
     return WriteEtag(EtagPath(gid, idx, "pcm"), etag);
 }
 
@@ -293,6 +321,8 @@ bool WriteFrameMeta(const std::string& gid, int idx, const FrameMeta& meta) {
     DirEnsure(GroupDir(gid));
     DirEnsure(FramesDir(gid));
     cJSON* root = cJSON_CreateObject();
+    if (!root)
+        return false;
     cJSON_AddStringToObject(root, "status_bar_text", meta.status_bar_text.c_str());
     cJSON_AddStringToObject(root, "content_etag", meta.content_etag.c_str());
     if (meta.has_ttl) {
@@ -302,9 +332,10 @@ bool WriteFrameMeta(const std::string& gid, int idx, const FrameMeta& meta) {
     }
     char* s = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
-    if (!s) return false;
+    if (!s)
+        return false;
     const size_t len = std::strlen(s);
-    const bool ok = WriteAll(MetaPath(gid, idx), s, len);
+    const bool   ok  = WriteAll(MetaPath(gid, idx), s, len);
     cJSON_free(s);
     return ok;
 }
@@ -312,18 +343,26 @@ bool WriteFrameMeta(const std::string& gid, int idx, const FrameMeta& meta) {
 bool ReadFrameMeta(const std::string& gid, int idx, FrameMeta& out) {
     out = {};
     std::vector<uint8_t> buf;
-    if (!ReadAll(MetaPath(gid, idx), buf) || buf.empty()) return false;
+    if (!ReadAll(MetaPath(gid, idx), buf) || buf.empty())
+        return false;
     std::string json(reinterpret_cast<const char*>(buf.data()), buf.size());
-    cJSON* root = cJSON_Parse(json.c_str());
-    if (!root) return false;
-    cJSON* cap = cJSON_GetObjectItemCaseSensitive(root, "status_bar_text");
+    cJSON*      root = cJSON_Parse(json.c_str());
+    if (!root)
+        return false;
+    cJSON* cap  = cJSON_GetObjectItemCaseSensitive(root, "status_bar_text");
     cJSON* etag = cJSON_GetObjectItemCaseSensitive(root, "content_etag");
-    cJSON* ttl = cJSON_GetObjectItemCaseSensitive(root, "ttl_sec");
-    if (cJSON_IsString(cap) && cap->valuestring) out.status_bar_text = cap->valuestring;
-    if (cJSON_IsString(etag) && etag->valuestring) out.content_etag = etag->valuestring;
+    cJSON* ttl  = cJSON_GetObjectItemCaseSensitive(root, "ttl_sec");
+    if (cJSON_IsString(cap) && cap->valuestring)
+        out.status_bar_text = cap->valuestring;
+    if (cJSON_IsString(etag) && etag->valuestring)
+        out.content_etag = etag->valuestring;
     if (cJSON_IsNumber(ttl)) {
-        out.has_ttl = true;
-        out.ttl_sec = static_cast<uint32_t>(ttl->valueint);
+        // NaN / 负数 / 越界值直接 cast 到 uint32_t 是 UB；显式范围校验后再 cast。
+        const double v = ttl->valuedouble;
+        if (v >= 0.0 && v <= static_cast<double>(UINT32_MAX)) {
+            out.has_ttl = true;
+            out.ttl_sec = static_cast<uint32_t>(v);
+        }
     }
     cJSON_Delete(root);
     return true;

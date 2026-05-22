@@ -158,7 +158,7 @@ nvs_flash_init + LittleFS mount
   → InitNetwork：
        有 Wi-Fi 凭据 → Wifi.Connect → SNTP → api::Register → SyncService.Start
        无 Wi-Fi 凭据 → CaptivePortal（SoftAP「Slate-XXXX」+ DNS 劫持）
-  → SleepManager.Init（默认 5 分钟无操作进深睡，captive portal 期间禁用）
+  → SleepManager.Init（默认 1 分钟无操作进深睡，captive portal 期间禁用）
   → esp_pm_configure（80–240 MHz DFS）
 ```
 
@@ -265,7 +265,7 @@ captive portal 期间 `SleepManager` 禁用 deep sleep。
 | `SLATE_DEFAULT_SERVER_URL` | `""` | captive portal 表单预填的服务端 URL |
 | `SLATE_AP_SSID_PREFIX` | `Slate` | AP SSID = `{prefix}-{XXYY}`（XXYY = MAC 后 2 字节） |
 | `SLATE_DEFAULT_TIMEZONE` | `CST-8` | SNTP 后 `setenv("TZ", ...)` |
-| `SLATE_IDLE_DEEP_SLEEP_MIN` | 5 | 闲置 N 分钟且不在充电时进 deep sleep |
+| `SLATE_IDLE_DEEP_SLEEP_MIN` | 1 | 闲置 N 分钟且不在充电时进 deep sleep |
 | `SLATE_LOG_PLAINTEXT_CRED` | n | ⚠ DEBUG ONLY，开启会把 Wi-Fi 密码写进 UART log |
 
 `sdkconfig.defaults` 固化的关键项：target = esp32s3、Flash 16 MB QIO、PSRAM Octal 8 MB 80 MHz、LVGL 9.5.0、PM enable + DFS auto + TICKLESS_IDLE、`ESP_MAIN_TASK_STACK_SIZE=8192`、`SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`。

@@ -40,6 +40,27 @@ export function AudioDropzone({
     disabled,
   });
 
+  const deleteAudio =
+    hasExistingAudio && editingContentId != null ? (
+      <DeleteAudioButton
+        isPending={delAudio.isPending}
+        label={hideLabel ? '删除已有音频' : '删除'}
+        onDelete={async () => {
+          const ok = await confirm({
+            title: '删除这一帧的音频？',
+            description: '图保留，只移除音频文件。',
+            destructive: true,
+            confirmText: '删除音频',
+          });
+          if (!ok) return;
+          delAudio.mutate(editingContentId, {
+            onSuccess: () => toast.success('音频已删除'),
+            onError: () => toast.error('删除失败'),
+          });
+        }}
+      />
+    ) : null;
+
   return (
     <div>
       {!hideLabel && (
@@ -47,56 +68,10 @@ export function AudioDropzone({
           <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em]">
             音频{hasExistingAudio ? ' · 已有' : ' · 选填'}
           </p>
-          {hasExistingAudio && editingContentId != null && (
-            <button
-              type="button"
-              onClick={async () => {
-                const ok = await confirm({
-                  title: '删除这一帧的音频？',
-                  description: '图保留，只移除音频文件。',
-                  destructive: true,
-                  confirmText: '删除音频',
-                });
-                if (!ok) return;
-                delAudio.mutate(editingContentId, {
-                  onSuccess: () => toast.success('音频已删除'),
-                  onError: () => toast.error('删除失败'),
-                });
-              }}
-              disabled={delAudio.isPending}
-              className="inline-flex items-center gap-1.5 font-mono text-[10px] text-clay hover:opacity-80 disabled:opacity-50"
-            >
-              <Trash2 size={11} />
-              删除
-            </button>
-          )}
+          {deleteAudio}
         </div>
       )}
-      {hideLabel && hasExistingAudio && editingContentId != null && (
-        <div className="flex justify-end mb-2">
-          <button
-            type="button"
-            onClick={async () => {
-              const ok = await confirm({
-                title: '删除这一帧的音频？',
-                description: '图保留，只移除音频文件。',
-                destructive: true,
-                confirmText: '删除音频',
-              });
-              if (!ok) return;
-              delAudio.mutate(editingContentId, {
-                onSuccess: () => toast.success('音频已删除'),
-                onError: () => toast.error('删除失败'),
-              });
-            }}
-            disabled={delAudio.isPending}
-            className="inline-flex items-center gap-1.5 font-mono text-[10px] text-clay hover:opacity-80 disabled:opacity-50"
-          >
-            <Trash2 size={11} />
-            删除已有音频
-          </button>
-        </div>
-      )}
+      {hideLabel && deleteAudio && <div className="flex justify-end mb-2">{deleteAudio}</div>}
       <div
         {...dz.getRootProps()}
         className={cn(
@@ -128,5 +103,27 @@ export function AudioDropzone({
         </div>
       </div>
     </div>
+  );
+}
+
+function DeleteAudioButton({
+  label,
+  isPending,
+  onDelete,
+}: {
+  label: string;
+  isPending: boolean;
+  onDelete: () => Promise<void>;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onDelete}
+      disabled={isPending}
+      className="inline-flex items-center gap-1.5 font-mono text-[10px] text-clay hover:opacity-80 disabled:opacity-50"
+    >
+      <Trash2 size={11} />
+      {label}
+    </button>
   );
 }

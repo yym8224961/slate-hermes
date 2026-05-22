@@ -56,10 +56,6 @@ export const TYPE_META: Record<AllContentType, TypeMeta> = {
   },
 };
 
-export function typeLabel(t: AllContentType): string {
-  return TYPE_META[t].label;
-}
-
 /**
  * 是否应渲染「类型参数」section。dashboard 在没有 contentId 时无可配项（URL 创建后才生成）。
  */

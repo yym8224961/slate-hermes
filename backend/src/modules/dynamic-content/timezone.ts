@@ -23,6 +23,11 @@ export function datePartsInTz(
   };
 }
 
+export function cnMonthDay(date: Date, timeZone: string): string {
+  const parts = datePartsInTz(date, timeZone);
+  return `${parts.month}月${parts.day}日`;
+}
+
 export function utcOffsetMin(date: Date, timeZone: string): number {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone,
@@ -51,6 +56,8 @@ export function nextLocalMidnight(now: Date, timeZone: string): Date {
   const parts = datePartsInTz(now, timeZone);
   const localMidnightUtc = Date.UTC(parts.year, parts.month - 1, parts.day + 1, 0, 0, 0, 0);
   let utcMs = localMidnightUtc;
+  // Convert local midnight to UTC by applying the zone offset, then re-check once for
+  // DST/offset transitions near midnight. Two passes are enough for normal IANA zones.
   for (let i = 0; i < 2; i++) {
     utcMs = localMidnightUtc - utcOffsetMin(new Date(utcMs), timeZone) * 60_000;
   }

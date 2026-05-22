@@ -20,7 +20,8 @@ DnsHijack::~DnsHijack() {
 }
 
 void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
-    if (running_.load()) Stop();
+    if (running_.load())
+        Stop();
 
     ESP_LOGI(kTag, "Starting DNS hijack on UDP :%u -> " IPSTR, port, IP2STR(&gateway));
     gateway_ = gateway;
@@ -37,7 +38,7 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
         return;
     }
 
-    sockaddr_in addr = {};
+    sockaddr_in addr     = {};
     addr.sin_family      = AF_INET;
     addr.sin_addr.s_addr = htonl(INADDR_ANY);
     addr.sin_port        = htons(port_);
@@ -50,7 +51,7 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
 
     fd_.store(sock);
     running_.store(true);
-    xTaskCreate(
+    BaseType_t ok = xTaskCreate(
         [](void* arg) {
             auto* self = static_cast<DnsHijack*>(arg);
             self->Run();
@@ -58,10 +59,18 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
             vTaskDelete(nullptr);
         },
         "dns_hijack", 4 * 1024, this, 5, &task_handle_);
+    if (ok != pdPASS) {
+        ESP_LOGE(kTag, "Task create failed");
+        running_.store(false);
+        fd_.store(-1);
+        close(sock);
+        task_handle_ = nullptr;
+    }
 }
 
 void DnsHijack::Stop() {
-    if (!running_.exchange(false)) return;
+    if (!running_.exchange(false))
+        return;
     ESP_LOGI(kTag, "Stopping DNS hijack");
     int sock = fd_.exchange(-1);
     if (sock >= 0) {
@@ -81,18 +90,21 @@ void DnsHijack::Run() {
     char buf[512];
     while (running_.load()) {
         const int sock = fd_.load();
-        if (sock < 0) break;
+        if (sock < 0)
+            break;
         sockaddr_in client     = {};
         socklen_t   client_len = sizeof(client);
-        int         len        = recvfrom(sock, buf, sizeof(buf), 0,
-                                          reinterpret_cast<sockaddr*>(&client), &client_len);
+        int         len        = recvfrom(sock, buf, sizeof(buf), 0, reinterpret_cast<sockaddr*>(&client), &client_len);
         if (len < 0) {
-            if (!running_.load()) break;
+            if (!running_.load())
+                break;
             ESP_LOGE(kTag, "Recvfrom failed: %d", errno);
             continue;
         }
-        if (!running_.load()) break;
-        if (len < 12) continue;  // DNS header ≥ 12 字节
+        if (!running_.load())
+            break;
+        if (len < 12)
+            continue;  // DNS header ≥ 12 字节
 
         // 标准 DNS 响应:把请求 header 改成 response,answer count=1,
         // 在尾部加一条 A record 指向 gateway。
@@ -102,7 +114,8 @@ void DnsHijack::Run() {
 
         // Answer:NAME pointer to query name (offset 0x0c) + TYPE A + CLASS IN +
         // TTL 28s + RDLENGTH=4 + RDATA(gateway IP)
-        if (len + 16 > (int)sizeof(buf)) continue;
+        if (len + 16 > (int)sizeof(buf))
+            continue;
         std::memcpy(&buf[len], "\xc0\x0c", 2);
         len += 2;
         std::memcpy(&buf[len], "\x00\x01\x00\x01\x00\x00\x00\x1c\x00\x04", 10);
@@ -111,7 +124,8 @@ void DnsHijack::Run() {
         len += 4;
 
         const int send_sock = fd_.load();
-        if (send_sock < 0) break;
+        if (send_sock < 0)
+            break;
         sendto(send_sock, buf, len, 0, reinterpret_cast<sockaddr*>(&client), client_len);
     }
     ESP_LOGI(kTag, "DNS hijack task exiting");

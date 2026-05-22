@@ -500,8 +500,8 @@ export const DashboardLayout = z
 export type DashboardLayoutT = z.infer<typeof DashboardLayout>;
 
 // POST /api/v1/contents/:contentId/data —— 外部数据推送（仅 dashboard 动态内容）。
-//   capability URL: contentId(cuid) 本身充当访问能力，不需要额外 token。
-//   bodyLimit 64KB；rate-limit 30/min/contentId。
+//   capability URL: contentId(cuid，~110 bit 熵) 本身充当访问能力，不需要额外 token。
+//   防滥用靠 bodyLimit 64KB + rate-limit 30/min/contentId。
 export const IngestPayload = z.object({
   heading: z.string().max(48).optional(),
   subtitle: z.string().max(48).optional(),

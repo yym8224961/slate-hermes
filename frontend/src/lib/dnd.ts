@@ -15,9 +15,10 @@
 // 也成功（serverOrder === pendingOrder）才接管。代价是别人的并发改动会延迟到
 // 本次结束之后才显现，换的是拖拽过程的视觉稳定。
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
-import { arrayMove } from '@dnd-kit/sortable';
+import { arrayMove, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 interface PersistControls {
   commit: () => void;
@@ -94,6 +95,22 @@ export function useDndOrder<T>(
   }
 
   return { sensors, currentOrder, orderedItems, setCurrentOrder, onDragEnd };
+}
+
+export function useSortableStyle(id: string) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
+    id,
+    animateLayoutChanges: () => false,
+  });
+  const style = useMemo<CSSProperties>(
+    () => ({
+      transform: CSS.Transform.toString(transform),
+      transition: 'none',
+      zIndex: isDragging ? 10 : undefined,
+    }),
+    [isDragging, transform]
+  );
+  return { attributes, listeners, setNodeRef, isDragging, style };
 }
 
 function sameOrder(a: readonly string[], b: readonly string[]): boolean {

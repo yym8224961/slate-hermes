@@ -10,9 +10,9 @@
 #include <nvs_flash.h>
 #include <sdkconfig.h>
 
+#include <esp_sleep.h>
 #include <cstdio>
 #include <cstring>
-#include <esp_sleep.h>
 #include <memory>
 #include <string>
 #include <utility>
@@ -23,22 +23,22 @@
 #include "epd_ssd1683.h"
 #include "power_state.h"
 
-#include "audio_player.h"
 #include "api_client.h"
+#include "audio_player.h"
+#include "boot_splash_scene.h"
+#include "cache.h"
 #include "captive_portal.h"
 #include "cred_store.h"
+#include "event_bus.h"
+#include "frame_scene.h"
 #include "sntp.h"
 #include "sync_service.h"
 #include "wifi.h"
-#include "boot_splash_scene.h"
-#include "frame_scene.h"
-#include "cache.h"
-#include "event_bus.h"
 
 namespace {
-constexpr char kTag[] = "App";
-constexpr int kSaveSecretRetryCount = 3;
-constexpr int kSaveSecretRetryDelayMs = 200;
+constexpr char kTag[]                  = "App";
+constexpr int  kSaveSecretRetryCount   = 3;
+constexpr int  kSaveSecretRetryDelayMs = 200;
 
 // 组合键 UP+DOWN 同时按下 = 全屏刷新（清残影）。仅依赖按下/释放瞬间事件维护
 // 「当前按住中」标志：两个键都处于按住中时立即触发 + 标记 consumed，本次按键
@@ -54,40 +54,50 @@ ComboState g_combo;
 
 const char* WakeReasonString() {
     switch (power_state::Classify()) {
-        case power_state::WakeCause::kRtcTimer: return "timer";
-        case power_state::WakeCause::kButton: return "button";
-        case power_state::WakeCause::kColdBoot: return "power_on";
-        default: return "other";
+        case power_state::WakeCause::kRtcTimer:
+            return "timer";
+        case power_state::WakeCause::kButton:
+            return "button";
+        case power_state::WakeCause::kColdBoot:
+            return "power_on";
+        default:
+            return "other";
     }
 }
 
 void TryFireCombo() {
-    if (!g_combo.up_held || !g_combo.down_held) return;
-    if (g_combo.up_consumed && g_combo.down_consumed) return;  // 已触发过
+    if (!g_combo.up_held || !g_combo.down_held)
+        return;
+    if (g_combo.up_consumed && g_combo.down_consumed)
+        return;  // 已触发过
     g_combo.up_consumed   = true;
     g_combo.down_consumed = true;
     ESP_LOGI(kTag, "Combo UP+DOWN -> urgent full refresh");
-    if (auto* epd = Board::Get().epd()) epd->RequestUrgentFullRefresh();
+    if (auto* epd = Board::Get().epd())
+        epd->RequestUrgentFullRefresh();
 }
 
 std::string MacString() {
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     char buf[18];
-    std::snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X",
-                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    std::snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     return buf;
 }
 
 // 各 boot 阶段 emit 给 splash 用,空 ssid/pair_code 传 nullptr。
 void EmitBootStage(BootStage stage, const char* ssid, const char* pair_code) {
     UiEvent e{};
-    e.kind                = UiEventKind::kBootStage;
-    e.u.boot_stage.stage  = stage;
-    if (ssid) std::snprintf(e.u.boot_stage.ssid, sizeof(e.u.boot_stage.ssid), "%s", ssid);
-    else      e.u.boot_stage.ssid[0] = 0;
-    if (pair_code) std::snprintf(e.u.boot_stage.pair_code, sizeof(e.u.boot_stage.pair_code), "%s", pair_code);
-    else           e.u.boot_stage.pair_code[0] = 0;
+    e.kind               = UiEventKind::kBootStage;
+    e.u.boot_stage.stage = stage;
+    if (ssid)
+        std::snprintf(e.u.boot_stage.ssid, sizeof(e.u.boot_stage.ssid), "%s", ssid);
+    else
+        e.u.boot_stage.ssid[0] = 0;
+    if (pair_code)
+        std::snprintf(e.u.boot_stage.pair_code, sizeof(e.u.boot_stage.pair_code), "%s", pair_code);
+    else
+        e.u.boot_stage.pair_code[0] = 0;
     evt::Post(e);
 }
 
@@ -109,7 +119,7 @@ bool TryConnectAndSetup(cred::Credentials& c) {
     // HTTPS 必须等系统时间对上才能校验证书。HTTP 这步没意义但也不亏。
     // 上限 10s:超时则继续,Register 失败由 SyncService 后续 poll 接管重试。
     constexpr int kSntpWaitMs = 10000;
-    int waited = 0;
+    int           waited      = 0;
     while (!sntp::TimeSynced() && waited < kSntpWaitMs) {
         vTaskDelay(pdMS_TO_TICKS(200));
         waited += 200;
@@ -122,7 +132,7 @@ bool TryConnectAndSetup(cred::Credentials& c) {
 
     if (c.device_secret.empty()) {
         // 首次启动 / 工厂重置后:NVS 没 secret,调 register 拿。
-        // 后端按 mac upsert + 重置(清旧主、轮换 secret/pair_code),"物理控制权 = 数字所有权"。
+        // 后端只允许新设备或无主设备注册；已绑定设备必须先在 Web 端解绑。
         EmitBootStage(BootStage::kRegistering, nullptr, nullptr);
         api::RegisterResult rr;
         if (!api::Register(rr)) {
@@ -137,8 +147,7 @@ bool TryConnectAndSetup(cred::Credentials& c) {
                 saved = true;
                 break;
             }
-            ESP_LOGW(kTag, "SaveSecret failed attempt %d/%d",
-                     attempt, kSaveSecretRetryCount);
+            ESP_LOGW(kTag, "SaveSecret failed attempt %d/%d", attempt, kSaveSecretRetryCount);
             vTaskDelay(pdMS_TO_TICKS(kSaveSecretRetryDelayMs));
         }
         if (!saved) {
@@ -148,8 +157,7 @@ bool TryConnectAndSetup(cred::Credentials& c) {
         c.device_id     = rr.id;
         c.device_secret = rr.device_secret;
         api::SetSecret(rr.device_secret);
-        ESP_LOGI(kTag, "Registered: id=%s pair=%s reclaimed=%d",
-                 rr.id.c_str(), rr.pair_code.c_str(), (int)rr.reclaimed);
+        ESP_LOGI(kTag, "Registered: id=%s pair=%s", rr.id.c_str(), rr.pair_code.c_str());
         // splash 立即显示配对码 —— 用户看屏抄码是关键体验。bound 状态由后续 poll 决定。
         EmitBootStage(BootStage::kAwaitingPair, nullptr, rr.pair_code.c_str());
     } else {
@@ -163,9 +171,9 @@ bool TryConnectAndSetup(cred::Credentials& c) {
 
 void PostWifiState(bool connected, int rssi) {
     UiEvent e{};
-    e.kind                 = UiEventKind::kWifiStateChanged;
-    e.u.wifi.connected     = connected;
-    e.u.wifi.rssi          = rssi;
+    e.kind             = UiEventKind::kWifiStateChanged;
+    e.u.wifi.connected = connected;
+    e.u.wifi.rssi      = rssi;
     evt::Post(e);
 }
 
@@ -175,13 +183,18 @@ void PostWifiState(bool connected, int rssi) {
 // 后面,FrameScene 进栈再消费这条事件,直接翻页响应。
 void PostWakeupKeyEvent() {
     esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    if (cause != ESP_SLEEP_WAKEUP_EXT1) return;
+    if (cause != ESP_SLEEP_WAKEUP_EXT1)
+        return;
     uint64_t mask = esp_sleep_get_ext1_wakeup_status();
-    if (mask == 0) return;
+    if (mask == 0)
+        return;
     ButtonId btn;
-    if (mask & (1ULL << DOWN_BUTTON_GPIO)) btn = ButtonId::kDown;
-    else if (mask & (1ULL << BOOT_BUTTON_GPIO)) btn = ButtonId::kEnter;
-    else return;
+    if (mask & (1ULL << DOWN_BUTTON_GPIO))
+        btn = ButtonId::kDown;
+    else if (mask & (1ULL << BOOT_BUTTON_GPIO))
+        btn = ButtonId::kEnter;
+    else
+        return;
     UiEvent e{};
     e.kind         = UiEventKind::kButtonShort;
     e.u.button.btn = btn;
@@ -191,17 +204,19 @@ void PostWakeupKeyEvent() {
 
 void PostCachedGroupReadyIfAny() {
     std::string gid, etag;
-    if (!cache::ReadStateMeta(gid, etag) || gid.empty()) return;
+    if (!cache::ReadStateMeta(gid, etag) || gid.empty())
+        return;
     int content_count = 0;
-    if (!cache::ReadManifestContentCount(gid, content_count) || content_count <= 0) return;
+    if (!cache::ReadManifestContentCount(gid, content_count) || content_count <= 0)
+        return;
 
     UiEvent e{};
     e.kind = UiEventKind::kGroupReady;
     std::strncpy(e.u.group.gid, gid.c_str(), sizeof(e.u.group.gid) - 1);
     e.u.group.gid[sizeof(e.u.group.gid) - 1] = '\0';
     // cache 不存 group name；SyncService 下一轮拉到 manifest 后会 Post 带 name 的事件。
-    e.u.group.name[0]     = '\0';
-    e.u.group.content_count = content_count;
+    e.u.group.name[0]         = '\0';
+    e.u.group.content_count   = content_count;
     e.u.group.content_changed = false;
     evt::Post(e);
     ESP_LOGI(kTag, "Cached GroupReady gid=%s count=%d", gid.c_str(), content_count);
@@ -239,11 +254,13 @@ void App::InitSceneStack() {
     ctx.stack = &scene_stack_;
 
     ctx.read_battery = [](int* mv, int* pct) -> bool {
-        uint16_t mv16 = 0;
-        uint8_t  p8   = 0;
-        const bool ok = Board::Get().ReadBattery(&mv16, &p8);
-        if (mv) *mv  = mv16;
-        if (pct) *pct = p8;
+        uint16_t   mv16 = 0;
+        uint8_t    p8   = 0;
+        const bool ok   = Board::Get().ReadBattery(&mv16, &p8);
+        if (mv)
+            *mv = mv16;
+        if (pct)
+            *pct = p8;
         return ok;
     };
     ctx.read_charge    = []() { return Board::Get().charge()->Get(); };
@@ -257,8 +274,7 @@ void App::StartUiLoop() {
     ui_loop_running_ = true;
     // ui_loop 8 KB：与 home_worker 一致；LVGL render+flush_cb 调用栈装得下，
     // esp_timer task / button cb task 装不下（栈 3584 B）。
-    BaseType_t ok = xTaskCreatePinnedToCore(&App::UiLoopEntry, "ui_loop",
-                                            8 * 1024, this, 5, nullptr, 0);
+    BaseType_t ok = xTaskCreatePinnedToCore(&App::UiLoopEntry, "ui_loop", 8 * 1024, this, 5, nullptr, 0);
     configASSERT(ok == pdPASS);
 }
 
@@ -338,11 +354,13 @@ void App::AttachInputs() {
     });
     board->up_btn()->OnPressUp([] { g_combo.up_held = false; });
     board->up_btn()->OnClick([cb = post_short(ButtonId::kUp)] {
-        if (g_combo.up_consumed) return;
+        if (g_combo.up_consumed)
+            return;
         cb();
     });
     board->up_btn()->OnLongPress([cb = post_long(ButtonId::kUp)] {
-        if (g_combo.up_consumed) return;
+        if (g_combo.up_consumed)
+            return;
         cb();
     });
 
@@ -353,11 +371,13 @@ void App::AttachInputs() {
     });
     board->down_btn()->OnPressUp([] { g_combo.down_held = false; });
     board->down_btn()->OnClick([cb = post_short(ButtonId::kDown)] {
-        if (g_combo.down_consumed) return;
+        if (g_combo.down_consumed)
+            return;
         cb();
     });
     board->down_btn()->OnLongPress([cb = post_long(ButtonId::kDown)] {
-        if (g_combo.down_consumed) return;
+        if (g_combo.down_consumed)
+            return;
         cb();
     });
 
@@ -378,9 +398,7 @@ void App::AttachInputs() {
     });
 
     // WiFi 断线转 EventBus（重连成功事件 wifi.cc 内部已处理；这里只接 disconnect）
-    Wifi::Get().OnDisconnected([](int /*reason*/) {
-        PostWifiState(false, 0);
-    });
+    Wifi::Get().OnDisconnected([](int /*reason*/) { PostWifiState(false, 0); });
 }
 
 void App::StartTimeTick() {
@@ -403,8 +421,8 @@ void App::InitNetwork() {
         StartPortal();
         return;
     }
-    ESP_LOGI(kTag, "Found NVS credentials: ssid=%s have_secret=%d",
-             creds.wifi_ssid.c_str(), (int)!creds.device_secret.empty());
+    ESP_LOGI(kTag, "Found NVS credentials: ssid=%s have_secret=%d", creds.wifi_ssid.c_str(),
+             (int)!creds.device_secret.empty());
     bool was_first_register = creds.device_secret.empty();
     if (TryConnectAndSetup(creds)) {
         // 连上 → 状态栏立即显示 wifi 图标
@@ -413,40 +431,39 @@ void App::InitNetwork() {
         // 启动 SyncService（依赖注入）。SyncService 拿到第一波数据后会 Post GroupReady。
         SyncDeps deps;
         deps.read_battery = [](int* mv, int* pct) -> bool {
-            uint16_t mv16 = 0;
-            uint8_t  p8   = 0;
-            const bool ok = Board::Get().ReadBattery(&mv16, &p8);
-            if (mv) *mv = mv16;
-            if (pct) *pct = p8;
+            uint16_t   mv16 = 0;
+            uint8_t    p8   = 0;
+            const bool ok   = Board::Get().ReadBattery(&mv16, &p8);
+            if (mv)
+                *mv = mv16;
+            if (pct)
+                *pct = p8;
             return ok;
         };
-        deps.read_rssi          = []() -> int { return Wifi::Get().GetRssi(); };
-        deps.current_group      = []() -> std::string {
+        deps.read_rssi     = []() -> int { return Wifi::Get().GetRssi(); };
+        deps.current_group = []() -> std::string {
             std::string gid, etag;
-            if (!cache::ReadStateMeta(gid, etag)) return "";
+            if (!cache::ReadStateMeta(gid, etag))
+                return "";
             return gid;
         };
         // 只有当前帧确实需要定时刷新时才上报 seq，避免静态帧/推送型 dashboard
         // 在每次 poll 时触发后端 current-frame 动态刷新查询。
-        deps.current_content_seq  = []() -> int {
-            return power_state::CurrentFrameNeedsTimerWake()
-                       ? power_state::GetCurrentFrameSeq()
-                       : -1;
+        deps.current_content_seq = []() -> int {
+            return power_state::CurrentFrameNeedsTimerWake() ? power_state::GetCurrentFrameSeq() : -1;
         };
         deps.current_content_etag = []() -> std::string {
             std::string gid;
             std::string manifest_etag;
-            if (!cache::ReadStateMeta(gid, manifest_etag) || gid.empty()) return "";
+            if (!cache::ReadStateMeta(gid, manifest_etag) || gid.empty())
+                return "";
             cache::FrameMeta meta;
-            if (!cache::ReadFrameMeta(gid, power_state::GetCurrentFrameSeq(), meta)) return "";
+            if (!cache::ReadFrameMeta(gid, power_state::GetCurrentFrameSeq(), meta))
+                return "";
             return meta.content_etag;
         };
-        deps.manifest_etag = []() -> std::string {
-            return cache::ReadCurrentManifestEtag();
-        };
-        deps.wake_reason = []() -> std::string {
-            return WakeReasonString();
-        };
+        deps.manifest_etag = []() -> std::string { return cache::ReadCurrentManifestEtag(); };
+        deps.wake_reason   = []() -> std::string { return WakeReasonString(); };
         SyncService::Get().Start(std::move(deps));
 
         // 首次注册(NVS 之前没 secret)的设备没有可信 cache:可能是新设备(没 cache)
@@ -491,13 +508,18 @@ void App::StartPortal() {
         c.server_url = s.server_url;
         // device_id/device_secret 留空:配网完成 esp_restart 后 InitNetwork 看到无 secret
         // → 走 register 流。设备命名留到 Web 端 PUT /devices/:id 完成绑定后再做。
-        cred::Save(c);
+        if (!cred::Save(c)) {
+            out_error = "凭据保存失败,请重试";
+            ESP_LOGE(kTag, "Credential save failed");
+            return false;
+        }
         ESP_LOGI(kTag, "Credentials saved, will reboot soon");
         return true;
     });
 
     portal_->OnFinished([this](bool success) {
-        if (!success) return;
+        if (!success)
+            return;
         ESP_LOGI(kTag, "Portal finished, stopping AP and rebooting in 500ms");
         portal_->Stop();
         vTaskDelay(pdMS_TO_TICKS(500));
@@ -519,7 +541,7 @@ void App::StartSleep() {
     // 内部已经在 Init 时把 snapshot 设到 kCharging,callback 不会因"未变化"而再触发。
     // 这里主动 Post 一次让 SleepManager 同步初始 paused_ 状态,免得"开机就充电"
     // 场景被误判为闲置 5min 后睡。
-    auto snap = Board::Get().charge()->Get();
+    auto    snap = Board::Get().charge()->Get();
     UiEvent e{};
     e.kind                = UiEventKind::kChargeChanged;
     e.u.charge.state      = static_cast<uint8_t>(snap.state);

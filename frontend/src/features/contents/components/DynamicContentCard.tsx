@@ -1,7 +1,4 @@
-import { useSortable } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import { AlertCircle, GripVertical, Pencil, RefreshCw, Trash2 } from 'lucide-react';
-import { useMemo } from 'react';
 import type { ContentDetailT } from 'shared';
 import {
   useContentImage,
@@ -14,6 +11,7 @@ import { AudioPlayPreview } from './AudioPlayPreview';
 import { AudioStatusBadge } from './AudioStatusBadge';
 import { ContentCardShell } from './content-card/ContentCardShell';
 import { FrameBitmapPreview } from '@/features/contents/components/FrameBitmapPreview';
+import { useSortableStyle } from '@/lib/dnd';
 
 interface DynamicContentCardProps {
   gid: string;
@@ -30,18 +28,7 @@ export function DynamicContentCard({ gid, content, onEdit }: DynamicContentCardP
   const img = useContentImage(content.id, content.image_etag);
   const hasRenderError = !!content.dynamic_render_error;
 
-  const { attributes, listeners, setNodeRef, transform, isDragging } = useSortable({
-    id: content.id,
-    animateLayoutChanges: () => false,
-  });
-  const style = useMemo(
-    () => ({
-      transform: CSS.Transform.toString(transform),
-      transition: 'none',
-      zIndex: isDragging ? 10 : undefined,
-    }),
-    [isDragging, transform]
-  );
+  const { attributes, listeners, setNodeRef, style, isDragging } = useSortableStyle(content.id);
 
   async function onDelete() {
     const ok = await confirm({

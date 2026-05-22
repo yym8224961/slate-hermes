@@ -1,6 +1,7 @@
 import type { ContentKind, Prisma } from '@prisma/client';
 import { FONT_TEST_FONTS } from 'shared';
-import { datePartsInTz, timezoneFromConfig } from '../dynamic-content/timezone';
+import { recordValue, valueText } from '../../common/utils';
+import { cnMonthDay, datePartsInTz, timezoneFromConfig } from '../dynamic-content/timezone';
 
 export interface ContentStatusBarSource {
   kind: ContentKind;
@@ -13,14 +14,19 @@ export interface ContentStatusBarSource {
 
 export function deviceStatusBarText(row: ContentStatusBarSource): string {
   if (row.kind !== 'dynamic') return row.frameName ?? '';
-  const renderedAt = row.renderedAt ?? new Date();
+  // 依赖 renderedAt 的动态类型在首次渲染前用 frameName 占位。
+  // 不用 `new Date()` 兜底：会让 etag 计算路径在每次刷新时漂移，下游 manifest etag
+  // 持续抖动到首次渲染落库，把 304 缓存优势打掉。
   switch (row.dynamicType) {
     case 'daily_calendar':
-      return dailyCalendarStatusBarText(row.dynamicData, row.dynamicConfig, renderedAt);
+      if (!row.renderedAt) return row.frameName ?? '';
+      return dailyCalendarStatusBarText(row.dynamicData, row.dynamicConfig, row.renderedAt);
     case 'month_calendar':
-      return monthCalendarStatusBarText(row.dynamicConfig, renderedAt);
+      if (!row.renderedAt) return row.frameName ?? '';
+      return monthCalendarStatusBarText(row.dynamicConfig, row.renderedAt);
     case 'history_today':
-      return historyTodayStatusBarText(row.dynamicData, row.dynamicConfig, renderedAt);
+      if (!row.renderedAt) return row.frameName ?? '';
+      return historyTodayStatusBarText(row.dynamicData, row.dynamicConfig, row.renderedAt);
     case 'weather':
       return weatherStatusBarText(row.dynamicConfig);
     case 'dashboard':
@@ -69,21 +75,4 @@ export function weatherStatusBarText(config: unknown): string {
 export function fontTestStatusBarText(config: unknown): string {
   const id = valueText(recordValue(config, 'font_id'));
   return id ? (FONT_TEST_FONTS.find((font) => font.id === id)?.label ?? '字体测试') : '字体测试';
-}
-
-function recordValue(value: unknown, key: string): unknown {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)[key]
-    : undefined;
-}
-
-function valueText(value: unknown): string | null {
-  if (value === null || value === undefined) return null;
-  const text = String(value).trim();
-  return text ? text : null;
-}
-
-function cnMonthDay(date: Date, timeZone: string): string {
-  const parts = datePartsInTz(date, timeZone);
-  return `${parts.month}月${parts.day}日`;
 }

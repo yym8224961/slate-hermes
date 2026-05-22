@@ -28,7 +28,7 @@ class ChargeStatus {
     void     OnStateChanged(std::function<void(const Snapshot&)> cb);
 
    private:
-    void            UpdateSnapshot(State state, bool power_present, bool full, bool no_battery);
+    void            UpdateSnapshot(State state, bool power_present, bool no_battery);
     static uint32_t Pack(State state, bool power_present, bool charging, bool full, bool no_battery);
     static Snapshot Unpack(uint32_t v);
 

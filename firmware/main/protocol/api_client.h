@@ -55,7 +55,6 @@ struct RegisterResult {
     std::string id;
     std::string device_secret;
     std::string pair_code;
-    bool        reclaimed = false;
 };
 
 struct Manifest {

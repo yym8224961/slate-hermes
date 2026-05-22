@@ -25,31 +25,44 @@ interface ConfirmOptions {
 }
 
 type Resolve = (ok: boolean) => void;
+type ConfirmRequest = ConfirmOptions & { resolve: Resolve };
 
 const ConfirmCtx = createContext<((opts: ConfirmOptions) => Promise<boolean>) | null>(null);
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
-  const [opts, setOpts] = useState<ConfirmOptions | null>(null);
-  const resolveRef = useRef<Resolve | null>(null);
+  const [active, setActive] = useState<ConfirmRequest | null>(null);
+  const activeRef = useRef<ConfirmRequest | null>(null);
+  const queueRef = useRef<ConfirmRequest[]>([]);
+
+  const show = useCallback((request: ConfirmRequest | null) => {
+    activeRef.current = request;
+    setActive(request);
+  }, []);
 
   const confirm = useCallback((options: ConfirmOptions) => {
     return new Promise<boolean>((resolve) => {
-      resolveRef.current = resolve;
-      setOpts(options);
+      // 单一路径：始终入队，再决定要不要立即 show。两次同步 confirm() 不会产生
+      // 「都看到 active=null 都直接 show」的覆盖竞态。
+      queueRef.current.push({ ...options, resolve });
+      if (!activeRef.current) {
+        const next = queueRef.current.shift();
+        if (next) show(next);
+      }
     });
-  }, []);
+  }, [show]);
 
   const close = useCallback((ok: boolean) => {
-    resolveRef.current?.(ok);
-    resolveRef.current = null;
-    setOpts(null);
-  }, []);
+    const request = activeRef.current;
+    if (!request) return;
+    request.resolve(ok);
+    show(queueRef.current.shift() ?? null);
+  }, [show]);
 
   return (
     <ConfirmCtx.Provider value={confirm}>
       {children}
       <Dialog.Root
-        open={!!opts}
+        open={!!active}
         onOpenChange={(open) => {
           if (!open) close(false);
         }}
@@ -63,16 +76,16 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           <Dialog.Overlay className={dialogOverlayConfirmCls} />
           <Dialog.Content className={dialogContentConfirmCls}>
             <div className="flex items-center gap-4">
-              <IconBlock size="lg" tone={opts?.destructive ? 'danger' : 'muted'}>
+              <IconBlock size="lg" tone={active?.destructive ? 'danger' : 'muted'}>
                 <AlertTriangle size={24} />
               </IconBlock>
               <div className="min-w-0 flex-1">
                 <Dialog.Title className="font-serif text-[20px] font-bold leading-[1.2]">
-                  {opts?.title}
+                  {active?.title}
                 </Dialog.Title>
-                {opts?.description && (
+                {active?.description && (
                   <Dialog.Description className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
-                    {opts.description}
+                    {active.description}
                   </Dialog.Description>
                 )}
               </div>
@@ -80,14 +93,14 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
 
             <div className="mt-6 flex items-center justify-end gap-3">
               <Button variant="outline" onClick={() => close(false)}>
-                {opts?.cancelText ?? '取消'}
+                {active?.cancelText ?? '取消'}
               </Button>
               <Button
-                variant={opts?.destructive ? 'danger' : 'primary'}
+                variant={active?.destructive ? 'danger' : 'primary'}
                 onClick={() => close(true)}
                 autoFocus
               >
-                {opts?.confirmText ?? '确认'}
+                {active?.confirmText ?? '确认'}
               </Button>
             </div>
           </Dialog.Content>

@@ -123,10 +123,11 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
       let targetContentId = content?.id ?? null;
       const hasImagePatch = !!imageFile || !!audioFile || frameNameChanged;
       if (isEdit) {
+        if (!content) return;
         if (hasImagePatch) {
-          await updateImageContent.mutateAsync({ contentId: content!.id, form: fd });
+          await updateImageContent.mutateAsync({ contentId: content.id, form: fd });
         }
-        targetContentId = content!.id;
+        targetContentId = content.id;
         toast.success('内容已保存');
       } else {
         const created = await createImageContent.mutateAsync(fd);
@@ -168,7 +169,7 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
         </IconBlock>
         <div className="flex-1 min-w-0">
           <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-[1.2] truncate tracking-tight">
-            {isEdit ? `编辑第 ${content!.seq + 1} 项` : '新建图片内容'}
+            {isEdit && content ? `编辑第 ${content.seq + 1} 项` : '新建图片内容'}
           </h1>
           <p className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
             {isEdit ? '改顺序请在组内用拖拽。' : '追加至列表末尾，可拖拽改序。'}
@@ -255,8 +256,8 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
                 onTtsTextChange={setTtsText}
                 ttsVoice={ttsVoice}
                 onTtsVoiceChange={setTtsVoice}
-                hasExistingAudio={isEdit && !!content!.audio_etag}
-                editingContentId={isEdit ? content!.id : null}
+                hasExistingAudio={isEdit && !!content?.audio_etag}
+                editingContentId={isEdit ? (content?.id ?? null) : null}
                 audioStatus={content?.audio_status}
                 audioError={content?.audio_error}
               />

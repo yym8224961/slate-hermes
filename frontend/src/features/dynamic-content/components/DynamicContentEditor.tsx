@@ -1,20 +1,16 @@
-// 动态内容编辑器 —— 创建 + 编辑共用。
-//
-// 创建：选类型 → 填配置 → 保存（POST /groups/:gid/contents）
-// 编辑：直接进配置面板（type 不可改）→ 保存（PATCH /contents/:contentId）
+// 动态内容编辑器 —— 编辑动态内容配置。
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUp, Sparkles } from 'lucide-react';
 import {
   DynamicConfig,
   isAudioDynamicConfig,
-  type ContentSummaryT,
+  type ContentDetailT,
   type DynamicConfigT,
   type DynamicTypeT,
 } from 'shared';
 import {
   useContentImage,
-  useCreateDynamicContent,
   usePreviewDynamicContent,
   useUpdateDynamicContent,
 } from '@/features/contents/queries';
@@ -25,14 +21,11 @@ import { Spinner } from '@/components/ui/Spinner';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { DoubleRule } from '@/components/ui/DoubleRule';
 import { FormSection } from '@/components/ui/FormSection';
-import { DynamicTypePicker } from '@/features/dynamic-content/components/DynamicTypePicker';
 import { getApiErrorMessage } from '@/lib/api-error';
-import { defaultConfig } from '@/features/dynamic-content/model/default-config';
 import {
   DynamicConfigForm,
   DynamicAudioSection,
 } from '@/features/dynamic-content/components/DynamicConfigForm';
-import { FrameBitmapPreview } from '@/features/contents/components/FrameBitmapPreview';
 import {
   defaultFrameName,
   effectiveFrameName,
@@ -40,14 +33,13 @@ import {
 } from '@/features/contents/components/create/frame-name';
 import { TYPE_META, shouldRenderParams } from '@/features/contents/components/create/type-meta';
 import { useDynamicCreatePreview } from '@/features/contents/components/create/useDynamicCreatePreview';
+import { DynamicFramePreview } from '@/features/contents/components/create/DynamicCreatePreview';
 
 interface DynamicContentEditorProps {
   gid: string;
-  /** edit 模式传现有动态内容；create 不传 */
-  content?: ContentSummaryT;
-  /** edit 模式下当前动态配置。 */
-  initialConfig?: DynamicConfigT;
-  initialType?: DynamicTypeT;
+  content: ContentDetailT;
+  initialConfig: DynamicConfigT;
+  initialType: DynamicTypeT;
   onDone: () => void;
 }
 
@@ -58,24 +50,21 @@ export function DynamicContentEditor({
   initialType,
   onDone,
 }: DynamicContentEditorProps) {
-  const isEdit = !!content;
-  const create = useCreateDynamicContent(gid);
   const update = useUpdateDynamicContent(gid);
-  const submitting = isEdit ? update.isPending : create.isPending;
+  const submitting = update.isPending;
   const toast = useToast();
 
-  const [type, setType] = useState<DynamicTypeT | null>(initialType ?? initialConfig?.type ?? null);
-  const [frameName, setFrameName] = useState(content?.frame_name ?? '');
-  const [config, setConfig] = useState<DynamicConfigT | null>(initialConfig ?? null);
+  const [type, setType] = useState<DynamicTypeT>(initialType);
+  const [frameName, setFrameName] = useState(content.frame_name ?? '');
+  const [config, setConfig] = useState<DynamicConfigT>(initialConfig);
   const initializedContentIdRef = useRef<string | null>(null);
   const initialConfigKey = useMemo(
-    () => (initialConfig ? JSON.stringify(initialConfig) : null),
+    () => JSON.stringify(initialConfig),
     [initialConfig]
   );
   const initializedConfigKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!isEdit || !content || !initialConfig) return;
     if (
       initializedContentIdRef.current === content.id &&
       initializedConfigKeyRef.current === initialConfigKey
@@ -86,31 +75,21 @@ export function DynamicContentEditor({
     initializedConfigKeyRef.current = initialConfigKey;
 
     const nextConfig = initialConfig;
-    const nextType = initialType ?? nextConfig.type;
+    const nextType = initialType;
     setType(nextType);
     setFrameName(content.frame_name ?? defaultFrameName(nextType, nextConfig));
     setConfig(nextConfig);
-  }, [isEdit, content, initialConfig, initialConfigKey, initialType]);
+  }, [content, initialConfig, initialConfigKey, initialType]);
 
-  // type 变化时（create 模式选了一个）→ 重置 config 为默认
-  useEffect(() => {
-    if (!isEdit && type && (!config || config.type !== type)) {
-      setConfig(defaultConfig(type));
-    }
-  }, [type, isEdit, config]);
+  const savedPreviewEnabled = !!content.image_etag;
+  const savedPreview = useContentImage(content.id, savedPreviewEnabled ? content.image_etag : '');
 
-  const savedPreviewEnabled = !!content?.id && !!content?.image_etag;
-  const savedPreview = useContentImage(
-    content?.id ?? '',
-    savedPreviewEnabled ? content!.image_etag : ''
-  );
-
-  // 实时预览（创建/编辑模式均支持）
-  const preview = usePreviewDynamicContent(content?.id);
+  // 实时预览
+  const preview = usePreviewDynamicContent(content.id);
   const { livePreviewData } = useDynamicCreatePreview({ type, config, frameName, preview });
+  const showParams = shouldRenderParams(type, { contentId: content.id });
 
   async function onSubmit() {
-    if (!type || !config) return;
     // 提交前用 shared 的 DynamicConfig zod 校验，避免后端 400 后才知道错。
     // 失败时把第一个 issue 反馈给用户。
     const parsed = DynamicConfig.safeParse(config);
@@ -121,24 +100,15 @@ export function DynamicContentEditor({
       return;
     }
     try {
-      if (isEdit) {
-        await update.mutateAsync({
-          contentId: content!.id,
-          frameName: effectiveFrameName(type, parsed.data, frameName),
-          config: parsed.data,
-        });
-        toast.success('已保存');
-      } else {
-        await create.mutateAsync({
-          kind: 'dynamic',
-          config: parsed.data,
-          frame_name: effectiveFrameName(type, parsed.data, frameName),
-        });
-        toast.success('已创建');
-      }
+      await update.mutateAsync({
+        contentId: content.id,
+        frameName: effectiveFrameName(type, parsed.data, frameName),
+        config: parsed.data,
+      });
+      toast.success('已保存');
       onDone();
     } catch (err) {
-      toast.error(isEdit ? '保存失败' : '创建失败', getApiErrorMessage(err));
+      toast.error('保存失败', getApiErrorMessage(err));
     }
   }
 
@@ -159,7 +129,7 @@ export function DynamicContentEditor({
         </IconBlock>
         <div className="flex-1 min-w-0">
           <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-[1.2] truncate tracking-tight">
-            {isEdit ? '编辑动态内容' : '新建动态内容'}
+            编辑动态内容
           </h1>
           <p className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
             动态内容由服务端生成 400×300 1bpp 帧，设备端直接显示并叠加状态栏。
@@ -178,7 +148,7 @@ export function DynamicContentEditor({
             </p>
             <DynamicPreview
               savedData={savedPreview.data}
-              savedCacheKey={savedPreviewEnabled ? content!.image_etag : null}
+              savedCacheKey={savedPreviewEnabled ? content.image_etag : null}
               savedPending={savedPreviewEnabled && savedPreview.isPending}
               liveData={livePreviewData}
               livePending={preview.isPending}
@@ -191,13 +161,10 @@ export function DynamicContentEditor({
           <div className="order-1 lg:order-2 lg:mt-7 space-y-6">
             {/* 类型块 — 12px 等距：picker/chip · description · divider */}
             <div className="space-y-3">
-              {!isEdit && <DynamicTypePicker value={type} onChange={setType} />}
-              {type && (
-                <p className="font-sans text-[12px] text-stone leading-relaxed">
-                  {TYPE_META[type].description}
-                </p>
-              )}
-              {type && <div className="border-t border-line" />}
+              <p className="font-sans text-[12px] text-stone leading-relaxed">
+                {TYPE_META[type].description}
+              </p>
+              <div className="border-t border-line" />
             </div>
 
             {/* 帧名称（仅 dashboard）*/}
@@ -214,7 +181,7 @@ export function DynamicContentEditor({
             )}
 
             {/* 类型参数 */}
-            {type && shouldRenderParams(type, { contentId: content?.id }) && config && (
+            {showParams && (
               <FormSection label="类型参数">
                 <DynamicConfigForm
                   config={config}
@@ -228,13 +195,13 @@ export function DynamicContentEditor({
                     }
                     setConfig(next);
                   }}
-                  contentId={content?.id}
+                  contentId={content.id}
                 />
               </FormSection>
             )}
 
             {/* 音频 */}
-            {type && TYPE_META[type].supportsAudio && config && isAudioDynamicConfig(config) && (
+            {TYPE_META[type].supportsAudio && isAudioDynamicConfig(config) && (
               <FormSection label="音频">
                 <DynamicAudioSection config={config} onChange={setConfig} />
               </FormSection>
@@ -247,11 +214,11 @@ export function DynamicContentEditor({
               </Button>
               <Button
                 onClick={onSubmit}
-                disabled={!type || !config || submitting}
+                disabled={submitting}
                 iconLeft={!submitting ? <ArrowUp size={16} /> : undefined}
                 className="flex-1"
               >
-                {submitting ? <Spinner /> : isEdit ? '保存' : '创建'}
+                {submitting ? <Spinner /> : '保存'}
               </Button>
             </div>
           </div>
@@ -282,27 +249,12 @@ function DynamicPreview({
   const pending = livePending || (!liveData && Boolean(savedPending));
 
   return (
-    <div className="bg-paper border border-ink relative overflow-hidden aspect-[4/3]">
-      {(!displayData || pending) && <FrameBitmapPreview data={null} caption={caption} />}
-      {!displayData && !pending && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
-          <span className="font-serif italic text-[13px] text-stone-light">
-            {hasConfig ? '修改参数后自动更新' : '选择类型后开始配置'}
-          </span>
-        </div>
-      )}
-      {pending && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center">
-          <Spinner />
-        </div>
-      )}
-      {displayData && !pending && (
-        <FrameBitmapPreview
-          data={displayData}
-          cacheKey={liveData ? null : savedCacheKey}
-          caption={caption}
-        />
-      )}
-    </div>
+    <DynamicFramePreview
+      data={displayData}
+      cacheKey={liveData ? null : savedCacheKey}
+      pending={pending}
+      hasConfig={hasConfig}
+      caption={caption}
+    />
   );
 }

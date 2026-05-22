@@ -29,7 +29,10 @@
   --radius-xl: 0px;
 
   /* tracking */
-  --tracking-tight: -0.015em;
+  /* tracking-tight 主动放宽到 0：原 -0.015em 过紧，中英文混排不耐看。
+     现有 10+ 组件仍写着 `tracking-tight` Tailwind 类，沿用变量等于不再加紧字距。
+     大标题（AuthLayout）单独用硬编码 tracking-[-0.04em] 做报刊腔，不依赖此变量。 */
+  --tracking-tight: 0;
   --tracking-soft:  0.02em;
 
   /* shadows */
@@ -110,17 +113,6 @@ body {
     background: var(--color-cream);
     cursor: pointer;
   }
-  .craft-card-danger {
-    background: var(--color-paper);
-    border: 1px solid var(--color-ink);
-    cursor: pointer;
-    transition: background 150ms ease, border-color 150ms ease;
-  }
-  .craft-card-danger:hover:not(:disabled) {
-    background: rgba(168, 40, 28, 0.06);
-    border-color: var(--color-clay);
-  }
-
   /* 状态方块：在线=实心墨，离线=空框，警告=实心砖红 */
   .dot { display: inline-block; width: 8px; height: 8px; }
   .dot-online  { background: var(--color-ink); border: 1.2px solid var(--color-ink); }
