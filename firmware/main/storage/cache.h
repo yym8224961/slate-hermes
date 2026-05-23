@@ -15,8 +15,8 @@ namespace cache {
 bool Init();
 bool FormatAll();
 
-bool ReadStateMeta(std::string& selected_group_id, std::string& last_etag);
-bool WriteStateMeta(const std::string& selected_group_id, const std::string& etag);
+bool        ReadStateMeta(std::string& selected_group_id, std::string& last_etag);
+bool        WriteStateMeta(const std::string& selected_group_id, const std::string& etag);
 std::string ReadCurrentManifestEtag();
 
 bool WriteManifest(const std::string& gid, const std::string& manifest_etag, int content_count);

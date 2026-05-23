@@ -18,6 +18,8 @@ export function defaultFrameName(type: DynamicTypeT, config: DynamicConfigT): st
       return '数据看板';
     case 'font_test':
       return dynamicStatusTitle(config) ?? '字体测试';
+    case 'hot_list':
+      return dynamicStatusTitle(config) ?? '热榜';
   }
 }
 

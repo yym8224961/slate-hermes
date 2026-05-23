@@ -64,6 +64,7 @@ const CONTENT_LEFT = 20;
 const CONTENT_RIGHT = FRAME_WIDTH - 20;
 const CONTENT_WIDTH = CONTENT_RIGHT - CONTENT_LEFT;
 const FALLBACK_TEXT = '暂无数据';
+const HOT_LIST_RENDER_COUNT = 8;
 
 @Injectable()
 export class DynamicFrameRendererService implements OnModuleInit {
@@ -97,6 +98,9 @@ export class DynamicFrameRendererService implements OnModuleInit {
         break;
       case 'font_test':
         this.renderFontTest(c, fonts, ctx);
+        break;
+      case 'hot_list':
+        this.renderHotList(c, fonts, ctx);
         break;
       default:
         this.renderFallback(c, fonts, `未知动态类型 ${ctx.type}`);
@@ -497,6 +501,56 @@ export class DynamicFrameRendererService implements OnModuleInit {
       maxWidth: 320,
       maxLines: 2,
       ellipsis: true,
+    });
+  }
+
+  private renderHotList(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
+    const data = ctx.data ?? {};
+    const rawItems = Array.isArray(data.items) ? data.items.filter(isRecord) : [];
+    const items = rawItems.slice(0, HOT_LIST_RENDER_COUNT);
+    const listTop = STATUS_BAR_H + 10;
+    const rowH = 33;
+    const rankBoxW = 28;
+    const rankBoxH = 18;
+    const rankX = CONTENT_LEFT;
+    const titleX = CONTENT_LEFT + 42;
+    const titleW = CONTENT_RIGHT - titleX;
+
+    if (items.length === 0) {
+      this.drawText(c, fonts.sans16, '暂无榜单数据', FRAME_WIDTH / 2, 136, {
+        align: 'center',
+        maxWidth: CONTENT_WIDTH,
+      });
+      return;
+    }
+
+    items.forEach((item, index) => {
+      const y = listTop + index * rowH;
+      const rowCenterY = y + (rowH - 2) / 2;
+      const rankY = Math.round(rowCenterY - rankBoxH / 2);
+      const rank = readInt(item.rank, index + 1, 1, 99);
+      const title = pickText(item.title, FALLBACK_TEXT);
+      const topRank = index < 3;
+
+      if (topRank) c.fillRect(rankX, rankY, rankBoxW, rankBoxH, PIXEL_BLACK);
+      else c.strokeRect(rankX, rankY, rankBoxW, rankBoxH, PIXEL_BLACK);
+      this.drawTextInBox(
+        c,
+        fonts.metric12,
+        String(rank).padStart(2, '0'),
+        rankX,
+        rankY,
+        rankBoxW,
+        rankBoxH,
+        topRank ? PIXEL_WHITE : PIXEL_BLACK
+      );
+      this.drawTextCenteredY(c, fonts.sans16, title, titleX, rowCenterY, {
+        maxWidth: titleW,
+        ellipsis: true,
+      });
+
+      if (index < items.length - 1)
+        this.drawRule(c, CONTENT_LEFT, y + rowH - 1, CONTENT_WIDTH, 'dashed');
     });
   }
 
@@ -932,6 +986,54 @@ export class DynamicFrameRendererService implements OnModuleInit {
     return lines.length * font.lineHeight + Math.max(0, lines.length - 1) * lineGap;
   }
 
+  private drawTextInBox(
+    c: BitmapCanvas,
+    font: BitmapFont,
+    text: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    color: number
+  ): void {
+    const fallback = this.fallbackForFont(font);
+    const line = filterDrawable(font, fallback, text.trim());
+    if (!line) return;
+    const bounds = textPixelBounds(font, fallback, line);
+    if (!bounds) return;
+    const drawX = Math.round(x + (w - (bounds.right - bounds.left)) / 2 - bounds.left);
+    const drawY = Math.round(y + (h - (bounds.bottom - bounds.top)) / 2 - bounds.top);
+    drawTextLine(c, font, fallback, line, drawX, drawY, color);
+  }
+
+  private drawTextCenteredY(
+    c: BitmapCanvas,
+    font: BitmapFont,
+    text: string,
+    x: number,
+    centerY: number,
+    opts: Omit<TextOptions, 'maxLines' | 'lineGap'> = {}
+  ): void {
+    const fallback = this.fallbackForFont(font);
+    const lines = wrapText(
+      font,
+      fallback,
+      text,
+      opts.maxWidth ?? FRAME_WIDTH,
+      1,
+      opts.ellipsis ?? false
+    );
+    const line = lines[0];
+    if (!line) return;
+    const bounds = textPixelBounds(font, fallback, line);
+    if (!bounds) return;
+    const width = textWidthFallback(font, fallback, line);
+    const drawX =
+      opts.align === 'center' ? Math.round(x - width / 2) : opts.align === 'right' ? x - width : x;
+    const drawY = Math.round(centerY - (bounds.bottom - bounds.top) / 2 - bounds.top);
+    drawTextLine(c, font, fallback, line, drawX, drawY, opts.color ?? PIXEL_BLACK);
+  }
+
   private fallbackForFont(font: BitmapFont): BitmapFont | undefined {
     const fonts = this.fonts;
     if (!fonts) return undefined;
@@ -1308,6 +1410,42 @@ function textVisualBounds(font: BitmapFont, text: string): { top: number; bottom
     bottom = Math.max(bottom, glyphBottom);
   }
   return Number.isFinite(top) && Number.isFinite(bottom) ? { top, bottom } : null;
+}
+
+function textPixelBounds(
+  font: BitmapFont,
+  fallback: BitmapFont | undefined,
+  text: string
+): { left: number; right: number; top: number; bottom: number } | null {
+  let penX = 0;
+  let left = Number.POSITIVE_INFINITY;
+  let right = Number.NEGATIVE_INFINITY;
+  let top = Number.POSITIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    const drawFont = hasGlyph(font, cp)
+      ? font
+      : fallback && hasGlyph(fallback, cp)
+        ? fallback
+        : null;
+    if (!drawFont) continue;
+    const glyph = drawFont.glyphs.get(cp)!;
+    const baselineY = drawFont.lineHeight - drawFont.baseLine;
+    const glyphLeft = penX + glyph.ofs_x;
+    const glyphTop = baselineY - glyph.ofs_y - glyph.box_h;
+    left = Math.min(left, glyphLeft);
+    right = Math.max(right, glyphLeft + glyph.box_w);
+    top = Math.min(top, glyphTop);
+    bottom = Math.max(bottom, glyphTop + glyph.box_h);
+    penX += Math.round(glyph.adv_w / 16);
+  }
+  return Number.isFinite(left) &&
+    Number.isFinite(right) &&
+    Number.isFinite(top) &&
+    Number.isFinite(bottom)
+    ? { left, right, top, bottom }
+    : null;
 }
 
 function drawTextLine(

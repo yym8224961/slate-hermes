@@ -1,4 +1,4 @@
-import { FONT_TEST_FONTS, type DynamicConfigT } from 'shared';
+import { FONT_TEST_FONTS, hotListSourceShortLabel, type DynamicConfigT } from 'shared';
 
 export function dynamicStatusTitle(config: DynamicConfigT | null | undefined): string | null {
   if (!config) return null;
@@ -16,6 +16,8 @@ export function dynamicStatusTitle(config: DynamicConfigT | null | undefined): s
       return '数据看板';
     case 'font_test':
       return FONT_TEST_FONTS.find((font) => font.id === config.font_id)?.label ?? '字体测试';
+    case 'hot_list':
+      return `${hotListSourceShortLabel(config.source)}热榜`;
     default:
       return null;
   }

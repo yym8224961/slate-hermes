@@ -1,0 +1,140 @@
+import { Inject, Injectable, Optional } from '@nestjs/common';
+import {
+  HotListConfig,
+  hotListSourceLabel,
+  type HotListConfigT,
+  type HotListSourceIdT,
+} from 'shared';
+import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
+import { HOT_LIST_SOURCE_REGISTRY } from '../hot-list/hot-list-sources';
+import type { HotListItem, HotListProviderData, HotListSource } from '../hot-list/hot-list.types';
+
+interface CacheEntry {
+  data: HotListProviderData;
+  fetchedAt: number;
+}
+
+interface FetchFreshResult {
+  sourceId: HotListSourceIdT;
+  sourceLabel: string;
+  items: HotListItem[];
+}
+
+const DEFAULT_CACHE_TTL_MS = 600_000;
+const FETCH_TIMEOUT_MS = 5000;
+
+/** 测试通过构造函数注入 mock sources；生产由 NestJS 走 @Optional 走默认值。 */
+export const HOT_LIST_SOURCES_TOKEN = Symbol('HotListSources');
+
+@Injectable()
+export class HotListProvider implements DataProvider<HotListConfigT, HotListProviderData> {
+  readonly type = 'hot_list';
+  private readonly cache = new Map<string, CacheEntry>();
+  private readonly inflight = new Map<string, Promise<FetchFreshResult>>();
+  private readonly sources: readonly HotListSource[];
+
+  constructor(@Optional() @Inject(HOT_LIST_SOURCES_TOKEN) sources?: readonly HotListSource[]) {
+    this.sources = sources ?? HOT_LIST_SOURCE_REGISTRY;
+  }
+
+  validateConfig(raw: unknown): HotListConfigT {
+    return HotListConfig.parse(raw);
+  }
+
+  /**
+   * 与 WeatherProvider 的差异：weather 用「共享 promise」让并发 caller 拿到同一份数据；
+   * hot-list 不共享 promise，而是让每个 caller 自行调用 dataFromFreshResult，从而在
+   * fetch 失败时各自回退到自己的 lastData。原因：同一个 source（如 weibo）会被多个
+   * Content 引用，它们的 lastData 各不相同，不能复用一份共享 fallback。
+   */
+  async fetchData(
+    config: HotListConfigT,
+    ctx: DynamicContentFetchCtx
+  ): Promise<HotListProviderData> {
+    const key = config.source;
+    const now = ctx.now.getTime();
+    const ttlMs = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_MS / 1000, 300) * 1000;
+    const cached = this.cache.get(key);
+    if (cached && now - cached.fetchedAt < ttlMs) return cached.data;
+    if (cached) this.cache.delete(key);
+
+    const existing = this.inflight.get(key);
+    if (existing) {
+      const fresh = await existing.catch(() => null);
+      return this.dataFromFreshResult(fresh, config.source, ctx);
+    }
+
+    const p = this.fetchFresh(config.source);
+    this.inflight.set(key, p);
+    let fresh: FetchFreshResult | null;
+    try {
+      fresh = await p.catch(() => null);
+    } finally {
+      this.inflight.delete(key);
+    }
+
+    const data = this.dataFromFreshResult(fresh, config.source, ctx);
+    if (fresh && fresh.items.length > 0) {
+      this.cache.set(key, { data, fetchedAt: now });
+    }
+    return data;
+  }
+
+  private dataFromFreshResult(
+    fresh: FetchFreshResult | null,
+    sourceId: HotListSourceIdT,
+    ctx: DynamicContentFetchCtx
+  ): HotListProviderData {
+    if (fresh && fresh.items.length > 0) {
+      return {
+        source: fresh.sourceId,
+        sourceLabel: fresh.sourceLabel,
+        updatedAt: ctx.now.toISOString(),
+        items: fresh.items,
+      };
+    }
+
+    const fallback = this.fallbackFromLastData(ctx.lastData);
+    if (fallback) return fallback;
+    return this.emptyData(sourceId, ctx.now);
+  }
+
+  private async fetchFresh(sourceId: HotListSourceIdT): Promise<FetchFreshResult> {
+    const source = this.sources.find((s) => s.id === sourceId);
+    if (!source) throw new Error(`未知热榜数据源: ${sourceId}`);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const items = (await source.fetch({ signal: controller.signal })).slice(0, 30);
+      return {
+        sourceId: source.id,
+        sourceLabel: source.label || hotListSourceLabel(source.id),
+        items,
+      };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private fallbackFromLastData(lastData: unknown): HotListProviderData | null {
+    if (!lastData || typeof lastData !== 'object' || Array.isArray(lastData)) return null;
+    const data = lastData as Partial<HotListProviderData>;
+    if (!data.source || !Array.isArray(data.items) || data.items.length === 0) return null;
+    return {
+      source: data.source,
+      sourceLabel: data.sourceLabel ?? hotListSourceLabel(data.source),
+      updatedAt: data.updatedAt ?? new Date().toISOString(),
+      items: data.items,
+    };
+  }
+
+  private emptyData(sourceId: HotListSourceIdT, now: Date): HotListProviderData {
+    return {
+      source: sourceId,
+      sourceLabel: hotListSourceLabel(sourceId),
+      updatedAt: now.toISOString(),
+      items: [],
+    };
+  }
+}

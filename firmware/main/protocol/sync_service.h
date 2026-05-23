@@ -62,11 +62,11 @@ class SyncService {
     void        SetCurrentGroupLocked(const std::string& gid);
     void        ClearCurrentGroupLocked();
 
-    SyncDeps             deps_;
-    std::atomic<bool>    running_{false};
-    EventGroupHandle_t   event_group_         = nullptr;
-    SemaphoreHandle_t    current_group_mutex_ = nullptr;
-    mutable std::string  current_group_;
+    SyncDeps            deps_;
+    std::atomic<bool>   running_{false};
+    EventGroupHandle_t  event_group_         = nullptr;
+    SemaphoreHandle_t   current_group_mutex_ = nullptr;
+    mutable std::string current_group_;
     // 跟踪 bound 翻转,只在变化时 emit kBound/kUnbound。
     std::atomic<bool> was_bound_{false};
     // 进入 unbound 状态的时刻,用于阶梯退避轮询间隔。

@@ -47,13 +47,13 @@ describe('IngestLimitGuard', () => {
   it('isolates rate-limit buckets per contentId', () => {
     const guard = new IngestLimitGuard();
     for (let i = 0; i < 30; i++) {
-      expect(
-        guard.canActivate(createContext({ params: { contentId: 'a' }, headers: {} }))
-      ).toBe(true);
+      expect(guard.canActivate(createContext({ params: { contentId: 'a' }, headers: {} }))).toBe(
+        true
+      );
     }
     // Different contentId should still pass — independent bucket.
-    expect(
-      guard.canActivate(createContext({ params: { contentId: 'b' }, headers: {} }))
-    ).toBe(true);
+    expect(guard.canActivate(createContext({ params: { contentId: 'b' }, headers: {} }))).toBe(
+      true
+    );
   });
 });

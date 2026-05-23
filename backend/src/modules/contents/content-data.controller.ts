@@ -24,7 +24,10 @@ export class ContentDataController {
   @Public()
   @UseGuards(IngestLimitGuard)
   @Post(':contentId/data')
-  async ingest(@Param('contentId') contentId: string, @Body() body: unknown): Promise<IngestResponseT> {
+  async ingest(
+    @Param('contentId') contentId: string,
+    @Body() body: unknown
+  ): Promise<IngestResponseT> {
     const parsed = IngestPayload.safeParse(body);
     if (!parsed.success) {
       throw new ValidationError(`payload 非法: ${parsed.error.message}`);

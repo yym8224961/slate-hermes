@@ -54,6 +54,12 @@ export const TYPE_META: Record<AllContentType, TypeMeta> = {
     hasConfigurableParams: true,
     supportsAudio: false,
   },
+  hot_list: {
+    label: '热榜',
+    description: '选择站点热榜，自动刷新并以墨水屏列表展示。',
+    hasConfigurableParams: true,
+    supportsAudio: false,
+  },
 };
 
 /**

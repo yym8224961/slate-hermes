@@ -58,10 +58,7 @@ export function DynamicContentEditor({
   const [frameName, setFrameName] = useState(content.frame_name ?? '');
   const [config, setConfig] = useState<DynamicConfigT>(initialConfig);
   const initializedContentIdRef = useRef<string | null>(null);
-  const initialConfigKey = useMemo(
-    () => JSON.stringify(initialConfig),
-    [initialConfig]
-  );
+  const initialConfigKey = useMemo(() => JSON.stringify(initialConfig), [initialConfig]);
   const initializedConfigKeyRef = useRef<string | null>(null);
 
   useEffect(() => {

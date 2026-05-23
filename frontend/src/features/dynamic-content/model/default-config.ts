@@ -44,5 +44,11 @@ export function defaultConfig(type: DynamicTypeT): DynamicConfigT {
         font_id: 'fusion_pixel_12',
         invert: false,
       };
+    case 'hot_list':
+      return {
+        type: 'hot_list',
+        source: 'weibo',
+        refresh_interval_sec: 600,
+      };
   }
 }

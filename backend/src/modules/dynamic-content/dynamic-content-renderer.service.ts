@@ -284,7 +284,7 @@ export class DynamicContentRendererService {
   }
 
   private computeNextRunAt(dynamicType: string, config: unknown, now: Date): Date | null {
-    if (dynamicType === 'weather') {
+    if (dynamicType === 'weather' || dynamicType === 'hot_list') {
       const configured = refreshIntervalSec(config);
       if (configured !== null) return new Date(now.getTime() + configured * 1000);
     }
@@ -308,7 +308,7 @@ export class DynamicContentRendererService {
       if (dueMs <= now.getTime()) return new Date(now.getTime() + MIN_REFRESH_DUE_DELAY_MS);
       return new Date(dueMs);
     }
-    if (dynamicType === 'weather') return nextRunAt;
+    if (dynamicType === 'weather' || dynamicType === 'hot_list') return nextRunAt;
     const dueMs = nextRunAt.getTime() - REFRESH_LEAD_MS;
     if (dueMs <= now.getTime()) return new Date(now.getTime() + MIN_REFRESH_DUE_DELAY_MS);
     return new Date(dueMs);

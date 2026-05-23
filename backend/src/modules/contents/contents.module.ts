@@ -22,12 +22,7 @@ import { MultipartParser } from './multipart.parser';
     AuthModule,
   ],
   controllers: [ContentsController, ContentDataController],
-  providers: [
-    ContentsService,
-    MultipartParser,
-    IngestLimitGuard,
-    ContentAudioBlobService,
-  ],
+  providers: [ContentsService, MultipartParser, IngestLimitGuard, ContentAudioBlobService],
   exports: [ContentsService],
 })
 export class ContentsModule {}

@@ -12,6 +12,7 @@ import { WeatherProvider } from './providers/weather.provider';
 import { HistoryTodayProvider } from './providers/history-today.provider';
 import { DashboardProvider } from './providers/dashboard.provider';
 import { FontTestProvider } from './providers/font-test.provider';
+import { HotListProvider } from './providers/hot-list.provider';
 import { CalendarDataService } from './calendar-data.service';
 import { DynamicContentRendererService } from './dynamic-content-renderer.service';
 import { DynamicContentSchedulerService } from './dynamic-content-scheduler.service';
@@ -37,6 +38,7 @@ import { DynamicAudioService } from './audio/dynamic-audio.service';
     HistoryTodayProvider,
     DashboardProvider,
     FontTestProvider,
+    HotListProvider,
     DynamicAudioService,
     DynamicContentSchedulerService,
   ],

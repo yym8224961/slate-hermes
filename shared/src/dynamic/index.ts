@@ -8,6 +8,7 @@ export const DynamicType = z.enum([
   'history_today',
   'dashboard',
   'font_test',
+  'hot_list',
 ]);
 export type DynamicTypeT = z.infer<typeof DynamicType>;
 
@@ -412,6 +413,71 @@ export const FontTestConfig = z.object({
 });
 export type FontTestConfigT = z.infer<typeof FontTestConfig>;
 
+export const HotListSourceIdValues = [
+  'zhihu',
+  'weibo',
+  'baidu',
+  'v2ex',
+  'bilibili',
+  'toutiao',
+  'thepaper',
+  'douyin',
+  'kuaishou',
+  'hupu',
+  'tieba',
+  'juejin',
+  'sspai',
+  'ithome',
+  'smzdm',
+  '36kr',
+] as const;
+
+export const HotListSourceId = z.enum(HotListSourceIdValues);
+export type HotListSourceIdT = z.infer<typeof HotListSourceId>;
+
+export type HotListSourceKindT = 'general' | 'news' | 'tech' | 'community' | 'commerce';
+
+export interface HotListSourceCatalogEntry {
+  id: HotListSourceIdT;
+  label: string;
+  shortLabel: string;
+  kind: HotListSourceKindT;
+}
+
+export const HOT_LIST_SOURCES = [
+  { id: 'zhihu', label: '知乎', shortLabel: '知乎', kind: 'general' },
+  { id: 'weibo', label: '微博', shortLabel: '微博', kind: 'general' },
+  { id: 'baidu', label: '百度热搜', shortLabel: '百度', kind: 'general' },
+  { id: 'v2ex', label: 'V2EX', shortLabel: 'V2EX', kind: 'community' },
+  { id: 'bilibili', label: '哔哩哔哩', shortLabel: 'B站', kind: 'general' },
+  { id: 'toutiao', label: '今日头条', shortLabel: '头条', kind: 'news' },
+  { id: 'thepaper', label: '澎湃新闻', shortLabel: '澎湃', kind: 'news' },
+  { id: 'douyin', label: '抖音', shortLabel: '抖音', kind: 'general' },
+  { id: 'kuaishou', label: '快手', shortLabel: '快手', kind: 'general' },
+  { id: 'hupu', label: '虎扑', shortLabel: '虎扑', kind: 'community' },
+  { id: 'tieba', label: '百度贴吧', shortLabel: '贴吧', kind: 'community' },
+  { id: 'juejin', label: '稀土掘金', shortLabel: '掘金', kind: 'tech' },
+  { id: 'sspai', label: '少数派', shortLabel: '少数派', kind: 'tech' },
+  { id: 'ithome', label: 'IT之家', shortLabel: 'IT之家', kind: 'tech' },
+  { id: 'smzdm', label: '什么值得买', shortLabel: '值得买', kind: 'commerce' },
+  { id: '36kr', label: '36氪', shortLabel: '36氪', kind: 'tech' },
+] as const satisfies readonly HotListSourceCatalogEntry[];
+
+export function hotListSourceLabel(source: HotListSourceIdT): string {
+  return HOT_LIST_SOURCES.find((item) => item.id === source)?.label ?? source;
+}
+
+export function hotListSourceShortLabel(source: HotListSourceIdT): string {
+  return HOT_LIST_SOURCES.find((item) => item.id === source)?.shortLabel ?? source;
+}
+
+export const HotListConfig = z.object({
+  type: z.literal('hot_list'),
+  source: HotListSourceId.default('weibo'),
+  refresh_interval_sec: z.coerce.number().int().min(300).max(86400).default(600),
+});
+export type HotListConfigT = z.infer<typeof HotListConfig>;
+
 export const DynamicConfig = z.discriminatedUnion('type', [
   DailyCalendarConfig,
   MonthCalendarConfig,
@@ -419,6 +485,7 @@ export const DynamicConfig = z.discriminatedUnion('type', [
   HistoryTodayConfig,
   DashboardConfig,
   FontTestConfig,
+  HotListConfig,
 ]);
 export type DynamicConfigT = z.infer<typeof DynamicConfig>;
 

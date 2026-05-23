@@ -11,6 +11,7 @@ import {
 import {
   deviceStatusBarText,
   fontTestStatusBarText,
+  hotListStatusBarText,
   weatherStatusBarText,
 } from './content-status-bar';
 
@@ -87,7 +88,10 @@ export function contentToDetail(
   };
 }
 
-export function defaultDynamicFrameName(dynamicType: string | null, config?: unknown): string | null {
+export function defaultDynamicFrameName(
+  dynamicType: string | null,
+  config?: unknown
+): string | null {
   switch (dynamicType) {
     case 'daily_calendar':
       return '日历';
@@ -101,6 +105,8 @@ export function defaultDynamicFrameName(dynamicType: string | null, config?: unk
       return '数据看板';
     case 'font_test':
       return fontTestStatusBarText(config);
+    case 'hot_list':
+      return hotListStatusBarText(config);
     default:
       return null;
   }

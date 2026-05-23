@@ -8,12 +8,14 @@ import { WeatherProvider } from './providers/weather.provider';
 import { HistoryTodayProvider } from './providers/history-today.provider';
 import { DashboardProvider } from './providers/dashboard.provider';
 import { FontTestProvider } from './providers/font-test.provider';
+import { HotListProvider } from './providers/hot-list.provider';
 import dailyCalendarDefinition from './definitions/daily-calendar.json' with { type: 'json' };
 import monthCalendarDefinition from './definitions/month-calendar.json' with { type: 'json' };
 import weatherDefinition from './definitions/weather.json' with { type: 'json' };
 import historyTodayDefinition from './definitions/history-today.json' with { type: 'json' };
 import dashboardDefinition from './definitions/dashboard-metrics.json' with { type: 'json' };
 import fontTestDefinition from './definitions/font-test.json' with { type: 'json' };
+import hotListDefinition from './definitions/hot-list.json' with { type: 'json' };
 
 /**
  * 中央注册表。启动时把所有 (definition, provider) 对装进 Map。
@@ -32,7 +34,8 @@ export class DynamicContentRegistry implements OnModuleInit {
     private readonly weatherProvider: WeatherProvider,
     private readonly historyTodayProvider: HistoryTodayProvider,
     private readonly dashboardProvider: DashboardProvider,
-    private readonly fontTestProvider: FontTestProvider
+    private readonly fontTestProvider: FontTestProvider,
+    private readonly hotListProvider: HotListProvider
   ) {}
 
   onModuleInit(): void {
@@ -47,6 +50,7 @@ export class DynamicContentRegistry implements OnModuleInit {
     this.register(normalizeDefinition(historyTodayDefinition), this.historyTodayProvider);
     this.register(normalizeDefinition(dashboardDefinition), this.dashboardProvider);
     this.register(normalizeDefinition(fontTestDefinition), this.fontTestProvider);
+    this.register(normalizeDefinition(hotListDefinition), this.hotListProvider);
   }
 
   private register(def: DynamicContentDefinition, provider: DynamicContentEntry['provider']): void {

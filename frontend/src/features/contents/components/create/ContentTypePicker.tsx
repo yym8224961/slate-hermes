@@ -8,6 +8,7 @@ import {
   BookText,
   BarChart3,
   Type,
+  Flame,
 } from 'lucide-react';
 import type { AllContentType } from './content-create-types';
 import { cn } from '@/lib/cn';
@@ -59,6 +60,12 @@ const TYPE_ITEMS: Array<{
     title: '字体测试',
     hint: '切换字体 · 查看 1bpp 字形',
     Icon: Type,
+  },
+  {
+    type: 'hot_list',
+    title: '热榜',
+    hint: '微博 / 知乎 / B站等榜单',
+    Icon: Flame,
   },
 ];
 

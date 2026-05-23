@@ -18,14 +18,12 @@ export class ContentAudioBlobService {
 
   async delete(groupId: string, contentId: string, audioEtag: string | null): Promise<void> {
     if (!audioEtag) return;
-    await this.blob.delete(groupId, audioBlobContentId(contentId, audioEtag), 'audio').catch(() => {});
+    await this.blob
+      .delete(groupId, audioBlobContentId(contentId, audioEtag), 'audio')
+      .catch(() => {});
   }
 
-  async read(
-    groupId: string,
-    contentId: string,
-    audioEtag: string | null
-  ): Promise<Buffer | null> {
+  async read(groupId: string, contentId: string, audioEtag: string | null): Promise<Buffer | null> {
     if (!audioEtag) return null;
     return this.blob.read(groupId, audioBlobContentId(contentId, audioEtag), 'audio');
   }

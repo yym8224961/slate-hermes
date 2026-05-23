@@ -1,5 +1,5 @@
 import type { ContentKind, Prisma } from '@prisma/client';
-import { FONT_TEST_FONTS } from 'shared';
+import { FONT_TEST_FONTS, HotListConfig, hotListSourceShortLabel } from 'shared';
 import { recordValue, valueText } from '../../common/utils';
 import { cnMonthDay, datePartsInTz, timezoneFromConfig } from '../dynamic-content/timezone';
 
@@ -33,6 +33,8 @@ export function deviceStatusBarText(row: ContentStatusBarSource): string {
       return row.frameName ?? '数据看板';
     case 'font_test':
       return fontTestStatusBarText(row.dynamicConfig);
+    case 'hot_list':
+      return hotListStatusBarText(row.dynamicConfig);
     default:
       return row.frameName ?? '';
   }
@@ -75,4 +77,10 @@ export function weatherStatusBarText(config: unknown): string {
 export function fontTestStatusBarText(config: unknown): string {
   const id = valueText(recordValue(config, 'font_id'));
   return id ? (FONT_TEST_FONTS.find((font) => font.id === id)?.label ?? '字体测试') : '字体测试';
+}
+
+export function hotListStatusBarText(config: unknown): string {
+  const parsed = HotListConfig.safeParse(config);
+  if (!parsed.success) return '热榜';
+  return `${hotListSourceShortLabel(parsed.data.source)}热榜`;
 }

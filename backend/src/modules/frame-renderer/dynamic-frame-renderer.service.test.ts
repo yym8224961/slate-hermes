@@ -137,6 +137,31 @@ describe('DynamicFrameRendererService', () => {
         data: null,
         renderedAt,
       },
+      {
+        type: 'hot_list',
+        frameName: '微博热榜',
+        config: {
+          type: 'hot_list',
+          source: 'weibo',
+          refresh_interval_sec: 600,
+        },
+        data: {
+          source: 'weibo',
+          sourceLabel: '微博',
+          updatedAt: '2026-05-17T04:00:00.000Z',
+          items: [
+            { rank: 1, title: '大型科技公司发布新一代墨水屏设备', hot: '893万热度' },
+            { rank: 2, title: '本周全国多地迎来强降雨天气', hot: '421万热度' },
+            { rank: 3, title: '开源社区讨论 TypeScript 新版本迁移策略', hot: '128万热度' },
+            { rank: 4, title: '热门电影票房刷新五月纪录', hot: '96万热度' },
+            { rank: 5, title: '城市骑行路线成为周末新选择', hot: '42万热度' },
+            { rank: 6, title: '人工智能工具进入更多办公流程', hot: '39万热度' },
+            { rank: 7, title: '年轻人开始整理家庭数字资产', hot: '31万热度' },
+            { rank: 8, title: '假期短途旅行预订量继续增长', hot: '22万热度' },
+          ],
+        },
+        renderedAt,
+      },
     ];
 
     for (const ctx of contexts) {
@@ -167,6 +192,58 @@ describe('DynamicFrameRendererService', () => {
       expect(stats.white).toBeGreaterThan(80);
     }
   });
+
+  it('centers hot-list rank boxes and title glyphs between row rules', async () => {
+    const frame = await renderer.render({
+      type: 'hot_list',
+      frameName: '热榜',
+      config: {
+        type: 'hot_list',
+        source: 'weibo',
+        refresh_interval_sec: 600,
+      },
+      data: {
+        source: 'weibo',
+        sourceLabel: '微博',
+        updatedAt: '2026-05-17T04:00:00.000Z',
+        items: [
+          { rank: 1, title: '中俄关系迈上新起点' },
+          { rank: 2, title: '全球唯一白色野生大熊猫影像公开' },
+          { rank: 3, title: '斯凯奇被清仓' },
+          { rank: 4, title: '外国博主扎堆中国乡村' },
+          { rank: 5, title: '寒潮预警手机只会越来越贵' },
+          { rank: 6, title: '歌手首场排名齐豫第一陈楚庆淘汰' },
+          { rank: 7, title: '女子捡到金项链发现异常立马报掉' },
+          { rank: 8, title: '黑龙江坚决拥护党中央决定' },
+        ],
+      },
+      renderedAt,
+    });
+
+    const listTop = 34;
+    const rowH = 33;
+    const rankX = 20;
+    const rankBoxW = 28;
+    const titleX = 62;
+    const titleW = 318;
+
+    for (let index = 1; index <= 6; index++) {
+      const rowY = listTop + index * rowH;
+      const previousRuleY = rowY - 1;
+      const nextRuleY = rowY + rowH - 1;
+      const rowCenter = (previousRuleY + nextRuleY) / 2;
+      const scanTop = previousRuleY + 1;
+      const scanH = nextRuleY - previousRuleY - 1;
+
+      const rankBounds = blackBounds(frame, rankX, scanTop, rankBoxW, scanH);
+      expect(rankBounds).not.toBeNull();
+      expect(centerY(rankBounds!)).toBe(rowCenter);
+
+      const titleBounds = blackBounds(frame, titleX, scanTop, titleW, scanH);
+      expect(titleBounds).not.toBeNull();
+      expect(Math.abs(centerY(titleBounds!) - rowCenter)).toBeLessThanOrEqual(1);
+    }
+  });
 });
 
 function countPixels(frame: Buffer): { black: number; white: number } {
@@ -182,4 +259,33 @@ function countPixels(frame: Buffer): { black: number; white: number } {
     }
   }
   return { black, white };
+}
+
+function blackBounds(
+  frame: Buffer,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): { top: number; bottom: number } | null {
+  let top = Number.POSITIVE_INFINITY;
+  let bottom = Number.NEGATIVE_INFINITY;
+  for (let yy = y; yy < y + h; yy++) {
+    for (let xx = x; xx < x + w; xx++) {
+      if (!isBlack(frame, xx, yy)) continue;
+      top = Math.min(top, yy);
+      bottom = Math.max(bottom, yy);
+    }
+  }
+  return Number.isFinite(top) && Number.isFinite(bottom) ? { top, bottom } : null;
+}
+
+function centerY(bounds: { top: number; bottom: number }): number {
+  return (bounds.top + bounds.bottom) / 2;
+}
+
+function isBlack(frame: Buffer, x: number, y: number): boolean {
+  const bpr = FRAME_WIDTH >> 3;
+  const byte = frame[y * bpr + (x >> 3)]!;
+  return ((byte >> (7 - (x & 7))) & 1) === 0;
 }

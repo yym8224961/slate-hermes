@@ -27,10 +27,7 @@ export class GroupsController {
   // 必须放在 /:gid 之前
   @Put('order')
   @HttpCode(204)
-  reorder(
-    @CurrentUser() user: WebUserContext,
-    @Body() body: ReorderGroupsDto
-  ): Promise<void> {
+  reorder(@CurrentUser() user: WebUserContext, @Body() body: ReorderGroupsDto): Promise<void> {
     return this.groups.reorderGroups(user.userId, body.order);
   }
 
@@ -53,10 +50,7 @@ export class GroupsController {
 
   @Delete(':groupId')
   @HttpCode(204)
-  delete(
-    @CurrentUser() user: WebUserContext,
-    @Param('groupId') groupId: string
-  ): Promise<void> {
+  delete(@CurrentUser() user: WebUserContext, @Param('groupId') groupId: string): Promise<void> {
     return this.groups.delete(groupId, user.userId);
   }
 }

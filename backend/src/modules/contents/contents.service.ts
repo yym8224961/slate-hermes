@@ -27,12 +27,7 @@ import { DynamicContentRegistry } from '../dynamic-content/dynamic-content-regis
 import { DynamicContentRendererService } from '../dynamic-content/dynamic-content-renderer.service';
 import type { RenderDynamicContentResult } from '../dynamic-content/dynamic-content-renderer.service';
 import { ContentAudioBlobService } from './content-audio-blob.service';
-import {
-  contentToDetail,
-  contentToSummary,
-  defaultDynamicFrameName,
-  type ContentRow,
-} from './content-presenter';
+import { contentToDetail, contentToSummary, defaultDynamicFrameName } from './content-presenter';
 import type { ParsedContentUpload } from './multipart.parser';
 
 type RenderDynamicContentResultExt = RenderDynamicContentResult & {
@@ -1018,7 +1013,6 @@ export class ContentsService {
     if (!row) throw new NotFoundError('内容不存在');
     return row.contentEtag;
   }
-
 }
 
 async function restoreBlob(

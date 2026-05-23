@@ -2,9 +2,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import {
   FONT_TEST_FONTS,
+  HOT_LIST_SOURCES,
   TTS_VOICES,
   type DynamicConfigT,
   type FontTestFontIdT,
+  type HotListSourceIdT,
   type TtsVoiceT,
 } from 'shared';
 import { inputCls, fieldBaseCls } from '@/lib/styles';
@@ -87,6 +89,8 @@ export function DynamicConfigForm({
         </div>
       );
     }
+    case 'hot_list':
+      return <HotListConfigPanel config={config} onChange={onChange} />;
     default:
       return <UnsupportedConfigNotice config={config} />;
   }
@@ -137,7 +141,7 @@ function DynamicRefreshSettings({
   config,
   onChange,
 }: {
-  config: AudioDynamicConfig;
+  config: AudioDynamicConfig | Extract<DynamicConfigT, { type: 'hot_list' }>;
   onChange: (c: DynamicConfigT) => void;
 }) {
   const current = config.refresh_interval_sec ?? defaultRefreshInterval(config.type);
@@ -158,6 +162,48 @@ function DynamicRefreshSettings({
       </Select>
     </div>
   );
+}
+
+function HotListConfigPanel({
+  config,
+  onChange,
+}: {
+  config: Extract<DynamicConfigT, { type: 'hot_list' }>;
+  onChange: (c: DynamicConfigT) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">频道</p>
+        <Select
+          value={config.source}
+          onValueChange={(v) => onChange({ ...config, source: v as HotListSourceIdT })}
+        >
+          {HOT_LIST_SOURCES.map((source) => (
+            <SelectItem key={source.id} value={source.id} hint={hotListKindLabel(source.kind)}>
+              {source.label}
+            </SelectItem>
+          ))}
+        </Select>
+      </div>
+      <DynamicRefreshSettings config={config} onChange={onChange} />
+    </div>
+  );
+}
+
+function hotListKindLabel(kind: (typeof HOT_LIST_SOURCES)[number]['kind']): string {
+  switch (kind) {
+    case 'general':
+      return '综合';
+    case 'news':
+      return '新闻';
+    case 'tech':
+      return '科技';
+    case 'community':
+      return '社区';
+    case 'commerce':
+      return '消费';
+  }
 }
 
 function UnsupportedConfigNotice({ config }: { config: DynamicConfigT }) {
@@ -271,7 +317,7 @@ function Checkbox({
   );
 }
 
-function defaultRefreshInterval(_type: AudioDynamicConfig['type']): number {
+function defaultRefreshInterval(_type: AudioDynamicConfig['type'] | 'hot_list'): number {
   return 600;
 }
 
@@ -329,8 +375,8 @@ function DashboardPushPanel({ contentId }: { contentId: string }) {
         </pre>
       </details>
       <p className="font-sans text-[11px] text-stone italic leading-snug">
-        推送流程：① 复制 URL → ② 由你的系统/脚本 POST 数据 → ③ 设备下次唤醒时拉取并刷新屏幕。
-        URL 中的 contentId 即推送凭证（cuid 不可枚举），请勿公开分享，泄漏后只能删内容重建。
+        推送流程：① 复制 URL → ② 由你的系统/脚本 POST 数据 → ③ 设备下次唤醒时拉取并刷新屏幕。 URL
+        中的 contentId 即推送凭证（cuid 不可枚举），请勿公开分享，泄漏后只能删内容重建。
         推送后不会立即亮屏，设备按预设周期或按键翻页时生效。
       </p>
     </div>

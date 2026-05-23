@@ -39,24 +39,30 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     setActive(request);
   }, []);
 
-  const confirm = useCallback((options: ConfirmOptions) => {
-    return new Promise<boolean>((resolve) => {
-      // 单一路径：始终入队，再决定要不要立即 show。两次同步 confirm() 不会产生
-      // 「都看到 active=null 都直接 show」的覆盖竞态。
-      queueRef.current.push({ ...options, resolve });
-      if (!activeRef.current) {
-        const next = queueRef.current.shift();
-        if (next) show(next);
-      }
-    });
-  }, [show]);
+  const confirm = useCallback(
+    (options: ConfirmOptions) => {
+      return new Promise<boolean>((resolve) => {
+        // 单一路径：始终入队，再决定要不要立即 show。两次同步 confirm() 不会产生
+        // 「都看到 active=null 都直接 show」的覆盖竞态。
+        queueRef.current.push({ ...options, resolve });
+        if (!activeRef.current) {
+          const next = queueRef.current.shift();
+          if (next) show(next);
+        }
+      });
+    },
+    [show]
+  );
 
-  const close = useCallback((ok: boolean) => {
-    const request = activeRef.current;
-    if (!request) return;
-    request.resolve(ok);
-    show(queueRef.current.shift() ?? null);
-  }, [show]);
+  const close = useCallback(
+    (ok: boolean) => {
+      const request = activeRef.current;
+      if (!request) return;
+      request.resolve(ok);
+      show(queueRef.current.shift() ?? null);
+    },
+    [show]
+  );
 
   return (
     <ConfirmCtx.Provider value={confirm}>
