@@ -28,13 +28,11 @@ set(SOURCES
 
     "protocol/api_client.cc"
     "protocol/sync_service.cc"
-    "protocol/poll_interval_store.cc"
 
     "scenes/boot/boot_splash_scene.cc"
     "scenes/frame/frame_scene.cc"
     "scenes/settings/settings_scene.cc"
     "scenes/settings/volume_page.cc"
-    "scenes/settings/poll_interval_page.cc"
     "scenes/settings/device_info_page.cc"
     "scenes/settings/data_sync_page.cc"
     "scenes/settings/restart_device_page.cc"

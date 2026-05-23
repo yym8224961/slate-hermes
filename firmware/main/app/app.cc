@@ -310,11 +310,7 @@ void App::UiLoopTask() {
             continue;
         }
         if (e.kind == UiEventKind::kGroupReady && scene_stack_.Empty()) {
-            auto scene = std::make_unique<FrameScene>(e.u.group.gid, e.u.group.content_count);
-            if (power_state::Classify() == power_state::WakeCause::kRtcTimer) {
-                scene->SetFirstLoadFullRefresh(false);
-            }
-            scene_stack_.Push(std::move(scene));
+            scene_stack_.Push(std::make_unique<FrameScene>(e.u.group.gid, e.u.group.content_count));
             scene_stack_.ApplyPending();
             continue;
         }
@@ -470,7 +466,7 @@ void App::InitNetwork() {
         // 或物理重置后(cache 是旧主人的相册,不该展示)。让 sync_service 第一轮 poll
         // 决定 splash 显示「配对码」/「等待相册」/FrameScene。
         // 重启场景(have_secret=true)才用 cache 跳过 splash 等待。
-        if (!was_first_register) {
+        if (!was_first_register && power_state::Classify() != power_state::WakeCause::kRtcTimer) {
             PostCachedGroupReadyIfAny();
             // ext1 唤醒补一次 ButtonShort,让 FrameScene 进栈后立即翻页(用户期望)。
             // 必须排在 GroupReady 之后,所以放在这。

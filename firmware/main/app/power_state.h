@@ -17,7 +17,7 @@ enum class WakeCause : uint8_t {
     kColdBoot = 0,  // 上电 / 软重启（POWERON / SW_RESET / 其它 RTC_SW_CPU_RESET）
     kButton,        // EXT1 按键唤醒（BOOT / DOWN）
     kCharge,        // EXT1 充电插入（CHARGE_DETECT 拉低）
-    kRtcTimer,      // RTC timer 到期（动态帧 next_wake_sec 或静态兜底）
+    kRtcTimer,      // RTC timer 到期（动态帧 next_wake_sec）
     kOther,         // 其他原因（UART / ULP / TouchPad），当前固件不用
 };
 
@@ -29,8 +29,9 @@ struct CurrentFrameSchedule {
     uint32_t server_sync_sec = 0;
 };
 
-// 当前展示帧的刷新策略。FrameScene::LoadFrame 调用 Set 写入，sleep_manager 在
-// EnterDeepSleep 时用动态间隔优先；静态帧由 sleep_manager 使用低频兜底。
+// 当前展示帧的刷新策略。FrameScene::LoadFrame 写入；RTC timer 唤醒后台同步当前
+// 动态帧时,SyncService 也会更新这里的 next_wake_sec。静态帧不会自己变更,
+// 不配置定时唤醒,避免为了无意义同步空耗电。
 CurrentFrameSchedule GetCurrentFrameSchedule();
 void                 SetCurrentFrameSchedule(const CurrentFrameSchedule& schedule);
 
@@ -38,8 +39,7 @@ int  GetCurrentFrameSeq();
 void SetCurrentFrameSeq(int seq);
 bool CurrentFrameNeedsTimerWake();
 
-// 当前动态帧的下次 RTC timer wakeup 间隔（秒）。0 表示当前帧没有动态刷新间隔，
-// 调用方可选择使用静态兜底。
+// 当前动态帧的下次 RTC timer wakeup 间隔（秒）。0 表示当前帧没有动态刷新间隔。
 uint32_t ComputeNextWakeSec();
 
 }  // namespace power_state

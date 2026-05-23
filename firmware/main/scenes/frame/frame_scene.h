@@ -18,9 +18,6 @@ class FrameScene : public Scene {
     const char* Name() const override {
         return "Frame";
     }
-    void SetFirstLoadFullRefresh(bool enabled) {
-        first_load_full_refresh_ = enabled;
-    }
     void      OnEnter(SceneContext& ctx) override;
     void      OnExit(SceneContext& ctx) override;
     void      OnEvent(SceneContext& ctx, const UiEvent& e) override;

@@ -106,6 +106,9 @@ EpdSsd1683::~EpdSsd1683() {
 void EpdSsd1683::Init() {
     SpiPortInit();
     SpiGpioInit();
+    // 不在驱动初始化阶段主动刷新屏幕。EPD 物理画面可在断电后保留；
+    // 首屏/内容变化由上层 RequestUrgent*Refresh 触发时再 EpdInit + 刷新。
+    EpdPowerOff();
 
     lvgl_port_cfg_t pc = ESP_LVGL_PORT_INIT_CONFIG();
     pc.task_priority   = 2;
@@ -151,11 +154,6 @@ void EpdSsd1683::Init() {
         esp_restart();
     }
     lv_display_set_buffers(lvgl_display_, rb, NULL, kRender, LV_DISPLAY_RENDER_MODE_PARTIAL);
-
-    EpdInit();
-    memcpy(prev_buffer_, buffer_, kBufferLen);
-    EpdDisplayFull();
-    prev_buffer_synced_ = true;
 
     StartRefreshTask();
 

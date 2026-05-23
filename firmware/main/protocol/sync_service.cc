@@ -13,7 +13,6 @@
 #include "api_client.h"
 #include "cache.h"
 #include "event_bus.h"
-#include "poll_interval_store.h"
 #include "power_state.h"
 #include "sntp.h"
 
@@ -24,9 +23,10 @@ constexpr int  BIT_STOP         = BIT1;
 constexpr int  BIT_CYCLE_NEXT   = BIT2;
 constexpr int  BIT_CYCLE_PREV   = BIT3;
 constexpr int  BIT_WAKE_REFRESH = BIT4;
+constexpr int  kBoundPollSec    = 60;
 
 // unbound 期阶梯退避轮询: 用户在 Web 端输码后快速屏切「等待相册」。
-// bound 后由 SleepManager 允许 deep sleep,设备活跃时 poll 间隔由用户偏好决定。
+// bound 后由 SleepManager 允许 deep sleep,设备活跃时 poll 间隔固定 60s。
 constexpr int        kUnboundFastPollSec            = 10;  // 前 10 分钟
 constexpr int        kUnboundMediumPollSec          = 30;  // 10-30 分钟
 constexpr int        kUnboundSlowPollSec            = 60;  // 30 分钟-2 小时
@@ -53,6 +53,14 @@ class MutexLockGuard {
     SemaphoreHandle_t mutex_  = nullptr;
     bool              locked_ = false;
 };
+
+void UpdateCurrentFrameScheduleFromMeta(int seq, const cache::FrameMeta& meta) {
+    power_state::CurrentFrameSchedule schedule;
+    schedule.dynamic         = meta.has_ttl;
+    schedule.server_sync_sec = meta.ttl_sec;
+    power_state::SetCurrentFrameSchedule(schedule);
+    power_state::SetCurrentFrameSeq(seq);
+}
 }  // namespace
 
 SyncService& SyncService::Get() {
@@ -164,7 +172,7 @@ void SyncService::ClearCurrentGroupLocked() {
 
 int SyncService::NextIntervalSec() const {
     if (was_bound_.load())
-        return poll::Get();
+        return kBoundPollSec;
     const int64_t elapsed = (esp_timer_get_time() / 1000) - unbound_since_ms_.load();
     if (elapsed < kUnboundFastMs)
         return kUnboundFastPollSec;
@@ -404,6 +412,7 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
                 return false;
             }
         }
+        UpdateCurrentFrameScheduleFromMeta(f.seq, next_meta);
         return true;
     }
 
@@ -442,6 +451,7 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
         ESP_LOGW(kTag, "Frame %d meta write failed", f.seq);
         return false;
     }
+    UpdateCurrentFrameScheduleFromMeta(f.seq, next_meta);
     changed = changed || old_meta.content_etag != f.content_etag;
     return true;
 }

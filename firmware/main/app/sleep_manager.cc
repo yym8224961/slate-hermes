@@ -19,10 +19,6 @@
 namespace {
 constexpr char kTag[] = "Sleep";
 
-// 静态帧兜底 timer wakeup（秒）。动态帧使用 manifest 下发的 next_wake_sec；
-// 静态帧不需要频繁联网，但仍保留低频唤醒避免长期错过同步。
-constexpr uint32_t kFallbackTimerSec = 4u * 60u * 60u;
-
 // 进 deep sleep 前等 EPD 刷新结束的最大时长。EPD 全刷 2~4 s。
 constexpr int kEpdFlushTimeoutMs = 4000;
 
@@ -133,7 +129,7 @@ void SleepManager::EnterDeepSleep() {
     AudioPlayer::Get().Stop();
 
     // 2) 只等待已有 EPD 刷新完成，不主动制造一轮全刷。墨水屏内容本来可保留；
-    //    静态帧超时睡眠时如果这里再全刷一次，会白白耗电。
+    //    静态帧 idle 进睡眠时如果这里再全刷一次，会白白耗电。
     if (auto* epd = Board::Get().epd()) {
         const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kEpdFlushTimeoutMs);
         while (epd->IsRefreshPending() && xTaskGetTickCount() < deadline) {
@@ -164,14 +160,18 @@ void SleepManager::EnterDeepSleep() {
                                    | (1ULL << CHARGE_DETECT_GPIO);
     esp_sleep_enable_ext1_wakeup(kWakeupMask, ESP_EXT1_WAKEUP_ANY_LOW);
 
-    // 7) RTC timer 优先服务当前动态帧；静态帧使用低频兜底同步。
-    uint32_t next_sec = power_state::ComputeNextWakeSec();
-    if (next_sec == 0) next_sec = kFallbackTimerSec;
-    esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(next_sec) * 1'000'000ULL);
-
-    ESP_LOGW(kTag, "ESP deep_sleep_start (mask=0x%llx, timer=%us)",
-             (unsigned long long)kWakeupMask,
-             static_cast<unsigned>(next_sec));
+    // 7) RTC timer 只服务当前动态帧。静态帧不会自己变更，靠 timer wake
+    //    周期性联网只会空耗电；远端静态内容变化等用户按键/插电唤醒后再同步。
+    const uint32_t next_sec = power_state::ComputeNextWakeSec();
+    if (next_sec > 0) {
+        esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(next_sec) * 1'000'000ULL);
+        ESP_LOGW(kTag, "ESP deep_sleep_start (mask=0x%llx, timer=%us)",
+                 (unsigned long long)kWakeupMask,
+                 static_cast<unsigned>(next_sec));
+    } else {
+        ESP_LOGW(kTag, "ESP deep_sleep_start (mask=0x%llx, timer=off)",
+                 (unsigned long long)kWakeupMask);
+    }
     esp_deep_sleep_start();
     // 不返回
 }
