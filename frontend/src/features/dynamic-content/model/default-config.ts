@@ -33,8 +33,20 @@ export function defaultConfig(type: DynamicTypeT): DynamicConfigT {
       return {
         type: 'history_today',
         tz: TZ,
+        source: 'wikipedia',
         audio_enabled: false,
         audio_voice: DEFAULT_TTS_VOICE,
+      };
+    case 'weather_alert':
+      return {
+        type: 'weather_alert',
+        province: '',
+        refresh_interval_sec: 600,
+      };
+    case 'earthquake_report':
+      return {
+        type: 'earthquake_report',
+        refresh_interval_sec: 600,
       };
     case 'dashboard':
       return { type: 'dashboard', layout: 'metrics' };

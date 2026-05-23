@@ -14,6 +14,10 @@ export function defaultFrameName(type: DynamicTypeT, config: DynamicConfigT): st
         : '天气';
     case 'history_today':
       return '历史上的今天';
+    case 'weather_alert':
+      return dynamicStatusTitle(config) ?? '气象预警';
+    case 'earthquake_report':
+      return '地震速报';
     case 'dashboard':
       return '数据看板';
     case 'font_test':

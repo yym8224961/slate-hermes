@@ -10,6 +10,8 @@ import { DailyCalendarProvider } from './providers/daily-calendar.provider';
 import { MonthCalendarProvider } from './providers/month-calendar.provider';
 import { WeatherProvider } from './providers/weather.provider';
 import { HistoryTodayProvider } from './providers/history-today.provider';
+import { WeatherAlertProvider } from './providers/weather-alert.provider';
+import { EarthquakeReportProvider } from './providers/earthquake-report.provider';
 import { DashboardProvider } from './providers/dashboard.provider';
 import { FontTestProvider } from './providers/font-test.provider';
 import { HotListProvider } from './providers/hot-list.provider';
@@ -36,6 +38,8 @@ import { DynamicAudioService } from './audio/dynamic-audio.service';
     MonthCalendarProvider,
     WeatherProvider,
     HistoryTodayProvider,
+    WeatherAlertProvider,
+    EarthquakeReportProvider,
     DashboardProvider,
     FontTestProvider,
     HotListProvider,

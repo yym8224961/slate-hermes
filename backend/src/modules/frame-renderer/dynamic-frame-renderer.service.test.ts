@@ -87,6 +87,69 @@ describe('DynamicFrameRendererService', () => {
         renderedAt,
       },
       {
+        type: 'weather_alert',
+        frameName: '气象预警',
+        config: {
+          type: 'weather_alert',
+          province: '',
+          refresh_interval_sec: 600,
+        },
+        data: {
+          title: '全国气象预警',
+          province: '',
+          updatedAt: '2026-05-17T04:00:00.000Z',
+          items: [
+            {
+              id: 'a1',
+              title: '中央气象台发布暴雨黄色预警',
+              issuedAt: '2026-05-17T03:30:00.000Z',
+            },
+            {
+              id: 'a2',
+              title: '广东省发布雷雨大风蓝色预警',
+              issuedAt: '2026-05-17T02:10:00.000Z',
+            },
+          ],
+        },
+        renderedAt,
+      },
+      {
+        type: 'earthquake_report',
+        frameName: '地震速报',
+        config: {
+          type: 'earthquake_report',
+          refresh_interval_sec: 600,
+        },
+        data: {
+          title: '中国地震台网速报',
+          updatedAt: '2026-05-17T04:00:00.000Z',
+          sourceUrl: 'https://data.earthquake.cn/datashare/report.shtml?PAGEID=earthquake_subao',
+          items: [
+            {
+              id: '1',
+              occurredAt: '2026-5-17 11:27:06',
+              longitude: '113.03',
+              latitude: '39.96',
+              depthKm: '-',
+              magnitude: '3.2',
+              location: '山西大同市云冈区',
+              eventType: '天然地震',
+            },
+            {
+              id: '2',
+              occurredAt: '2026-5-17 01:16:27',
+              longitude: '90.23',
+              latitude: '33.47',
+              depthKm: '10',
+              magnitude: '4.1',
+              location: '青海海西州唐古拉地区',
+              eventType: '天然地震',
+            },
+          ],
+        },
+        renderedAt,
+      },
+      {
         type: 'dashboard',
         frameName: '数据',
         config: {},

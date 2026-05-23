@@ -12,6 +12,7 @@ import {
   deviceStatusBarText,
   fontTestStatusBarText,
   hotListStatusBarText,
+  weatherAlertStatusBarText,
   weatherStatusBarText,
 } from './content-status-bar';
 
@@ -99,6 +100,10 @@ export function defaultDynamicFrameName(
       return '月历';
     case 'history_today':
       return '历史上的今天';
+    case 'weather_alert':
+      return weatherAlertStatusBarText(config);
+    case 'earthquake_report':
+      return '地震速报';
     case 'weather':
       return weatherStatusBarText(config);
     case 'dashboard':

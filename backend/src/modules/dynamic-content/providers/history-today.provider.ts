@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { HistoryTodayConfig, type HistoryTodayConfigT } from 'shared';
 import { AiService } from '../../ai/ai.service';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
+import { stripHtml } from '../html-text';
 import {
   normalizeHistoryYear,
   parseHistoryTodayData,
@@ -47,6 +48,9 @@ export class HistoryTodayProvider implements DataProvider<
     config: HistoryTodayConfigT,
     ctx: DynamicContentFetchCtx
   ): Promise<HistoryTodayProviderData> {
+    if (config.source === 'baidu_baike') {
+      return await this.fetchBaiduBaike(config, ctx);
+    }
     const tz = config.tz;
     const fmt = new Intl.DateTimeFormat('en-US', {
       timeZone: tz,
@@ -74,6 +78,53 @@ export class HistoryTodayProvider implements DataProvider<
       .finally(() => this.inflight.delete(aiKey));
     this.inflight.set(aiKey, p);
     return p;
+  }
+
+  private async fetchBaiduBaike(
+    config: HistoryTodayConfigT,
+    ctx: DynamicContentFetchCtx
+  ): Promise<HistoryTodayProviderData> {
+    const parts = dateParts(config.tz, ctx.now);
+    const month = String(parts.month).padStart(2, '0');
+    const day = String(parts.day).padStart(2, '0');
+    const key = `baidu:${month}-${day}`;
+    const nowMs = ctx.now.getTime();
+    const cached = this.aiCache.get(key);
+    if (cached && nowMs - cached.fetchedAt < CACHE_TTL_MS) return cached.data;
+    if (cached) this.aiCache.delete(key);
+
+    const url = `https://baike.baidu.com/cms/home/eventsOnHistory/${month}.json`;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const resp = await fetch(`${url}?_=${nowMs}`, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
+            '(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
+        },
+      });
+      if (!resp.ok) throw new Error(`baidu history HTTP ${resp.status}`);
+      const json = (await resp.json()) as BaiduHistoryResponse;
+      const rawItems = json[month]?.[`${month}${day}`] ?? [];
+      const data = parseHistoryTodayData({
+        dateLabel: `${parts.month} 月 ${parts.day} 日`,
+        items: rawItems
+          .map((item) => ({
+            year: normalizeHistoryYear(textOrEmpty(item.year)),
+            display: normalizeDisplay(stripHtml(textOrEmpty(item.title || item.desc))),
+          }))
+          .filter((item): item is { year: string; display: string } => {
+            return !!item.year && !!item.display;
+          }),
+      });
+      if (!data) throw new Error('baidu history empty');
+      this.aiCache.set(key, { data, fetchedAt: nowMs });
+      return data;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async fetchOptimized(
@@ -159,6 +210,29 @@ interface HistoryTodayRawEvent {
   pages?: Array<{ title: string; description?: string; extract?: string }>;
 }
 
+interface BaiduHistoryResponse {
+  [month: string]: {
+    [monthDay: string]: Array<{
+      title?: string;
+      desc?: string;
+      year?: string;
+    }>;
+  };
+}
+
+function dateParts(tz: string, now: Date): { month: number; day: number } {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    month: 'numeric',
+    day: 'numeric',
+  });
+  const parts = fmt.formatToParts(now);
+  return {
+    month: parseInt(parts.find((p) => p.type === 'month')!.value, 10),
+    day: parseInt(parts.find((p) => p.type === 'day')!.value, 10),
+  };
+}
+
 function mmdd(month: number, day: number): string {
   return `${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
@@ -178,8 +252,7 @@ export function normalizeHistoryTodayAiData(
     }))
     .filter((item): item is { year: string; display: string } => {
       return !!item.year && !!item.display;
-    })
-    .slice(0, 5);
+    });
 
   return parseHistoryTodayData({
     dateLabel: textOrEmpty(data.dateLabel) || fallbackDateLabel,

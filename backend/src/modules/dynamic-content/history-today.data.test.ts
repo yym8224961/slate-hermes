@@ -21,11 +21,25 @@ describe('history today data contract', () => {
       dateLabel: '5月21日',
       items: [
         { year: '1904', display: '国际足联在巴黎成立' },
-        { year: '前221', display: '秦统一六国，建立统一王朝' },
-        { year: '前44', display: '凯撒遇刺，罗马共和政治陷入动荡' },
         { year: '221', display: '刘备称帝，蜀汉政权正式建立' },
+        { year: '前44', display: '凯撒遇刺，罗马共和政治陷入动荡' },
+        { year: '前221', display: '秦统一六国，建立统一王朝' },
       ],
     });
+  });
+
+  it('sorts events by year descending', () => {
+    expect(
+      parseHistoryTodayData({
+        dateLabel: '5月21日',
+        items: [
+          { year: '前221', display: '秦统一六国' },
+          { year: '1904', display: '国际足联成立' },
+          { year: '221', display: '刘备称帝' },
+          { year: '前44', display: '凯撒遇刺' },
+        ],
+      })?.items.map((item) => item.year)
+    ).toEqual(['1904', '221', '前44', '前221']);
   });
 
   it('rejects zero years', () => {

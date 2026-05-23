@@ -38,9 +38,21 @@ export const TYPE_META: Record<AllContentType, TypeMeta> = {
   },
   history_today: {
     label: '历史上的今天',
-    description: '自动显示今日历史事件，数据来自维基百科中文版。',
-    hasConfigurableParams: false,
+    description: '自动显示今日历史事件，可选维基百科或百度百科。',
+    hasConfigurableParams: true,
     supportsAudio: true,
+  },
+  weather_alert: {
+    label: '气象预警',
+    description: '显示中央气象台全国或指定省份气象预警。',
+    hasConfigurableParams: true,
+    supportsAudio: false,
+  },
+  earthquake_report: {
+    label: '地震速报',
+    description: '显示中国地震台网最新地震速报。',
+    hasConfigurableParams: true,
+    supportsAudio: false,
   },
   dashboard: {
     label: '数据看板',

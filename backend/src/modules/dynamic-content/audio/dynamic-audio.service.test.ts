@@ -98,6 +98,7 @@ describe('buildDynamicAudioTextForContent', () => {
       {
         type: 'history_today',
         tz: 'Asia/Shanghai',
+        source: 'wikipedia',
         audio_enabled: true,
         audio_voice: DEFAULT_TTS_VOICE,
       },
@@ -112,7 +113,7 @@ describe('buildDynamicAudioTextForContent', () => {
     );
 
     expect(text).toBe(
-      '历史上的5月21日。公元前221年，秦统一六国，建立中国历史上首个统一王朝。公元1904年，国际足联在巴黎成立，现代足球治理体系成形'
+      '历史上的5月21日。公元1904年，国际足联在巴黎成立，现代足球治理体系成形。公元前221年，秦统一六国，建立中国历史上首个统一王朝'
     );
   });
 
@@ -122,6 +123,7 @@ describe('buildDynamicAudioTextForContent', () => {
       {
         type: 'history_today',
         tz: 'Asia/Shanghai',
+        source: 'wikipedia',
         audio_enabled: true,
         audio_voice: DEFAULT_TTS_VOICE,
       },

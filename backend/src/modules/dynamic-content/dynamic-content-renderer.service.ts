@@ -284,7 +284,7 @@ export class DynamicContentRendererService {
   }
 
   private computeNextRunAt(dynamicType: string, config: unknown, now: Date): Date | null {
-    if (dynamicType === 'weather' || dynamicType === 'hot_list') {
+    if (dynamicType === 'weather' || isRefreshIntervalDynamicType(dynamicType)) {
       const configured = refreshIntervalSec(config);
       if (configured !== null) return new Date(now.getTime() + configured * 1000);
     }
@@ -308,7 +308,7 @@ export class DynamicContentRendererService {
       if (dueMs <= now.getTime()) return new Date(now.getTime() + MIN_REFRESH_DUE_DELAY_MS);
       return new Date(dueMs);
     }
-    if (dynamicType === 'weather' || dynamicType === 'hot_list') return nextRunAt;
+    if (dynamicType === 'weather' || isRefreshIntervalDynamicType(dynamicType)) return nextRunAt;
     const dueMs = nextRunAt.getTime() - REFRESH_LEAD_MS;
     if (dueMs <= now.getTime()) return new Date(now.getTime() + MIN_REFRESH_DUE_DELAY_MS);
     return new Date(dueMs);
@@ -330,6 +330,14 @@ function isCalendarLikeDynamicType(dynamicType: string): boolean {
     dynamicType === 'daily_calendar' ||
     dynamicType === 'month_calendar' ||
     dynamicType === 'history_today'
+  );
+}
+
+function isRefreshIntervalDynamicType(dynamicType: string): boolean {
+  return (
+    dynamicType === 'hot_list' ||
+    dynamicType === 'weather_alert' ||
+    dynamicType === 'earthquake_report'
   );
 }
 

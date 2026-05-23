@@ -10,6 +10,10 @@ export function dynamicStatusTitle(config: DynamicConfigT | null | undefined): s
       return `${dateParts(now, config.tz).year}年${dateParts(now, config.tz).month}月`;
     case 'history_today':
       return `历史上的${dateParts(now, config.tz).month}月${dateParts(now, config.tz).day}日`;
+    case 'weather_alert':
+      return `${config.province || '全国'}气象预警`;
+    case 'earthquake_report':
+      return '地震速报';
     case 'weather':
       return config.location_label ? `${config.location_label}天气` : '天气';
     case 'dashboard':

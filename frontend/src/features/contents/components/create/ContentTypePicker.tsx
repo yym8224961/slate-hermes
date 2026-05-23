@@ -6,6 +6,8 @@ import {
   CalendarDays,
   CloudSun,
   BookText,
+  Bell,
+  Activity,
   BarChart3,
   Type,
   Flame,
@@ -48,6 +50,18 @@ const TYPE_ITEMS: Array<{
     title: '历史上的今天',
     hint: '今日历史大事，每日 0 点更新',
     Icon: BookText,
+  },
+  {
+    type: 'weather_alert',
+    title: '气象预警',
+    hint: '中央气象台 · 全国预警',
+    Icon: Bell,
+  },
+  {
+    type: 'earthquake_report',
+    title: '地震速报',
+    hint: '中国地震台网 · 最新速报',
+    Icon: Activity,
   },
   {
     type: 'dashboard',

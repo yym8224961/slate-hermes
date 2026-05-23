@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { Copy, Check } from 'lucide-react';
 import {
   FONT_TEST_FONTS,
-  HOT_LIST_SOURCES,
+  HOT_LIST_SOURCES_BY_NAME,
   TTS_VOICES,
+  hotListSourceDisplayLabel,
   type DynamicConfigT,
   type FontTestFontIdT,
   type HotListSourceIdT,
@@ -28,8 +29,9 @@ export function DynamicConfigForm({
   switch (config.type) {
     case 'daily_calendar':
     case 'month_calendar':
-    case 'history_today':
       return null;
+    case 'history_today':
+      return <HistoryTodayConfigPanel config={config} onChange={onChange} />;
     case 'weather':
       return (
         <div className="space-y-4">
@@ -47,6 +49,10 @@ export function DynamicConfigForm({
           <DynamicRefreshSettings config={config} onChange={onChange} />
         </div>
       );
+    case 'weather_alert':
+      return <WeatherAlertConfigPanel config={config} onChange={onChange} />;
+    case 'earthquake_report':
+      return <DynamicRefreshSettings config={config} onChange={onChange} />;
     case 'dashboard':
       return contentId ? <DashboardPushPanel contentId={contentId} /> : null;
     case 'font_test': {
@@ -141,7 +147,9 @@ function DynamicRefreshSettings({
   config,
   onChange,
 }: {
-  config: AudioDynamicConfig | Extract<DynamicConfigT, { type: 'hot_list' }>;
+  config:
+    | AudioDynamicConfig
+    | Extract<DynamicConfigT, { type: 'hot_list' | 'weather_alert' | 'earthquake_report' }>;
   onChange: (c: DynamicConfigT) => void;
 }) {
   const current = config.refresh_interval_sec ?? defaultRefreshInterval(config.type);
@@ -164,6 +172,59 @@ function DynamicRefreshSettings({
   );
 }
 
+function HistoryTodayConfigPanel({
+  config,
+  onChange,
+}: {
+  config: Extract<DynamicConfigT, { type: 'history_today' }>;
+  onChange: (c: DynamicConfigT) => void;
+}) {
+  return (
+    <div>
+      <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">数据源</p>
+      <Select
+        value={config.source}
+        onValueChange={(v) =>
+          onChange({ ...config, source: v as Extract<typeof config.source, string> })
+        }
+      >
+        <SelectItem value="wikipedia" hint="默认">
+          维基百科
+        </SelectItem>
+        <SelectItem value="baidu_baike" hint="百科">
+          百度百科
+        </SelectItem>
+      </Select>
+    </div>
+  );
+}
+
+function WeatherAlertConfigPanel({
+  config,
+  onChange,
+}: {
+  config: Extract<DynamicConfigT, { type: 'weather_alert' }>;
+  onChange: (c: DynamicConfigT) => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <label className="block">
+        <span className="block font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
+          区域
+        </span>
+        <input
+          className={cn(inputCls, 'w-full')}
+          value={config.province}
+          onChange={(e) => onChange({ ...config, province: e.target.value.trim() })}
+          placeholder="留空为全国，如：广东省"
+          autoComplete="off"
+        />
+      </label>
+      <DynamicRefreshSettings config={config} onChange={onChange} />
+    </div>
+  );
+}
+
 function HotListConfigPanel({
   config,
   onChange,
@@ -179,9 +240,9 @@ function HotListConfigPanel({
           value={config.source}
           onValueChange={(v) => onChange({ ...config, source: v as HotListSourceIdT })}
         >
-          {HOT_LIST_SOURCES.map((source) => (
+          {HOT_LIST_SOURCES_BY_NAME.map((source) => (
             <SelectItem key={source.id} value={source.id} hint={hotListKindLabel(source.kind)}>
-              {source.label}
+              {hotListSourceDisplayLabel(source)}
             </SelectItem>
           ))}
         </Select>
@@ -191,7 +252,7 @@ function HotListConfigPanel({
   );
 }
 
-function hotListKindLabel(kind: (typeof HOT_LIST_SOURCES)[number]['kind']): string {
+function hotListKindLabel(kind: (typeof HOT_LIST_SOURCES_BY_NAME)[number]['kind']): string {
   switch (kind) {
     case 'general':
       return '综合';
@@ -317,7 +378,9 @@ function Checkbox({
   );
 }
 
-function defaultRefreshInterval(_type: AudioDynamicConfig['type'] | 'hot_list'): number {
+function defaultRefreshInterval(
+  _type: AudioDynamicConfig['type'] | 'hot_list' | 'weather_alert' | 'earthquake_report'
+): number {
   return 600;
 }
 

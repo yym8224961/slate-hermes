@@ -308,9 +308,12 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
                           config={config}
                           onChange={(next) => {
                             if (
-                              next.type === 'weather' &&
-                              config?.type === 'weather' &&
-                              next.location_label !== config.location_label
+                              (next.type === 'weather' &&
+                                config?.type === 'weather' &&
+                                next.location_label !== config.location_label) ||
+                              (next.type === 'weather_alert' &&
+                                config?.type === 'weather_alert' &&
+                                next.province !== config.province)
                             ) {
                               setFrameName(defaultFrameName(next.type, next));
                             }

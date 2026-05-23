@@ -93,6 +93,12 @@ export class DynamicFrameRendererService implements OnModuleInit {
       case 'history_today':
         this.renderHistoryToday(c, fonts, ctx);
         break;
+      case 'weather_alert':
+        this.renderWeatherAlert(c, fonts, ctx);
+        break;
+      case 'earthquake_report':
+        this.renderEarthquakeReport(c, fonts, ctx);
+        break;
       case 'dashboard':
         this.renderDashboard(c, fonts, ctx);
         break;
@@ -405,6 +411,127 @@ export class DynamicFrameRendererService implements OnModuleInit {
         lineGap: 2,
       });
     }
+  }
+
+  private renderWeatherAlert(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
+    const data = ctx.data ?? {};
+    const rawItems = Array.isArray(data.items) ? data.items.filter(isRecord) : [];
+    const title = pickText(data.title, '全国气象预警');
+    const items = rawItems.slice(0, 5);
+
+    this.drawText(c, fonts.sans16, title, CONTENT_LEFT, CONTENT_TOP + 2, {
+      maxWidth: 250,
+      ellipsis: true,
+    });
+    this.drawText(
+      c,
+      fonts.sans12,
+      formatShortTime(data.updatedAt, ctx.renderedAt, timezoneFromConfig(ctx.config)),
+      CONTENT_RIGHT,
+      CONTENT_TOP + 4,
+      {
+        align: 'right',
+        maxWidth: 90,
+        ellipsis: true,
+      }
+    );
+    this.drawRule(c, CONTENT_LEFT, 62, CONTENT_WIDTH, 'solid');
+
+    if (items.length === 0) {
+      this.drawText(c, fonts.sans16, '暂无气象预警', FRAME_WIDTH / 2, 146, {
+        align: 'center',
+        maxWidth: CONTENT_WIDTH,
+      });
+      return;
+    }
+
+    const startY = 76;
+    const rowH = 42;
+    items.forEach((item, index) => {
+      const y = startY + index * rowH;
+      const titleText = pickText(item.title, FALLBACK_TEXT);
+      const timeText = formatShortTime(
+        item.issuedAt,
+        ctx.renderedAt,
+        timezoneFromConfig(ctx.config)
+      );
+      this.drawText(c, fonts.sans16, titleText, CONTENT_LEFT, y, {
+        maxWidth: CONTENT_WIDTH,
+        maxLines: 1,
+        ellipsis: true,
+      });
+      if (timeText) {
+        this.drawText(c, fonts.sans12, timeText, CONTENT_LEFT, y + 21, {
+          maxWidth: CONTENT_WIDTH,
+          ellipsis: true,
+        });
+      }
+      if (index < items.length - 1)
+        this.drawRule(c, CONTENT_LEFT, y + rowH - 5, CONTENT_WIDTH, 'dashed');
+    });
+  }
+
+  private renderEarthquakeReport(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
+    const data = ctx.data ?? {};
+    const rawItems = Array.isArray(data.items) ? data.items.filter(isRecord) : [];
+    const items = rawItems.slice(0, 5);
+
+    this.drawText(c, fonts.sans16, '中国地震台网速报', CONTENT_LEFT, CONTENT_TOP + 2, {
+      maxWidth: 240,
+      ellipsis: true,
+    });
+    this.drawText(
+      c,
+      fonts.sans12,
+      formatShortTime(data.updatedAt, ctx.renderedAt, timezoneFromConfig(ctx.config)),
+      CONTENT_RIGHT,
+      CONTENT_TOP + 4,
+      {
+        align: 'right',
+        maxWidth: 90,
+        ellipsis: true,
+      }
+    );
+    this.drawRule(c, CONTENT_LEFT, 62, CONTENT_WIDTH, 'solid');
+
+    if (items.length === 0) {
+      this.drawText(c, fonts.sans16, '暂无地震速报', FRAME_WIDTH / 2, 146, {
+        align: 'center',
+        maxWidth: CONTENT_WIDTH,
+      });
+      return;
+    }
+
+    const startY = 74;
+    const rowH = 43;
+    items.forEach((item, index) => {
+      const y = startY + index * rowH;
+      const magnitude = pickText(item.magnitude, '--');
+      const location = pickText(item.location, FALLBACK_TEXT);
+      const depth = pickText(item.depthKm, '');
+      const occurredAt = pickText(item.occurredAt, '');
+      const title = `${location} ${magnitude}级`;
+      const detail = [
+        shortEarthquakeTime(occurredAt),
+        depth && depth !== '-' ? `深度${depth}千米` : '',
+      ]
+        .filter(Boolean)
+        .join('  ');
+
+      this.drawText(c, fonts.sans16, title, CONTENT_LEFT, y, {
+        maxWidth: CONTENT_WIDTH,
+        maxLines: 1,
+        ellipsis: true,
+      });
+      if (detail) {
+        this.drawText(c, fonts.sans12, detail, CONTENT_LEFT, y + 22, {
+          maxWidth: CONTENT_WIDTH,
+          ellipsis: true,
+        });
+      }
+      if (index < items.length - 1)
+        this.drawRule(c, CONTENT_LEFT, y + rowH - 3, CONTENT_WIDTH, 'dashed');
+    });
   }
 
   private renderDashboard(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
@@ -1505,6 +1632,13 @@ function formatShortTime(value: unknown, fallback: Date, timeZone: string): stri
     hour: '2-digit',
     minute: '2-digit',
   }).format(date);
+}
+
+function shortEarthquakeTime(value: string): string {
+  const match = value.match(/(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})/);
+  if (match) return `${Number(match[1])}/${Number(match[2])} ${match[3]}:${match[4]}`;
+  const fallback = value.match(/(\d{1,2}):(\d{2})/);
+  return fallback ? `${fallback[1]}:${fallback[2]}` : value;
 }
 
 function normalizeWeatherCode(value: unknown): number | null {

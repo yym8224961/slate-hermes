@@ -6,6 +6,8 @@ import { DailyCalendarProvider } from './providers/daily-calendar.provider';
 import { MonthCalendarProvider } from './providers/month-calendar.provider';
 import { WeatherProvider } from './providers/weather.provider';
 import { HistoryTodayProvider } from './providers/history-today.provider';
+import { WeatherAlertProvider } from './providers/weather-alert.provider';
+import { EarthquakeReportProvider } from './providers/earthquake-report.provider';
 import { DashboardProvider } from './providers/dashboard.provider';
 import { FontTestProvider } from './providers/font-test.provider';
 import { HotListProvider } from './providers/hot-list.provider';
@@ -13,6 +15,8 @@ import dailyCalendarDefinition from './definitions/daily-calendar.json' with { t
 import monthCalendarDefinition from './definitions/month-calendar.json' with { type: 'json' };
 import weatherDefinition from './definitions/weather.json' with { type: 'json' };
 import historyTodayDefinition from './definitions/history-today.json' with { type: 'json' };
+import weatherAlertDefinition from './definitions/weather-alert.json' with { type: 'json' };
+import earthquakeReportDefinition from './definitions/earthquake-report.json' with { type: 'json' };
 import dashboardDefinition from './definitions/dashboard-metrics.json' with { type: 'json' };
 import fontTestDefinition from './definitions/font-test.json' with { type: 'json' };
 import hotListDefinition from './definitions/hot-list.json' with { type: 'json' };
@@ -33,6 +37,8 @@ export class DynamicContentRegistry implements OnModuleInit {
     private readonly monthCalendarProvider: MonthCalendarProvider,
     private readonly weatherProvider: WeatherProvider,
     private readonly historyTodayProvider: HistoryTodayProvider,
+    private readonly weatherAlertProvider: WeatherAlertProvider,
+    private readonly earthquakeReportProvider: EarthquakeReportProvider,
     private readonly dashboardProvider: DashboardProvider,
     private readonly fontTestProvider: FontTestProvider,
     private readonly hotListProvider: HotListProvider
@@ -48,6 +54,8 @@ export class DynamicContentRegistry implements OnModuleInit {
     this.register(normalizeDefinition(monthCalendarDefinition), this.monthCalendarProvider);
     this.register(normalizeDefinition(weatherDefinition), this.weatherProvider);
     this.register(normalizeDefinition(historyTodayDefinition), this.historyTodayProvider);
+    this.register(normalizeDefinition(weatherAlertDefinition), this.weatherAlertProvider);
+    this.register(normalizeDefinition(earthquakeReportDefinition), this.earthquakeReportProvider);
     this.register(normalizeDefinition(dashboardDefinition), this.dashboardProvider);
     this.register(normalizeDefinition(fontTestDefinition), this.fontTestProvider);
     this.register(normalizeDefinition(hotListDefinition), this.hotListProvider);

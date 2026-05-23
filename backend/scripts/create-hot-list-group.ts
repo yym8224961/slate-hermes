@@ -3,7 +3,9 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import {
   HOT_LIST_SOURCES,
+  HOT_LIST_SOURCES_BY_NAME,
   HotListConfig,
+  hotListSourceDisplayLabel,
   type ContentDetailT,
   type HotListSourceIdT,
 } from 'shared';
@@ -213,10 +215,10 @@ async function upsertHotListFrames(
   }
 
   const generated: Array<{ sourceId: HotListSourceIdT; contentId: string }> = [];
-  for (const source of HOT_LIST_SOURCES) {
+  for (const source of HOT_LIST_SOURCES_BY_NAME) {
     const config = configs.get(source.id);
     if (!config) throw new Error(`Missing hot-list config for source: ${source.id}`);
-    const frameName = `${source.shortLabel}热榜`;
+    const frameName = hotListSourceDisplayLabel(source);
     const existing = bySource.get(source.id);
     if (existing) {
       await contents.patchDynamic(existing.id, userId, {
@@ -254,7 +256,7 @@ function buildHotListConfigs(
 
 function orderedContentIds(rows: ContentDetailT[]): string[] {
   const rank = new Map<HotListSourceIdT, number>(
-    HOT_LIST_SOURCES.map((source, index) => [source.id, index])
+    HOT_LIST_SOURCES_BY_NAME.map((source, index) => [source.id, index])
   );
   const hotRows = rows
     .filter((row) => row.dynamic_type === 'hot_list' && sourceIdFromContent(row))

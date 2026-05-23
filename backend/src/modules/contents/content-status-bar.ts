@@ -27,6 +27,10 @@ export function deviceStatusBarText(row: ContentStatusBarSource): string {
     case 'history_today':
       if (!row.renderedAt) return row.frameName ?? '';
       return historyTodayStatusBarText(row.dynamicData, row.dynamicConfig, row.renderedAt);
+    case 'weather_alert':
+      return weatherAlertStatusBarText(row.dynamicConfig);
+    case 'earthquake_report':
+      return '地震速报';
     case 'weather':
       return weatherStatusBarText(row.dynamicConfig);
     case 'dashboard':
@@ -72,6 +76,11 @@ function historyTodayStatusBarText(
 export function weatherStatusBarText(config: unknown): string {
   const location = valueText(recordValue(config, 'location_label')) ?? '天气';
   return location === '天气' ? '天气' : `${location}天气`;
+}
+
+export function weatherAlertStatusBarText(config: unknown): string {
+  const province = valueText(recordValue(config, 'province')) ?? '';
+  return `${province || '全国'}气象预警`;
 }
 
 export function fontTestStatusBarText(config: unknown): string {
