@@ -37,11 +37,11 @@ slate/
          ← 一次性下发 id + device_secret + pair_code
  └─ NVS 写 device_secret（明文，固件唯一持有）
  └─ SyncService 周期 POST /api/v1/devices/current/poll（Authorization: Bearer <device_secret>）
-       ├ 上报 telemetry（battery / rssi / fw_version / current_group / current_frame_seq）
+       ├ 上报 telemetry（battery / rssi / fw_version / current_group / current_content_seq）
        └ 拿 DeviceState{device, group:{structure_etag, manifest_etag, content_count, ...}}
 
 设备绑定
- └─ 屏幕显示 pair_code（6 位 [A-Z2-9]）
+ └─ 屏幕显示 pair_code（6 位，A-Z 去 I/L/O + 2-9）
  └─ 用户在 Web 端输入 pair_code → 后端 claim → 立即轮换 pair_code（防截图复用）
 
 内容下发

@@ -147,6 +147,21 @@ CONFIG_ESP_SLEEP_GPIO_RESET_WORKAROUND=y
 
 ## 软件架构
 
+### 目录结构
+
+```
+main/
+├── app/          应用生命周期、事件总线、休眠、电源状态与场景栈
+├── bsp/          板级 GPIO、电源、I²C、EPD 初始化
+├── drivers/      EPD、按键、充电状态、音频、I²C helper
+├── generated/    captive portal HTML 与 LVGL 字体生成产物
+├── network/      Wi-Fi、DNS 劫持、captive portal、SNTP
+├── protocol/     设备 HTTP 协议、同步服务与协议字段名
+├── scenes/       BootSplash / BgRefresh / Frame / Settings 等 UI 场景
+├── storage/      LittleFS cache layout 与读写
+└── ui/           status bar、frame view、menu list、theme
+```
+
 ### 启动顺序（`App::Init`）
 
 ```
@@ -223,12 +238,12 @@ partition：4 MB factory + 12 MB storage（约 270 帧）：
 
 ```
 /littlefs/state.json                            {selected_group_id, last_etag}
-/littlefs/groups/{gid}/manifest.json            {group_etag, content_count}
+/littlefs/groups/{gid}/manifest.json            {manifest_etag, content_count}
 /littlefs/groups/{gid}/frames/{idx}.img         400x300 1bpp packed image，15000 字节
 /littlefs/groups/{gid}/frames/{idx}.img.etag    image ETag
 /littlefs/groups/{gid}/frames/{idx}.pcm         16 kHz mono s16le raw PCM（可选）
 /littlefs/groups/{gid}/frames/{idx}.pcm.etag    audio ETag（可选）
-/littlefs/groups/{gid}/frames/{idx}.meta        caption + next_wake_sec
+/littlefs/groups/{gid}/frames/{idx}.meta        status_bar_text + content_etag + has_ttl/ttl_sec
 ```
 
 ### Captive Portal

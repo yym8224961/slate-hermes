@@ -6,8 +6,8 @@ export const MacAddress = z
   .regex(/^([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}$/, 'invalid MAC address')
   .transform((s) => s.toUpperCase().replace(/-/g, ':'));
 
-// 6 位 [A-Z0-9] 配对码；后端 register 时生成，用户在 Web 端输入此码 claim 设备。
-// 接受小写输入但落库统一大写，避免视觉混淆。
+// 6 位配对码；后端生成字母表为 A-Z 去 I/L/O + 2-9，降低屏幕抄码混淆。
+// Web 输入校验接受更宽的 A-Z0-9 与小写，再统一转大写，便于兼容历史码和用户输入。
 export const PairCode = z
   .string()
   .regex(/^[A-Za-z0-9]{6}$/, 'invalid pair code')

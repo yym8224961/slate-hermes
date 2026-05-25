@@ -54,7 +54,7 @@ model Device {
   mac              String    @unique @db.VarChar(17)
   // sha256(device_secret) hex；secret 明文仅在 register 响应里返回一次，丢了只能工厂重置
   secretHash       String    @unique(map: "devices_secret_hash_key") @map("secret_hash") @db.Char(64)
-  // 6 位 [A-Z0-9] 配对码；用户在 Web 端输入此码 claim 设备，解绑/重新注册时轮换
+  // 6 位配对码；生成字母表为 A-Z 去 I/L/O + 2-9，降低屏幕抄码混淆
   pairCode         String    @unique @map("pair_code") @db.Char(6)
   name             String?   @db.VarChar(64)
   ownerUserId      String?   @map("owner_user_id")

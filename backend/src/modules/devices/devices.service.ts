@@ -411,7 +411,7 @@ export class DevicesService {
     return d as DeviceRow;
   }
 
-  // 6 位 [A-Z2-9] 字母表（避开 0/O/1/I/L）。PAIR_CODE_ALPHABET.length^6 ≈ 8.8 亿，撞概率极低，
+  // 6 位字母表：A-Z 去 I/L/O + 2-9。PAIR_CODE_ALPHABET.length^6 ≈ 8.8 亿，撞概率极低，
   // 但仍按 unique 约束最多重试 8 次以兜底。
   private async generateUniquePairCode(
     client: Prisma.TransactionClient | PrismaService = this.prisma

@@ -62,14 +62,14 @@ src/
 ├── lib/
 │   ├── api.ts          axios 实例：baseURL '/', auto Bearer JWT, 401 跳 /login
 │   ├── api-error.ts    解包 ApiErrorEnvelope
-│   ├── queries.ts      兼容 barrel，re-export 各 feature 的 query hooks
-│   ├── format.ts       isOnline / timeAgo / rssiLabel / formatBytes / normalizeMac / normalizePairCode
+│   ├── cities.ts       天气动态内容城市列表与搜索数据
+│   ├── cn.ts           tailwind-merge 包装
+│   ├── colors.ts       从 token 派生的语义色
 │   ├── dnd.ts          useDndOrder：dnd-kit + 乐观更新 + 后端 reorder mutation
+│   ├── format.ts       isOnline / timeAgo / rssiLabel / formatBytes / normalizeMac / normalizePairCode
 │   ├── hooks.ts        通用 hooks
 │   ├── image.ts        1bpp blob → ImageData
-│   ├── colors.ts       从 token 派生的语义色
-│   ├── styles.ts       共用 className 片段（dialogContentCls / dialogOverlayCls 等）
-│   └── cn.ts           tailwind-merge 包装
+│   └── styles.ts       共用 className 片段（dialogContentCls / dialogOverlayCls 等）
 ├── pages/
 │   ├── auth/           LoginPage / RegisterPage
 │   ├── dashboard/      DashboardPage：首页设备 grid + 相册 grid；/devices/:did deep link
@@ -77,7 +77,7 @@ src/
 │   └── contents/       ContentNewPage / ImageContentEditorPage / DynamicContentEditorPage
 ├── components/
 │   ├── layout/         Layout / AuthLayout / RequireAuth / Section
-│   ├── ui/             Button / Card / Input / Select / DialogHeader / EmptyState 等设计系统原语
+│   ├── ui/             Button / Input / Select / DialogHeader / EmptyState / FormSection / IconBlock 等原语
 │   └── feedback/       Toast + Confirm Provider：useToast() / await confirm()
 └── features/
     ├── auth/           AuthProvider + useAuth + 登录注册 query hooks

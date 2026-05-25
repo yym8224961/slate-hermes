@@ -26,29 +26,36 @@ src/
 ├── main.ts                  bootstrap：Fastify + 全局 prefix /api/v1 + SPA fallback
 ├── app.module.ts            装载所有 module 与 4 个 APP_* provider
 ├── infra/
+│   ├── assets/              asset-paths.ts：运行时资产目录定位
+│   ├── blob/                BlobService：{BLOB_DIR}/{groupId}/{contentId}.img|.pcm
 │   ├── config/              env.schema.ts（zod 校验）→ AppConfig
 │   ├── logger/              pino + nestjs-pino
-│   ├── prisma/              PrismaService（MariaDB adapter）
-│   └── blob/                BlobService：{BLOB_DIR}/{groupId}/{contentId}.img|.pcm
+│   └── prisma/              PrismaService（MariaDB adapter）
 ├── common/
+│   ├── auth/                HTTP token 提取
+│   ├── db/                  行锁与批量 sort_order 更新 helper
 │   ├── decorators/          @Public / @CurrentUser / @CurrentDevice
-│   ├── guards/              JwtAuthGuard / DeviceAuthGuard / JwtOrDeviceAuthGuard
-│   ├── pipes/               ZodValidationPipe（DTO 上挂 static schema = *Request）
-│   ├── filters/             AppExceptionFilter：统一错误 envelope
-│   ├── interceptors/        RequestIdInterceptor：每请求一个 reqId 串日志
+│   ├── errors/              AppError 体系（NotFound / Forbidden / Validation / Conflict / Auth）
 │   ├── etag/                computeETag + respondWithEtag（304 策略）
-│   └── errors/              AppError 体系（NotFound / Forbidden / Validation / Conflict / Auth）
+│   ├── filters/             AppExceptionFilter：统一错误 envelope
+│   ├── guards/              JwtAuthGuard / DeviceAuthGuard / JwtOrDeviceAuthGuard
+│   ├── interceptors/        RequestIdInterceptor：每请求一个 reqId 串日志
+│   ├── pipes/               ZodValidationPipe（DTO 上挂 static schema = *Request）
+│   ├── request-context.ts   AsyncLocalStorage 请求上下文
+│   └── utils.ts             通用格式化 helper
 └── modules/
+    ├── ai/                  OpenAI-compatible chat completions，用于历史事件筛选/改写
+    ├── audio/               ffmpeg 转 16 kHz mono s16le PCM（容器内自带 ffmpeg）
     ├── auth/                POST /users 注册、POST /sessions 登录、GET /users/current 当前用户
-    ├── users/               用户表 CRUD + bcrypt 哈希
-    ├── devices/             两个 controller：protocol（设备协议）+ admin（Web 端 CRUD），都挂 /devices 前缀
-    ├── groups/              /groups CRUD + cycle（next/prev）+ 设备绑组
     ├── contents/            /groups/:gid/contents + manifest + multipart 解析
+    ├── devices/             两个 controller：protocol（设备协议）+ admin（Web 端 CRUD），都挂 /devices 前缀
     ├── dynamic-content/     动态内容定义、provider、layout engine、刷新调度与动态帧渲染
     ├── frame-renderer/      bitmap canvas/font + 动态帧 400x300 renderer
+    ├── groups/              /groups CRUD + cycle（next/prev）+ 设备绑组
+    ├── health/              GET /healthz（不挂 /api/v1，docker HEALTHCHECK 用）
     ├── image-renderer/      sharp 图片管线 + 内存与磁盘双层缓存
-    ├── audio/               ffmpeg 转 16 kHz mono s16le PCM（容器内自带 ffmpeg）
-    └── health/              GET /healthz（不挂 /api/v1，docker HEALTHCHECK 用）
+    ├── tts/                 OpenAI-compatible TTS 调用与音色校验
+    └── users/               用户表 CRUD + bcrypt 哈希
 prisma/
 ├── schema.prisma            User / Device / Group / Content
 └── migrations/              prisma migrate dev 自动管
@@ -57,11 +64,11 @@ prisma/
 ## 数据模型
 
 ```
-User    id(cuid) email(unique) username(unique) password(bcrypt)
+User    id(cuid) email(unique) username?(unique；注册接口必填) password(bcrypt)
           └ owns ──► Device.ownerUserId
           └ owns ──► Group.ownerUserId
 
-Device  id mac(unique) secret_hash(sha256) pair_code(unique, 6 位 [A-Z2-9])
+Device  id mac(unique) secret_hash(sha256) pair_code(unique, 6 位，A-Z 去 I/L/O + 2-9)
         name? owner_user_id? selected_group_id? sort_order
         last_seen_at? battery_pct? rssi_dbm? fw_version?
 
@@ -73,7 +80,8 @@ Content id (group_id, sort_order) unique 复合键
         audio_etag? audio_size? audio_status audio_source? audio_voice?
         audio_text? audio_last_error? audio_updated_at? audio_lease_until? audio_attempts
         dynamic_type? dynamic_config? dynamic_data?
-        dynamic_last_run_at? dynamic_next_run_at? dynamic_refresh_due_at? dynamic_last_error?
+        dynamic_last_run_at? dynamic_next_run_at? dynamic_refresh_due_at?
+        dynamic_refresh_lease_until? dynamic_refresh_attempts dynamic_last_error?
 ```
 
 关键约束：
@@ -116,25 +124,32 @@ GET    /api/v1/groups/:gid
 PATCH  /api/v1/groups/:gid                     改 name，并返回最新 group summary
 DELETE /api/v1/groups/:gid                     删相册（cascade 删 contents + blobs）
 
-GET    /api/v1/groups/:gid/contents                内容列表
 POST   /api/v1/groups/:gid/contents                multipart 创建图片内容，或 JSON 创建动态内容
 PUT    /api/v1/groups/:gid/contents/order          批量重排
 PATCH  /api/v1/contents/:contentId                 multipart 更新图片/音频/标题，或 JSON 更新标题/动态配置
 DELETE /api/v1/contents/:contentId                 删除内容
 DELETE /api/v1/contents/:contentId/audio           只清音频留图
+POST   /api/v1/contents/:contentId/audio/tts       给图片内容生成 TTS 音频
 POST   /api/v1/contents/:contentId/refresh         手动刷新动态内容
-POST   /api/v1/contents/:contentId/data            dashboard 动态内容外部数据推送
 POST   /api/v1/contents/preview                    创建模式动态内容预览
 POST   /api/v1/contents/:contentId/preview         编辑模式动态内容预览
 ```
 
-### 资源下发（dual-auth：JWT 或 device_secret，所有端点带 ETag/304）
+### 内容读取与资源下发（dual-auth：JWT 或 device_secret）
 
 ```
-GET /api/v1/groups/:gid/manifest                  {group, contents[]}
-GET /api/v1/contents/:contentId                   单个 content detail
-GET /api/v1/contents/:contentId/image             400x300 1bpp packed image，15000 字节
-GET /api/v1/contents/:contentId/audio             16 kHz mono s16le raw PCM
+GET /api/v1/groups/:gid/contents                 内容列表（content detail[]）
+GET /api/v1/groups/:gid/manifest                 {group, contents[]}，ETag/304
+GET /api/v1/contents/:contentId                  单个 content detail
+GET /api/v1/contents/:contentId/image            400x300 1bpp packed image，15000 字节，ETag/304
+GET /api/v1/contents/:contentId/audio            16 kHz mono s16le raw PCM，ETag/304
+```
+
+### 外部数据推送（capability URL）
+
+```
+POST /api/v1/contents/:contentId/data            dashboard 动态内容外部数据推送
+                                                 无 JWT；contentId 作为 capability，IngestLimitGuard 限速
 ```
 
 ### 设备协议（`Authorization: Bearer <device_secret>`，除 register 外）
@@ -166,7 +181,8 @@ POST /api/v1/devices/current/group/prev   环回切上一组 → DeviceState
 | 端点类 | 装饰器组合 | 实际 guard |
 |---|---|---|
 | Web 管理 | （默认） | JwtAuthGuard |
-| 资源下发 | `@Public()` + `@UseGuards(JwtOrDeviceAuthGuard)` | JWT 或 device_secret |
+| 内容读取与资源下发 | `@Public()` + `@UseGuards(JwtOrDeviceAuthGuard)` | JWT 或 device_secret |
+| dashboard 外部数据推送 | `@Public()` + `@UseGuards(IngestLimitGuard)` | contentId capability URL + 限速 |
 | 设备 `/devices/current/*` | `@Public()` + `@UseGuards(DeviceAuthGuard)` | device_secret |
 | 设备 register | `@Public()` | 无（mac 在 body 里） |
 | `/healthz` | `@Public()` | 无 |
@@ -178,7 +194,7 @@ POST /api/v1/devices/current/group/prev   环回切上一组 → DeviceState
 ```
 {BLOB_DIR}/                                   默认 ./blobs（dev）或 /data/blobs（docker）
 ├── {groupId}/{contentId}.img                 1bpp packed，15000 字节
-├── {groupId}/{contentId}_{audioEtag}.pcm     16 kHz mono s16le raw PCM
+├── {groupId}/{contentId}.{audioEtag}.pcm     16 kHz mono s16le raw PCM
 └── image-render-cache/{key0..2}/{key}.bin
                                               sharp 渲染产物 key = sha1(sourceEtag|w|h|threshold|mode|...)
                                               两层 hex 前缀分桶避免单目录爆 inode
