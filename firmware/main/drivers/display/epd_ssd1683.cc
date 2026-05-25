@@ -76,6 +76,73 @@ inline void SetPx1(uint8_t* fb, int W, int x, int y, bool white) {
     else
         fb[i] &= ~m;
 }
+inline bool GetPx1(const uint8_t* fb, int W, int x, int y) {
+    int      bpr = (W + 7) >> 3;
+    uint32_t i   = (uint32_t)y * bpr + (uint32_t)(x >> 3);
+    uint8_t  m   = 1 << (7 - (x & 7));
+    return (fb[i] & m) != 0;
+}
+// 把外部 1bpp raw 拷进 framebuffer 的指定区域。x=0 且 w 跨满整行时走 memcpy 快路径，
+// 否则逐像素 SetPx1（处理非 8 对齐的 x/w）。仅做拷贝，不维护 dirty/notify，由调用方决定。
+inline void Copy1bppInto(uint8_t* fb, int fb_w, int fb_h, int x, int y, int w, int h, const uint8_t* data) {
+    const int src_bpr = (w + 7) >> 3;
+    const int dst_bpr = (fb_w + 7) >> 3;
+    if (x == 0 && w == fb_w) {
+        for (int row = 0; row < h; row++) {
+            int dy = y + row;
+            if (dy < 0 || dy >= fb_h)
+                continue;
+            memcpy(fb + dy * dst_bpr, data + row * src_bpr, src_bpr);
+        }
+        return;
+    }
+    for (int row = 0; row < h; row++) {
+        int dy = y + row;
+        if (dy < 0 || dy >= fb_h)
+            continue;
+        const uint8_t* src_row = data + row * src_bpr;
+        for (int col = 0; col < w; col++) {
+            int dx = x + col;
+            if (dx < 0 || dx >= fb_w)
+                continue;
+            bool white = (src_row[col >> 3] >> (7 - (col & 7))) & 1;
+            SetPx1(fb, fb_w, dx, dy, white);
+        }
+    }
+}
+inline void Copy1bppFrom(const uint8_t* fb, int fb_w, int fb_h, int x, int y, int w, int h, uint8_t* data) {
+    const int dst_bpr = (w + 7) >> 3;
+    const int src_bpr = (fb_w + 7) >> 3;
+    if (x == 0 && w == fb_w) {
+        for (int row = 0; row < h; row++) {
+            int sy = y + row;
+            if (sy < 0 || sy >= fb_h) {
+                memset(data + row * dst_bpr, 0xFF, dst_bpr);
+                continue;
+            }
+            memcpy(data + row * dst_bpr, fb + sy * src_bpr, src_bpr);
+        }
+        return;
+    }
+    memset(data, 0xFF, dst_bpr * h);
+    for (int row = 0; row < h; row++) {
+        int sy = y + row;
+        if (sy < 0 || sy >= fb_h)
+            continue;
+        uint8_t* dst_row = data + row * dst_bpr;
+        for (int col = 0; col < w; col++) {
+            int sx = x + col;
+            if (sx < 0 || sx >= fb_w)
+                continue;
+            const bool white = GetPx1(fb, fb_w, sx, sy);
+            const uint8_t mask = 1 << (7 - (col & 7));
+            if (white)
+                dst_row[col >> 3] |= mask;
+            else
+                dst_row[col >> 3] &= ~mask;
+        }
+    }
+}
 inline void Pack1bppTo2683(uint8_t in, uint8_t& o0, uint8_t& o1) {
     uint8_t b0 = 0, b1 = 0;
     for (uint8_t i = 0; i < 8; ++i) {
@@ -251,30 +318,8 @@ void EpdSsd1683::WriteRaw1bpp(int x, int y, int w, int h, const uint8_t* data, s
     const int src_bpr = (w + 7) >> 3;
     if (len < static_cast<size_t>(src_bpr * h))
         return;
-    const int dst_bpr = (kWidth + 7) >> 3;  // 50
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-    if (x == 0 && w == kWidth) {
-        for (int row = 0; row < h; row++) {
-            int dy = y + row;
-            if (dy < 0 || dy >= kHeight)
-                continue;
-            memcpy(buffer_ + dy * dst_bpr, data + row * src_bpr, src_bpr);
-        }
-    } else {
-        for (int row = 0; row < h; row++) {
-            int dy = y + row;
-            if (dy < 0 || dy >= kHeight)
-                continue;
-            const uint8_t* src_row = data + row * src_bpr;
-            for (int col = 0; col < w; col++) {
-                int dx = x + col;
-                if (dx < 0 || dx >= kWidth)
-                    continue;
-                bool white = (src_row[col >> 3] >> (7 - (col & 7))) & 1;
-                SetPx1(buffer_, kWidth, dx, dy, white);
-            }
-        }
-    }
+    Copy1bppInto(buffer_, kWidth, kHeight, x, y, w, h, data);
     R r = Clamp(AlignX8({x, y, w, h}), kWidth, kHeight);
     if (Area(r) > 0) {
         R cur            = {dirty_.x, dirty_.y, dirty_.w, dirty_.h};
@@ -286,6 +331,37 @@ void EpdSsd1683::WriteRaw1bpp(int x, int y, int w, int h, const uint8_t* data, s
             xTaskNotifyGive(refresh_task_);
     }
     xSemaphoreGive(dirty_mutex_);
+}
+
+void EpdSsd1683::SeedPreviousRaw1bpp(int x, int y, int w, int h, const uint8_t* data, size_t len) {
+    if (!data || w <= 0 || h <= 0)
+        return;
+    const int src_bpr = (w + 7) >> 3;
+    if (len < static_cast<size_t>(src_bpr * h))
+        return;
+
+    xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+    Copy1bppInto(buffer_, kWidth, kHeight, x, y, w, h, data);
+    Copy1bppInto(prev_buffer_, kWidth, kHeight, x, y, w, h, data);
+    prev_buffer_synced_ = true;
+    xSemaphoreGive(dirty_mutex_);
+    ESP_LOGI(kTag, "Seed previous buffer area=(%d,%d,%dx%d)", x, y, w, h);
+}
+
+bool EpdSsd1683::ReadPreviousRaw1bpp(int x, int y, int w, int h, uint8_t* out, size_t len) {
+    if (!out || w <= 0 || h <= 0)
+        return false;
+    const int dst_bpr = (w + 7) >> 3;
+    if (len < static_cast<size_t>(dst_bpr * h))
+        return false;
+
+    xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+    const bool synced = prev_buffer_synced_;
+    if (synced) {
+        Copy1bppFrom(prev_buffer_, kWidth, kHeight, x, y, w, h, out);
+    }
+    xSemaphoreGive(dirty_mutex_);
+    return synced;
 }
 
 namespace {
@@ -356,10 +432,10 @@ void EpdSsd1683::RefreshTaskLoop() {
         // read-and-clear at start:防止 refresh_task 跑刷新期间又有
         // RequestUrgentXxxRefresh 设 flag 时,本轮完成时把它误清。
         xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-        bool urgent         = urgent_refresh_;
-        urgent_refresh_     = false;
-        bool force_full     = force_full_refresh_;
-        force_full_refresh_ = false;
+        bool urgent            = urgent_refresh_;
+        urgent_refresh_        = false;
+        bool force_full        = force_full_refresh_;
+        force_full_refresh_    = false;
         // 保存被 read-and-clear 的 dirty 区域用于本轮日志
         R prev_dirty = {dirty_.x, dirty_.y, dirty_.w, dirty_.h};
         if (pending_) {
@@ -393,21 +469,24 @@ void EpdSsd1683::RefreshTaskLoop() {
             continue;
         }
 
-        // 决策 full vs partial:force_full / 累积 partial >= 阈值 / 首次
-        // / 差异 ≥ 30%(大改动 partial 出来会一片错乱) → full,否则 partial。
+        // 决策 full vs partial:force_full / 累积 partial >= 阈值 / 差异 ≥ 30%(大改动
+        // partial 出来会一片错乱) → 必须 full;首次未 sync 也要 full。timer wake
+        // 会先用 SeedPreviousRaw1bpp 把 prev_buffer 跟物理屏幕对齐,不需要额外越过。
         // 两条路径都先调 EpdInit() 做硬 reset + 寄存器初始化:
         // 1) full 路径里 EpdDisplayFull 自己会发 0xA5 切到 full 模式;
         // 2) partial 路径靠 EpdInit 把 EPD 拉回默认/partial 模式,否则上一轮
         //    full 留下的 0xA5 LUT 会让本轮 partial 视觉上变成全刷闪一下。
         constexpr float kForceFullDiffRatio = 0.30f;
-        bool do_full = force_full || partial_since_full_ >= kPartialBeforeFullCleanup || !prev_buffer_synced_ ||
-                       d.ratio >= kForceFullDiffRatio;
+        bool do_full = force_full ||
+                       partial_since_full_ >= kPartialBeforeFullCleanup ||
+                       d.ratio >= kForceFullDiffRatio ||
+                       !prev_buffer_synced_;
 
         // 决策原因细分,方便定位"为啥这轮选了 full / partial"。
         const char* full_cause = force_full                                           ? "force_full"
                                  : (partial_since_full_ >= kPartialBeforeFullCleanup) ? "partial_count_overflow"
-                                 : (!prev_buffer_synced_)                             ? "prev_not_synced"
                                  : (d.ratio >= kForceFullDiffRatio)                   ? "diff_over_30pct"
+                                 : (!prev_buffer_synced_)                             ? "prev_not_synced"
                                                                                       : "n/a";
 
         if (do_full) {

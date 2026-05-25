@@ -7,20 +7,24 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include <array>
+
 #include "audio_player.h"
 #include "epd_ssd1683.h"
 #include "config.h"
 #include "gpio_util.h"
 #include "sync_service.h"
 #include "board.h"
+#include "charge_status.h"
 #include "event_bus.h"
 #include "power_state.h"
 
 namespace {
 constexpr char kTag[] = "Sleep";
 
-// 进 deep sleep 前等 EPD 刷新结束的最大时长。EPD 全刷 2~4 s。
-constexpr int kEpdFlushTimeoutMs = 4000;
+// 进 deep sleep 前等 EPD 刷新结束的最大时长。低温或 full cleanup 可接近 5s；
+// 超时过短会在白相阶段切 EPD 电源，留下整屏白。
+constexpr int kEpdFlushTimeoutMs = 8000;
 
 // 把单个 GPIO 配成 RTC 数字输入 + 上拉 + hold,适合做 EXT1 ANY_LOW 唤醒源。
 // 必须用 rtc_gpio_set_direction —— 仅 rtc_gpio_init 不改 direction,GPIO 仍可能
@@ -47,13 +51,30 @@ void LockVbatPowerHigh() {
     rtc_gpio_hold_en(pin);
 }
 
+void SaveStatusBarSnapshot(EpdSsd1683* epd) {
+    if (!epd)
+        return;
+    std::array<uint8_t, power_state::kStatusBarSnapshotBytes> snapshot{};
+    if (!epd->ReadPreviousRaw1bpp(0, 0,
+                                  power_state::kStatusBarSnapshotWidth,
+                                  power_state::kStatusBarSnapshotHeight,
+                                  snapshot.data(), snapshot.size())) {
+        ESP_LOGW(kTag, "Status bar snapshot skipped: previous buffer not synced");
+        power_state::ClearStatusBarSnapshot();
+        return;
+    }
+    power_state::SaveStatusBarSnapshot(snapshot.data(), snapshot.size());
+}
+
 }  // namespace
 
-void SleepManager::Init(int idle_timeout_min) {
-    idle_timeout_min_ = idle_timeout_min;
+void SleepManager::Init(Policy p) {
+    idle_timeout_min_ = p.idle_timeout_min;
+    unbound_grace_ms_ = p.unbound_grace_ms;
+    low_battery_pct_  = p.low_battery_pct;
     last_active_ms_.store(esp_timer_get_time() / 1000);
-    enabled_.store(true);
-    ESP_LOGI(kTag, "Deep sleep idle timeout: %d min", idle_timeout_min);
+    enabled_.store(!p.disabled);
+    ESP_LOGI(kTag, "Deep sleep idle timeout: %d min", idle_timeout_min_);
 }
 
 void SleepManager::Disable() {
@@ -98,10 +119,14 @@ bool SleepManager::InUnboundGrace(int64_t now_ms) const {
     // 注意:三次 atomic load 之间无一致快照,OnEvent 可能并发修改。
     // 实际风险低:最差结果是多/少一次 Tick 阻塞或放行 deep sleep。
     if (!unbound_.load()) return false;
-    if (battery_pct_.load() < kLowBatteryPct) return false;
+    if (battery_pct_.load() < low_battery_pct_) return false;
     const int64_t since = unbound_since_ms_.load();
     if (since == 0) return false;  // 还没收到第一次 unbound 事件
-    return (now_ms - since) < kUnboundGraceMs;
+    return (now_ms - since) < unbound_grace_ms_;
+}
+
+uint32_t SleepManager::ComputeConfiguredNextWakeSec() const {
+    return power_state::ComputeNextWakeSec();
 }
 
 void SleepManager::Tick(int64_t now_ms) {
@@ -113,10 +138,33 @@ void SleepManager::Tick(int64_t now_ms) {
     if (idle_ms < threshold_ms) return;
     ESP_LOGW(kTag, "Idle %lldms >= %lldms -> entering deep sleep",
              (long long)idle_ms, (long long)threshold_ms);
-    EnterDeepSleep();
+    const auto decision = TryEnterDeepSleep();
+    ESP_LOGI(kTag, "Idle sleep skipped, outcome=%d next_wake=%us",
+             static_cast<int>(decision.outcome),
+             static_cast<unsigned>(decision.configured_next_wake_sec));
 }
 
-void SleepManager::EnterDeepSleep() {
+SleepManager::SleepDecision SleepManager::TryEnterDeepSleep() {
+    const uint32_t next_sec = ComputeConfiguredNextWakeSec();
+    if (!enabled_.load()) {
+        ESP_LOGI(kTag, "Skip deep sleep: disabled");
+        return {SleepOutcome::kDisabled, next_sec};
+    }
+    const int64_t now_ms = esp_timer_get_time() / 1000;
+    if (InUnboundGrace(now_ms)) {
+        ESP_LOGI(kTag, "Skip deep sleep: unbound grace");
+        return {SleepOutcome::kUnboundGrace, next_sec};
+    }
+    // paused_ 由 kChargeChanged 事件驱动,timer wake 路径下可能尚未消化此事件。
+    // 同时现场查询硬件确保新插入的电源也能即时拦截。
+    const bool power_present = Board::Get().charge()->Get().power_present;
+    if (power_present || paused_.load()) {
+        ESP_LOGI(kTag, "Skip deep sleep: charging (paused=%d, power_present=%d)",
+                 paused_.load() ? 1 : 0, power_present ? 1 : 0);
+        if (power_present)
+            paused_.store(true);
+        return {SleepOutcome::kPausedByCharge, next_sec};
+    }
     ESP_LOGW(kTag, "EnterDeepSleep: shutting down peripherals");
 
     // 0) 预睡 hook 留给上层做最小必要清理；帧场景没有固定状态栏，不再为了
@@ -134,6 +182,12 @@ void SleepManager::EnterDeepSleep() {
         const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kEpdFlushTimeoutMs);
         while (epd->IsRefreshPending() && xTaskGetTickCount() < deadline) {
             vTaskDelay(pdMS_TO_TICKS(50));
+        }
+        if (epd->IsRefreshPending()) {
+            ESP_LOGW(kTag, "EPD still pending after %dms; skip status bar snapshot", kEpdFlushTimeoutMs);
+            power_state::ClearStatusBarSnapshot();
+        } else {
+            SaveStatusBarSnapshot(epd);
         }
     }
 
@@ -162,7 +216,6 @@ void SleepManager::EnterDeepSleep() {
 
     // 7) RTC timer 只服务当前动态帧。静态帧不会自己变更，靠 timer wake
     //    周期性联网只会空耗电；远端静态内容变化等用户按键/插电唤醒后再同步。
-    const uint32_t next_sec = power_state::ComputeNextWakeSec();
     if (next_sec > 0) {
         esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(next_sec) * 1'000'000ULL);
         ESP_LOGW(kTag, "ESP deep_sleep_start (mask=0x%llx, timer=%us)",
@@ -173,5 +226,5 @@ void SleepManager::EnterDeepSleep() {
                  (unsigned long long)kWakeupMask);
     }
     esp_deep_sleep_start();
-    // 不返回
+    __builtin_unreachable();
 }

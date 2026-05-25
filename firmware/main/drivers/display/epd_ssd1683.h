@@ -33,6 +33,14 @@ class EpdSsd1683 {
     // 调用后自动 notify refresh_task；调用方再发 RequestUrgentXxxRefresh 设 urgent 标志。
     void WriteRaw1bpp(int x, int y, int w, int h, const uint8_t* data, size_t len);
 
+    // 把已知的当前物理画面种到 buffer_/prev_buffer_，不触发刷新。
+    // deep sleep 唤醒后内存丢失，但 EPD 物理像素仍保持；timer 自动刷新要先用
+    // 睡前缓存重建 previous buffer，后续才能做真正 partial 而不是首次 full 清屏。
+    void SeedPreviousRaw1bpp(int x, int y, int w, int h, const uint8_t* data, size_t len);
+
+    // 读取上次已刷到物理屏的 framebuffer 快照。只有 prev_buffer_ 已同步时返回 true。
+    bool ReadPreviousRaw1bpp(int x, int y, int w, int h, uint8_t* out, size_t len);
+
     bool Lock(int timeout_ms = 0);
     void Unlock();
 

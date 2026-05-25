@@ -12,7 +12,7 @@ export interface TelemetryInput {
   battery_pct?: number;
   rssi_dbm?: number;
   fw_version?: string;
-  wake_reason?: 'timer' | 'button' | 'power_on' | 'other';
+  wake_reason?: 'timer' | 'button' | 'power_on' | 'charge' | 'other';
   current_group?: string | null;
   current_content_seq?: number;
   current_content_etag?: string;

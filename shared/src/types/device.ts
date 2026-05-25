@@ -52,7 +52,7 @@ export const PollRequest = z.object({
       battery_pct: z.number().int().min(0).max(100).optional(),
       rssi_dbm: z.number().int().optional(),
       fw_version: z.string().max(32).optional(),
-      wake_reason: z.enum(['timer', 'button', 'power_on', 'other']).optional(),
+      wake_reason: z.enum(['timer', 'button', 'power_on', 'charge', 'other']).optional(),
       current_group: z.string().nullable().optional(),
       current_content_seq: z.number().int().nonnegative().optional(),
       current_content_etag: z.string().max(64).optional(),

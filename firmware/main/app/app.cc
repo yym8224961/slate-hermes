@@ -10,7 +10,6 @@
 #include <nvs_flash.h>
 #include <sdkconfig.h>
 
-#include <esp_sleep.h>
 #include <cstdio>
 #include <cstring>
 #include <memory>
@@ -18,10 +17,11 @@
 #include <utility>
 
 #include "board.h"
+#include "bg_refresh_scene.h"
+#include "boot_mode.h"
 #include "button.h"
 #include "config.h"
 #include "epd_ssd1683.h"
-#include "power_state.h"
 
 #include "api_client.h"
 #include "audio_player.h"
@@ -31,6 +31,7 @@
 #include "cred_store.h"
 #include "event_bus.h"
 #include "frame_scene.h"
+#include "power_state.h"
 #include "sntp.h"
 #include "sync_service.h"
 #include "wifi.h"
@@ -51,19 +52,6 @@ struct ComboState {
     bool down_consumed = false;
 };
 ComboState g_combo;
-
-const char* WakeReasonString() {
-    switch (power_state::Classify()) {
-        case power_state::WakeCause::kRtcTimer:
-            return "timer";
-        case power_state::WakeCause::kButton:
-            return "button";
-        case power_state::WakeCause::kColdBoot:
-            return "power_on";
-        default:
-            return "other";
-    }
-}
 
 void TryFireCombo() {
     if (!g_combo.up_held || !g_combo.down_held)
@@ -163,7 +151,7 @@ bool TryConnectAndSetup(cred::Credentials& c) {
     } else {
         ESP_LOGI(kTag, "Have device_secret, skip register (id=%s)", c.device_id.c_str());
         // 不 emit kRegistering / kAwaitingPair,让 sync_service 第一轮 poll 拿到真实
-        // bound/group 状态后再决定 splash 显示什么(已绑且有相册 → kGroupReady 切 FrameScene;
+        // bound/group 状态后再决定 splash 显示什么(已绑且有相册 → kSyncedGroupReady 切 FrameScene;
         // 已绑无相册 → kBound 切「等待相册」;远程被踢 → kUnbound 切「配对码」)。
     }
     return true;
@@ -177,41 +165,16 @@ void PostWifiState(bool connected, int rssi) {
     evt::Post(e);
 }
 
-// 检查本次启动是否由按键 ext1 唤醒;若是则 Post 一条 ButtonShort 模拟那一下按。
-// GPIO 39(UP)不是 RTC IO,不会出现在 ext1_wakeup_status,所以只能补 BOOT/DOWN。
-// 调用时机:cred 已加载 + GroupReady 已 Post 之后,这样 ButtonShort 排在 GroupReady
-// 后面,FrameScene 进栈再消费这条事件,直接翻页响应。
-void PostWakeupKeyEvent() {
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    if (cause != ESP_SLEEP_WAKEUP_EXT1)
-        return;
-    uint64_t mask = esp_sleep_get_ext1_wakeup_status();
-    if (mask == 0)
-        return;
-    ButtonId btn;
-    if (mask & (1ULL << DOWN_BUTTON_GPIO))
-        btn = ButtonId::kDown;
-    else if (mask & (1ULL << BOOT_BUTTON_GPIO))
-        btn = ButtonId::kEnter;
-    else
-        return;
-    UiEvent e{};
-    e.kind         = UiEventKind::kButtonShort;
-    e.u.button.btn = btn;
-    evt::Post(e);
-    ESP_LOGI(kTag, "Wakeup by btn=%d -> posted ButtonShort", static_cast<int>(btn));
-}
-
-void PostCachedGroupReadyIfAny() {
+bool PostCachedGroupReadyIfAny() {
     std::string gid, etag;
     if (!cache::ReadStateMeta(gid, etag) || gid.empty())
-        return;
+        return false;
     int content_count = 0;
     if (!cache::ReadManifestContentCount(gid, content_count) || content_count <= 0)
-        return;
+        return false;
 
     UiEvent e{};
-    e.kind = UiEventKind::kGroupReady;
+    e.kind = UiEventKind::kCachedGroupReady;
     std::strncpy(e.u.group.gid, gid.c_str(), sizeof(e.u.group.gid) - 1);
     e.u.group.gid[sizeof(e.u.group.gid) - 1] = '\0';
     // cache 不存 group name；SyncService 下一轮拉到 manifest 后会 Post 带 name 的事件。
@@ -219,7 +182,8 @@ void PostCachedGroupReadyIfAny() {
     e.u.group.content_count   = content_count;
     e.u.group.content_changed = false;
     evt::Post(e);
-    ESP_LOGI(kTag, "Cached GroupReady gid=%s count=%d", gid.c_str(), content_count);
+    ESP_LOGI(kTag, "Cached group ready gid=%s count=%d", gid.c_str(), content_count);
+    return true;
 }
 
 }  // namespace
@@ -282,10 +246,38 @@ void App::UiLoopEntry(void* arg) {
     static_cast<App*>(arg)->UiLoopTask();
 }
 
-void App::UiLoopTask() {
-    // RTC timer 唤醒只为后台同步动态帧，不渲染启动页，避免一次无意义全刷。
-    if (power_state::Classify() != power_state::WakeCause::kRtcTimer) {
+void App::PostWakeupKeyEvent(uint64_t ext1_mask) {
+    if (ext1_mask == 0)
+        return;
+    ButtonId btn;
+    if (ext1_mask & (1ULL << DOWN_BUTTON_GPIO))
+        btn = ButtonId::kDown;
+    else if (ext1_mask & (1ULL << BOOT_BUTTON_GPIO))
+        btn = ButtonId::kEnter;
+    else
+        return;
+    UiEvent e{};
+    e.kind         = UiEventKind::kButtonShort;
+    e.u.button.btn = btn;
+    evt::Post(e);
+    ESP_LOGI(kTag, "Wakeup by btn=%d -> posted ButtonShort", static_cast<int>(btn));
+}
+
+void App::PromoteToFrameSceneFromCache() {
+    if (!PostCachedGroupReadyIfAny()) {
         scene_stack_.Push(std::make_unique<BootSplashScene>());
+    }
+}
+
+void App::UiLoopTask() {
+    switch (decision_.mode) {
+        case boot_mode::Mode::kPortal:
+        case boot_mode::Mode::kFullActive:
+            scene_stack_.Push(std::make_unique<BootSplashScene>());
+            break;
+        case boot_mode::Mode::kBackgroundRefresh:
+            scene_stack_.Push(std::make_unique<BgRefreshScene>());
+            break;
     }
 
     while (ui_loop_running_) {
@@ -303,13 +295,31 @@ void App::UiLoopTask() {
             vTaskDelay(pdMS_TO_TICKS(200));
             esp_restart();
         }
-        if (e.kind == UiEventKind::kDynamicWakeSyncFinished) {
-            scene_stack_.ApplyPending();
-            sleep_mgr_.OnEvent(e);
-            sleep_mgr_.EnterDeepSleep();
+        if (e.kind == UiEventKind::kBgRefreshDone) {
+            auto d = sleep_mgr_.TryEnterDeepSleep();
+            switch (d.outcome) {
+                case SleepManager::SleepOutcome::kSlept:
+                    break;
+                case SleepManager::SleepOutcome::kPausedByCharge:
+                    scene_stack_.Pop();
+                    PromoteToFrameSceneFromCache();
+                    SyncService::Get().TriggerNow();
+                    break;
+                case SleepManager::SleepOutcome::kUnboundGrace:
+                    scene_stack_.Pop();
+                    scene_stack_.Push(std::make_unique<BootSplashScene>());
+                    SyncService::Get().TriggerNow();
+                    break;
+                case SleepManager::SleepOutcome::kDisabled:
+                    ESP_LOGW(kTag, "Sleep disabled after background refresh; promote active");
+                    scene_stack_.Pop();
+                    PromoteToFrameSceneFromCache();
+                    break;
+            }
             continue;
         }
-        if (e.kind == UiEventKind::kGroupReady && scene_stack_.Empty()) {
+        if ((e.kind == UiEventKind::kCachedGroupReady || e.kind == UiEventKind::kSyncedGroupReady) &&
+            scene_stack_.Empty()) {
             scene_stack_.Push(std::make_unique<FrameScene>(e.u.group.gid, e.u.group.content_count));
             scene_stack_.ApplyPending();
             continue;
@@ -401,7 +411,7 @@ void App::StartTimeTick() {
     time_tick_.Start();
 }
 
-void App::InitNetwork() {
+bool App::InitWifiAndSync(cred::Credentials& creds) {
     Wifi::Get().Init();
 
     // poll 收 401 → emit kSecretInvalid;UiLoop 拦下来在主线程清 NVS + esp_restart。
@@ -411,20 +421,13 @@ void App::InitNetwork() {
         evt::Post(e);
     });
 
-    cred::Credentials creds;
-    if (!cred::Load(creds)) {
-        ESP_LOGI(kTag, "No credentials -> captive portal");
-        StartPortal();
-        return;
-    }
     ESP_LOGI(kTag, "Found NVS credentials: ssid=%s have_secret=%d", creds.wifi_ssid.c_str(),
              (int)!creds.device_secret.empty());
-    bool was_first_register = creds.device_secret.empty();
     if (TryConnectAndSetup(creds)) {
         // 连上 → 状态栏立即显示 wifi 图标
         PostWifiState(true, Wifi::Get().GetRssi());
 
-        // 启动 SyncService（依赖注入）。SyncService 拿到第一波数据后会 Post GroupReady。
+        // 启动 SyncService（依赖注入）。首轮同步由 App 根据 boot_mode 显式 Trigger。
         SyncDeps deps;
         deps.read_battery = [](int* mv, int* pct) -> bool {
             uint16_t   mv16 = 0;
@@ -459,31 +462,11 @@ void App::InitNetwork() {
             return meta.content_etag;
         };
         deps.manifest_etag = []() -> std::string { return cache::ReadCurrentManifestEtag(); };
-        deps.wake_reason   = []() -> std::string { return WakeReasonString(); };
+        deps.wake_reason   = [this]() -> std::string { return decision_.wake_reason; };
         SyncService::Get().Start(std::move(deps));
-
-        // 首次注册(NVS 之前没 secret)的设备没有可信 cache:可能是新设备(没 cache)
-        // 或物理重置后(cache 是旧主人的相册,不该展示)。让 sync_service 第一轮 poll
-        // 决定 splash 显示「配对码」/「等待相册」/FrameScene。
-        // 重启场景(have_secret=true)才用 cache 跳过 splash 等待。
-        if (!was_first_register && power_state::Classify() != power_state::WakeCause::kRtcTimer) {
-            PostCachedGroupReadyIfAny();
-            // ext1 唤醒补一次 ButtonShort,让 FrameScene 进栈后立即翻页(用户期望)。
-            // 必须排在 GroupReady 之后,所以放在这。
-            if (power_state::Classify() == power_state::WakeCause::kButton) {
-                PostWakeupKeyEvent();
-            }
-        }
+        return true;
     } else {
-        if (power_state::Classify() == power_state::WakeCause::kRtcTimer) {
-            ESP_LOGW(kTag, "Timer wake network setup failed -> deep sleep");
-            UiEvent e{};
-            e.kind = UiEventKind::kDynamicWakeSyncFinished;
-            evt::Post(e, portMAX_DELAY);
-            return;
-        }
-        ESP_LOGW(kTag, "Fallback to captive portal");
-        StartPortal();
+        return false;
     }
 }
 
@@ -502,7 +485,7 @@ void App::StartPortal() {
         c.wifi_ssid  = s.ssid;
         c.wifi_pwd   = s.password;
         c.server_url = s.server_url;
-        // device_id/device_secret 留空:配网完成 esp_restart 后 InitNetwork 看到无 secret
+        // device_id/device_secret 留空:配网完成 esp_restart 后 InitWifiAndSync 看到无 secret
         // → 走 register 流。设备命名留到 Web 端 PUT /devices/:id 完成绑定后再做。
         if (!cred::Save(c)) {
             out_error = "凭据保存失败,请重试";
@@ -526,13 +509,6 @@ void App::StartPortal() {
 }
 
 void App::StartSleep() {
-    if (portal_) {
-        // captive portal 期间禁用 deep sleep —— 用户在手机配网过程中设备睡了体验崩。
-        sleep_mgr_.Disable();
-        return;
-    }
-    sleep_mgr_.Init(CONFIG_SLATE_IDLE_DEEP_SLEEP_MIN);
-
     // 注册 charge callback 时设备可能已经在充电(USB 接着启动),但 ChargeStatus
     // 内部已经在 Init 时把 snapshot 设到 kCharging,callback 不会因"未变化"而再触发。
     // 这里主动 Post 一次让 SleepManager 同步初始 paused_ 状态,免得"开机就充电"
@@ -566,11 +542,58 @@ void App::Init() {
     InitDevices();
     InitEventBus();
     InitSceneStack();
+
+    cred::Credentials creds;
+    cred::Load(creds);
+    decision_ = boot_mode::Decide(creds);
+
+    SleepManager::Policy policy;
+    policy.idle_timeout_min = CONFIG_SLATE_IDLE_DEEP_SLEEP_MIN;
+    policy.disabled         = (decision_.mode == boot_mode::Mode::kPortal);
+    sleep_mgr_.Init(policy);
+
     StartUiLoop();
     AttachInputs();
     StartTimeTick();
-    InitNetwork();
     StartSleep();
+
+    switch (decision_.mode) {
+        case boot_mode::Mode::kPortal:
+            ESP_LOGI(kTag, "No credentials -> captive portal");
+            Wifi::Get().Init();
+            StartPortal();
+            break;
+        case boot_mode::Mode::kBackgroundRefresh: {
+            const bool net_ok = InitWifiAndSync(creds);
+            if (net_ok) {
+                SyncService::Get().TriggerWakeRefresh();
+            } else {
+                ESP_LOGW(kTag, "Background refresh network setup failed -> deep sleep");
+                UiEvent e{};
+                e.kind = UiEventKind::kBgRefreshDone;
+                evt::Post(e, portMAX_DELAY);
+            }
+            break;
+        }
+        case boot_mode::Mode::kFullActive: {
+            const bool net_ok = InitWifiAndSync(creds);
+            if (net_ok && !decision_.first_register) {
+                PostCachedGroupReadyIfAny();
+                if (decision_.wake_cause == boot_mode::WakeCause::kButton) {
+                    PostWakeupKeyEvent(decision_.ext1_mask);
+                }
+            }
+            if (net_ok) {
+                SyncService::Get().TriggerNow();
+            } else {
+                ESP_LOGW(kTag, "Fallback to captive portal");
+                StartPortal();
+                sleep_mgr_.Disable();
+            }
+            break;
+        }
+    }
+
     FinalizePm();
 }
 

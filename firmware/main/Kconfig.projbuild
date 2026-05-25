@@ -23,13 +23,13 @@ config SLATE_DEFAULT_TIMEZONE
 
 config SLATE_IDLE_DEEP_SLEEP_MIN
     int "Idle minutes before entering deep sleep"
-    default 1
+    default 10
     range 1 60
     help
         没按键 + 不在充电时,N 分钟后进 deep sleep。BOOT/DOWN 键唤醒(GPIO 39 UP
         键不是 RTC IO 不能 ext1 唤醒)。captive portal 期间禁用。动态帧按
         next_wake_sec 配置 RTC timer；静态帧不配置定时唤醒。
-        默认 1 分钟，让用户按一下就能走，省电。
+        默认 10 分钟，给正常查看/操作留足时间，同时避免长时间空耗电。
 
 config SLATE_LOG_PLAINTEXT_CRED
     bool "Log WiFi password and full credentials in plaintext"

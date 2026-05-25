@@ -5,7 +5,7 @@
 //   - kBootStage event 切到对应阶段(连 Wi-Fi / 对时 / 注册中 / 配对码 ...)
 //   - kBound → kAwaitingGroup;kUnbound → kAwaitingPair(载新码)
 //   - kSyncProgress → 帧级下载进度;kSyncFinished{ok=false} → 网络异常
-//   - kGroupReady → RequestReplace 切 FrameScene
+//   - kCachedGroupReady / kSyncedGroupReady → RequestReplace 切 FrameScene
 //
 // 配对码 6 字符用 montserrat_48 大字号居中显示,确保用户对屏抄码一眼能看清。
 

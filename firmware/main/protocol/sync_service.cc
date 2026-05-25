@@ -171,7 +171,7 @@ void SyncService::ClearCurrentGroupLocked() {
 }
 
 int SyncService::NextIntervalSec() const {
-    if (was_bound_.load())
+    if (was_bound_.load() == BoundState::kBound)
         return kBoundPollSec;
     const int64_t elapsed = (esp_timer_get_time() / 1000) - unbound_since_ms_.load();
     if (elapsed < kUnboundFastMs)
@@ -181,10 +181,10 @@ int SyncService::NextIntervalSec() const {
     return kUnboundSlowPollSec;
 }
 
-void SyncService::PostGroupReady(const std::string& gid, const std::string& name, int content_count,
-                                 bool content_changed) {
+void SyncService::PostSyncedGroupReady(const std::string& gid, const std::string& name, int content_count,
+                                       bool content_changed) {
     UiEvent e{};
-    e.kind = UiEventKind::kGroupReady;
+    e.kind = UiEventKind::kSyncedGroupReady;
     std::strncpy(e.u.group.gid, gid.c_str(), sizeof(e.u.group.gid) - 1);
     e.u.group.gid[sizeof(e.u.group.gid) - 1] = '\0';
     std::strncpy(e.u.group.name, name.c_str(), sizeof(e.u.group.name) - 1);
@@ -247,7 +247,7 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
             cache::ReadManifestContentCount(gid, content_count);
             // 内容没变,只是 splash → frame_scene 首次切换需要 hint;不刷屏。
             // name 留空，下一轮 manifest 拉成功后会用真实名字补一次。
-            PostGroupReady(gid, "", content_count, /*content_changed=*/false);
+            PostSyncedGroupReady(gid, "", content_count, /*content_changed=*/false);
         }
         return true;
     }
@@ -270,7 +270,7 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
             int content_count = 0;
             cache::ReadManifestContentCount(gid, content_count);
             // 304 → server 没下发新 manifest，没有 group_name。留空让 UI 兜底。
-            PostGroupReady(gid, "", content_count, /*content_changed=*/false);
+            PostSyncedGroupReady(gid, "", content_count, /*content_changed=*/false);
         }
         return true;
     }
@@ -384,8 +384,8 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     SetCurrentGroupLocked(gid);
     group_changed = true;
     // 真有内容变化(新增/修改/删除帧),让 FrameScene 重读当前帧并触发 EPD 刷新。
-    PostGroupReady(gid, mf.group_name, static_cast<int>(mf.contents.size()),
-                   /*content_changed=*/true);
+    PostSyncedGroupReady(gid, mf.group_name, static_cast<int>(mf.contents.size()),
+                         /*content_changed=*/true);
     return true;
 }
 
@@ -457,7 +457,7 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
 }
 
 void SyncService::SyncOnce(SyncMode mode) {
-    if (mode == SyncMode::kDynamicWake) {
+    if (mode == SyncMode::kBackgroundRefresh) {
         if (deps_.current_group)
             SetCurrentGroupLocked(deps_.current_group());
     }
@@ -484,8 +484,9 @@ void SyncService::SyncOnce(SyncMode mode) {
     }
     sntp::ApplyServerTime(state.server_time);
     // 1. bound 翻转:发独立事件让 splash / frame_scene 都能响应。
-    bool prev_bound = was_bound_.load();
-    if (state.bound != prev_bound) {
+    const BoundState prev_bound = was_bound_.load();
+    const BoundState next_bound = state.bound ? BoundState::kBound : BoundState::kUnbound;
+    if (next_bound != prev_bound) {
         UiEvent e{};
         if (state.bound) {
             e.kind = UiEventKind::kBound;
@@ -497,7 +498,7 @@ void SyncService::SyncOnce(SyncMode mode) {
             ESP_LOGW(kTag, "Unbound: pair_code=%s", state.pair_code.c_str());
         }
         evt::Post(e, 0);
-        was_bound_.store(state.bound);
+        was_bound_.store(next_bound);
         if (state.bound) {
             unbound_since_ms_.store(0);
         } else {
@@ -507,7 +508,7 @@ void SyncService::SyncOnce(SyncMode mode) {
 
     // 2. 当前态推 splash:让重启场景的 splash 也能直接拿到正确文案,无需依赖翻转。
     //    (启动时 splash 会先看 kAwaitingPair/kAwaitingGroup 切到正确文案;
-    //     SyncManifestAndFrames 后续 emit kGroupReady 会 RequestReplace 到 FrameScene。)
+    //     SyncManifestAndFrames 后续 emit kSyncedGroupReady 会 RequestReplace 到 FrameScene。)
     UiEvent stage_evt{};
     stage_evt.kind                      = UiEventKind::kBootStage;
     stage_evt.u.boot_stage.ssid[0]      = '\0';
@@ -521,29 +522,41 @@ void SyncService::SyncOnce(SyncMode mode) {
         stage_evt.u.boot_stage.stage = BootStage::kAwaitingGroup;
         evt::Post(stage_evt, 0);
     }
-    // bound + has_group 不发 boot_stage,SyncManifestAndFrames 走 kGroupReady。
+    // bound + has_group 不发 boot_stage,SyncManifestAndFrames 走 kSyncedGroupReady。
 
     bool group_changed = false;
     bool sync_ok       = true;
-    if (mode == SyncMode::kDynamicWake && state.has_group && state.has_current_content) {
-        sync_ok = SyncCurrentContent(state.group_id, state.current_content, group_changed);
-        if (sync_ok && group_changed) {
-            PostGroupReady(state.group_id, state.group_name, state.content_count,
-                           /*content_changed=*/true);
+    if (mode == SyncMode::kBackgroundRefresh && state.has_group && state.has_current_content) {
+        // server 的 manifest 与本地不一致 → 不能只同步 current_content：那样会让其他帧的
+        // 增/删/改丢失，而且如果在这里把 server 的 manifest_etag 写回 cache，
+        // 下一轮 SyncManifestAndFrames 会因 etag 匹配直接跳过，缺帧永远不补。
+        // 这种情况回退到完整 manifest 同步路径。
+        if (tel.manifest_etag != state.manifest_etag) {
+            ESP_LOGI(kTag, "Timer wake current_content but manifest stale; full sync");
+            sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
+        } else {
+            sync_ok = SyncCurrentContent(state.group_id, state.current_content, group_changed);
+            if (sync_ok && group_changed) {
+                PostSyncedGroupReady(state.group_id, state.group_name, state.content_count,
+                                     /*content_changed=*/true);
+            }
         }
-    } else if (mode == SyncMode::kDynamicWake && state.has_group) {
+    } else if (mode == SyncMode::kBackgroundRefresh && state.has_group) {
         if (tel.manifest_etag != state.manifest_etag) {
             ESP_LOGI(kTag, "Timer wake manifest mismatch; full sync");
             sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
         } else {
             ESP_LOGI(kTag, "Timer wake has no current_content and manifest unchanged; skip sync");
         }
-    } else if (mode == SyncMode::kDynamicWake) {
-        ESP_LOGI(kTag, "Timer wake has no group; skip full manifest sync");
+    } else if (mode == SyncMode::kBackgroundRefresh) {
+        ESP_LOGI(kTag, "Timer wake has no group; clear cached current group");
+        ClearCurrentGroupLocked();
+        power_state::SetCurrentFrameSchedule({});
+        sync_ok = cache::WriteStateMeta("", "");
     } else if (state.has_group) {
         sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
     } else {
-        // 没选组:清掉 current_group_(scene 等下一次 GroupReady)
+        // 没选组:清掉 current_group_(scene 等下一次 ready 事件)
         ClearCurrentGroupLocked();
         sync_ok = cache::WriteStateMeta("", "");
     }
@@ -593,21 +606,6 @@ void SyncService::DoCycle(const std::string& direction) {
 }
 
 void SyncService::Loop() {
-    const auto cause = power_state::Classify();
-    if (cause == power_state::WakeCause::kRtcTimer) {
-        SyncOnce(SyncMode::kDynamicWake);
-        UiEvent e{};
-        e.kind = UiEventKind::kDynamicWakeSyncFinished;
-        evt::Post(e, 0);
-        ESP_LOGI(kTag, "Timer wake sync finished -> deep sleep");
-        running_.store(false);
-        return;
-    } else if (cause == power_state::WakeCause::kButton || cause == power_state::WakeCause::kColdBoot) {
-        SyncOnce(SyncMode::kUserActive);
-    } else {
-        ESP_LOGI(kTag, "Skip initial sync for non-user wake cause=%d", static_cast<int>(cause));
-    }
-
     while (running_.load()) {
         const int         interval_s = NextIntervalSec();
         const EventBits_t bits       = xEventGroupWaitBits(
@@ -625,7 +623,7 @@ void SyncService::Loop() {
         } else if (bits & BIT_CYCLE_PREV) {
             DoCycle("prev");
         } else if (bits & BIT_WAKE_REFRESH) {
-            SyncOnce(SyncMode::kDynamicWake);
+            SyncOnce(SyncMode::kBackgroundRefresh);
         } else {
             SyncOnce(SyncMode::kUserActive);
         }

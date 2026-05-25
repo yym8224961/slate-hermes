@@ -2,10 +2,9 @@
 
 #include <esp_attr.h>
 #include <esp_log.h>
-#include <esp_sleep.h>
 #include <freertos/FreeRTOS.h>
 
-#include "config.h"
+#include <cstring>
 
 namespace power_state {
 namespace {
@@ -21,36 +20,28 @@ constexpr uint32_t kMinWakeIntervalSec = 60u;
 RTC_DATA_ATTR bool     s_frame_dynamic = false;
 RTC_DATA_ATTR uint32_t s_frame_server_sync_sec = 0;
 RTC_DATA_ATTR int      s_current_frame_seq = 0;
+
+constexpr uint32_t kStatusBarSnapshotMagic = 0x53544231u;  // "STB1"
+RTC_DATA_ATTR uint32_t s_status_bar_magic = 0;
+RTC_DATA_ATTR uint32_t s_status_bar_hash = 0;
+RTC_DATA_ATTR uint8_t  s_status_bar_snapshot[kStatusBarSnapshotBytes] = {};
+
 portMUX_TYPE           s_state_mux = portMUX_INITIALIZER_UNLOCKED;
 
 uint32_t NormalizeDynamicWakeSec(uint32_t sec) {
     return sec < kMinWakeIntervalSec ? kMinWakeIntervalSec : sec;
 }
 
-}  // namespace
-
-WakeCause Classify() {
-    esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
-    switch (cause) {
-        case ESP_SLEEP_WAKEUP_UNDEFINED:
-            return WakeCause::kColdBoot;
-        case ESP_SLEEP_WAKEUP_EXT1: {
-            const uint64_t mask = esp_sleep_get_ext1_wakeup_status();
-            if (mask & ((1ULL << BOOT_BUTTON_GPIO) | (1ULL << DOWN_BUTTON_GPIO))) {
-                return WakeCause::kButton;
-            }
-            if (mask & (1ULL << CHARGE_DETECT_GPIO)) {
-                return WakeCause::kCharge;
-            }
-            ESP_LOGW(kTag, "Unknown EXT1 wake mask=0x%llx -> other", (unsigned long long)mask);
-            return WakeCause::kOther;
-        }
-        case ESP_SLEEP_WAKEUP_TIMER:
-            return WakeCause::kRtcTimer;
-        default:
-            return WakeCause::kOther;
+uint32_t HashBytes(const uint8_t* data, size_t len) {
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < len; ++i) {
+        h ^= data[i];
+        h *= 16777619u;
     }
+    return h;
 }
+
+}  // namespace
 
 CurrentFrameSchedule GetCurrentFrameSchedule() {
     CurrentFrameSchedule schedule;
@@ -103,6 +94,44 @@ uint32_t ComputeNextWakeSec() {
              static_cast<unsigned>(next),
              static_cast<unsigned>(server_sync_sec));
     return next;
+}
+
+bool SaveStatusBarSnapshot(const uint8_t* data, size_t len) {
+    if (!data || len != kStatusBarSnapshotBytes)
+        return false;
+    const uint32_t hash = HashBytes(data, len);
+    portENTER_CRITICAL(&s_state_mux);
+    s_status_bar_magic = 0;
+    std::memcpy(s_status_bar_snapshot, data, kStatusBarSnapshotBytes);
+    s_status_bar_hash  = hash;
+    s_status_bar_magic = kStatusBarSnapshotMagic;
+    portEXIT_CRITICAL(&s_state_mux);
+    ESP_LOGD(kTag, "Saved status bar snapshot hash=%08lx", static_cast<unsigned long>(hash));
+    return true;
+}
+
+bool LoadStatusBarSnapshot(uint8_t* out, size_t len) {
+    if (!out || len != kStatusBarSnapshotBytes)
+        return false;
+    uint32_t magic = 0;
+    uint32_t hash  = 0;
+    portENTER_CRITICAL(&s_state_mux);
+    magic = s_status_bar_magic;
+    hash  = s_status_bar_hash;
+    if (magic == kStatusBarSnapshotMagic) {
+        std::memcpy(out, s_status_bar_snapshot, kStatusBarSnapshotBytes);
+    }
+    portEXIT_CRITICAL(&s_state_mux);
+    if (magic != kStatusBarSnapshotMagic)
+        return false;
+    return HashBytes(out, len) == hash;
+}
+
+void ClearStatusBarSnapshot() {
+    portENTER_CRITICAL(&s_state_mux);
+    s_status_bar_magic = 0;
+    s_status_bar_hash  = 0;
+    portEXIT_CRITICAL(&s_state_mux);
 }
 
 }  // namespace power_state

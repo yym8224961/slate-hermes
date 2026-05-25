@@ -1,7 +1,8 @@
 #pragma once
 
 // Scene 抽象 + SceneContext。
-// 所有可见 UI = 一个 Scene；多个 Scene 用 SceneStack 堆叠。栈底永远是 FrameScene。
+// 所有可见 UI = 一个 Scene；多个 Scene 用 SceneStack 堆叠。启动态可以是
+// BootSplashScene / BgRefreshScene / FrameScene，具体由 App 的 boot_mode 决定。
 // Scene 的所有方法仅由 ui_loop task 调用（OnEnter/OnExit/OnEvent）。
 
 #include <lvgl.h>

@@ -1,6 +1,7 @@
 #pragma once
 
-// 场景栈：栈底永远是 FrameScene；其他 Scene（设置页 / 配网页 / 子菜单）push 在它之上。
+// 场景栈：活跃态通常以 FrameScene 为根；配网和后台刷新也可作为启动根场景。
+// 其他 Scene（设置页 / 子菜单）push 在当前根场景之上。
 // 所有同步切换方法（Push/Pop/Replace）只能由 ui_loop task 调用，否则 LVGL 不安全。
 // Scene::OnEvent 内若需切换，应调 RequestX；ui_loop 在 Dispatch 后调 ApplyPending。
 

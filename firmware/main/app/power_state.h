@@ -8,21 +8,14 @@
 //
 // 选 RTC slow RAM 而不是 NVS 的原因：写次数高（每次睡都更新）、不耐 flash 寿命。
 
+#include <cstddef>
 #include <cstdint>
 
 namespace power_state {
 
-// 设备唤醒原因分类（基于 esp_sleep_get_wakeup_cause()）。
-enum class WakeCause : uint8_t {
-    kColdBoot = 0,  // 上电 / 软重启（POWERON / SW_RESET / 其它 RTC_SW_CPU_RESET）
-    kButton,        // EXT1 按键唤醒（BOOT / DOWN）
-    kCharge,        // EXT1 充电插入（CHARGE_DETECT 拉低）
-    kRtcTimer,      // RTC timer 到期（动态帧 next_wake_sec）
-    kOther,         // 其他原因（UART / ULP / TouchPad），当前固件不用
-};
-
-// 解析本次启动的 wake 原因。仅看一次，结果应缓存。
-WakeCause Classify();
+constexpr int kStatusBarSnapshotWidth  = 400;
+constexpr int kStatusBarSnapshotHeight = 24;
+constexpr int kStatusBarSnapshotBytes  = kStatusBarSnapshotWidth * kStatusBarSnapshotHeight / 8;
 
 struct CurrentFrameSchedule {
     bool     dynamic         = false;
@@ -41,5 +34,11 @@ bool CurrentFrameNeedsTimerWake();
 
 // 当前动态帧的下次 RTC timer wakeup 间隔（秒）。0 表示当前帧没有动态刷新间隔。
 uint32_t ComputeNextWakeSec();
+
+// 睡前最后一次刷到物理屏上的状态栏 1bpp 快照。用于 timer wake 后重建
+// prev_buffer_ 的 0~24 行，让后台 partial refresh 的 old/new 输入真实一致。
+bool SaveStatusBarSnapshot(const uint8_t* data, size_t len);
+bool LoadStatusBarSnapshot(uint8_t* out, size_t len);
+void ClearStatusBarSnapshot();
 
 }  // namespace power_state

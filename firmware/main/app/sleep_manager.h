@@ -23,12 +23,31 @@ class SleepManager {
    public:
     using PreSleepHook = std::function<void()>;
 
+    enum class SleepOutcome {
+        kSlept,
+        kPausedByCharge,
+        kDisabled,
+        kUnboundGrace,
+    };
+
     // unbound 状态保持禁睡的最长窗口。超过则即便仍 unbound 也允许 deep sleep。
     static constexpr int64_t kUnboundGraceMs = 2LL * 60 * 60 * 1000;
     // 电量低于此阈值时强制允许 deep sleep,无视 unbound 状态。
     static constexpr int kLowBatteryPct = 20;
 
-    void Init(int idle_timeout_min);
+    struct SleepDecision {
+        SleepOutcome outcome;
+        uint32_t     configured_next_wake_sec;
+    };
+
+    struct Policy {
+        int     idle_timeout_min = 5;
+        int64_t unbound_grace_ms = kUnboundGraceMs;
+        int     low_battery_pct  = kLowBatteryPct;
+        bool    disabled         = false;
+    };
+
+    void Init(Policy p);
     void Disable();  // captive portal 等场景禁用 deep sleep
 
     // 进睡前最后一刻调用。固定状态栏已移除，默认不需要为了状态图标刷新屏幕。
@@ -39,17 +58,21 @@ class SleepManager {
     void OnEvent(const UiEvent& e);
     void Tick(int64_t now_ms);
 
-    // 主动进 deep sleep。不返回。
-    void EnterDeepSleep();
+    // 主动进 deep sleep。**正常情况不返回**；若被 paused_(充电中)/enabled_=false 短路，
+    // 会立刻 return,调用方应转入正常 active 模式(例如把 cache 中的相册 push 成 FrameScene)。
+    SleepDecision TryEnterDeepSleep();
 
    private:
     // 当前是否处于 unbound 加速窗口(unbound + 未超 2h + 电量充足)。
-    bool InUnboundGrace(int64_t now_ms) const;
+    bool     InUnboundGrace(int64_t now_ms) const;
+    uint32_t ComputeConfiguredNextWakeSec() const;
 
     std::atomic<bool>    enabled_{false};
     std::atomic<int64_t> last_active_ms_{0};
     std::atomic<bool>    paused_{false};
     int                  idle_timeout_min_ = 5;
+    int64_t              unbound_grace_ms_ = kUnboundGraceMs;
+    int                  low_battery_pct_  = kLowBatteryPct;
     PreSleepHook         pre_sleep_hook_;
 
     // unbound 加速窗口状态:

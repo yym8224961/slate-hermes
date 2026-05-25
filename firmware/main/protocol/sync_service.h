@@ -4,7 +4,7 @@
 // 状态/进度通过 EventBus 反馈：
 //   - SyncStarted       每轮开始
 //   - SyncFinished{ok}  每轮结束(含 304 noop)
-//   - GroupReady{gid,content_count}  当 selected_group 内容就绪
+//   - kSyncedGroupReady{gid,content_count}  当 selected_group 内容就绪
 
 #include <atomic>
 #include <functional>
@@ -52,12 +52,12 @@ class SyncService {
     static void TaskEntry(void* arg);
     void        Loop();
     int         NextIntervalSec() const;
-    enum class SyncMode { kUserActive, kDynamicWake };
+    enum class SyncMode { kUserActive, kBackgroundRefresh };
     void SyncOnce(SyncMode mode);
     void DoCycle(const std::string& direction);
     bool SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, bool& group_changed);
     bool SyncCurrentContent(const std::string& gid, const api::ContentMeta& content, bool& changed);
-    void PostGroupReady(const std::string& gid, const std::string& name, int content_count, bool content_changed);
+    void PostSyncedGroupReady(const std::string& gid, const std::string& name, int content_count, bool content_changed);
     std::string GetCurrentGroupLocked() const;
     void        SetCurrentGroupLocked(const std::string& gid);
     void        ClearCurrentGroupLocked();
@@ -67,8 +67,9 @@ class SyncService {
     EventGroupHandle_t  event_group_         = nullptr;
     SemaphoreHandle_t   current_group_mutex_ = nullptr;
     mutable std::string current_group_;
-    // 跟踪 bound 翻转,只在变化时 emit kBound/kUnbound。
-    std::atomic<bool> was_bound_{false};
+    enum class BoundState : uint8_t { kUnknown, kBound, kUnbound };
+    // 跟踪 bound 翻转。Unknown 初始态保证首轮 unbound 也会 emit kUnbound。
+    std::atomic<BoundState> was_bound_{BoundState::kUnknown};
     // 进入 unbound 状态的时刻,用于阶梯退避轮询间隔。
     std::atomic<int64_t> unbound_since_ms_{0};
 };

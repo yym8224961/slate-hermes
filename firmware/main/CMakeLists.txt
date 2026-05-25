@@ -2,6 +2,7 @@ set(SOURCES
     "main.cc"
 
     "app/app.cc"
+    "app/boot_mode.cc"
     "app/event_bus.cc"
     "app/power_state.cc"
     "app/scene_stack.cc"
@@ -30,6 +31,7 @@ set(SOURCES
     "protocol/sync_service.cc"
 
     "scenes/boot/boot_splash_scene.cc"
+    "scenes/bg_refresh/bg_refresh_scene.cc"
     "scenes/frame/frame_scene.cc"
     "scenes/settings/settings_scene.cc"
     "scenes/settings/volume_page.cc"
@@ -60,6 +62,7 @@ set(INCLUDE_DIRS
     "network"
     "protocol"
     "scenes/boot"
+    "scenes/bg_refresh"
     "scenes/frame"
     "scenes/settings"
     "storage"

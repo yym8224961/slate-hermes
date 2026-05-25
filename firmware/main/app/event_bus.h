@@ -21,9 +21,10 @@ enum class UiEventKind : uint8_t {
     kBatteryUpdated,    // u.battery
     kWifiStateChanged,  // u.wifi
     kSyncStarted,
-    kSyncProgress,  // u.progress { current, total }  帧级下载进度
-    kSyncFinished,  // u.sync
-    kGroupReady,    // u.group
+    kSyncProgress,      // u.progress { current, total }  帧级下载进度
+    kSyncFinished,      // u.sync
+    kCachedGroupReady,  // u.group
+    kSyncedGroupReady,  // u.group
     kMinuteTick,
     kIdleTimeout,
     // 启动阶段进度,由 app.cc TryConnectAndSetup 各步 emit;splash 用 stage 切文案。
@@ -34,8 +35,8 @@ enum class UiEventKind : uint8_t {
     kUnbound,  // u.unbound { pair_code[8] }
     // poll 收到 401:secret 失效,固件 self-reset 流(清 NVS secret + 重启)。
     kSecretInvalid,
-    // RTC timer 唤醒后的同步/上报已结束，App 可立即进入下一轮 deep sleep。
-    kDynamicWakeSyncFinished,
+    // RTC timer 唤醒后台刷新场景完成/放弃，App 可立即进入下一轮 deep sleep。
+    kBgRefreshDone,
 };
 
 enum class ButtonId : uint8_t { kEnter = 0, kUp, kDown };

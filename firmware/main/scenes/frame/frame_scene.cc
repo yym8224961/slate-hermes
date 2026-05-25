@@ -168,7 +168,7 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             }
             break;
         }
-        case UiEventKind::kGroupReady: {
+        case UiEventKind::kSyncedGroupReady: {
             if (e.u.group.gid[0] == '\0')
                 break;
             const bool same_group      = (gid_ == e.u.group.gid);

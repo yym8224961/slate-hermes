@@ -8,7 +8,10 @@
 // 由各后台 task（ui_loop / sync / charge_tick / audio / epd_refresh）继续跑。
 
 #include <memory>
+#include <string>
 
+#include "boot_mode.h"
+#include "cred_store.h"
 #include "event_bus.h"
 #include "scene_stack.h"
 #include "sleep_manager.h"
@@ -31,11 +34,13 @@ class App {
     void StartUiLoop();
     void AttachInputs();
     void StartTimeTick();
-    void InitNetwork();
+    bool InitWifiAndSync(cred::Credentials& creds);
     void StartSleep();
     void FinalizePm();
 
     void StartPortal();
+    void PostWakeupKeyEvent(uint64_t ext1_mask);
+    void PromoteToFrameSceneFromCache();
 
     static void UiLoopEntry(void* arg);
     void        UiLoopTask();
@@ -45,4 +50,5 @@ class App {
     TimeTick                       time_tick_;
     std::unique_ptr<CaptivePortal> portal_;
     bool                           ui_loop_running_ = false;
+    boot_mode::Decision            decision_;
 };

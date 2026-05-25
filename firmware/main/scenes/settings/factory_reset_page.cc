@@ -95,7 +95,7 @@ void FactoryResetPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
     if (e.kind == UiEventKind::kButtonLong && e.u.button.btn == ButtonId::kEnter) {
         ESP_LOGW(kTag, "Long Enter -> factory reset: clear NVS + format littlefs + reboot");
         // 顺序: NVS 清干净后 format LittleFS。两步任一失败都继续 esp_restart,
-        // 防止用户卡在 settings 不知所措;下次启动 InitNetwork 会按当时状态决定下一步。
+        // 防止用户卡在 settings 不知所措;下次启动 App::Init 会按 boot_mode 决定下一步。
         cred::Clear();
         cache::FormatAll();
         vTaskDelay(pdMS_TO_TICKS(200));
