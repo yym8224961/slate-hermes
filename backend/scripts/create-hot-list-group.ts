@@ -1,6 +1,4 @@
 #!/usr/bin/env bun
-import 'reflect-metadata';
-import { NestFactory } from '@nestjs/core';
 import {
   HOT_LIST_SOURCES,
   HOT_LIST_SOURCES_BY_NAME,
@@ -9,15 +7,18 @@ import {
   type ContentDetailT,
   type HotListSourceIdT,
 } from 'shared';
-import { AppModule } from '../src/app.module';
-import { PrismaService } from '../src/infra/prisma/prisma.service';
-import { ContentsService } from '../src/modules/contents/contents.service';
-import { GroupsService } from '../src/modules/groups/groups.service';
+import type { ContentsService } from '../src/modules/contents/contents.service';
+import {
+  createGroupScriptServices,
+  deleteAllContents,
+  ensureGroup,
+  readArgValue,
+  resolveUser,
+  userDisplay,
+  type UserSelectorArgs,
+} from './lib/group-script';
 
-interface Args {
-  userId?: string;
-  email?: string;
-  username?: string;
+interface Args extends UserSelectorArgs {
   groupName: string;
   replace: boolean;
   refreshIntervalSec: number;
@@ -25,14 +26,10 @@ interface Args {
 
 const args = parseArgs(process.argv.slice(2));
 const hotListConfigs = buildHotListConfigs(args.refreshIntervalSec);
-const app = await NestFactory.createApplicationContext(AppModule, {
-  logger: ['error', 'warn'],
-});
+const services = await createGroupScriptServices();
 
 try {
-  const prisma = app.get(PrismaService);
-  const groups = app.get(GroupsService);
-  const contents = app.get(ContentsService);
+  const { prisma, groups, contents } = services;
   const user = await resolveUser(prisma, args);
   const group = await ensureGroup(groups, prisma, user.id, args.groupName);
 
@@ -50,15 +47,16 @@ try {
   process.stdout.write(
     [
       `Hot list group ready: ${args.groupName}`,
-      `  user: ${user.email}${user.username ? ` (${user.username})` : ''}`,
+      `  user: ${userDisplay(user)}`,
       `  group_id: ${group.id}`,
       `  frames: ${generated.length}`,
       `  manifest_etag: ${manifest_etag}`,
     ].join('\n') + '\n'
   );
 } finally {
-  await app.close();
+  await services.app.close();
 }
+process.exit(0);
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
@@ -89,12 +87,6 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-function readArgValue(argv: string[], index: number, flag: string): string {
-  const value = argv[index];
-  if (!value || value.startsWith('--')) throw new Error(`${flag} requires a value`);
-  return value;
-}
-
 function readPositiveInt(value: string, flag: string): number {
   const n = Number(value);
   if (!Number.isInteger(n) || n <= 0) throw new Error(`${flag} requires a positive integer`);
@@ -111,73 +103,6 @@ Options:
   --refresh-interval-sec <sec>    Hot-list refresh interval. Default: 600
 `);
   process.exit(0);
-}
-
-async function resolveUser(
-  prisma: PrismaService,
-  args: Args
-): Promise<{
-  id: string;
-  email: string;
-  username: string | null;
-}> {
-  const where =
-    args.userId !== undefined
-      ? { id: args.userId }
-      : args.email !== undefined
-        ? { email: args.email }
-        : args.username !== undefined
-          ? { username: args.username }
-          : undefined;
-
-  if (where) {
-    const user = await prisma.user.findFirst({
-      where,
-      select: { id: true, email: true, username: true },
-    });
-    if (!user) throw new Error('No matching user found.');
-    return user;
-  }
-
-  const users = await prisma.user.findMany({
-    orderBy: { createdAt: 'asc' },
-    select: { id: true, email: true, username: true },
-  });
-  if (users.length === 1) return users[0]!;
-  if (users.length === 0) throw new Error('No users found. Create an account first.');
-  throw new Error(
-    [
-      'Multiple users found. Pass --email, --username, or --user-id.',
-      ...users.map((u) => `  ${u.email}${u.username ? ` (${u.username})` : ''} id=${u.id}`),
-    ].join('\n')
-  );
-}
-
-async function ensureGroup(
-  groups: GroupsService,
-  prisma: PrismaService,
-  userId: string,
-  groupName: string
-): Promise<{ id: string; name: string }> {
-  const existing = await prisma.group.findFirst({
-    where: { ownerUserId: userId, name: groupName },
-    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-    select: { id: true, name: true },
-  });
-  if (existing) return existing;
-  const created = await groups.create(userId, { name: groupName });
-  return { id: created.id, name: created.name };
-}
-
-async function deleteAllContents(
-  contents: ContentsService,
-  groupId: string,
-  userId: string
-): Promise<void> {
-  const rows = await contents.list(groupId, { userId });
-  for (const row of rows) {
-    await contents.delete(row.id, userId);
-  }
 }
 
 async function deleteDuplicateHotLists(
