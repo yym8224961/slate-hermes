@@ -416,85 +416,73 @@ export class DynamicFrameRendererService implements OnModuleInit {
   private renderWeatherAlert(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
     const data = ctx.data ?? {};
     const rawItems = Array.isArray(data.items) ? data.items.filter(isRecord) : [];
-    const title = pickText(data.title, '全国气象预警');
-    const items = rawItems.slice(0, 5);
-
-    this.drawText(c, fonts.sans16, title, CONTENT_LEFT, CONTENT_TOP + 2, {
-      maxWidth: 250,
-      ellipsis: true,
-    });
-    this.drawText(
-      c,
-      fonts.sans12,
-      formatShortTime(data.updatedAt, ctx.renderedAt, timezoneFromConfig(ctx.config)),
-      CONTENT_RIGHT,
-      CONTENT_TOP + 4,
-      {
-        align: 'right',
-        maxWidth: 90,
-        ellipsis: true,
-      }
-    );
-    this.drawRule(c, CONTENT_LEFT, 62, CONTENT_WIDTH, 'solid');
+    const items = rawItems.slice(0, 9);
+    const tz = timezoneFromConfig(ctx.config);
 
     if (items.length === 0) {
-      this.drawText(c, fonts.sans16, '暂无气象预警', FRAME_WIDTH / 2, 146, {
+      const province = pickText(data.province, '');
+      const text = province ? `${weatherAlertSourceShort(province)}暂无预警` : '暂无气象预警';
+      this.drawText(c, fonts.sans16, text, FRAME_WIDTH / 2, 146, {
         align: 'center',
         maxWidth: CONTENT_WIDTH,
       });
       return;
     }
 
-    const startY = 76;
-    const rowH = 42;
+    const startY = STATUS_BAR_H + 7;
+    const rowH = Math.min(30, Math.floor((FRAME_HEIGHT - startY - 4) / items.length));
+    const badgeW = 34;
+    const badgeH = 22;
+    const titleX = CONTENT_LEFT + 44;
+    const timeW = 44;
+    const titleW = CONTENT_RIGHT - titleX - timeW - 10;
     items.forEach((item, index) => {
       const y = startY + index * rowH;
+      const centerY = y + Math.floor(rowH / 2);
       const titleText = pickText(item.title, FALLBACK_TEXT);
-      const timeText = formatShortTime(
-        item.issuedAt,
-        ctx.renderedAt,
-        timezoneFromConfig(ctx.config)
+      const timeText = formatShortTime(item.issuedAt, ctx.renderedAt, tz);
+      const summary = weatherAlertSummary(titleText);
+      this.drawBadge(
+        c,
+        fonts,
+        summary.kindLabel,
+        CONTENT_LEFT,
+        Math.round(centerY - badgeH / 2),
+        badgeW,
+        badgeH,
+        summary.level.filled
       );
-      this.drawText(c, fonts.sans16, titleText, CONTENT_LEFT, y, {
-        maxWidth: CONTENT_WIDTH,
-        maxLines: 1,
+      this.drawTextCenteredY(c, fonts.sans16, weatherAlertLine(summary), titleX, centerY, {
+        maxWidth: titleW,
         ellipsis: true,
       });
       if (timeText) {
-        this.drawText(c, fonts.sans12, timeText, CONTENT_LEFT, y + 21, {
-          maxWidth: CONTENT_WIDTH,
+        this.drawTextCenteredY(c, fonts.metric12, timeText, CONTENT_RIGHT, centerY, {
+          align: 'right',
+          maxWidth: timeW,
           ellipsis: true,
         });
       }
       if (index < items.length - 1)
-        this.drawRule(c, CONTENT_LEFT, y + rowH - 5, CONTENT_WIDTH, 'dashed');
+        this.drawRule(c, titleX, y + rowH - 1, CONTENT_RIGHT - titleX, 'dashed');
     });
   }
 
   private renderEarthquakeReport(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
     const data = ctx.data ?? {};
     const rawItems = Array.isArray(data.items) ? data.items.filter(isRecord) : [];
-    const items = rawItems.slice(0, 5);
-
-    this.drawText(c, fonts.sans16, '中国地震台网速报', CONTENT_LEFT, CONTENT_TOP + 2, {
-      maxWidth: 240,
-      ellipsis: true,
-    });
-    this.drawText(
-      c,
-      fonts.sans12,
-      formatShortTime(data.updatedAt, ctx.renderedAt, timezoneFromConfig(ctx.config)),
-      CONTENT_RIGHT,
-      CONTENT_TOP + 4,
-      {
-        align: 'right',
-        maxWidth: 90,
-        ellipsis: true,
-      }
-    );
-    this.drawRule(c, CONTENT_LEFT, 62, CONTENT_WIDTH, 'solid');
+    const items = rawItems.slice(0, 4);
+    const tz = timezoneFromConfig(ctx.config);
+    const updatedAt = formatShortTime(data.updatedAt, ctx.renderedAt, tz);
 
     if (items.length === 0) {
+      if (updatedAt) {
+        this.drawText(c, fonts.sans12, `更新 ${updatedAt}`, CONTENT_RIGHT, STATUS_BAR_H + 12, {
+          align: 'right',
+          maxWidth: 116,
+          ellipsis: true,
+        });
+      }
       this.drawText(c, fonts.sans16, '暂无地震速报', FRAME_WIDTH / 2, 146, {
         align: 'center',
         maxWidth: CONTENT_WIDTH,
@@ -502,35 +490,84 @@ export class DynamicFrameRendererService implements OnModuleInit {
       return;
     }
 
-    const startY = 74;
-    const rowH = 43;
-    items.forEach((item, index) => {
+    const latest = items[0]!;
+    const heroY = STATUS_BAR_H + 10;
+    const heroH = 106;
+    const magW = 120;
+    const magText = pickText(latest.magnitude, '--');
+    const location = pickText(latest.location, FALLBACK_TEXT);
+    const fields = earthquakeFields(latest);
+
+    c.fillRect(CONTENT_LEFT, heroY, magW, heroH, PIXEL_BLACK);
+    this.drawText(c, fonts.sans12, '震级', CONTENT_LEFT + 8, heroY + 8, {
+      maxWidth: magW - 16,
+      ellipsis: true,
+      color: PIXEL_WHITE,
+    });
+    this.drawMagnitudeValue(c, fonts, magText, CONTENT_LEFT + 4, heroY + 22, magW - 8, 58);
+    this.drawText(
+      c,
+      fonts.sans12,
+      updatedAt ? `更新 ${updatedAt}` : '最新速报',
+      CONTENT_LEFT + 8,
+      heroY + 82,
+      {
+        maxWidth: magW - 16,
+        ellipsis: true,
+        color: PIXEL_WHITE,
+      }
+    );
+
+    const heroTextX = CONTENT_LEFT + magW + 14;
+    const heroTextW = CONTENT_RIGHT - heroTextX;
+    const locationH = this.drawStrongText(c, fonts.sans16, location, heroTextX, heroY + 4, {
+      maxWidth: heroTextW,
+      maxLines: 2,
+      ellipsis: true,
+      lineGap: 2,
+    });
+    const fieldY = heroY + Math.max(34, locationH + 8);
+    this.drawFieldPair(c, fonts, '时间', fields.time || '--', heroTextX, fieldY, heroTextW);
+    this.drawFieldPair(c, fonts, '深度', fields.depth, heroTextX, fieldY + 21, heroTextW);
+    this.drawFieldPair(c, fonts, '坐标', fields.coords || '--', heroTextX, fieldY + 42, heroTextW);
+
+    const rest = items.slice(1);
+    if (rest.length === 0) return;
+
+    const startY = heroY + heroH + 12;
+    const rowH = Math.min(46, Math.floor((FRAME_HEIGHT - startY - 8) / rest.length));
+    rest.forEach((item, index) => {
       const y = startY + index * rowH;
+      const titleY = y + 5;
+      const detailY = y + 26;
       const magnitude = pickText(item.magnitude, '--');
       const location = pickText(item.location, FALLBACK_TEXT);
-      const depth = pickText(item.depthKm, '');
-      const occurredAt = pickText(item.occurredAt, '');
-      const title = `${location} ${magnitude}级`;
-      const detail = [
-        shortEarthquakeTime(occurredAt),
-        depth && depth !== '-' ? `深度${depth}千米` : '',
-      ]
-        .filter(Boolean)
-        .join('  ');
+      const fields = earthquakeFields(item);
 
-      this.drawText(c, fonts.sans16, title, CONTENT_LEFT, y, {
-        maxWidth: CONTENT_WIDTH,
+      this.drawBadge(c, fonts, `M${magnitude}`, CONTENT_LEFT, y + 11, 52, 24, index === 0);
+      this.drawText(c, fonts.sans16, location, CONTENT_LEFT + 66, titleY, {
+        maxWidth: CONTENT_RIGHT - CONTENT_LEFT - 66,
         maxLines: 1,
         ellipsis: true,
       });
-      if (detail) {
-        this.drawText(c, fonts.sans12, detail, CONTENT_LEFT, y + 22, {
-          maxWidth: CONTENT_WIDTH,
+      if (fields.time) {
+        this.drawText(c, fonts.metric12, fields.time, CONTENT_LEFT + 66, detailY, {
+          maxWidth: 62,
           ellipsis: true,
         });
       }
-      if (index < items.length - 1)
-        this.drawRule(c, CONTENT_LEFT, y + rowH - 3, CONTENT_WIDTH, 'dashed');
+      this.drawText(c, fonts.metric12, fields.depth, CONTENT_LEFT + 138, detailY, {
+        maxWidth: CONTENT_RIGHT - CONTENT_LEFT - 138,
+        ellipsis: true,
+      });
+      if (index < rest.length - 1)
+        this.drawRule(
+          c,
+          CONTENT_LEFT + 66,
+          y + rowH - 1,
+          CONTENT_RIGHT - CONTENT_LEFT - 66,
+          'dashed'
+        );
     });
   }
 
@@ -977,6 +1014,101 @@ export class DynamicFrameRendererService implements OnModuleInit {
       maxWidth: w - labelW - 8,
       ellipsis: true,
     });
+  }
+
+  private drawFieldPair(
+    c: BitmapCanvas,
+    fonts: FontSet,
+    label: string,
+    value: string,
+    x: number,
+    y: number,
+    w: number
+  ): void {
+    const labelW = 38;
+    this.drawText(c, fonts.sans16, label, x, y, {
+      maxWidth: labelW,
+      ellipsis: true,
+    });
+    this.drawText(c, fonts.sans16, value, x + labelW + 8, y, {
+      maxWidth: w - labelW - 8,
+      ellipsis: true,
+    });
+  }
+
+  private drawBadge(
+    c: BitmapCanvas,
+    fonts: FontSet,
+    label: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    filled: boolean
+  ): void {
+    if (filled) c.fillRect(x, y, w, h, PIXEL_BLACK);
+    else c.strokeRect(x, y, w, h, PIXEL_BLACK);
+    const font =
+      textWidth(fonts.sans16, label) <= w - 4
+        ? fonts.sans16
+        : textWidth(fonts.sans12, label) <= w - 4
+          ? fonts.sans12
+          : fonts.metric12;
+    this.drawTextInBox(c, font, label, x, y, w, h, filled ? PIXEL_WHITE : PIXEL_BLACK);
+  }
+
+  private drawStrongText(
+    c: BitmapCanvas,
+    font: BitmapFont,
+    text: string,
+    x: number,
+    y: number,
+    opts: TextOptions = {}
+  ): number {
+    const used = this.drawText(c, font, text, x, y, opts);
+    this.drawText(c, font, text, x + 1, y, opts);
+    return used;
+  }
+
+  private drawMagnitudeValue(
+    c: BitmapCanvas,
+    fonts: FontSet,
+    value: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number
+  ): void {
+    const compact = value.match(/^(\d+)\.(\d)$/);
+    if (compact) {
+      const digitW = 42;
+      const centerX = x + Math.round(w / 2);
+      this.drawTextInBox(
+        c,
+        fonts.displayLarge,
+        compact[1]!,
+        centerX - digitW - 7,
+        y,
+        digitW,
+        h,
+        PIXEL_WHITE
+      );
+      this.drawTextInBox(
+        c,
+        fonts.displayLarge,
+        compact[2]!,
+        centerX + 7,
+        y,
+        digitW,
+        h,
+        PIXEL_WHITE
+      );
+      c.fillRect(centerX - 3, y + h - 20, 7, 7, PIXEL_WHITE);
+      return;
+    }
+
+    const font = textWidth(fonts.displayLarge, value) <= w - 4 ? fonts.displayLarge : fonts.sans16;
+    this.drawTextInBox(c, font, value, x, y, w, h, PIXEL_WHITE);
   }
 
   private drawRule(
@@ -1639,6 +1771,111 @@ function shortEarthquakeTime(value: string): string {
   if (match) return `${Number(match[1])}/${Number(match[2])} ${match[3]}:${match[4]}`;
   const fallback = value.match(/(\d{1,2}):(\d{2})/);
   return fallback ? `${fallback[1]}:${fallback[2]}` : value;
+}
+
+function weatherAlertLevel(title: string): { label: string; filled: boolean } {
+  if (title.includes('红色')) return { label: '红', filled: true };
+  if (title.includes('橙色')) return { label: '橙', filled: true };
+  if (title.includes('黄色')) return { label: '黄', filled: false };
+  if (title.includes('蓝色')) return { label: '蓝', filled: false };
+  return { label: '警', filled: false };
+}
+
+function weatherAlertSummary(title: string): {
+  headline: string;
+  source: string;
+  sourceShort: string;
+  kindLabel: string;
+  levelShort: string;
+  level: { label: string; filled: boolean };
+} {
+  const normalized = title.replace(/\s+/g, '');
+  const level = weatherAlertLevel(normalized);
+  const publishMatch = normalized.match(/^(.*?)发布(.+?)预警(?:信号)?$/);
+  const source = publishMatch?.[1] ?? '';
+  const rawSignal = publishMatch?.[2] ?? normalized.replace(/预警(?:信号)?$/, '');
+  const levelName = weatherAlertLevelName(rawSignal) || weatherAlertLevelName(normalized);
+  const signal = rawSignal.replace(/(红色|橙色|黄色|蓝色)$/, '') || rawSignal || '气象';
+  return {
+    headline: `${levelName}${signal}预警`,
+    source,
+    sourceShort: weatherAlertSourceShort(source),
+    kindLabel: weatherAlertKindLabel(signal),
+    levelShort: weatherAlertLevelShort(levelName),
+    level,
+  };
+}
+
+function weatherAlertLevelName(title: string): string {
+  const match = title.match(/(红色|橙色|黄色|蓝色)/);
+  return match?.[1] ?? '';
+}
+
+function weatherAlertKindLabel(signal: string): string {
+  const compact = signal.replace(/灾害|气象|预警|信号/g, '');
+  if (compact.includes('雷雨大风')) return '雷暴';
+  if (compact.includes('雷电')) return '雷电';
+  if (compact.includes('暴雨')) return '暴雨';
+  if (compact.includes('大风')) return '大风';
+  if (compact.includes('台风')) return '台风';
+  if (compact.includes('高温')) return '高温';
+  if (compact.includes('大雾') || compact.includes('雾')) return '大雾';
+  if (compact.includes('山洪')) return '山洪';
+  if (compact.includes('暴雪')) return '暴雪';
+  if (compact.includes('寒潮')) return '寒潮';
+  if (compact.includes('冰雹')) return '冰雹';
+  if (compact.length <= 2) return compact || '预警';
+  return compact.slice(0, 2);
+}
+
+function weatherAlertLevelShort(levelName: string): string {
+  if (levelName === '红色') return '红';
+  if (levelName === '橙色') return '橙';
+  if (levelName === '黄色') return '黄';
+  if (levelName === '蓝色') return '蓝';
+  return '警';
+}
+
+function weatherAlertSourceShort(source: string): string {
+  if (!source) return '';
+  if (source.includes('中央气象台')) return '中央气象台';
+  return source
+    .replace('广西壮族自治区', '广西自治区')
+    .replace('宁夏回族自治区', '宁夏自治区')
+    .replace('新疆维吾尔自治区', '新疆自治区')
+    .replace('内蒙古自治区', '内蒙古')
+    .replace('西藏自治区', '西藏')
+    .replace(/特别行政区/g, '')
+    .slice(0, 6);
+}
+
+function weatherAlertLine(summary: {
+  headline: string;
+  source: string;
+  sourceShort: string;
+  kindLabel: string;
+  levelShort: string;
+  level: { label: string; filled: boolean };
+}): string {
+  return summary.sourceShort
+    ? `${summary.levelShort} · ${summary.sourceShort}`
+    : summary.levelShort;
+}
+
+function earthquakeFields(item: Record<string, unknown>): {
+  time: string;
+  depth: string;
+  coords: string;
+} {
+  const occurredAt = shortEarthquakeTime(pickText(item.occurredAt, ''));
+  const depth = pickText(item.depthKm, '');
+  const longitude = pickText(item.longitude, '');
+  const latitude = pickText(item.latitude, '');
+  const depthText = depth && depth !== '-' && depth !== '--' ? `${depth}千米` : '--';
+  const coords = [longitude ? `经${longitude}` : '', latitude ? `纬${latitude}` : '']
+    .filter(Boolean)
+    .join('  ');
+  return { time: occurredAt, depth: depthText, coords };
 }
 
 function normalizeWeatherCode(value: unknown): number | null {

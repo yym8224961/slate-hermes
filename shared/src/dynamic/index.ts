@@ -80,6 +80,64 @@ export const HistoryTodayConfig = z
   .merge(DynamicRefreshOptions);
 export type HistoryTodayConfigT = z.infer<typeof HistoryTodayConfig>;
 
+export const WEATHER_ALERT_PROVINCES = [
+  '北京市',
+  '上海市',
+  '天津市',
+  '重庆市',
+  '黑龙江省',
+  '吉林省',
+  '辽宁省',
+  '内蒙古自治区',
+  '河北省',
+  '山西省',
+  '陕西省',
+  '山东省',
+  '新疆维吾尔自治区',
+  '西藏自治区',
+  '青海省',
+  '甘肃省',
+  '宁夏回族自治区',
+  '河南省',
+  '江苏省',
+  '湖北省',
+  '浙江省',
+  '安徽省',
+  '福建省',
+  '江西省',
+  '湖南省',
+  '贵州省',
+  '四川省',
+  '广东省',
+  '云南省',
+  '广西壮族自治区',
+  '海南省',
+] as const;
+export type WeatherAlertProvinceT = (typeof WEATHER_ALERT_PROVINCES)[number];
+
+const weatherAlertProvinceAliases = new Map<string, WeatherAlertProvinceT>(
+  WEATHER_ALERT_PROVINCES.flatMap((province) => {
+    const aliases = new Set<string>([
+      province,
+      province.replace(/省$|市$/, ''),
+      province.replace(/(?:壮族|回族|维吾尔)?自治区$/, ''),
+      province.replace(/(?:壮族|回族|维吾尔)自治区$/, '自治区'),
+    ]);
+    aliases.delete('');
+    return [...aliases].map((alias) => [alias, province] as const);
+  })
+);
+
+export function isWeatherAlertProvince(value: string): value is WeatherAlertProvinceT {
+  return (WEATHER_ALERT_PROVINCES as readonly string[]).includes(value);
+}
+
+export function normalizeWeatherAlertProvince(value: string): string {
+  const text = value.trim();
+  if (!text || text === '全国' || text === '全部' || text === '中国') return '';
+  return weatherAlertProvinceAliases.get(text) ?? '';
+}
+
 export const WeatherAlertConfig = z.object({
   type: z.literal('weather_alert'),
   province: z.string().max(16).default(''),

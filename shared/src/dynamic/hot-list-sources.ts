@@ -3,14 +3,14 @@ import { z } from 'zod';
 export type HotListSourceKindT = 'general' | 'news' | 'tech' | 'community' | 'commerce';
 
 export interface HotListSourceCatalogEntry {
-  id: HotListSourceIdT;
+  id: CurrentHotListSourceIdT;
   label: string;
   shortLabel: string;
   kind: HotListSourceKindT;
   channelLabel?: string;
 }
 
-export const HotListSourceIdValues = [
+export const CurrentHotListSourceIdValues = [
   'zhihu',
   'weibo',
   'baidu',
@@ -27,7 +27,6 @@ export const HotListSourceIdValues = [
   'ithome',
   'smzdm',
   '36kr',
-  'baidutieba',
   'dongchedi',
   'douban-movic',
   'github-trending',
@@ -50,7 +49,6 @@ export const HotListSourceIdValues = [
   'geekpark',
   'guokr',
   'hackernews',
-  'hostloc',
   'huxiu',
   'ifanr',
   'ithome-xijiayi',
@@ -71,14 +69,11 @@ export const HotListSourceIdValues = [
   'zhihu-daily',
   '36kr-quick',
   'bilibili-hot-search',
-  'bilibili-hot-video',
   'bilibili-ranking',
   'cankaoxiaoxi',
   'douban',
-  'chongbuluo',
   'chongbuluo-hot',
   'chongbuluo-latest',
-  'cls',
   'cls-depth',
   'cls-hot',
   'cls-telegraph',
@@ -88,36 +83,72 @@ export const HotListSourceIdValues = [
   'freebuf',
   'gelonghui',
   'ifeng',
-  'iqiyi',
   'iqiyi-hot-ranklist',
   'jin10',
   'kaopu',
-  'mktnews',
   'mktnews-flash',
   'nowcoder',
-  'pcbeta',
   'pcbeta-windows11',
   'solidot',
   'sputniknewscn',
   'steam',
-  'tencent',
   'tencent-hot',
   'v2ex-share',
-  'wallstreetcn',
   'wallstreetcn-hot',
   'wallstreetcn-news',
   'wallstreetcn-quick',
-  'xueqiu',
   'xueqiu-hotstock',
   'zaobao',
-  'qqvideo',
   'qqvideo-tv-hotsearch',
 ] as const;
 
+const LegacyHotListSourceIdValues = [
+  'baidutieba',
+  'hostloc',
+  'bilibili-hot-video',
+  'chongbuluo',
+  'cls',
+  'iqiyi',
+  'mktnews',
+  'pcbeta',
+  'tencent',
+  'wallstreetcn',
+  'xueqiu',
+  'qqvideo',
+] as const;
+
+export const HotListSourceIdValues = [
+  ...CurrentHotListSourceIdValues,
+  ...LegacyHotListSourceIdValues,
+] as const;
+
+export const CurrentHotListSourceId = z.enum(CurrentHotListSourceIdValues);
+export type CurrentHotListSourceIdT = z.infer<typeof CurrentHotListSourceId>;
 export const HotListSourceId = z.enum(HotListSourceIdValues);
 export type HotListSourceIdT = z.infer<typeof HotListSourceId>;
 
-function hotListSource<const Id extends HotListSourceIdT>(
+type LegacyHotListSourceIdT = (typeof LegacyHotListSourceIdValues)[number];
+
+const LEGACY_HOT_LIST_SOURCE_ALIASES = {
+  baidutieba: 'tieba',
+  hostloc: 'nodeseek',
+  'bilibili-hot-video': 'bilibili',
+  chongbuluo: 'chongbuluo-latest',
+  cls: 'cls-telegraph',
+  iqiyi: 'iqiyi-hot-ranklist',
+  mktnews: 'mktnews-flash',
+  pcbeta: 'pcbeta-windows11',
+  tencent: 'tencent-hot',
+  wallstreetcn: 'wallstreetcn-quick',
+  xueqiu: 'xueqiu-hotstock',
+  qqvideo: 'qqvideo-tv-hotsearch',
+} as const satisfies Record<LegacyHotListSourceIdT, CurrentHotListSourceIdT>;
+
+export function normalizeHotListSourceId(source: HotListSourceIdT): CurrentHotListSourceIdT {
+  return LEGACY_HOT_LIST_SOURCE_ALIASES[source as LegacyHotListSourceIdT] ?? source;
+}
+
+function hotListSource<const Id extends CurrentHotListSourceIdT>(
   id: Id,
   label: string,
   kind: HotListSourceKindT,
@@ -151,7 +182,6 @@ export const HOT_LIST_SOURCES = [
   hotListSource('smzdm', '什么值得买', M, '值得买'),
   hotListSource('36kr', '36氪', T, '36氪热榜', '热榜'),
 
-  hotListSource('baidutieba', '百度贴吧', C, '贴吧热议榜', '热议榜'),
   hotListSource('dongchedi', '懂车帝', G),
   hotListSource('douban-movic', '豆瓣电影', G, '豆瓣新片', '新片榜（Next）'),
   hotListSource('github-trending', 'GitHub', T, 'GitHub热门仓库', '热门仓库'),
@@ -175,7 +205,6 @@ export const HOT_LIST_SOURCES = [
   hotListSource('geekpark', '极客公园', T),
   hotListSource('guokr', '果壳', T),
   hotListSource('hackernews', 'Hacker News', T),
-  hotListSource('hostloc', '全球主机交流', C, 'Hostloc'),
   hotListSource('huxiu', '虎嗅', N, '虎嗅24小时'),
   hotListSource('ifanr', '爱范儿', N, '爱范儿快讯'),
   hotListSource('ithome-xijiayi', 'IT之家「喜加一」', T, 'IT之家喜加一'),
@@ -197,14 +226,11 @@ export const HOT_LIST_SOURCES = [
 
   hotListSource('36kr-quick', '36氪', T, '36氪快讯', '快讯'),
   hotListSource('bilibili-hot-search', '哔哩哔哩', C, 'B站热搜', '热搜'),
-  hotListSource('bilibili-hot-video', '哔哩哔哩', C, 'B站热门视频', '热门视频（NewsNow）'),
   hotListSource('bilibili-ranking', '哔哩哔哩', C, 'B站排行榜', '排行榜'),
   hotListSource('cankaoxiaoxi', '参考消息', N, '参考消息'),
   hotListSource('douban', '豆瓣', G, '豆瓣热门'),
-  hotListSource('chongbuluo', '虫部落', C, '虫部落首页', '首页'),
   hotListSource('chongbuluo-hot', '虫部落', C, '虫部落最热', '最热'),
   hotListSource('chongbuluo-latest', '虫部落', C, '虫部落最新', '最新'),
-  hotListSource('cls', '财联社', N, '财联社电报', '电报（默认）'),
   hotListSource('cls-depth', '财联社', N, '财联社深度', '深度'),
   hotListSource('cls-hot', '财联社', N, '财联社热门', '热门'),
   hotListSource('cls-telegraph', '财联社', N, '财联社电报', '电报'),
@@ -214,34 +240,28 @@ export const HOT_LIST_SOURCES = [
   hotListSource('freebuf', 'FreeBuf', T),
   hotListSource('gelonghui', '格隆汇', N),
   hotListSource('ifeng', '凤凰网', N, '凤凰网'),
-  hotListSource('iqiyi', '爱奇艺', G, '爱奇艺热播榜', '热播榜（默认）'),
   hotListSource('iqiyi-hot-ranklist', '爱奇艺', G, '爱奇艺热播榜', '热播榜'),
   hotListSource('jin10', '金十数据', N, '金十'),
   hotListSource('kaopu', '靠谱新闻', N, '靠谱'),
-  hotListSource('mktnews', 'MKTNews', N, 'MKTNews快讯', '快讯（默认）'),
   hotListSource('mktnews-flash', 'MKTNews', N, 'MKTNews快讯', '快讯'),
   hotListSource('nowcoder', '牛客', C),
-  hotListSource('pcbeta', '远景论坛', C, '远景Win11', 'Windows 11'),
   hotListSource('pcbeta-windows11', '远景论坛', C, '远景Win11热帖', 'Windows 11 热帖'),
   hotListSource('solidot', 'Solidot', T),
   hotListSource('sputniknewscn', '卫星通讯社', N, '卫星通讯社'),
   hotListSource('steam', 'Steam', G),
-  hotListSource('tencent', '腾讯新闻', N, '腾讯综合早报', '综合早报（默认）'),
   hotListSource('tencent-hot', '腾讯新闻', N, '腾讯综合早报', '综合早报'),
   hotListSource('v2ex-share', 'V2EX', C, 'V2EX最新分享', '最新分享'),
-  hotListSource('wallstreetcn', '华尔街见闻', N, '华尔街快讯', '快讯（默认）'),
   hotListSource('wallstreetcn-hot', '华尔街见闻', N, '华尔街最热', '最热'),
   hotListSource('wallstreetcn-news', '华尔街见闻', N, '华尔街最新', '最新'),
   hotListSource('wallstreetcn-quick', '华尔街见闻', N, '华尔街快讯', '快讯'),
-  hotListSource('xueqiu', '雪球', N, '雪球热门股票', '热门股票（默认）'),
   hotListSource('xueqiu-hotstock', '雪球', N, '雪球热门股票', '热门股票'),
   hotListSource('zaobao', '联合早报', N, '联合早报'),
-  hotListSource('qqvideo', '腾讯视频', G, '腾讯视频热搜榜', '电视热搜榜（默认）'),
   hotListSource('qqvideo-tv-hotsearch', '腾讯视频', G, '腾讯视频电视热搜榜', '电视热搜榜'),
 ] as const satisfies readonly HotListSourceCatalogEntry[];
 
 export function hotListSourceLabel(source: HotListSourceIdT): string {
-  return HOT_LIST_SOURCES.find((item) => item.id === source)?.label ?? source;
+  const normalized = normalizeHotListSourceId(source);
+  return HOT_LIST_SOURCES.find((item) => item.id === normalized)?.label ?? source;
 }
 
 export function hotListSourceDisplayLabel(source: HotListSourceCatalogEntry): string {
@@ -258,12 +278,15 @@ export const HOT_LIST_SOURCES_BY_NAME = [...HOT_LIST_SOURCES].sort((a, b) =>
 );
 
 export function hotListSourceShortLabel(source: HotListSourceIdT): string {
-  return HOT_LIST_SOURCES.find((item) => item.id === source)?.shortLabel ?? source;
+  const normalized = normalizeHotListSourceId(source);
+  return HOT_LIST_SOURCES.find((item) => item.id === normalized)?.shortLabel ?? source;
 }
+
+const HotListConfigSourceId = HotListSourceId.default('weibo').transform(normalizeHotListSourceId);
 
 export const HotListConfig = z.object({
   type: z.literal('hot_list'),
-  source: HotListSourceId.default('weibo'),
+  source: HotListConfigSourceId,
   refresh_interval_sec: z.coerce.number().int().min(300).max(86400).default(600),
 });
 export type HotListConfigT = z.infer<typeof HotListConfig>;

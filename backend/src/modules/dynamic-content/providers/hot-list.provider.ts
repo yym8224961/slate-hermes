@@ -1,9 +1,11 @@
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import {
+  HotListSourceId,
   HotListConfig,
   hotListSourceLabel,
+  normalizeHotListSourceId,
   type HotListConfigT,
-  type HotListSourceIdT,
+  type CurrentHotListSourceIdT,
 } from 'shared';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { HOT_LIST_SOURCE_REGISTRY } from '../hot-list/hot-list-sources';
@@ -15,7 +17,7 @@ interface CacheEntry {
 }
 
 interface FetchFreshResult {
-  sourceId: HotListSourceIdT;
+  sourceId: CurrentHotListSourceIdT;
   sourceLabel: string;
   items: HotListItem[];
 }
@@ -82,7 +84,7 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
 
   private dataFromFreshResult(
     fresh: FetchFreshResult | null,
-    sourceId: HotListSourceIdT,
+    sourceId: CurrentHotListSourceIdT,
     ctx: DynamicContentFetchCtx
   ): HotListProviderData {
     if (fresh && fresh.items.length > 0) {
@@ -99,7 +101,7 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
     return this.emptyData(sourceId, ctx.now);
   }
 
-  private async fetchFresh(sourceId: HotListSourceIdT): Promise<FetchFreshResult> {
+  private async fetchFresh(sourceId: CurrentHotListSourceIdT): Promise<FetchFreshResult> {
     const source = this.sources.find((s) => s.id === sourceId);
     if (!source) throw new Error(`未知热榜数据源: ${sourceId}`);
 
@@ -120,16 +122,18 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
   private fallbackFromLastData(lastData: unknown): HotListProviderData | null {
     if (!lastData || typeof lastData !== 'object' || Array.isArray(lastData)) return null;
     const data = lastData as Partial<HotListProviderData>;
-    if (!data.source || !Array.isArray(data.items) || data.items.length === 0) return null;
+    const source = HotListSourceId.safeParse(data.source);
+    if (!source.success || !Array.isArray(data.items) || data.items.length === 0) return null;
+    const normalizedSource = normalizeHotListSourceId(source.data);
     return {
-      source: data.source,
-      sourceLabel: data.sourceLabel ?? hotListSourceLabel(data.source),
+      source: normalizedSource,
+      sourceLabel: data.sourceLabel ?? hotListSourceLabel(normalizedSource),
       updatedAt: data.updatedAt ?? new Date().toISOString(),
       items: data.items,
     };
   }
 
-  private emptyData(sourceId: HotListSourceIdT, now: Date): HotListProviderData {
+  private emptyData(sourceId: CurrentHotListSourceIdT, now: Date): HotListProviderData {
     return {
       source: sourceId,
       sourceLabel: hotListSourceLabel(sourceId),

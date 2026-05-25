@@ -40,16 +40,16 @@ const TYPE_ITEMS: Array<{
     Icon: CalendarDays,
   },
   {
-    type: 'weather',
-    title: '天气',
-    hint: '实时气温 / 湿度 / 风速',
-    Icon: CloudSun,
-  },
-  {
     type: 'history_today',
     title: '历史上的今天',
     hint: '今日历史大事，每日 0 点更新',
     Icon: BookText,
+  },
+  {
+    type: 'weather',
+    title: '天气',
+    hint: '实时气温 / 湿度 / 风速',
+    Icon: CloudSun,
   },
   {
     type: 'weather_alert',
@@ -64,6 +64,12 @@ const TYPE_ITEMS: Array<{
     Icon: Activity,
   },
   {
+    type: 'hot_list',
+    title: '热榜',
+    hint: '微博 / 知乎 / B站等榜单',
+    Icon: Flame,
+  },
+  {
     type: 'dashboard',
     title: '数据看板',
     hint: '外部 POST 数据，立即刷新',
@@ -74,12 +80,6 @@ const TYPE_ITEMS: Array<{
     title: '字体测试',
     hint: '切换字体 · 查看 1bpp 字形',
     Icon: Type,
-  },
-  {
-    type: 'hot_list',
-    title: '热榜',
-    hint: '微博 / 知乎 / B站等榜单',
-    Icon: Flame,
   },
 ];
 

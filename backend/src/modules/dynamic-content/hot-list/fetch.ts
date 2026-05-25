@@ -16,6 +16,16 @@ export async function fetchJson<T>(url: string, opts: FetchOptions): Promise<T> 
 }
 
 export async function fetchText(url: string, opts: FetchOptions): Promise<string> {
+  const resp = await fetchResponse(url, opts);
+  return await resp.text();
+}
+
+export async function fetchArrayBuffer(url: string, opts: FetchOptions): Promise<ArrayBuffer> {
+  const resp = await fetchResponse(url, opts);
+  return await resp.arrayBuffer();
+}
+
+async function fetchResponse(url: string, opts: FetchOptions): Promise<Response> {
   const headers = new Headers(opts.headers);
   if (!headers.has('User-Agent')) headers.set('User-Agent', DESKTOP_UA);
   const body =
@@ -31,5 +41,5 @@ export async function fetchText(url: string, opts: FetchOptions): Promise<string
     body,
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status} ${url}`);
-  return await resp.text();
+  return resp;
 }

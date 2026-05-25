@@ -1,5 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { WeatherAlertConfig, type WeatherAlertConfigT } from 'shared';
+import {
+  normalizeWeatherAlertProvince,
+  WeatherAlertConfig,
+  type WeatherAlertConfigT,
+} from 'shared';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { stripHtml } from '../html-text';
 
@@ -57,7 +61,8 @@ export class WeatherAlertProvider implements DataProvider<
     config: WeatherAlertConfigT,
     ctx: DynamicContentFetchCtx
   ): Promise<WeatherAlertProviderData> {
-    const key = config.province || '全国';
+    const province = normalizeWeatherAlertProvince(config.province);
+    const key = province || '全国';
     const now = ctx.now.getTime();
     const ttlMs = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_MS / 1000, 300) * 1000;
     const cached = this.cache.get(key);
@@ -67,7 +72,7 @@ export class WeatherAlertProvider implements DataProvider<
     const existing = this.inflight.get(key);
     if (existing) return existing;
 
-    const p = this.fetchFresh(config, ctx)
+    const p = this.fetchFresh({ ...config, province }, ctx)
       .then((data) => {
         this.cache.set(key, { data, fetchedAt: now });
         return data;
@@ -81,7 +86,7 @@ export class WeatherAlertProvider implements DataProvider<
     config: WeatherAlertConfigT,
     ctx: DynamicContentFetchCtx
   ): Promise<WeatherAlertProviderData> {
-    const province = config.province.trim();
+    const province = normalizeWeatherAlertProvince(config.province);
     const url =
       `${NMC_ALARM_API}?pageNo=1&pageSize=20&signaltype=&signallevel=&province=` +
       encodeURIComponent(province);

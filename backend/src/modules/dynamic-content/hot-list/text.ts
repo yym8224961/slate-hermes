@@ -78,3 +78,46 @@ export function pickJsonScript(html: string, pattern: RegExp): unknown | null {
 function trimDecimal(value: number): string {
   return value.toFixed(value >= 10 ? 0 : 1).replace(/\.0$/, '');
 }
+
+export function normalizeTimestamp(value: unknown): string | undefined {
+  if (value === null || value === undefined || value === '') return undefined;
+  if (typeof value === 'number') {
+    const ms = value > 10_000_000_000 ? value : value * 1000;
+    return new Date(ms).toISOString();
+  }
+  const text = cleanText(value).trim();
+  if (!text) return undefined;
+  const numeric = Number(text);
+  if (Number.isFinite(numeric) && numeric > 0) return normalizeTimestamp(numeric);
+  const date = new Date(text.replace(/-/g, '/'));
+  return Number.isNaN(date.getTime()) ? text : date.toISOString();
+}
+
+export interface NeteaseResponse {
+  data?: {
+    list?: Array<{
+      docid?: string;
+      skipID?: string;
+      title?: string;
+      _keyword?: string;
+      source?: string;
+      publishTime?: string;
+      ptime?: string;
+      url?: string;
+    }>;
+  };
+}
+
+export interface QqNewsResponse {
+  idlist?: Array<{
+    newslist?: Array<{
+      id?: string;
+      title?: string;
+      abstract?: string;
+      source?: string;
+      timestamp?: number;
+      readCount?: number;
+      hotEvent?: { hotScore?: number };
+    }>;
+  }>;
+}

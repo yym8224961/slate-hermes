@@ -1,4 +1,9 @@
-import { FONT_TEST_FONTS, hotListSourceShortLabel, type DynamicConfigT } from 'shared';
+import {
+  FONT_TEST_FONTS,
+  hotListSourceShortLabel,
+  normalizeWeatherAlertProvince,
+  type DynamicConfigT,
+} from 'shared';
 
 export function dynamicStatusTitle(config: DynamicConfigT | null | undefined): string | null {
   if (!config) return null;
@@ -11,7 +16,7 @@ export function dynamicStatusTitle(config: DynamicConfigT | null | undefined): s
     case 'history_today':
       return `历史上的${dateParts(now, config.tz).month}月${dateParts(now, config.tz).day}日`;
     case 'weather_alert':
-      return `${config.province || '全国'}气象预警`;
+      return `${normalizeWeatherAlertProvince(config.province) || '全国'}气象预警`;
     case 'earthquake_report':
       return '地震速报';
     case 'weather':

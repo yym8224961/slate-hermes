@@ -35,6 +35,14 @@ type RenderDynamicContentResultExt = RenderDynamicContentResult & {
   audioEtag: string | null;
 };
 
+interface CurrentContentRequest {
+  deviceId: string;
+  groupId: string;
+  seq: number;
+  contentId: string;
+  manifestEtag: string;
+}
+
 const CONTENT_SELECT = {
   id: true,
   groupId: true,
@@ -140,7 +148,7 @@ export class ContentsService {
     };
   }
 
-  async currentContentForDevice(
+  async resolveCurrentContentRequest(
     deviceId: string,
     telemetry:
       | {
@@ -149,7 +157,7 @@ export class ContentsService {
           manifest_etag?: string;
         }
       | undefined
-  ): Promise<ContentSummaryT | null> {
+  ): Promise<CurrentContentRequest | null> {
     const seq = telemetry?.current_content_seq;
     if (seq === undefined || !Number.isInteger(seq) || seq < 0) return null;
     const device = await this.prisma.device.findUnique({
@@ -163,51 +171,70 @@ export class ContentsService {
       return null;
     const content = await this.prisma.content.findUnique({
       where: { groupId_sortOrder: { groupId, sortOrder: seq } },
+      select: { id: true },
+    });
+    if (!content) return null;
+    return {
+      deviceId,
+      groupId,
+      seq,
+      contentId: content.id,
+      manifestEtag: telemetry.manifest_etag,
+    };
+  }
+
+  async currentContentForDevice(request: CurrentContentRequest): Promise<ContentSummaryT | null> {
+    const content = await this.prisma.content.findUnique({
+      where: { id: request.contentId },
       select: CONTENT_SELECT,
     });
+    if (!content || content.groupId !== request.groupId || content.sortOrder !== request.seq) {
+      return null;
+    }
     return content ? contentToSummary(content) : null;
   }
 
   async refreshCurrentContentForDeviceIfDue(
-    deviceId: string,
-    telemetry:
-      | {
-          current_group?: string | null;
-          current_content_seq?: number;
-          manifest_etag?: string;
-        }
-      | undefined
-  ): Promise<void> {
-    const seq = telemetry?.current_content_seq;
-    if (seq === undefined || !Number.isInteger(seq) || seq < 0) return;
+    request: CurrentContentRequest | null
+  ): Promise<CurrentContentRequest | null> {
+    if (!request) return null;
     const device = await this.prisma.device.findUnique({
-      where: { id: deviceId },
+      where: { id: request.deviceId },
       select: { selectedGroupId: true, selectedGroup: { select: { manifestEtag: true } } },
     });
-    const groupId = device?.selectedGroupId;
-    if (!groupId) return;
-    if (telemetry?.current_group && telemetry.current_group !== groupId) return;
-    if (!telemetry?.manifest_etag || telemetry.manifest_etag !== device.selectedGroup?.manifestEtag)
-      return;
+    if (
+      !device ||
+      device.selectedGroupId !== request.groupId ||
+      device.selectedGroup?.manifestEtag !== request.manifestEtag
+    ) {
+      return null;
+    }
     const content = await this.prisma.content.findUnique({
-      where: { groupId_sortOrder: { groupId, sortOrder: seq } },
+      where: { id: request.contentId },
       select: {
         id: true,
+        groupId: true,
+        sortOrder: true,
         kind: true,
         dynamicType: true,
         dynamicNextRunAt: true,
         dynamicRefreshDueAt: true,
       },
     });
-    if (content && this.isCurrentDynamicDue(content)) {
+    if (!content || content.groupId !== request.groupId || content.sortOrder !== request.seq) {
+      return null;
+    }
+    if (this.isCurrentDynamicDue(content)) {
       try {
-        await this.dynamicRenderer.renderDynamicContent(content.id);
+        const rendered = await this.dynamicRenderer.renderDynamicContent(content.id);
+        return { ...request, manifestEtag: rendered.groupEtag };
       } catch (err) {
         this.logger.warn(
           `dynamic current-frame refresh failed content=${content.id}: ${formatError(err)}`
         );
       }
     }
+    return request;
   }
 
   async list(

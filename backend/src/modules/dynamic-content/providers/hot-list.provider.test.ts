@@ -16,6 +16,15 @@ describe('HotListProvider', () => {
     expect(() => provider.validateConfig({ type: 'hot_list', source: 'missing' })).toThrow();
   });
 
+  it('normalizes legacy source ids', () => {
+    const provider = new HotListProvider();
+    const wallstreet = provider.validateConfig({ type: 'hot_list', source: 'wallstreetcn' });
+    const qqVideo = provider.validateConfig({ type: 'hot_list', source: 'qqvideo' });
+
+    expect(wallstreet.source).toBe('wallstreetcn-quick');
+    expect(qqVideo.source).toBe('qqvideo-tv-hotsearch');
+  });
+
   it('caches fetched lists within the configured refresh ttl', async () => {
     let calls = 0;
     const source: HotListSource = {

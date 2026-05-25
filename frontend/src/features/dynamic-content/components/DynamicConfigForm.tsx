@@ -4,16 +4,28 @@ import {
   FONT_TEST_FONTS,
   HOT_LIST_SOURCES_BY_NAME,
   TTS_VOICES,
+  WEATHER_ALERT_PROVINCES,
   hotListSourceDisplayLabel,
+  isWeatherAlertProvince,
+  normalizeWeatherAlertProvince,
+  type CurrentHotListSourceIdT,
   type DynamicConfigT,
   type FontTestFontIdT,
-  type HotListSourceIdT,
   type TtsVoiceT,
 } from 'shared';
 import { inputCls, fieldBaseCls } from '@/lib/styles';
 import { searchCities } from '@/lib/cities';
 import { Select, SelectItem } from '@/components/ui/Select';
 import { cn } from '@/lib/cn';
+
+const WEATHER_ALERT_REGIONS: Array<{ label: string; value: string; hint?: string }> = [
+  { label: '全国', value: '', hint: '全部预警' },
+  ...WEATHER_ALERT_PROVINCES.map((province) => ({
+    label: province,
+    value: province,
+    hint: province.endsWith('市') ? '直辖市' : undefined,
+  })),
+];
 
 // 按动态类型渲染不同的配置字段集合。
 export function DynamicConfigForm({
@@ -208,18 +220,10 @@ function WeatherAlertConfigPanel({
 }) {
   return (
     <div className="space-y-4">
-      <label className="block">
-        <span className="block font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
-          区域
-        </span>
-        <input
-          className={cn(inputCls, 'w-full')}
-          value={config.province}
-          onChange={(e) => onChange({ ...config, province: e.target.value.trim() })}
-          placeholder="留空为全国，如：广东省"
-          autoComplete="off"
-        />
-      </label>
+      <ProvinceSearch
+        value={config.province}
+        onSelect={(province) => onChange({ ...config, province })}
+      />
       <DynamicRefreshSettings config={config} onChange={onChange} />
     </div>
   );
@@ -238,7 +242,7 @@ function HotListConfigPanel({
         <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">频道</p>
         <Select
           value={config.source}
-          onValueChange={(v) => onChange({ ...config, source: v as HotListSourceIdT })}
+          onValueChange={(v) => onChange({ ...config, source: v as CurrentHotListSourceIdT })}
         >
           {HOT_LIST_SOURCES_BY_NAME.map((source) => (
             <SelectItem key={source.id} value={source.id} hint={hotListKindLabel(source.kind)}>
@@ -356,6 +360,93 @@ function CitySearch({
   );
 }
 
+function ProvinceSearch({
+  value,
+  onSelect,
+}: {
+  value: string;
+  onSelect: (province: string) => void;
+}) {
+  const [focused, setFocused] = useState(false);
+  const [query, setQuery] = useState(value ? regionLabel(value) : '');
+  const [open, setOpen] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  useEffect(() => {
+    if (focused) return;
+    setQuery(value ? regionLabel(value) : '');
+    setDirty(false);
+    setOpen(false);
+  }, [focused, value]);
+
+  const results = useMemo(() => (dirty ? searchWeatherAlertRegions(query) : []), [dirty, query]);
+
+  useEffect(() => {
+    if (results.length > 0) setOpen(true);
+    else if (dirty) setOpen(false);
+  }, [dirty, results.length]);
+
+  return (
+    <div className="relative">
+      <label className="block">
+        <span className="block font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
+          区域
+        </span>
+        <input
+          className={cn(inputCls, 'w-full')}
+          value={query}
+          onChange={(e) => {
+            const next = e.target.value;
+            const normalized = regionValueFromInput(next);
+            setQuery(next);
+            setDirty(true);
+            if (isWeatherAlertRegionValue(normalized)) onSelect(normalized);
+          }}
+          onFocus={() => {
+            setFocused(true);
+            setDirty(true);
+            setOpen(true);
+          }}
+          onBlur={() =>
+            setTimeout(() => {
+              const next = regionValueFromInput(query);
+              const normalized = isWeatherAlertRegionValue(next) ? next : value;
+              onSelect(normalized);
+              setQuery(normalized ? regionLabel(normalized) : '');
+              setFocused(false);
+              setDirty(false);
+              setOpen(false);
+            }, 150)
+          }
+          placeholder="全国或省级区域，如：广东省"
+          autoComplete="off"
+        />
+      </label>
+      {open && results.length > 0 && (
+        <div className="absolute z-10 top-full mt-1 left-0 right-0 max-h-64 overflow-y-auto overscroll-contain border border-ink bg-paper shadow">
+          {results.map((region) => (
+            <button
+              key={region.label}
+              type="button"
+              className="w-full text-left px-3 py-2 font-sans text-[13px] text-ink hover:bg-cream"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                onSelect(region.value);
+                setQuery(region.label);
+                setDirty(false);
+                setOpen(false);
+              }}
+            >
+              {region.label}
+              {region.hint && <span className="ml-2 text-stone text-[11px]">{region.hint}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Checkbox({
   label,
   checked,
@@ -382,6 +473,35 @@ function defaultRefreshInterval(
   _type: AudioDynamicConfig['type'] | 'hot_list' | 'weather_alert' | 'earthquake_report'
 ): number {
   return 600;
+}
+
+function regionLabel(value: string): string {
+  const normalized = normalizeWeatherAlertProvince(value);
+  if (!normalized) return '全国';
+  return WEATHER_ALERT_REGIONS.find((region) => region.value === normalized)?.label ?? value;
+}
+
+function regionValueFromInput(value: string): string {
+  return normalizeWeatherAlertProvince(value);
+}
+
+function isWeatherAlertRegionValue(value: string): boolean {
+  return value === '' || isWeatherAlertProvince(value);
+}
+
+function searchWeatherAlertRegions(query: string): typeof WEATHER_ALERT_REGIONS {
+  const q = query.trim();
+  if (!q || q === '全国') return WEATHER_ALERT_REGIONS;
+  const normalizedQuery = normalizeWeatherAlertProvince(q);
+  return WEATHER_ALERT_REGIONS.filter((region) => {
+    const normalized = region.label.replace(/省|市|自治区|特别行政区|壮族|回族|维吾尔/g, '');
+    return (
+      region.label.includes(q) ||
+      region.value.includes(q) ||
+      region.value === normalizedQuery ||
+      normalized.includes(q)
+    );
+  });
 }
 
 function refreshOptions(): Array<{

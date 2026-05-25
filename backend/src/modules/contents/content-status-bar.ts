@@ -1,5 +1,10 @@
 import type { ContentKind, Prisma } from '@prisma/client';
-import { FONT_TEST_FONTS, HotListConfig, hotListSourceShortLabel } from 'shared';
+import {
+  FONT_TEST_FONTS,
+  HotListConfig,
+  hotListSourceShortLabel,
+  normalizeWeatherAlertProvince,
+} from 'shared';
 import { recordValue, valueText } from '../../common/utils';
 import { cnMonthDay, datePartsInTz, timezoneFromConfig } from '../dynamic-content/timezone';
 
@@ -79,7 +84,7 @@ export function weatherStatusBarText(config: unknown): string {
 }
 
 export function weatherAlertStatusBarText(config: unknown): string {
-  const province = valueText(recordValue(config, 'province')) ?? '';
+  const province = normalizeWeatherAlertProvince(valueText(recordValue(config, 'province')) ?? '');
   return `${province || '全国'}气象预警`;
 }
 

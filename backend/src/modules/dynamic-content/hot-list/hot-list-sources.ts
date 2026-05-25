@@ -17,6 +17,8 @@ import { zhihuSource } from './sources/zhihu';
 import { kr36Source } from './sources/36kr';
 import { githubTrendingSource } from './sources/github-trending';
 import { REFERENCE_HOT_LIST_SOURCES } from './reference-sources';
+import { DAILY_HOT_DIRECT_SOURCES } from './sources/daily-hot-direct';
+import { NEWSNOW_DIRECT_SOURCES } from './sources/newsnow-direct';
 
 export const HOT_LIST_SOURCE_REGISTRY = [
   zhihuSource,
@@ -36,5 +38,7 @@ export const HOT_LIST_SOURCE_REGISTRY = [
   smzdmSource,
   kr36Source,
   githubTrendingSource,
+  ...DAILY_HOT_DIRECT_SOURCES,
+  ...NEWSNOW_DIRECT_SOURCES,
   ...REFERENCE_HOT_LIST_SOURCES,
 ] as const satisfies readonly HotListSource[];

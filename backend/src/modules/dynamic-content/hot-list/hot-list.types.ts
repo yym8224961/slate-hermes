@@ -1,4 +1,4 @@
-import type { HotListSourceIdT } from 'shared';
+import type { CurrentHotListSourceIdT } from 'shared';
 
 export interface HotListItem {
   rank: number;
@@ -11,7 +11,7 @@ export interface HotListItem {
 }
 
 export interface HotListProviderData {
-  source: HotListSourceIdT;
+  source: CurrentHotListSourceIdT;
   sourceLabel: string;
   updatedAt: string;
   items: HotListItem[];
@@ -22,7 +22,7 @@ export interface HotListSourceFetchCtx {
 }
 
 export interface HotListSource {
-  id: HotListSourceIdT;
+  id: CurrentHotListSourceIdT;
   label: string;
   fetch(ctx: HotListSourceFetchCtx): Promise<HotListItem[]>;
 }
