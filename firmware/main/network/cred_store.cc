@@ -41,7 +41,6 @@ bool SaveSecret(const std::string& device_id, const std::string& device_secret) 
         ESP_LOGE(kTag, "SaveSecret failed");
         return false;
     }
-    ESP_LOGI(kTag, "Device secret committed: id=%s", device_id.c_str());
     return true;
 }
 
@@ -60,7 +59,6 @@ void Clear() {
     nvs_store::EraseNamespace(nvs_schema::kNet);
     // 不读旧 namespace，但恢复出厂时顺手清掉测试残留。
     nvs_store::EraseNamespace(nvs_schema::kLegacy);
-    ESP_LOGI(kTag, "Credentials cleared");
 }
 
 }  // namespace cred

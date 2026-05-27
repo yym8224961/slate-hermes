@@ -38,7 +38,6 @@ esp_err_t I2cDevice::ResetBus(const char* reason) {
     ESP_LOGW(kTag, "I2C bus reset: reason=%s addr=0x%02X", reason ? reason : "unknown",
              static_cast<unsigned>(device_address_));
     esp_err_t ret = i2c_master_bus_reset(i2c_bus_);
-    ESP_LOGI(kTag, "I2C bus reset done: ret=%s", esp_err_to_name(ret));
     return ret;
 }
 

@@ -92,7 +92,6 @@ void FactoryResetPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
     // 跟其他子页一致:短按确认 = 返回,长按确认 = 执行(危险动作)。
     // UP/DOWN 短按忽略(防误触)。
     if (e.kind == UiEventKind::kButtonShort && e.u.button.btn == ButtonId::kEnter) {
-        ESP_LOGI(kTag, "Short Enter -> cancel, pop");
         ctx.stack->RequestPop();
         return;
     }

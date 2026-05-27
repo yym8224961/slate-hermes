@@ -124,14 +124,11 @@ void BootSplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
     // 应急逃生:长按 ENTER push 设置页 — 即使同步未完成、网络断开,
     // 用户仍能调音量 / 看设备信息 / 重新配网 / 恢复出厂。
     if (e.kind == UiEventKind::kButtonLong && e.u.button.btn == ButtonId::kEnter) {
-        ESP_LOGI(kTag, "Long Enter on splash -> push Settings (emergency exit)");
         ctx.stack->RequestPush(std::make_unique<SettingsScene>());
         return;
     }
 
     if (e.kind == UiEventKind::kCachedGroupReady || e.kind == UiEventKind::kSyncedGroupReady) {
-        ESP_LOGI(kTag, "Group ready gid=%s contents=%d -> switch to FrameScene", e.u.group.gid,
-                 e.u.group.content_count);
         ctx.stack->RequestReplace(std::make_unique<FrameScene>(e.u.group.gid, e.u.group.content_count));
         return;
     }

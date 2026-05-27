@@ -3,7 +3,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <esp_log.h>
 #include <vector>
 
 #include "event_bus.h"
@@ -15,8 +14,6 @@
 #include "theme.h"
 
 namespace {
-constexpr char kTag[] = "VolumePage";
-
 constexpr int kBarWidth  = 280;
 constexpr int kBarHeight = 24;
 
@@ -185,5 +182,4 @@ void VolumePage::PlayTestTone(SceneContext& ctx) {
     if (!ctx.audio || target_ != Target::kAlbum) return;
     static std::vector<uint8_t> tone = MakeTestTone();
     ctx.audio->Play(tone.data(), tone.size());
-    ESP_LOGI(kTag, "Play test tone: level=%d codec=%d", level_, vol::ToCodec(level_));
 }

@@ -31,12 +31,4 @@ config SLATE_IDLE_DEEP_SLEEP_MIN
         next_wake_sec 配置 RTC timer；静态帧不配置定时唤醒。
         默认 10 分钟，给正常查看/操作留足时间，同时避免长时间空耗电。
 
-config SLATE_LOG_PLAINTEXT_CRED
-    bool "Log WiFi password and full credentials in plaintext"
-    default n
-    help
-        ⚠ DEBUG ONLY. When enabled, captive portal /submit handler and
-        Wifi::TryConnect will write the WiFi password to UART log to help
-        diagnose connectivity issues. NEVER ship a build with this on.
-
 endmenu

@@ -23,22 +23,6 @@ int64_t NowMs() {
     return esp_timer_get_time() / 1000;
 }
 
-const char* MethodName(esp_http_client_method_t method) {
-    switch (method) {
-        case HTTP_METHOD_GET:
-            return "GET";
-        case HTTP_METHOD_POST:
-            return "POST";
-        case HTTP_METHOD_PUT:
-            return "PUT";
-        case HTTP_METHOD_PATCH:
-            return "PATCH";
-        case HTTP_METHOD_DELETE:
-            return "DELETE";
-        default:
-            return "?";
-    }
-}
 }  // namespace
 
 namespace api {
@@ -93,7 +77,7 @@ void LogErrorEnvelope(const std::string& path, int status, const std::vector<uin
     std::string text(body.begin(), body.end());
     cJSON*      root = cJSON_Parse(text.c_str());
     if (!root) {
-        ESP_LOGW(kTag, "%s -> HTTP %d: %.160s", path.c_str(), status, text.c_str());
+        ESP_LOGW(kTag, "%s -> HTTP %d: non-json error body len=%u", path.c_str(), status, (unsigned)body.size());
         return;
     }
     auto get_str = [](cJSON* obj, const char* key) -> const char* {
@@ -101,13 +85,12 @@ void LogErrorEnvelope(const std::string& path, int status, const std::vector<uin
         return (cJSON_IsString(v) && v->valuestring) ? v->valuestring : "";
     };
     const char* klass  = get_str(root, proto::kError);
-    const char* msg    = get_str(root, proto::kMessage);
     const char* code   = "";
     cJSON*      detail = cJSON_GetObjectItemCaseSensitive(root, proto::kDetail);
     if (cJSON_IsObject(detail)) {
         code = get_str(detail, proto::kCode);
     }
-    ESP_LOGW(kTag, "%s -> HTTP %d error=%s code=%s message=%s", path.c_str(), status, klass, code, msg);
+    ESP_LOGW(kTag, "%s -> HTTP %d error=%s code=%s", path.c_str(), status, klass, code);
     cJSON_Delete(root);
 }
 
@@ -160,9 +143,6 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
     if (!full.empty() && full.back() == '/')
         full.pop_back();
     full += path;
-    ESP_LOGI(kTag, "HTTP begin %s %s body=%u if_none=%d auth=%d", MethodName(method), path.c_str(),
-             (unsigned)body_in.size(), if_none_match.empty() ? 0 : 1, need_auth ? 1 : 0);
-
     esp_http_client_config_t cfg = {};
     cfg.url                      = full.c_str();
     cfg.method                   = method;
@@ -201,7 +181,6 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
         esp_http_client_set_header(client, "If-None-Match", h.c_str());
     }
 
-    ESP_LOGI(kTag, "HTTP open %s", path.c_str());
     esp_err_t err = esp_http_client_open(client, body_in.size());
     if (err != ESP_OK) {
         ESP_LOGW(kTag, "Open %s failed after %lldms: %s", path.c_str(), (long long)(NowMs() - started_ms),
@@ -209,10 +188,7 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
         esp_http_client_cleanup(client);
         return false;
     }
-    ESP_LOGI(kTag, "HTTP opened %s after %lldms", path.c_str(), (long long)(NowMs() - started_ms));
-
     if (!body_in.empty()) {
-        ESP_LOGI(kTag, "HTTP write %s bytes=%u", path.c_str(), (unsigned)body_in.size());
         int wn = esp_http_client_write(client, body_in.c_str(), body_in.size());
         if (wn != static_cast<int>(body_in.size())) {
             ESP_LOGW(kTag, "Write %s short after %lldms: %d/%u", path.c_str(), (long long)(NowMs() - started_ms), wn,
@@ -223,11 +199,8 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
         }
     }
 
-    ESP_LOGI(kTag, "HTTP fetch headers %s", path.c_str());
     int64_t content_length = esp_http_client_fetch_headers(client);
     int     status         = esp_http_client_get_status_code(client);
-    ESP_LOGI(kTag, "HTTP headers %s status=%d len=%lld after %lldms", path.c_str(), status,
-             (long long)content_length, (long long)(NowMs() - started_ms));
     if (status_out)
         *status_out = status;
     if (etag_out)
@@ -248,8 +221,6 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
         if (content_length > 0)
             body_out.reserve(static_cast<size_t>(content_length));
         char buf[1024];
-        size_t last_log_bytes = 0;
-        ESP_LOGI(kTag, "HTTP read body %s status=%d", path.c_str(), status);
         while (true) {
             int n = esp_http_client_read(client, buf, sizeof(buf));
             if (n < 0) {
@@ -262,11 +233,6 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
             if (n <= 0)
                 break;
             body_out.insert(body_out.end(), buf, buf + n);
-            if (body_out.size() - last_log_bytes >= 16 * 1024) {
-                last_log_bytes = body_out.size();
-                ESP_LOGI(kTag, "HTTP read progress %s bytes=%u after %lldms", path.c_str(),
-                         (unsigned)body_out.size(), (long long)(NowMs() - started_ms));
-            }
             if (body_out.size() > kMaxResponseBytes) {
                 ESP_LOGW(kTag, "%s: response body exceeded %u B, aborting", path.c_str(), (unsigned)kMaxResponseBytes);
                 esp_http_client_close(client);
@@ -287,14 +253,10 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
 
     if (status == 304) {
         s_consecutive_401.store(0, std::memory_order_relaxed);
-        ESP_LOGI(kTag, "HTTP done %s status=304 bytes=0 total=%lldms", path.c_str(),
-                 (long long)(NowMs() - started_ms));
         return true;
     }
     if (status / 100 == 2) {
         s_consecutive_401.store(0, std::memory_order_relaxed);
-        ESP_LOGI(kTag, "HTTP done %s status=%d bytes=%u total=%lldms", path.c_str(), status,
-                 (unsigned)body_out.size(), (long long)(NowMs() - started_ms));
         return true;
     }
     if (status == 401 && need_auth) {
@@ -453,7 +415,6 @@ bool Register(RegisterResult& out) {
         ESP_LOGW(kTag, "Register: response missing required fields");
         return false;
     }
-    ESP_LOGI(kTag, "Registered: id=%s pair=%s", out.id.c_str(), out.pair_code.c_str());
     return true;
 }
 

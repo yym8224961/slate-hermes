@@ -23,7 +23,6 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
     if (running_.load())
         Stop();
 
-    ESP_LOGI(kTag, "Starting DNS hijack on UDP :%u -> " IPSTR, port, IP2STR(&gateway));
     gateway_ = gateway;
     port_    = port;
 
@@ -71,7 +70,6 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
 void DnsHijack::Stop() {
     if (!running_.exchange(false))
         return;
-    ESP_LOGI(kTag, "Stopping DNS hijack");
     int sock = fd_.exchange(-1);
     if (sock >= 0) {
         shutdown(sock, SHUT_RDWR);
@@ -128,5 +126,4 @@ void DnsHijack::Run() {
             break;
         sendto(send_sock, buf, len, 0, reinterpret_cast<sockaddr*>(&client), client_len);
     }
-    ESP_LOGI(kTag, "DNS hijack task exiting");
 }

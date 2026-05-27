@@ -75,12 +75,10 @@ void SleepManager::Init(Policy p) {
     low_battery_pct_  = p.low_battery_pct;
     last_active_ms_.store(esp_timer_get_time() / 1000);
     enabled_.store(!p.disabled);
-    ESP_LOGI(kTag, "Deep sleep idle timeout: %d min", idle_timeout_min_);
 }
 
 void SleepManager::Disable() {
     enabled_.store(false);
-    ESP_LOGI(kTag, "Deep sleep disabled");
 }
 
 void SleepManager::OnEvent(const UiEvent& e) {
@@ -99,7 +97,6 @@ void SleepManager::OnEvent(const UiEvent& e) {
         case UiEventKind::kBound:
             unbound_.store(false);
             unbound_since_ms_.store(0);
-            ESP_LOGI(kTag, "Bound -> exit unbound grace, normal idle sleep applies");
             break;
         case UiEventKind::kUnbound:
             // 仅首次进入 unbound 时记录起始 ts,重复事件不重置(否则 2h 兜底永不触发)。
@@ -142,28 +139,22 @@ void SleepManager::Tick(int64_t now_ms) {
     ESP_LOGW(kTag, "Idle %lldms >= %lldms -> entering deep sleep",
              (long long)idle_ms, (long long)threshold_ms);
     const auto decision = TryEnterDeepSleep();
-    ESP_LOGI(kTag, "Idle sleep skipped, outcome=%d next_wake=%us",
-             static_cast<int>(decision.outcome),
-             static_cast<unsigned>(decision.configured_next_wake_sec));
+    (void)decision;
 }
 
 SleepManager::SleepDecision SleepManager::TryEnterDeepSleep() {
     const uint32_t next_sec = ComputeConfiguredNextWakeSec();
     if (!enabled_.load()) {
-        ESP_LOGI(kTag, "Skip deep sleep: disabled");
         return {SleepOutcome::kDisabled, next_sec};
     }
     const int64_t now_ms = esp_timer_get_time() / 1000;
     if (InUnboundGrace(now_ms)) {
-        ESP_LOGI(kTag, "Skip deep sleep: unbound grace");
         return {SleepOutcome::kUnboundGrace, next_sec};
     }
     // paused_ 由 kChargeChanged 事件驱动,timer wake 路径下可能尚未消化此事件。
     // 同时现场查询硬件确保新插入的电源也能即时拦截。
     const bool power_present = Board::Get().charge()->Get().power_present;
     if (power_present || paused_.load()) {
-        ESP_LOGI(kTag, "Skip deep sleep: charging (paused=%d, power_present=%d)",
-                 paused_.load() ? 1 : 0, power_present ? 1 : 0);
         if (power_present)
             paused_.store(true);
         return {SleepOutcome::kPausedByCharge, next_sec};

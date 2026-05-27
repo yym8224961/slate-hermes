@@ -153,9 +153,6 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     }
 
     initialized_ = true;
-    ESP_LOGI(kTag, "AudioPlayer ready (lazy), sample_rate=%d, vol=%d",
-             AUDIO_OUTPUT_SAMPLE_RATE,
-             volume_.load(std::memory_order_relaxed));
     return true;
 }
 

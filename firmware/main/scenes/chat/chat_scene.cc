@@ -163,6 +163,12 @@ std::string SanitizeForScreen(const std::string& text) {
             pos += step;
             continue;
         }
+        if (cp == 0xFF5E) {
+            out.push_back('~');
+            previous_space = false;
+            pos += step;
+            continue;
+        }
 
         out.append(text, pos, step);
         previous_space = false;

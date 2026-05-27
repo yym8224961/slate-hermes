@@ -101,7 +101,6 @@ void SettingsScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         }
         case UiEventKind::kButtonLong: {
             if (e.u.button.btn == ButtonId::kEnter) {
-                ESP_LOGI(kTag, "Long Enter -> pop back to Frame");
                 ctx.stack->RequestPop();
             }
             break;

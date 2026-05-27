@@ -86,13 +86,9 @@ uint32_t ComputeNextWakeSec() {
     portEXIT_CRITICAL(&s_state_mux);
 
     if (!dynamic) {
-        ESP_LOGI(kTag, "Current frame has no dynamic wake interval");
         return 0;
     }
     const uint32_t next = NormalizeDynamicWakeSec(server_sync_sec);
-    ESP_LOGI(kTag, "Next wake in %us (server_sync=%us)",
-             static_cast<unsigned>(next),
-             static_cast<unsigned>(server_sync_sec));
     return next;
 }
 

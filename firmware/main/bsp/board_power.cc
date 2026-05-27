@@ -1,12 +1,10 @@
 #include "board_power.h"
 
 #include <driver/gpio.h>
-#include <esp_log.h>
 
 #include "gpio_util.h"
 
 namespace {
-constexpr char       kTag[]   = "BoardPower";
 constexpr gpio_num_t kLedPin  = GPIO_NUM_3;  // 板上唯一一颗绿色 LED，低有效
 }  // namespace
 
@@ -49,7 +47,6 @@ void BoardPowerBsp::InitLed() {
     cfg.pull_down_en  = GPIO_PULLDOWN_DISABLE;
     ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_config(&cfg));
     GpioWriteHold(kLedPin, 1);
-    ESP_LOGI(kTag, "LED off (status bar manages charging indicator)");
 }
 
 void BoardPowerBsp::PowerAudioOn()  { GpioWriteHold(audioPowerPin_, 1); }

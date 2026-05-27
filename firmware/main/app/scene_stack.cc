@@ -1,25 +1,18 @@
 #include "scene_stack.h"
 
-#include <esp_log.h>
 #include <utility>
 
 #include "event_bus.h"
 
-namespace {
-constexpr char kTag[] = "Scene";
-}
-
 void SceneStack::Push(std::unique_ptr<Scene> s) {
     if (!s) return;
     if (Top()) Top()->OnExit(ctx_);
-    ESP_LOGI(kTag, "Push %s", s->Name());
     stack_.push_back(std::move(s));
     Top()->OnEnter(ctx_);
 }
 
 void SceneStack::Pop() {
     if (stack_.empty()) return;
-    ESP_LOGI(kTag, "Pop  %s", Top()->Name());
     Top()->OnExit(ctx_);
     stack_.pop_back();
     if (Top()) Top()->OnEnter(ctx_);
@@ -28,11 +21,8 @@ void SceneStack::Pop() {
 void SceneStack::Replace(std::unique_ptr<Scene> s) {
     if (!s) return;
     if (Top()) {
-        ESP_LOGI(kTag, "Replace %s -> %s", Top()->Name(), s->Name());
         Top()->OnExit(ctx_);
         stack_.pop_back();
-    } else {
-        ESP_LOGI(kTag, "Replace [empty] -> %s", s->Name());
     }
     stack_.push_back(std::move(s));
     Top()->OnEnter(ctx_);

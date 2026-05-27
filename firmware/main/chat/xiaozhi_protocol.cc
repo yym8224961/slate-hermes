@@ -294,7 +294,6 @@ void Protocol::SendMcpMessage(const std::string& payload) {
 
     std::lock_guard<std::mutex> lock(mcp_mutex_);
     if (!mcp_accepting_.load(std::memory_order_relaxed)) {
-        ESP_LOGI(kTag, "MCP tx dropped: not accepting bytes=%u", static_cast<unsigned>(payload.size()));
         delete queued;
         return;
     }
@@ -421,18 +420,12 @@ void Protocol::McpSendTask() {
         if (!mcp_accepting_.load(std::memory_order_relaxed) ||
             !audio_channel_ready_.load(std::memory_order_relaxed) ||
             session_id_.empty()) {
-            ESP_LOGI(kTag, "MCP tx dropped after dequeue: ready=%d has_session=%d bytes=%u",
-                     audio_channel_ready_.load(std::memory_order_relaxed) ? 1 : 0,
-                     session_id_.empty() ? 0 : 1,
-                     static_cast<unsigned>(payload->size()));
             delete payload;
             continue;
         }
 
         std::string message = "{\"session_id\":\"" + session_id_ + "\",\"type\":\"mcp\",\"payload\":" + *payload + "}";
-        const unsigned bytes = static_cast<unsigned>(message.size());
-        const bool ok = SendText(message);
-        ESP_LOGI(kTag, "MCP tx done: has_session=%d bytes=%u ok=%d", session_id_.empty() ? 0 : 1, bytes, ok ? 1 : 0);
+        SendText(message);
         delete payload;
     }
 }
@@ -444,13 +437,8 @@ bool Protocol::HandleMcpMessage(const cJSON* root) {
 
     const std::string method = JsonString(payload, "method");
     const std::string id = JsonId(cJSON_GetObjectItem(payload, "id"));
-    ESP_LOGI(kTag, "MCP rx: method=%s id=%s has_params=%d",
-             method.empty() ? "(missing)" : method.c_str(),
-             id.empty() ? "(none)" : id.c_str(),
-             cJSON_IsObject(cJSON_GetObjectItem(payload, "params")) ? 1 : 0);
 
     if (!mcp_accepting_.load(std::memory_order_relaxed)) {
-        ESP_LOGI(kTag, "MCP ignored after channel closing: method=%s", method.empty() ? "(missing)" : method.c_str());
         return true;
     }
 
@@ -463,14 +451,6 @@ bool Protocol::HandleMcpMessage(const cJSON* root) {
     }
 
     if (method == "initialize") {
-        cJSON* params = cJSON_GetObjectItem(payload, "params");
-        cJSON* capabilities = cJSON_IsObject(params) ? cJSON_GetObjectItem(params, "capabilities") : nullptr;
-        cJSON* vision = cJSON_IsObject(capabilities) ? cJSON_GetObjectItem(capabilities, "vision") : nullptr;
-        if (cJSON_IsObject(vision)) {
-            ESP_LOGI(kTag, "MCP client capability: vision url=%s token_len=%u",
-                     JsonString(vision, "url").c_str(),
-                     static_cast<unsigned>(JsonString(vision, "token").size()));
-        }
         const auto* app = esp_app_get_description();
         std::string result = "{\"protocolVersion\":\"2024-11-05\",\"capabilities\":{\"tools\":{}},"
                              "\"serverInfo\":{\"name\":\"slate\",\"version\":\"";
@@ -481,12 +461,6 @@ bool Protocol::HandleMcpMessage(const cJSON* root) {
     }
 
     if (method == "tools/list") {
-        cJSON* params = cJSON_GetObjectItem(payload, "params");
-        cJSON* with_user_tools = cJSON_IsObject(params) ? cJSON_GetObjectItem(params, "withUserTools") : nullptr;
-        cJSON* cursor = cJSON_IsObject(params) ? cJSON_GetObjectItem(params, "cursor") : nullptr;
-        ESP_LOGI(kTag, "MCP tools/list: withUserTools=%d cursor=%s",
-                 cJSON_IsTrue(with_user_tools) ? 1 : 0,
-                 cJSON_IsString(cursor) ? cursor->valuestring : "");
         SendMcpMessage(JsonRpcResult(id, ToolListResultJson()));
         return true;
     }
@@ -524,7 +498,6 @@ bool Protocol::HandleMcpMessage(const cJSON* root) {
         return true;
     }
 
-    ESP_LOGI(kTag, "Ignore unsupported MCP method: %s", method.c_str());
     SendMcpMessage(JsonRpcError(id, -32601, "Method not implemented"));
     return true;
 }

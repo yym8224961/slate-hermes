@@ -71,8 +71,6 @@ void BgRefreshScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         return;
 
     if (!e.u.sync.ok || !e.u.sync.group_changed) {
-        ESP_LOGI(kTag, "Sync finished: ok=%d changed=%d -> no screen update", e.u.sync.ok ? 1 : 0,
-                 e.u.sync.group_changed ? 1 : 0);
         Finish();
         return;
     }
@@ -109,19 +107,19 @@ bool BgRefreshScene::SeedPreviousFrame(SceneContext& ctx) {
 
     int content_count = 0;
     if (!cache::ReadManifestContentCount(gid, content_count) || content_count <= 0) {
-        ESP_LOGW(kTag, "No cached manifest to seed gid=%s", gid.c_str());
+        ESP_LOGW(kTag, "No cached manifest to seed");
         return false;
     }
 
     const int seq = power_state::GetCurrentFrameSeq();
     if (seq < 0 || seq >= content_count) {
-        ESP_LOGW(kTag, "Cached seq out of range gid=%s seq=%d count=%d", gid.c_str(), seq, content_count);
+        ESP_LOGW(kTag, "Cached seq out of range seq=%d count=%d", seq, content_count);
         return false;
     }
 
     std::vector<uint8_t> raw;
     if (!cache::ReadFrameImage(gid, seq, raw) || raw.size() != static_cast<size_t>(FrameView::kRawBytes)) {
-        ESP_LOGW(kTag, "Seed image miss gid=%s seq=%d size=%u", gid.c_str(), seq, static_cast<unsigned>(raw.size()));
+        ESP_LOGW(kTag, "Seed image miss seq=%d size=%u", seq, static_cast<unsigned>(raw.size()));
         return false;
     }
 
@@ -132,8 +130,6 @@ bool BgRefreshScene::SeedPreviousFrame(SceneContext& ctx) {
                                  power_state::kStatusBarSnapshotHeight,
                                  status_bar.data(), status_bar.size());
     ctx.epd->SeedPreviousRaw1bpp(0, y, FrameView::kWidth, h, raw.data() + y * kBpr, h * kBpr);
-
-    ESP_LOGI(kTag, "Seeded previous screen gid=%s seq=%d", gid.c_str(), seq);
     return true;
 }
 
@@ -144,7 +140,7 @@ bool BgRefreshScene::ResolveCurrentFrame(std::string& gid, int& seq, int& conten
         return false;
     }
     if (!cache::ReadManifestContentCount(gid, content_count) || content_count <= 0) {
-        ESP_LOGW(kTag, "Render skip: no manifest after sync gid=%s", gid.c_str());
+        ESP_LOGW(kTag, "Render skip: no manifest after sync");
         return false;
     }
 
@@ -167,7 +163,7 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
 
     std::vector<uint8_t> raw;
     if (!cache::ReadFrameImage(gid, seq, raw) || raw.size() != static_cast<size_t>(FrameView::kRawBytes)) {
-        ESP_LOGW(kTag, "Render image miss gid=%s seq=%d size=%u", gid.c_str(), seq, static_cast<unsigned>(raw.size()));
+        ESP_LOGW(kTag, "Render image miss seq=%d size=%u", seq, static_cast<unsigned>(raw.size()));
         return false;
     }
 
@@ -214,7 +210,6 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
     ctx.epd->WriteRaw1bpp(0, y, FrameView::kWidth, h, raw.data() + y * kBpr, h * kBpr);
     ctx.epd->RequestUrgentPartialRefresh();
 
-    ESP_LOGI(kTag, "Rendered changed frame gid=%s seq=%d count=%d refresh=partial", gid.c_str(), seq, content_count);
     StartWatcher(ctx.epd);
     return true;
 }

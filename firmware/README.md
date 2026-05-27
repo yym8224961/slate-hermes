@@ -285,7 +285,6 @@ captive portal 期间 `SleepManager` 禁用 deep sleep。
 | `SLATE_AP_SSID_PREFIX` | `Slate` | AP SSID = `{prefix}-{XXYY}`（XXYY = MAC 后 2 字节） |
 | `SLATE_DEFAULT_TIMEZONE` | `CST-8` | SNTP 后 `setenv("TZ", ...)` |
 | `SLATE_IDLE_DEEP_SLEEP_MIN` | 10 | 闲置 N 分钟且不在充电时进 deep sleep |
-| `SLATE_LOG_PLAINTEXT_CRED` | n | ⚠ DEBUG ONLY，开启会把 Wi-Fi 密码写进 UART log |
 
 `sdkconfig.defaults` 固化的关键项：target = esp32s3、Flash 16 MB QIO、PSRAM Octal 8 MB 80 MHz、LVGL 9.5.0、PM enable + DFS auto + TICKLESS_IDLE、`ESP_MAIN_TASK_STACK_SIZE=8192`、`SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y`。
 

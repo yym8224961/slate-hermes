@@ -41,49 +41,7 @@ void WriteBe32(char* data, uint32_t value) {
     std::memcpy(data, &value, sizeof(value));
 }
 
-std::string JsonType(const cJSON* root) {
-    cJSON* type = cJSON_GetObjectItem(root, "type");
-    return cJSON_IsString(type) && type->valuestring ? type->valuestring : "";
-}
-
-std::string LogPayloadSummary(const cJSON* root, size_t bytes) {
-    const std::string type = JsonType(root);
-    if (type == "tts") {
-        cJSON* state = cJSON_GetObjectItem(root, "state");
-        std::string out = "type=tts state=";
-        out += cJSON_IsString(state) ? state->valuestring : "";
-        return out;
-    }
-    if (type == "stt") {
-        cJSON* text = cJSON_GetObjectItem(root, "text");
-        std::string out = "type=stt text_len=";
-        out += std::to_string(cJSON_IsString(text) && text->valuestring ? std::strlen(text->valuestring) : 0);
-        return out;
-    }
-    if (type == "llm") {
-        cJSON* emotion = cJSON_GetObjectItem(root, "emotion");
-        std::string out = "type=llm emotion=";
-        out += cJSON_IsString(emotion) ? emotion->valuestring : "";
-        return out;
-    }
-    if (type == "mcp") {
-        cJSON* rpc = cJSON_GetObjectItem(cJSON_GetObjectItem(root, "payload"), "method");
-        std::string out = "type=mcp method=";
-        out += cJSON_IsString(rpc) ? rpc->valuestring : "";
-        return out;
-    }
-    return "type=" + type + " bytes=" + std::to_string(bytes);
-}
-
-std::string LogPayloadSummary(const std::string& payload) {
-    cJSON* root = cJSON_Parse(payload.c_str());
-    if (!root)
-        return "invalid-json";
-    std::string out = LogPayloadSummary(root, payload.size());
-    cJSON_Delete(root);
-    return out;
-}
-}
+}  // namespace
 
 namespace xiaozhi {
 
@@ -121,10 +79,6 @@ bool WebsocketProtocol::OpenAudioChannel() {
     }
     if (cfg.version > 0)
         version_ = cfg.version;
-    ESP_LOGI(kTag, "WS config: url=%s token_len=%u version=%d",
-             cfg.url.c_str(),
-             static_cast<unsigned>(cfg.token.size()),
-             version_);
 
     error_occurred_ = false;
     mcp_accepting_.store(true, std::memory_order_relaxed);
@@ -199,9 +153,6 @@ bool WebsocketProtocol::OpenAudioChannel() {
                 ESP_LOGW(kTag, "WS rx ignored: invalid JSON");
                 return;
             }
-            ESP_LOGI(kTag, "WS rx: bytes=%u %s",
-                     static_cast<unsigned>(len),
-                     LogPayloadSummary(root, len).c_str());
             cJSON* type = cJSON_GetObjectItem(root, "type");
             if (cJSON_IsString(type)) {
                 if (std::strcmp(type->valuestring, "hello") == 0) {
@@ -233,7 +184,6 @@ bool WebsocketProtocol::OpenAudioChannel() {
         ESP_LOGW(kTag, "WS error: %d", err);
     });
 
-    ESP_LOGI(kTag, "Connect %s version=%d", cfg.url.c_str(), version_);
     if (!websocket->Connect(cfg.url.c_str())) {
         SetError("连接小智 WebSocket 失败");
         return false;
@@ -246,13 +196,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
         websocket_ = std::move(websocket);
     }
     const std::string hello = GetHelloMessage();
-    ESP_LOGI(kTag, "WS tx hello: bytes=%u %s",
-             static_cast<unsigned>(hello.size()),
-             LogPayloadSummary(hello).c_str());
     if (!SendText(hello))
         return false;
 
-    ESP_LOGI(kTag, "Waiting WS server hello");
     const EventBits_t bits = xEventGroupWaitBits(event_group_,
                                                  kServerHelloEvent | kChannelClosedEvent,
                                                  pdTRUE,
@@ -264,9 +210,8 @@ bool WebsocketProtocol::OpenAudioChannel() {
         return false;
     }
     if (!(bits & kServerHelloEvent)) {
-        ESP_LOGW(kTag, "WS server hello timeout: connected=%d session_id=%s",
-                 websocket_ && websocket_->IsConnected() ? 1 : 0,
-                 session_id_.c_str());
+        ESP_LOGW(kTag, "WS server hello timeout: connected=%d",
+                 websocket_ && websocket_->IsConnected() ? 1 : 0);
         SetError("小智 WebSocket 响应超时");
         return false;
     }
@@ -349,10 +294,6 @@ bool WebsocketProtocol::SendText(const std::string& text) {
         return false;
     }
     const bool ok = websocket_->Send(text);
-    ESP_LOGI(kTag, "WS tx: ok=%d bytes=%u %s",
-             ok ? 1 : 0,
-             static_cast<unsigned>(text.size()),
-             LogPayloadSummary(text).c_str());
     return ok;
 }
 
@@ -396,10 +337,6 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
         if (cJSON_IsNumber(frame_duration))
             server_frame_duration_ = frame_duration->valueint;
     }
-    ESP_LOGI(kTag, "Server hello: session_id=%s sample_rate=%d frame_duration=%d",
-             session_id_.c_str(),
-             server_sample_rate_,
-             server_frame_duration_);
     xEventGroupSetBits(event_group_, kServerHelloEvent);
 }
 

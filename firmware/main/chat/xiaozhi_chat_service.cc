@@ -16,12 +16,12 @@
 
 namespace {
 constexpr char kTag[] = "XiaoChat";
-constexpr int kNoSendDiagIntervalMs = 1000;
 
 std::string JsonString(const cJSON* obj, const char* key) {
     cJSON* item = cJSON_GetObjectItem(obj, key);
     return cJSON_IsString(item) && item->valuestring ? item->valuestring : "";
 }
+
 }  // namespace
 
 namespace xiaozhi {
@@ -319,7 +319,8 @@ void ChatService::ConfigTask() {
             if (!result.activation_code.empty())
                 SetActivation(result.activation_message, result.activation_code);
             esp_err_t activate_err = client.Activate(result.activation_challenge);
-            ESP_LOGI(kTag, "Activation challenge result: %s", esp_err_to_name(activate_err));
+            if (activate_err != ESP_OK && activate_err != ESP_ERR_TIMEOUT)
+                ESP_LOGW(kTag, "Activation challenge failed: %s", esp_err_to_name(activate_err));
         }
         if (result.has_activation) {
             SetActivation(result.activation_message, result.activation_code);
@@ -391,8 +392,6 @@ void ChatService::ConversationTask() {
     pending_listen_after_playback_.store(false, std::memory_order_relaxed);
     AudioService::Get().EnableVoiceProcessing(true);
     SetState(ChatState::kListening, "聆听中");
-    AudioService::Get().DumpDiagnostics("listen-start");
-    int no_send_elapsed_ms = 0;
 
     while (conversation_running_.load(std::memory_order_relaxed) && in_mode_.load(std::memory_order_relaxed)) {
         bool channel_open = false;
@@ -406,8 +405,6 @@ void ChatService::ConversationTask() {
             pending_listen_after_playback_.store(false, std::memory_order_relaxed);
             AudioService::Get().EnableVoiceProcessing(true);
             SetState(ChatState::kListening, "聆听中");
-            AudioService::Get().DumpDiagnostics("listen-resume");
-            no_send_elapsed_ms = 0;
         }
 
         bool sent = false;
@@ -418,18 +415,6 @@ void ChatService::ConversationTask() {
         }
         if (!sent) {
             vTaskDelay(pdMS_TO_TICKS(10));
-            if (CurrentState() == ChatState::kListening &&
-                AudioService::Get().IsVoiceProcessing()) {
-                no_send_elapsed_ms += 10;
-                if (no_send_elapsed_ms >= kNoSendDiagIntervalMs) {
-                    AudioService::Get().DumpDiagnostics("listening-no-send");
-                    no_send_elapsed_ms = 0;
-                }
-            } else {
-                no_send_elapsed_ms = 0;
-            }
-        } else {
-            no_send_elapsed_ms = 0;
         }
     }
 
@@ -513,7 +498,7 @@ void ChatService::HandleIncomingJson(const cJSON* root) {
                      emotion.empty() ? "neutral" : emotion);
         }
     } else if (std::strcmp(type->valuestring, "system") == 0) {
-        ESP_LOGI(kTag, "Ignore system command: %s", JsonString(root, "command").c_str());
+        ESP_LOGD(kTag, "Ignore system command");
     } else if (std::strcmp(type->valuestring, "mcp") == 0) {
         ESP_LOGD(kTag, "Ignore MCP message");
     }
@@ -630,7 +615,6 @@ void ChatService::SetAssistantText(const std::string& text) {
 }
 
 void ChatService::SetAlert(const std::string& status, const std::string& message, const std::string& emotion) {
-    ESP_LOGW(kTag, "Alert [%s] %s: %s", emotion.c_str(), status.c_str(), message.c_str());
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
         snapshot_.status = status;

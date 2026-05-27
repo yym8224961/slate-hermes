@@ -83,7 +83,6 @@ void RestartDevicePage::OnExit(SceneContext& ctx) {
 
 void RestartDevicePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
     if (e.kind == UiEventKind::kButtonShort && e.u.button.btn == ButtonId::kEnter) {
-        ESP_LOGI(kTag, "Short Enter -> cancel, pop");
         ctx.stack->RequestPop();
         return;
     }

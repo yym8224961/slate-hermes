@@ -233,16 +233,6 @@ esp_err_t ConfigClient::Activate(const std::string& challenge) {
     const std::string payload = ActivationPayload(challenge, serial_number);
     const std::string url = ActivationUrl();
 
-    ESP_LOGI(kTag, "Activate POST url=%s activation_version=%s device_id=%s ua=%s serial_len=%u client_id_len=%u challenge_len=%u payload_len=%u",
-             url.c_str(),
-             serial_number.empty() ? "1" : "2",
-             device_id.c_str(),
-             user_agent.c_str(),
-             static_cast<unsigned>(serial_number.size()),
-             static_cast<unsigned>(client_id.size()),
-             static_cast<unsigned>(challenge.size()),
-             static_cast<unsigned>(payload.size()));
-
     esp_http_client_config_t cfg = {};
     cfg.url                     = url.c_str();
     cfg.method                  = HTTP_METHOD_POST;
@@ -260,11 +250,7 @@ esp_err_t ConfigClient::Activate(const std::string& challenge) {
 
     esp_err_t err = esp_http_client_perform(client);
     const int status = esp_http_client_get_status_code(client);
-    if (err == ESP_OK) {
-        ESP_LOGI(kTag, "Activate response: status=%d body_len=%u",
-                 status,
-                 static_cast<unsigned>(body.size()));
-    } else {
+    if (err != ESP_OK) {
         ESP_LOGW(kTag, "Activate failed: err=%s status=%d body_len=%u",
                  esp_err_to_name(err),
                  status,
@@ -287,15 +273,6 @@ ConfigResult ConfigClient::Fetch() {
     const std::string client_id = settings::GetUuid();
     const std::string user_agent = UserAgent();
     const std::string serial_number = SerialNumber();
-
-    ESP_LOGI(kTag, "Fetch OTA config: url=%s activation_version=%s device_id=%s ua=%s serial_len=%u client_id_len=%u body_len=%u",
-             kConfigUrl,
-             serial_number.empty() ? "1" : "2",
-             device_id.c_str(),
-             user_agent.c_str(),
-             static_cast<unsigned>(serial_number.size()),
-             static_cast<unsigned>(client_id.size()),
-             static_cast<unsigned>(request.size()));
 
     esp_http_client_config_t cfg = {};
     cfg.url                     = kConfigUrl;
@@ -324,10 +301,6 @@ ConfigResult ConfigClient::Fetch() {
     }
     esp_http_client_cleanup(client);
 
-    ESP_LOGI(kTag, "Fetch response: status=%d body_len=%u",
-             result.http_status,
-             static_cast<unsigned>(body.size()));
-
     if (result.http_status != 200) {
         result.error = "HTTP " + std::to_string(result.http_status);
         ESP_LOGW(kTag, "Fetch status=%d body_len=%u",
@@ -349,11 +322,6 @@ ConfigResult ConfigClient::Fetch() {
         result.activation_challenge = GetJsonString(activation, "challenge");
         result.has_activation_challenge = !result.activation_challenge.empty();
         result.activation_timeout_ms = GetJsonInt(activation, "timeout_ms", 30000);
-        ESP_LOGI(kTag, "Activation info: code=%s challenge_len=%u timeout_ms=%d message=%s",
-                 result.activation_code.c_str(),
-                 static_cast<unsigned>(result.activation_challenge.size()),
-                 result.activation_timeout_ms,
-                 result.activation_message.c_str());
     }
 
     if (cJSON* mqtt = cJSON_GetObjectItem(root, "mqtt"); cJSON_IsObject(mqtt)) {
@@ -364,13 +332,6 @@ ConfigResult ConfigClient::Fetch() {
         m.password      = GetJsonString(mqtt, "password");
         m.publish_topic = GetJsonString(mqtt, "publish_topic");
         m.keepalive     = GetJsonInt(mqtt, "keepalive", 240);
-        ESP_LOGI(kTag, "MQTT config rx: endpoint=%s client_id_len=%u username_len=%u publish_topic=%s keepalive=%ld password_len=%u",
-                 m.endpoint.c_str(),
-                 static_cast<unsigned>(m.client_id.size()),
-                 static_cast<unsigned>(m.username.size()),
-                 m.publish_topic.c_str(),
-                 static_cast<long>(m.keepalive),
-                 static_cast<unsigned>(m.password.size()));
         if (settings::SaveMqtt(m)) {
             result.has_protocol = true;
         }
@@ -381,10 +342,6 @@ ConfigResult ConfigClient::Fetch() {
         ws.url     = GetJsonString(websocket, "url");
         ws.token   = GetJsonString(websocket, "token");
         ws.version = GetJsonInt(websocket, "version", 0);
-        ESP_LOGI(kTag, "WS config rx: url=%s token_len=%u version=%d",
-                 ws.url.c_str(),
-                 static_cast<unsigned>(ws.token.size()),
-                 ws.version);
         if (settings::SaveWebsocket(ws)) {
             result.has_protocol = true;
         }

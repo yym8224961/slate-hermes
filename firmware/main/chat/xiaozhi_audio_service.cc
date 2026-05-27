@@ -212,11 +212,6 @@ bool AudioService::Start(AudioPlayer* player) {
             CloseCodecResources();
         return false;
     }
-    ESP_LOGI(kTag, "Audio service started: enc_in=%d enc_out=%d stack=psram internal_free=%u largest=%u",
-             encoder_input_bytes_,
-             encoder_output_bytes_,
-             static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-             static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
     return true;
 }
 
@@ -378,49 +373,6 @@ bool AudioService::WaitForPlaybackQueueEmpty(int timeout_ms) {
     }
 }
 
-void AudioService::DumpDiagnostics(const char* reason) {
-    size_t encode_q = 0;
-    size_t decode_q = 0;
-    size_t playback_q = 0;
-    size_t send_q = 0;
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        encode_q = encode_queue_.size();
-        decode_q = decode_queue_.size();
-        playback_q = playback_queue_.size();
-        send_q = send_queue_.size();
-    }
-
-    const int64_t now = NowMs();
-    const int64_t last_input = last_input_ok_ms_.load(std::memory_order_relaxed);
-    const int64_t last_encode = last_encode_ok_ms_.load(std::memory_order_relaxed);
-    const int64_t last_send = last_send_pop_ms_.load(std::memory_order_relaxed);
-    ESP_LOGI(kTag,
-             "Diag %s: active=%d voice=%d epoch=%lu q(enc=%u dec=%u play=%u send=%u) "
-             "cnt(read_ok=%lu read_fail=%lu peak=%lu enc_ok=%lu enc_empty=%lu enc_fail=%lu send_pop=%lu dec_in=%lu play=%lu) "
-             "age_ms(input=%lld enc=%lld send=%lld)",
-             reason ? reason : "",
-             active_.load(std::memory_order_relaxed) ? 1 : 0,
-             voice_processing_.load(std::memory_order_relaxed) ? 1 : 0,
-             static_cast<unsigned long>(queue_epoch_.load(std::memory_order_relaxed)),
-             static_cast<unsigned>(encode_q),
-             static_cast<unsigned>(decode_q),
-             static_cast<unsigned>(playback_q),
-             static_cast<unsigned>(send_q),
-             static_cast<unsigned long>(input_read_ok_.load(std::memory_order_relaxed)),
-             static_cast<unsigned long>(input_read_fail_.load(std::memory_order_relaxed)),
-             static_cast<unsigned long>(last_input_peak_.load(std::memory_order_relaxed)),
-             static_cast<unsigned long>(encode_ok_.load(std::memory_order_relaxed)),
-             static_cast<unsigned long>(encode_empty_.load(std::memory_order_relaxed)),
-             static_cast<unsigned long>(encode_fail_.load(std::memory_order_relaxed)),
-             static_cast<unsigned long>(send_pop_count_.load(std::memory_order_relaxed)),
-             static_cast<unsigned long>(decode_push_count_.load(std::memory_order_relaxed)),
-             static_cast<unsigned long>(playback_write_count_.load(std::memory_order_relaxed)),
-             last_input ? static_cast<long long>(now - last_input) : -1LL,
-             last_encode ? static_cast<long long>(now - last_encode) : -1LL,
-             last_send ? static_cast<long long>(now - last_send) : -1LL);
-}
-
 void AudioService::InputTaskEntry(void* arg) {
     auto* self = static_cast<AudioService*>(arg);
     self->InputTask();
@@ -482,7 +434,6 @@ void AudioService::InputTask() {
         if (!PushTaskToEncodeQueue(std::move(pcm)))
             vTaskDelay(pdMS_TO_TICKS(5));
     }
-    ESP_LOGI(kTag, "Input task stopped");
 }
 
 void AudioService::OutputTask() {
@@ -515,7 +466,6 @@ void AudioService::OutputTask() {
         playback_active_.store(false, std::memory_order_relaxed);
     }
     playback_active_.store(false, std::memory_order_relaxed);
-    ESP_LOGI(kTag, "Output task stopped");
 }
 
 void AudioService::CodecTask() {
@@ -631,7 +581,6 @@ void AudioService::CodecTask() {
             xSemaphoreTake(decode_notify_, pdMS_TO_TICKS(kCodecTaskDelayMs));
     }
     decode_active_.store(false, std::memory_order_relaxed);
-    ESP_LOGI(kTag, "Codec task stopped");
 }
 
 bool AudioService::PushTaskToEncodeQueue(std::vector<int16_t>&& pcm) {

@@ -68,7 +68,6 @@ void TryFireCombo() {
         return;  // 已触发过
     g_combo.up_consumed   = true;
     g_combo.down_consumed = true;
-    ESP_LOGI(kTag, "Combo UP+DOWN -> urgent full refresh");
     if (auto* epd = Board::Get().epd())
         epd->RequestUrgentFullRefresh();
 }
@@ -122,8 +121,6 @@ bool TryConnectAndSetup(cred::Credentials& c) {
     }
     if (!sntp::TimeSynced()) {
         ESP_LOGW(kTag, "SNTP not synced after %dms; HTTPS register may fail", kSntpWaitMs);
-    } else {
-        ESP_LOGI(kTag, "SNTP synced in %dms", waited);
     }
 
     if (c.device_secret.empty()) {
@@ -153,11 +150,9 @@ bool TryConnectAndSetup(cred::Credentials& c) {
         c.device_id     = rr.id;
         c.device_secret = rr.device_secret;
         api::SetSecret(rr.device_secret);
-        ESP_LOGI(kTag, "Registered: id=%s pair=%s", rr.id.c_str(), rr.pair_code.c_str());
         // splash 立即显示配对码 —— 用户看屏抄码是关键体验。bound 状态由后续 poll 决定。
         EmitBootStage(BootStage::kAwaitingPair, nullptr, rr.pair_code.c_str());
     } else {
-        ESP_LOGI(kTag, "Have device_secret, skip register (id=%s)", c.device_id.c_str());
         // 不 emit kRegistering / kAwaitingPair,让 sync_service 第一轮 poll 拿到真实
         // bound/group 状态后再决定 splash 显示什么(已绑且有相册 → kSyncedGroupReady 切 FrameScene;
         // 已绑无相册 → kBound 切「等待相册」;远程被踢 → kUnbound 切「配对码」)。
@@ -190,7 +185,6 @@ bool PostCachedGroupReadyIfAny() {
     e.u.group.content_count   = content_count;
     e.u.group.content_changed = false;
     evt::Post(e);
-    ESP_LOGI(kTag, "Cached group ready gid=%s count=%d", gid.c_str(), content_count);
     return true;
 }
 
@@ -268,7 +262,6 @@ void App::PostWakeupKeyEvent(uint64_t ext1_mask) {
     e.kind         = UiEventKind::kButtonShort;
     e.u.button.btn = btn;
     evt::Post(e);
-    ESP_LOGI(kTag, "Wakeup by btn=%d -> posted ButtonShort", static_cast<int>(btn));
 }
 
 void App::PromoteToFrameSceneFromCache() {
@@ -298,7 +291,6 @@ void App::UiLoopTask() {
         // 401 self-reset:把擦 NVS + 重启放到 ui_loop 主线程做,避免在 HTTP 回调
         // 里直接 esp_restart 撕坏 socket 导致 mbedtls 内部 panic。
         if (e.kind == UiEventKind::kSecretInvalid) {
-            ESP_LOGI(kTag, "Secret invalid -> clear + restart");
             cred::ClearSecret();
             vTaskDelay(pdMS_TO_TICKS(200));
             esp_restart();
@@ -455,8 +447,6 @@ bool App::InitWifiAndSync(cred::Credentials& creds) {
         evt::Post(e);
     });
 
-    ESP_LOGI(kTag, "Found NVS credentials: ssid=%s have_secret=%d", creds.wifi_ssid.c_str(),
-             (int)!creds.device_secret.empty());
     if (TryConnectAndSetup(creds)) {
         // 连上 → 状态栏立即显示 wifi 图标
         PostWifiState(true, Wifi::Get().GetRssi());
@@ -508,7 +498,6 @@ void App::StartPortal() {
     portal_ = std::make_unique<CaptivePortal>();
 
     portal_->OnSubmit([](const CaptivePortal::Submission& s, std::string& out_error) -> bool {
-        ESP_LOGI(kTag, "Portal /submit: ssid=%s", s.ssid.c_str());
         std::string reason;
         if (!Wifi::Get().TryConnect(s.ssid, s.password, 10000, reason)) {
             out_error = reason;
@@ -526,14 +515,12 @@ void App::StartPortal() {
             ESP_LOGE(kTag, "Credential save failed");
             return false;
         }
-        ESP_LOGI(kTag, "Credentials saved, will reboot soon");
         return true;
     });
 
     portal_->OnFinished([this](bool success) {
         if (!success)
             return;
-        ESP_LOGI(kTag, "Portal finished, stopping AP and rebooting in 500ms");
         portal_->Stop();
         vTaskDelay(pdMS_TO_TICKS(500));
         esp_restart();
@@ -568,7 +555,6 @@ void App::FinalizePm() {
         .light_sleep_enable = false,
     };
     ESP_ERROR_CHECK(esp_pm_configure(&pm));
-    ESP_LOGI(kTag, "PM configured: 80-240MHz DFS, light sleep off");
 }
 
 void App::Init() {
@@ -594,7 +580,6 @@ void App::Init() {
 
     switch (decision_.mode) {
         case boot_mode::Mode::kPortal:
-            ESP_LOGI(kTag, "No credentials -> captive portal");
             Wifi::Get().Init();
             StartPortal();
             break;

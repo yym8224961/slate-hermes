@@ -19,7 +19,6 @@ void TimeTick::Start() {
     args.name                    = "time_tick";
     ESP_ERROR_CHECK(esp_timer_create(&args, &timer_));
     ESP_ERROR_CHECK(esp_timer_start_periodic(timer_, 1000 * 1000));  // 1s
-    ESP_LOGI(kTag, "Time tick started");
 }
 
 void TimeTick::Stop() {

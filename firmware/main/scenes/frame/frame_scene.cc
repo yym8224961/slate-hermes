@@ -108,15 +108,12 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         case UiEventKind::kButtonLong: {
             switch (e.u.button.btn) {
                 case ButtonId::kUp:
-                    ESP_LOGI(kTag, "Long Up -> cycle group prev");
                     CycleGroup(ctx, /*next=*/false);
                     break;
                 case ButtonId::kDown:
-                    ESP_LOGI(kTag, "Long Down -> cycle group next");
                     CycleGroup(ctx, /*next=*/true);
                     break;
                 case ButtonId::kEnter:
-                    ESP_LOGI(kTag, "Long Enter -> push Settings");
                     ctx.stack->RequestPush(std::make_unique<SettingsScene>());
                     break;
             }
@@ -129,8 +126,6 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
                 int mv = 0;
                 ctx.read_battery(&mv, &pct);
             }
-            ESP_LOGI(kTag, "ChargeChanged: present=%d charging=%d full=%d no_battery=%d pct=%d", c.present, c.charging,
-                     c.full, c.no_battery, pct);
             if (status_bar_ && status_bar_->SetBattery(pct, c.charging, c.full)) {
                 SyncRender(ctx, /*force_full*/ false);
             }
@@ -201,7 +196,7 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             RefreshStatusBarFromSensors(ctx);
             break;
         case UiEventKind::kUnbound: {
-            ESP_LOGW(kTag, "Unbound (pair_code=%s) -> back to BootSplashScene", e.u.unbound.pair_code);
+            ESP_LOGW(kTag, "Unbound -> back to BootSplashScene");
             ctx.stack->RequestReplace(std::make_unique<BootSplashScene>());
             break;
         }
@@ -243,7 +238,6 @@ void FrameScene::RebindGroup(SceneContext& ctx, const char* gid, int content_cou
     power_state::SetCurrentFrameSeq(idx_);
     power_state::SetCurrentFrameSchedule({});
     first_loaded_ = false;
-    ESP_LOGI(kTag, "Rebind group: gid=%s count=%d", gid_.c_str(), content_count_);
 }
 
 void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full, AudioBehavior audio_behavior) {
@@ -279,8 +273,6 @@ void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full, AudioBeh
         ctx.epd->RequestUrgentFullRefresh();
     else
         ctx.epd->RequestUrgentPartialRefresh();
-
-    ESP_LOGI(kTag, "LoadFrame %d: status_bar_text=%s%s", idx, meta.status_bar_text.c_str(), full ? " (full)" : "");
 
     if (ctx.audio) {
         std::vector<uint8_t> pcm;

@@ -35,7 +35,6 @@ void Board::Init() {
     InitEpd();
     InitButtons();
     InitBatteryAdc();
-    ESP_LOGI(kTag, "Board init done");
 }
 
 static int64_t NowMs() {
@@ -128,14 +127,14 @@ void Board::InitEpd() {
 void Board::InitButtons() {
     // 三个业务按键统一 1s 长按阈值。具体语义由当前 Scene 处理:
     // FrameScene 中 UP/DOWN 长按切相册,ENTER 长按进设置;危险动作在各确认页长按执行。
-    // 第 5 个参数 enable_power_save=true:button 库内部会调 gpio_wakeup_enable,
-    // 把 GPIO 注册成 light-sleep 唤醒源。
-    constexpr bool kPowerSave = true;
-    up_btn_ = std::make_unique<Button>(static_cast<gpio_num_t>(UP_BUTTON_GPIO), false, kNavLongPressMs, 0, kPowerSave);
+    // 不启用 iot_button 的 enable_power_save：它会注册一个 GPIO wake ISR，
+    // flash cache 关闭期间（例如 LittleFS rename）触发会因 ISR 不在 IRAM 崩溃。
+    // Deep sleep 唤醒由 SleepManager 进入睡眠前单独配置 EXT1。
+    up_btn_ = std::make_unique<Button>(static_cast<gpio_num_t>(UP_BUTTON_GPIO), false, kNavLongPressMs, 0);
     down_btn_ =
-        std::make_unique<Button>(static_cast<gpio_num_t>(DOWN_BUTTON_GPIO), false, kNavLongPressMs, 0, kPowerSave);
+        std::make_unique<Button>(static_cast<gpio_num_t>(DOWN_BUTTON_GPIO), false, kNavLongPressMs, 0);
     boot_btn_ =
-        std::make_unique<Button>(static_cast<gpio_num_t>(BOOT_BUTTON_GPIO), false, kNavLongPressMs, 0, kPowerSave);
+        std::make_unique<Button>(static_cast<gpio_num_t>(BOOT_BUTTON_GPIO), false, kNavLongPressMs, 0);
 }
 
 void Board::InitBatteryAdc() {

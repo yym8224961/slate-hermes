@@ -150,15 +150,6 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
     sub.server_url = get("server_url");
     cJSON_Delete(root);
 
-    // 明文凭据日志由 CONFIG_SLATE_LOG_PLAINTEXT_CRED 门控,详见 wifi.cc。
-#if CONFIG_SLATE_LOG_PLAINTEXT_CRED
-    ESP_LOGW(kTag, "/submit ssid='%s' pwd='%s' server='%s'", sub.ssid.c_str(), sub.password.c_str(),
-             sub.server_url.c_str());
-#else
-    ESP_LOGI(kTag, "/submit ssid='%s' pwd_len=%u server='%s'", sub.ssid.c_str(), (unsigned)sub.password.size(),
-             sub.server_url.c_str());
-#endif
-
     if (sub.ssid.empty() || sub.server_url.empty()) {
         httpd_resp_set_type(req, "application/json");
         httpd_resp_send(req, R"({"success":false,"error":"missing fields"})", -1);
@@ -288,7 +279,6 @@ bool CaptivePortal::Start() {
     httpd_register_uri_handler(server_, &uri_catch);
 
     running_.store(true);
-    ESP_LOGI(kTag, "Captive portal up: http://192.168.4.1/");
     return true;
 }
 
@@ -303,7 +293,6 @@ void CaptivePortal::Stop() {
     Wifi::Get().StopAp();
     running_.store(false);
     g_portal = nullptr;
-    ESP_LOGI(kTag, "Captive portal stopped");
 }
 
 void CaptivePortal::OnSubmit(SubmitCb cb) {
