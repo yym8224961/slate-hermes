@@ -9,7 +9,9 @@
 
 class VolumePage : public Scene {
    public:
-    VolumePage();
+    enum class Target { kAlbum, kXiaozhi };
+
+    explicit VolumePage(Target target = Target::kAlbum);
     ~VolumePage() override;
 
     const char* Name() const override {
@@ -24,6 +26,8 @@ class VolumePage : public Scene {
 
    private:
     void RedrawValue();
+    void SaveLevel();
+    const char* Caption() const;
     void SyncRender(SceneContext& ctx);
     void PlayTestTone(SceneContext& ctx);
 
@@ -33,5 +37,6 @@ class VolumePage : public Scene {
     lv_obj_t*                  value_label_ = nullptr;  // "6 / 10"
     lv_obj_t*                  hint_label_  = nullptr;  // 底部提示
     std::unique_ptr<StatusBar> status_bar_;
+    Target                     target_ = Target::kAlbum;
     int                        level_ = 0;
 };

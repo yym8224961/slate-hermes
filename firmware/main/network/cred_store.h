@@ -1,11 +1,11 @@
 #pragma once
 
-// NVS namespace "slate" 凭据存储分两组:
+// NVS 凭据存储:
 //
-// 1. 配网凭据 (wifi_ssid / wifi_pwd / server_url): captive portal 提交后由 Save() 写入。
-//    工厂重置 (Clear()) 清空整个 namespace 让设备回到首次开机状态。
+// 1. 配网凭据 slate.net { ssid / pwd / url }: captive portal 提交后由 Save() 写入。
 //
-// 2. 设备身份 (device_id / device_secret): register 响应里下发,SaveSecret() 单独写一次
+// 2. 内容服务端设备身份 slate.net { dev_id / dev_sec }:
+//    register 响应里下发,SaveSecret() 单独写一次
 //    并 commit,保证跨重启可见。后续所有受保护 API 用 Authorization: Bearer <device_secret>。
 //    poll 收到 401 (secret 失效) 时调 ClearSecret() 让设备重启走 register 流,
 //    不擦 wifi/server,体验上是"内部修复"而非"重新配网"。
@@ -22,7 +22,7 @@ struct Credentials {
     std::string device_secret;
 };
 
-// Load 把 NVS 里所有字段读出来。返回 true 表示至少有 wifi_ssid (= 配过网)。
+// Load 把 NVS 里所有字段读出来。返回 true 表示至少有 wifi_ssid + server_url (= 配网完整)。
 // device_id/device_secret 可能为空 —— 表示首次启动或 self-reset 后,需要走 register。
 bool Load(Credentials& out);
 

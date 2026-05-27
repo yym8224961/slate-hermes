@@ -18,6 +18,7 @@
 #include "charge_status.h"
 #include "event_bus.h"
 #include "power_state.h"
+#include "xiaozhi_chat_service.h"
 
 namespace {
 constexpr char kTag[] = "Sleep";
@@ -86,6 +87,7 @@ void SleepManager::OnEvent(const UiEvent& e) {
     switch (e.kind) {
         case UiEventKind::kButtonShort:
         case UiEventKind::kButtonLong:
+        case UiEventKind::kButtonDouble:
             last_active_ms_.store(esp_timer_get_time() / 1000);
             break;
         case UiEventKind::kChargeChanged:
@@ -132,6 +134,7 @@ uint32_t SleepManager::ComputeConfiguredNextWakeSec() const {
 void SleepManager::Tick(int64_t now_ms) {
     if (!enabled_.load()) return;
     if (paused_.load()) return;
+    if (xiaozhi::ChatService::Get().BlocksSleep()) return;
     if (InUnboundGrace(now_ms)) return;
     const int64_t idle_ms      = now_ms - last_active_ms_.load();
     const int64_t threshold_ms = static_cast<int64_t>(idle_timeout_min_) * 60 * 1000;
@@ -173,6 +176,7 @@ SleepManager::SleepDecision SleepManager::TryEnterDeepSleep() {
 
     // 1) 停后台 task,避免在 rail 关闭后还有 I²C / 网络写操作。
     //    Stop 是异步信号 task 自然退出,不等(esp_deep_sleep_start 强制中断)。
+    xiaozhi::ChatService::Get().SuspendForSleep();
     SyncService::Get().Stop();
     AudioPlayer::Get().Stop();
 

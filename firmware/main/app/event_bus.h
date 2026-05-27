@@ -17,6 +17,7 @@
 enum class UiEventKind : uint8_t {
     kButtonShort,       // u.button.btn
     kButtonLong,        // u.button.btn
+    kButtonDouble,      // u.button.btn
     kChargeChanged,     // u.charge
     kBatteryUpdated,    // u.battery
     kWifiStateChanged,  // u.wifi
@@ -37,6 +38,10 @@ enum class UiEventKind : uint8_t {
     kSecretInvalid,
     // RTC timer 唤醒后台刷新场景完成/放弃，App 可立即进入下一轮 deep sleep。
     kBgRefreshDone,
+    // 小智子系统状态变化。Scene 收到后从 ChatService 读取最新快照。
+    kXiaozhiChanged,
+    // 小智网络/服务端主动关闭。App 收到后转交 ChatService 收束对应会话。
+    kXiaozhiChannelClosed,  // u.xiaozhi_channel.token
 };
 
 enum class ButtonId : uint8_t { kEnter = 0, kUp, kDown };
@@ -100,6 +105,9 @@ struct UiEvent {
         struct {
             char pair_code[8];
         } unbound;
+        struct {
+            uint32_t token;
+        } xiaozhi_channel;
         U() {
         }
     } u;

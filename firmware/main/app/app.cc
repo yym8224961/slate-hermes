@@ -28,6 +28,7 @@
 #include "boot_splash_scene.h"
 #include "cache.h"
 #include "captive_portal.h"
+#include "chat_scene.h"
 #include "cred_store.h"
 #include "event_bus.h"
 #include "frame_scene.h"
@@ -35,6 +36,7 @@
 #include "sntp.h"
 #include "sync_service.h"
 #include "wifi.h"
+#include "xiaozhi_chat_service.h"
 
 namespace {
 constexpr char kTag[]                  = "App";
@@ -52,6 +54,12 @@ struct ComboState {
     bool down_consumed = false;
 };
 ComboState g_combo;
+
+bool IsSettingsSceneName(const char* name) {
+    return name && (std::strcmp(name, "Settings") == 0 || std::strcmp(name, "Volume") == 0 ||
+                    std::strcmp(name, "DeviceInfo") == 0 || std::strcmp(name, "RestartDevice") == 0 ||
+                    std::strcmp(name, "FactoryReset") == 0);
+}
 
 void TryFireCombo() {
     if (!g_combo.up_held || !g_combo.down_held)
@@ -318,11 +326,28 @@ void App::UiLoopTask() {
             }
             continue;
         }
+        if (e.kind == UiEventKind::kXiaozhiChannelClosed) {
+            xiaozhi::ChatService::Get().NotifyNetworkClosed(e.u.xiaozhi_channel.token);
+            continue;
+        }
         if ((e.kind == UiEventKind::kCachedGroupReady || e.kind == UiEventKind::kSyncedGroupReady) &&
             scene_stack_.Empty()) {
             scene_stack_.Push(std::make_unique<FrameScene>(e.u.group.gid, e.u.group.content_count));
             scene_stack_.ApplyPending();
             continue;
+        }
+        if (e.kind == UiEventKind::kButtonDouble && e.u.button.btn == ButtonId::kEnter) {
+            Scene* top = scene_stack_.Top();
+            if (top && IsSettingsSceneName(top->Name())) {
+                sleep_mgr_.OnEvent(e);
+                continue;
+            }
+            if (!top || std::strcmp(top->Name(), "Xiaozhi") != 0) {
+                scene_stack_.Push(std::make_unique<ChatScene>());
+                scene_stack_.ApplyPending();
+                sleep_mgr_.OnEvent(e);
+                continue;
+            }
         }
         scene_stack_.Dispatch(e);
         sleep_mgr_.OnEvent(e);
@@ -344,6 +369,14 @@ void App::AttachInputs() {
         return [b]() {
             UiEvent e{};
             e.kind         = UiEventKind::kButtonLong;
+            e.u.button.btn = b;
+            evt::Post(e);
+        };
+    };
+    auto post_double = [](ButtonId b) {
+        return [b]() {
+            UiEvent e{};
+            e.kind         = UiEventKind::kButtonDouble;
             e.u.button.btn = b;
             evt::Post(e);
         };
@@ -388,6 +421,7 @@ void App::AttachInputs() {
     });
 
     board->boot_btn()->OnClick(post_short(ButtonId::kEnter));
+    board->boot_btn()->OnDoubleClick(post_double(ButtonId::kEnter));
     // ENTER 长按 1s → frame_scene 接 ButtonLong{kEnter} push SettingsScene。
     board->boot_btn()->OnLongPress(post_long(ButtonId::kEnter));
 
@@ -541,6 +575,7 @@ void App::Init() {
     InitStorage();
     InitDevices();
     InitEventBus();
+    xiaozhi::ChatService::Get().Start(&AudioPlayer::Get());
     InitSceneStack();
 
     cred::Credentials creds;

@@ -227,9 +227,12 @@ static api::Telemetry BuildTelemetry(const SyncDeps& deps, const std::string& cu
 // 拉某 group 的 manifest 并把缺的 frame 落盘。返回 false 表示本轮同步失败，应通过 SyncFinished 通知 UI。
 // group_changed 表示是否真的有「内容更新」。
 bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, bool& group_changed) {
+    const int64_t sync_started_ms = esp_timer_get_time() / 1000;
     group_changed = false;
     if (gid.empty())
         return true;
+
+    ESP_LOGI(kTag, "Manifest sync begin gid=%s expected_etag=%s", gid.c_str(), expected_etag.c_str());
 
     if (expected_etag.empty()) {
         ESP_LOGE(kTag, "SyncManifestAndFrames: empty expected_etag for gid=%s", gid.c_str());
@@ -241,6 +244,7 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
 
     bool need = (gid != cached_group_id) || (expected_etag != cached_etag);
     if (!need) {
+        ESP_LOGI(kTag, "Manifest sync skip gid=%s etag unchanged", gid.c_str());
         if (GetCurrentGroupLocked() != gid) {
             SetCurrentGroupLocked(gid);
             int content_count = 0;
@@ -281,10 +285,17 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     const int total    = static_cast<int>(mf.contents.size());
     int       done     = 0;
     bool      complete = true;
+    ESP_LOGI(kTag, "Manifest fetched gid=%s contents=%d manifest_etag=%s", gid.c_str(), total,
+             mf.manifest_etag.c_str());
     // 防日志噪音：同一 gid 的协议不匹配只 warn 一次/轮同步，避免每 tick 反复刷屏。
     // 不用 static：切组后应重新允许打 warn，便于用户修复数据后确认日志恢复。
     std::string warned_gid;
     for (auto& f : mf.contents) {
+        const int64_t frame_started_ms = esp_timer_get_time() / 1000;
+        ESP_LOGI(kTag,
+                 "Frame sync begin gid=%s seq=%d id=%s image_etag=%s image_size=%d audio_etag=%s audio_size=%d",
+                 gid.c_str(), f.seq, f.id.c_str(), f.image_etag.c_str(), f.image_size, f.audio_etag.c_str(),
+                 f.audio_size);
         // 本地缓存按 (gid, seq) 维度，HTTP URL 用稳定 id。
         if (f.id.empty()) {
             if (warned_gid != gid) {
@@ -314,7 +325,12 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         if (!cache::FrameImageExists(gid, f.seq, f.image_etag)) {
             std::vector<uint8_t> buf;
             bool                 nm = false;
+            const int64_t        image_started_ms = esp_timer_get_time() / 1000;
+            ESP_LOGI(kTag, "Frame %d image download begin id=%s", f.seq, f.id.c_str());
             if (api::DownloadContentImage(f.id, "", buf, nm)) {
+                ESP_LOGI(kTag, "Frame %d image download done bytes=%u elapsed=%lldms", f.seq, (unsigned)buf.size(),
+                         (long long)((esp_timer_get_time() / 1000) - image_started_ms));
+                ESP_LOGI(kTag, "Frame %d image cache write begin", f.seq);
                 if (cache::WriteFrameImage(gid, f.seq, buf, f.image_etag)) {
                     ESP_LOGI(kTag, "Frame %d image cached (%u B)", f.seq, (unsigned)buf.size());
                 } else {
@@ -322,23 +338,36 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
                     complete = false;
                 }
             } else {
+                ESP_LOGW(kTag, "Frame %d image download failed elapsed=%lldms", f.seq,
+                         (long long)((esp_timer_get_time() / 1000) - image_started_ms));
                 complete = false;
             }
+        } else {
+            ESP_LOGI(kTag, "Frame %d image cache hit", f.seq);
         }
         if (f.audio_etag.empty()) {
+            ESP_LOGI(kTag, "Frame %d has no audio; delete cached audio", f.seq);
             cache::DeleteFrameAudio(gid, f.seq);
         } else if (!cache::FrameAudioExists(gid, f.seq, f.audio_etag)) {
             std::vector<uint8_t> buf;
             bool                 nm = false;
+            const int64_t        audio_started_ms = esp_timer_get_time() / 1000;
+            ESP_LOGI(kTag, "Frame %d audio download begin id=%s", f.seq, f.id.c_str());
             if (api::DownloadContentAudio(f.id, "", buf, nm)) {
+                ESP_LOGI(kTag, "Frame %d audio download done bytes=%u elapsed=%lldms", f.seq, (unsigned)buf.size(),
+                         (long long)((esp_timer_get_time() / 1000) - audio_started_ms));
+                ESP_LOGI(kTag, "Frame %d audio cache write begin", f.seq);
                 if (!cache::WriteFrameAudio(gid, f.seq, buf, f.audio_etag)) {
                     ESP_LOGW(kTag, "Frame %d audio write failed", f.seq);
                     complete = false;
                 }
             } else {
-                ESP_LOGW(kTag, "Frame %d audio download failed", f.seq);
+                ESP_LOGW(kTag, "Frame %d audio download failed elapsed=%lldms", f.seq,
+                         (long long)((esp_timer_get_time() / 1000) - audio_started_ms));
                 complete = false;
             }
+        } else {
+            ESP_LOGI(kTag, "Frame %d audio cache hit", f.seq);
         }
 
         if (cache::FrameImageExists(gid, f.seq, f.image_etag) &&
@@ -348,6 +377,7 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
             fm.content_etag    = f.content_etag;
             fm.has_ttl         = f.has_next_wake_sec && f.next_wake_sec >= 0;
             fm.ttl_sec         = f.next_wake_sec > 0 ? static_cast<uint32_t>(f.next_wake_sec) : 0;
+            ESP_LOGI(kTag, "Frame %d meta write begin", f.seq);
             if (!cache::WriteFrameMeta(gid, f.seq, fm)) {
                 ESP_LOGW(kTag, "Frame %d meta write failed", f.seq);
                 complete = false;
@@ -356,6 +386,8 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
             complete = false;
         }
         ++done;
+        ESP_LOGI(kTag, "Frame sync done seq=%d progress=%d/%d elapsed=%lldms", f.seq, done, total,
+                 (long long)((esp_timer_get_time() / 1000) - frame_started_ms));
         // 帧级进度,Scene 自己决定显示与否(BootSplash + FrameScene 关心,
         // SettingsScene 等忽略)。clamp 到 0xFF 避免极端 group 溢出。
         UiEvent e{};
@@ -370,13 +402,16 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         return false;
     }
     for (int idx = total; idx < old_content_count; ++idx) {
+        ESP_LOGI(kTag, "Delete stale frame files gid=%s idx=%d", gid.c_str(), idx);
         cache::DeleteFrameFiles(gid, idx);
     }
+    ESP_LOGI(kTag, "Manifest cache write begin gid=%s count=%d", gid.c_str(), total);
     if (!cache::WriteManifest(gid, mf.manifest_etag, mf.contents.size())) {
         ESP_LOGW(kTag, "Manifest write failed, not committing state gid=%s etag=%s", gid.c_str(),
                  mf.manifest_etag.c_str());
         return false;
     }
+    ESP_LOGI(kTag, "State meta write begin gid=%s etag=%s", gid.c_str(), mf.manifest_etag.c_str());
     if (!cache::WriteStateMeta(gid, mf.manifest_etag)) {
         ESP_LOGW(kTag, "State write failed, not switching group gid=%s etag=%s", gid.c_str(), mf.manifest_etag.c_str());
         return false;
@@ -386,6 +421,8 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     // 真有内容变化(新增/修改/删除帧),让 FrameScene 重读当前帧并触发 EPD 刷新。
     PostSyncedGroupReady(gid, mf.group_name, static_cast<int>(mf.contents.size()),
                          /*content_changed=*/true);
+    ESP_LOGI(kTag, "Manifest sync done gid=%s contents=%d elapsed=%lldms", gid.c_str(), total,
+             (long long)((esp_timer_get_time() / 1000) - sync_started_ms));
     return true;
 }
 
@@ -457,6 +494,8 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
 }
 
 void SyncService::SyncOnce(SyncMode mode) {
+    const int64_t sync_once_started_ms = esp_timer_get_time() / 1000;
+    ESP_LOGI(kTag, "SyncOnce begin mode=%s", mode == SyncMode::kBackgroundRefresh ? "background" : "active");
     if (mode == SyncMode::kBackgroundRefresh) {
         if (deps_.current_group)
             SetCurrentGroupLocked(deps_.current_group());
@@ -473,6 +512,7 @@ void SyncService::SyncOnce(SyncMode mode) {
     api::Telemetry tel = BuildTelemetry(deps_, GetCurrentGroupLocked());
 
     api::DeviceState state;
+    ESP_LOGI(kTag, "Poll begin");
     if (!api::Poll(tel, state)) {
         ESP_LOGW(kTag, "Poll failed (offline?)");
         UiEvent e{};
@@ -480,8 +520,15 @@ void SyncService::SyncOnce(SyncMode mode) {
         e.u.sync.ok            = false;
         e.u.sync.group_changed = false;
         evt::Post(e, 0);
+        ESP_LOGI(kTag, "SyncOnce finished after poll failure elapsed=%lldms",
+                 (long long)((esp_timer_get_time() / 1000) - sync_once_started_ms));
         return;
     }
+    ESP_LOGI(kTag,
+             "Poll done bound=%d has_group=%d gid=%s manifest=%s content_count=%d has_current=%d elapsed=%lldms",
+             state.bound ? 1 : 0, state.has_group ? 1 : 0, state.group_id.c_str(), state.manifest_etag.c_str(),
+             state.content_count, state.has_current_content ? 1 : 0,
+             (long long)((esp_timer_get_time() / 1000) - sync_once_started_ms));
     sntp::ApplyServerTime(state.server_time);
     // 1. bound 翻转:发独立事件让 splash / frame_scene 都能响应。
     const BoundState prev_bound = was_bound_.load();
@@ -565,10 +612,14 @@ void SyncService::SyncOnce(SyncMode mode) {
     e.kind                 = UiEventKind::kSyncFinished;
     e.u.sync.ok            = sync_ok;
     e.u.sync.group_changed = group_changed;
+    ESP_LOGI(kTag, "Post SyncFinished ok=%d group_changed=%d elapsed=%lldms", sync_ok ? 1 : 0,
+             group_changed ? 1 : 0, (long long)((esp_timer_get_time() / 1000) - sync_once_started_ms));
     evt::Post(e, 0);
 }
 
 void SyncService::DoCycle(const std::string& direction) {
+    const int64_t cycle_started_ms = esp_timer_get_time() / 1000;
+    ESP_LOGI(kTag, "Cycle begin direction=%s", direction.c_str());
     {
         UiEvent e{};
         e.kind = UiEventKind::kSyncStarted;
@@ -602,6 +653,9 @@ void SyncService::DoCycle(const std::string& direction) {
     e.kind                 = UiEventKind::kSyncFinished;
     e.u.sync.ok            = sync_ok;
     e.u.sync.group_changed = group_changed;
+    ESP_LOGI(kTag, "Cycle finished direction=%s ok=%d group_changed=%d elapsed=%lldms", direction.c_str(),
+             sync_ok ? 1 : 0, group_changed ? 1 : 0,
+             (long long)((esp_timer_get_time() / 1000) - cycle_started_ms));
     evt::Post(e, 0);
 }
 

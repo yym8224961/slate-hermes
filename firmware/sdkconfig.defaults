@@ -29,9 +29,8 @@ CONFIG_FREERTOS_HZ=1000
 # 注意:Kconfig 不支持行内注释,注释必须独占一行,否则覆盖会被 confgen 静默丢弃。
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 
-# LVGL：简化 include 路径让字体源里的 #include "lvgl.h" 生效
-# (firmware/main/generated/fonts/*.c 直接 #include "lvgl.h"，删此项会编译失败)
-CONFIG_LV_LVGL_H_INCLUDE_SIMPLE=y
+# LVGL: 字体源会按编译宏 LV_LVGL_H_INCLUDE_SIMPLE 选择 include 路径。
+# 该宏由组件 CMake 注入，不是 LVGL 9 的 Kconfig 选项。
 CONFIG_LV_USE_LOG=y
 CONFIG_LV_LOG_LEVEL_WARN=y
 CONFIG_LV_USE_LABEL=y

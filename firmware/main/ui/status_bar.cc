@@ -76,12 +76,17 @@ StatusBar::StatusBar(lv_obj_t* parent) {
     lv_label_set_text(battery_pct_lbl_, "");
     lv_obj_align(battery_pct_lbl_, LV_ALIGN_RIGHT_MID, -26, 0);
 
+    title_icon_label_ = lv_label_create(root_);
+    ApplyIconStyle(title_icon_label_);
+    lv_obj_align(title_icon_label_, LV_ALIGN_CENTER, 0, 0);
+
     // 中央标题：16px SourceHanSansSC Regular 1bpp。和 BootSplash 同字体,
     // 整固件统一中文风格,EPD 1bpp 渲染最干净（无抗锯齿伪边）。
     title_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(title_label_, &SourceHanSansSC_Regular_slim, 0);
     lv_obj_set_style_text_color(title_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(title_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_long_mode(title_label_, LV_LABEL_LONG_CLIP);
     lv_label_set_text(title_label_, "");
     lv_obj_align(title_label_, LV_ALIGN_CENTER, 0, 0);
 }
@@ -134,7 +139,17 @@ bool StatusBar::SetCaption(const std::string& text) {
         return false;
     shown_title_ = text;
     lv_label_set_text(title_label_, text.c_str());
-    lv_obj_align(title_label_, LV_ALIGN_CENTER, 0, 0);
+    LayoutTitle();
+    return true;
+}
+
+bool StatusBar::SetCaptionIcon(const char* icon) {
+    const std::string next = icon ? icon : "";
+    if (next == shown_title_icon_)
+        return false;
+    shown_title_icon_ = next;
+    lv_label_set_text(title_icon_label_, shown_title_icon_.c_str());
+    LayoutTitle();
     return true;
 }
 
@@ -146,4 +161,25 @@ void StatusBar::Show() {
 void StatusBar::Hide() {
     if (root_)
         lv_obj_add_flag(root_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void StatusBar::LayoutTitle() {
+    if (!title_label_ || !title_icon_label_)
+        return;
+    lv_obj_update_layout(title_label_);
+    lv_obj_update_layout(title_icon_label_);
+
+    if (shown_title_icon_.empty()) {
+        lv_obj_add_flag(title_icon_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(title_label_, LV_ALIGN_CENTER, 0, 0);
+        return;
+    }
+
+    lv_obj_clear_flag(title_icon_label_, LV_OBJ_FLAG_HIDDEN);
+    const int icon_w = lv_obj_get_width(title_icon_label_);
+    const int text_w = lv_obj_get_width(title_label_);
+    constexpr int kGap = 5;
+    const int total = icon_w + kGap + text_w;
+    lv_obj_align(title_icon_label_, LV_ALIGN_CENTER, -(total / 2) + icon_w / 2, 0);
+    lv_obj_align(title_label_, LV_ALIGN_CENTER, -(total / 2) + icon_w + kGap + text_w / 2, 0);
 }

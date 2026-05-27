@@ -9,6 +9,7 @@
 #include "event_bus.h"
 #include "scene_stack.h"
 #include "audio_player.h"
+#include "xiaozhi_audio_service.h"
 #include "volume_store.h"
 #include "epd_ssd1683.h"
 #include "theme.h"
@@ -36,7 +37,8 @@ std::vector<uint8_t> MakeTestTone() {
 }
 }  // namespace
 
-VolumePage::VolumePage()  = default;
+VolumePage::VolumePage(Target target) : target_(target) {
+}
 VolumePage::~VolumePage() = default;
 
 void VolumePage::OnEnter(SceneContext& ctx) {
@@ -53,7 +55,7 @@ void VolumePage::OnEnter(SceneContext& ctx) {
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
 
     status_bar_ = std::make_unique<StatusBar>(root_);
-    status_bar_->SetCaption("音量调节");
+    status_bar_->SetCaption(Caption());
 
     // 数值 "6 / 10",大写字号靠居中视觉强调
     value_label_ = lv_label_create(root_);
@@ -87,10 +89,11 @@ void VolumePage::OnEnter(SceneContext& ctx) {
     lv_obj_set_style_text_font(hint_label_, &SourceHanSansSC_Regular_slim, 0);
     lv_obj_set_style_text_color(hint_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(hint_label_, "上/下 调节   按确认 返回   长按确认 试听");
+    lv_label_set_text(hint_label_, target_ == Target::kAlbum ? "上/下 调节   按确认 返回   长按确认 试听"
+                                                             : "上/下 调节   按确认 返回");
     lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -16);
 
-    level_ = vol::Get();
+    level_ = (target_ == Target::kAlbum) ? vol::GetAlbum() : vol::GetXiaozhi();
     RedrawValue();
 
     lv_refr_now(NULL);
@@ -116,8 +119,7 @@ void VolumePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
                 case ButtonId::kUp:
                     if (level_ < vol::kMax) {
                         level_++;
-                        vol::Set(level_);
-                        AudioPlayer::Get().SetVolume(vol::ToCodec(level_));
+                        SaveLevel();
                         RedrawValue();
                         SyncRender(ctx);
                     }
@@ -125,8 +127,7 @@ void VolumePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
                 case ButtonId::kDown:
                     if (level_ > 0) {
                         level_--;
-                        vol::Set(level_);
-                        AudioPlayer::Get().SetVolume(vol::ToCodec(level_));
+                        SaveLevel();
                         RedrawValue();
                         SyncRender(ctx);
                     }
@@ -159,6 +160,20 @@ void VolumePage::RedrawValue() {
     }
 }
 
+void VolumePage::SaveLevel() {
+    if (target_ == Target::kAlbum) {
+        vol::SetAlbum(level_);
+        AudioPlayer::Get().SetVolume(vol::ToCodec(level_));
+    } else {
+        vol::SetXiaozhi(level_);
+        xiaozhi::AudioService::Get().SetVolume(vol::ToCodec(level_));
+    }
+}
+
+const char* VolumePage::Caption() const {
+    return target_ == Target::kAlbum ? "相册音量" : "小智音量";
+}
+
 void VolumePage::SyncRender(SceneContext& ctx) {
     if (!ctx.epd || !ctx.epd->Lock(500)) return;
     lv_refr_now(NULL);
@@ -167,7 +182,7 @@ void VolumePage::SyncRender(SceneContext& ctx) {
 }
 
 void VolumePage::PlayTestTone(SceneContext& ctx) {
-    if (!ctx.audio) return;
+    if (!ctx.audio || target_ != Target::kAlbum) return;
     static std::vector<uint8_t> tone = MakeTestTone();
     ctx.audio->Play(tone.data(), tone.size());
     ESP_LOGI(kTag, "Play test tone: level=%d codec=%d", level_, vol::ToCodec(level_));

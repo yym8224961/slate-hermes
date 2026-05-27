@@ -10,7 +10,10 @@
 #include "epd_ssd1683.h"
 #include "cred_store.h"
 #include "cache.h"
+#include "nvs_schema.h"
+#include "nvs_store.h"
 #include "theme.h"
+#include "xiaozhi_settings.h"
 
 namespace {
 constexpr char kTag[] = "FactoryReset";
@@ -57,7 +60,8 @@ void FactoryResetPage::OnEnter(SceneContext& ctx) {
     lv_label_set_text(warn,
         "确认要恢复出厂吗？\n\n"
         "Wi-Fi 配置、设备绑定\n"
-        "及所有内容缓存将全部清除\n"
+        "小智配置及内容缓存\n"
+        "将全部清除\n"
         "重启后进入配网模式");
     lv_obj_align(warn, LV_ALIGN_CENTER, 0, -8);
 
@@ -97,6 +101,8 @@ void FactoryResetPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
         // 顺序: NVS 清干净后 format LittleFS。两步任一失败都继续 esp_restart,
         // 防止用户卡在 settings 不知所措;下次启动 App::Init 会按 boot_mode 决定下一步。
         cred::Clear();
+        nvs_store::EraseNamespace(nvs_schema::kAudio);
+        xiaozhi::settings::ClearAll();
         cache::FormatAll();
         vTaskDelay(pdMS_TO_TICKS(200));
         esp_restart();

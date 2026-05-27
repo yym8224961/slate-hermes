@@ -1,7 +1,7 @@
 #pragma once
 
-// I2S + ES8311 audio playback。单例,异步播放:Play(buf, samples) 替换共享
-// PCM buf + notify task,task 内 esp_codec_dev_write 阻塞写一段后释放。
+// I2S + ES8311 audio owner。相册使用异步播放接口；小智进入对话时通过
+// BeginChat/EndChat 独占同一套 codec/I2S，避免两套业务各自初始化硬件。
 //
 // 服务端约定：16 kHz mono 16-bit raw PCM（.pcm 二进制）。
 // 数据来源:cache::ReadFrameAudio(gid, idx, vec<uint8_t>) 读 LittleFS。
@@ -41,6 +41,17 @@ class AudioPlayer {
     // 0..100,默认 70。改 codec output volume 寄存器。
     void SetVolume(int v);
 
+    // 小智对话独占音频硬件。BeginChat 会停止相册播放，并把 codec 音量切到
+    // 小智音量；EndChat 恢复相册音量缓存。
+    bool BeginChat(int codec_volume);
+    void EndChat(int album_codec_volume);
+    void SetChatVolume(int codec_volume);
+    bool ReadChatPcm(int16_t* dest, size_t samples);
+    bool WriteChatPcm(const int16_t* data, size_t samples);
+    bool IsChatActive() const {
+        return chat_active_.load(std::memory_order_relaxed);
+    }
+
    private:
     AudioPlayer() = default;
     static void TaskEntry(void* arg);
@@ -50,24 +61,28 @@ class AudioPlayer {
     bool EnsureCodecOpen();
 
     bool initialized_  = false;
-    bool codec_opened_ = false;  // lazy 标志
+    std::atomic<bool> codec_opened_{false};  // lazy 标志
     // 是否已经播过至少一段 PCM。用于 TaskLoop 判断"切歌"场景需要先静音再写,
     // 避免旧 PCM 末尾和新 PCM 开头波形跳变产生"啵"。Init 后第一段不算切歌。
     bool                         codec_in_progress_ = false;
     i2s_chan_handle_t            tx_handle_         = nullptr;
+    i2s_chan_handle_t            rx_handle_         = nullptr;
     const audio_codec_data_if_t* data_if_           = nullptr;
     const audio_codec_ctrl_if_t* ctrl_if_           = nullptr;
     const audio_codec_if_t*      codec_if_          = nullptr;
     const audio_codec_gpio_if_t* gpio_if_           = nullptr;
     esp_codec_dev_handle_t       dev_               = nullptr;
-    int                          volume_            = 85;
+    std::atomic<int>             volume_{85};
+    std::atomic<int>             chat_volume_{85};
 
     // 共享 PCM:Play 写入,task 读取并播。简单 swap,不做 ring buffer
     // (本场景 frame 切换 = 整段重播,不是流式追加)。
     SemaphoreHandle_t shared_mutex_ = nullptr;
+    SemaphoreHandle_t codec_mutex_  = nullptr;
     SemaphoreHandle_t notify_       = nullptr;  // binary semaphore,Play 时 give,task wait
     uint8_t*          pending_pcm_  = nullptr;  // 由 Play 拷贝;task 取走置 null
     size_t            pending_len_  = 0;
     std::atomic<bool> stop_flag_{false};
+    std::atomic<bool> chat_active_{false};
     TaskHandle_t      task_ = nullptr;
 };

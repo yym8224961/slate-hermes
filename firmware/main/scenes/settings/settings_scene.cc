@@ -9,7 +9,6 @@
 #include "epd_ssd1683.h"
 #include "menu_list.h"
 #include "theme.h"
-#include "data_sync_page.h"
 #include "device_info_page.h"
 #include "factory_reset_page.h"
 #include "restart_device_page.h"
@@ -42,12 +41,12 @@ void SettingsScene::OnEnter(SceneContext& ctx) {
     status_bar_->SetCaption("设置");
 
     // 三段语义分组(MenuList 不显式画分隔,靠顺序传达):
-    //   偏好    音量调节
-    //   信息    立即同步 / 设备信息
+    //   偏好    相册音量 / 小智音量
+    //   信息    设备信息
     //   危险    重启设备 / 恢复出厂(永远末尾,避免误触)
     std::vector<MenuList::Item> items = {
-        {"音量调节", [&ctx]() { ctx.stack->RequestPush(std::make_unique<VolumePage>()); }},
-        {"立即同步", [&ctx]() { ctx.stack->RequestPush(std::make_unique<DataSyncPage>()); }},
+        {"相册音量", [&ctx]() { ctx.stack->RequestPush(std::make_unique<VolumePage>(VolumePage::Target::kAlbum)); }},
+        {"小智音量", [&ctx]() { ctx.stack->RequestPush(std::make_unique<VolumePage>(VolumePage::Target::kXiaozhi)); }},
         {"设备信息", [&ctx]() { ctx.stack->RequestPush(std::make_unique<DeviceInfoPage>()); }},
         {"重启设备", [&ctx]() { ctx.stack->RequestPush(std::make_unique<RestartDevicePage>()); }},
         {"恢复出厂", [&ctx]() { ctx.stack->RequestPush(std::make_unique<FactoryResetPage>()); }},

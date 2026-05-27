@@ -33,7 +33,7 @@ class SyncService {
     void Start(SyncDeps deps);
     void Stop();
 
-    // 立即触发一次 poll（设置页「立即同步」按钮用）
+    // 立即触发一次 poll。用于启动、唤醒和绑定状态变化后的后台同步。
     void TriggerNow();
 
     // RTC timer 到期后触发：允许同步 + telemetry，并把新 manifest/data 拉下来。

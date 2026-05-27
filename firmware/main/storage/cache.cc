@@ -3,6 +3,7 @@
 #include <cJSON.h>
 #include <esp_littlefs.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 #include <sys/stat.h>
 
 #include <unistd.h>
@@ -39,24 +40,30 @@ bool DirEnsure(const std::string& dir) {
 // 原子写:写到 path.tmp 然后 rename。LittleFS rename 是原子的,
 // 中途断电只会留下 .tmp(下次启动时无人 fopen 会自然忽略)或保持原文件不变。
 bool WriteAll(const std::string& path, const void* data, size_t len) {
+    const int64_t started_ms = esp_timer_get_time() / 1000;
     const std::string tmp = path + ".tmp";
+    ESP_LOGI(kTag, "Write begin %s len=%u", path.c_str(), (unsigned)len);
     FILE*             f   = fopen(tmp.c_str(), "wb");
     if (!f) {
         ESP_LOGW(kTag, "Open w %s failed: %d", tmp.c_str(), errno);
         return false;
     }
+    ESP_LOGI(kTag, "Write data %s len=%u", tmp.c_str(), (unsigned)len);
     size_t w    = fwrite(data, 1, len, f);
+    ESP_LOGI(kTag, "Write close %s wrote=%u/%u", tmp.c_str(), (unsigned)w, (unsigned)len);
     int    cret = fclose(f);  // flush 失败(磁盘满)在这里才暴露
     if (w != len || cret != 0) {
         ESP_LOGW(kTag, "Write %s short/flush failed (w=%u/%u close=%d)", tmp.c_str(), (unsigned)w, (unsigned)len, cret);
         unlink(tmp.c_str());
         return false;
     }
+    ESP_LOGI(kTag, "Write rename %s -> %s", tmp.c_str(), path.c_str());
     if (rename(tmp.c_str(), path.c_str()) != 0) {
         ESP_LOGW(kTag, "Rename %s -> %s failed: %d", tmp.c_str(), path.c_str(), errno);
         unlink(tmp.c_str());
         return false;
     }
+    ESP_LOGI(kTag, "Write done %s elapsed=%lldms", path.c_str(), (long long)((esp_timer_get_time() / 1000) - started_ms));
     return true;
 }
 

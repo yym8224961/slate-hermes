@@ -4,6 +4,7 @@
 #include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <esp_log.h>
+#include <esp_timer.h>
 
 #include <atomic>
 #include <cstdio>
@@ -17,6 +18,27 @@
 namespace {
 constexpr char kTag[]                      = "Api";
 constexpr int  kUnauthorizedResetThreshold = 5;
+
+int64_t NowMs() {
+    return esp_timer_get_time() / 1000;
+}
+
+const char* MethodName(esp_http_client_method_t method) {
+    switch (method) {
+        case HTTP_METHOD_GET:
+            return "GET";
+        case HTTP_METHOD_POST:
+            return "POST";
+        case HTTP_METHOD_PUT:
+            return "PUT";
+        case HTTP_METHOD_PATCH:
+            return "PATCH";
+        case HTTP_METHOD_DELETE:
+            return "DELETE";
+        default:
+            return "?";
+    }
+}
 }  // namespace
 
 namespace api {
@@ -124,6 +146,7 @@ constexpr char kApiPrefix[] = "/api/v1";
 static bool DoRequest(const std::string& path, esp_http_client_method_t method, const std::string& body_in,
                       std::vector<uint8_t>& body_out, int* status_out = nullptr, const std::string& if_none_match = "",
                       std::string* etag_out = nullptr, bool need_auth = true) {
+    const int64_t started_ms = NowMs();
     std::string base_url;
     {
         std::lock_guard<std::mutex> lock(s_state_mutex);
@@ -137,6 +160,8 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
     if (!full.empty() && full.back() == '/')
         full.pop_back();
     full += path;
+    ESP_LOGI(kTag, "HTTP begin %s %s body=%u if_none=%d auth=%d", MethodName(method), path.c_str(),
+             (unsigned)body_in.size(), if_none_match.empty() ? 0 : 1, need_auth ? 1 : 0);
 
     esp_http_client_config_t cfg = {};
     cfg.url                      = full.c_str();
@@ -148,8 +173,10 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
     cfg.crt_bundle_attach = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client)
+    if (!client) {
+        ESP_LOGW(kTag, "HTTP init failed %s after %lldms", path.c_str(), (long long)(NowMs() - started_ms));
         return false;
+    }
 
     if (need_auth) {
         // 锁里只复制 secret 字符串，拼接放到锁外，缩短临界区。
@@ -174,25 +201,33 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
         esp_http_client_set_header(client, "If-None-Match", h.c_str());
     }
 
+    ESP_LOGI(kTag, "HTTP open %s", path.c_str());
     esp_err_t err = esp_http_client_open(client, body_in.size());
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "Open %s failed: %s", path.c_str(), esp_err_to_name(err));
+        ESP_LOGW(kTag, "Open %s failed after %lldms: %s", path.c_str(), (long long)(NowMs() - started_ms),
+                 esp_err_to_name(err));
         esp_http_client_cleanup(client);
         return false;
     }
+    ESP_LOGI(kTag, "HTTP opened %s after %lldms", path.c_str(), (long long)(NowMs() - started_ms));
 
     if (!body_in.empty()) {
+        ESP_LOGI(kTag, "HTTP write %s bytes=%u", path.c_str(), (unsigned)body_in.size());
         int wn = esp_http_client_write(client, body_in.c_str(), body_in.size());
         if (wn != static_cast<int>(body_in.size())) {
-            ESP_LOGW(kTag, "Write %s short: %d/%u", path.c_str(), wn, (unsigned)body_in.size());
+            ESP_LOGW(kTag, "Write %s short after %lldms: %d/%u", path.c_str(), (long long)(NowMs() - started_ms), wn,
+                     (unsigned)body_in.size());
             esp_http_client_close(client);
             esp_http_client_cleanup(client);
             return false;
         }
     }
 
+    ESP_LOGI(kTag, "HTTP fetch headers %s", path.c_str());
     int64_t content_length = esp_http_client_fetch_headers(client);
     int     status         = esp_http_client_get_status_code(client);
+    ESP_LOGI(kTag, "HTTP headers %s status=%d len=%lld after %lldms", path.c_str(), status,
+             (long long)content_length, (long long)(NowMs() - started_ms));
     if (status_out)
         *status_out = status;
     if (etag_out)
@@ -213,10 +248,13 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
         if (content_length > 0)
             body_out.reserve(static_cast<size_t>(content_length));
         char buf[1024];
+        size_t last_log_bytes = 0;
+        ESP_LOGI(kTag, "HTTP read body %s status=%d", path.c_str(), status);
         while (true) {
             int n = esp_http_client_read(client, buf, sizeof(buf));
             if (n < 0) {
-                ESP_LOGW(kTag, "%s: response read failed: %d", path.c_str(), n);
+                ESP_LOGW(kTag, "%s: response read failed after %lldms: %d", path.c_str(),
+                         (long long)(NowMs() - started_ms), n);
                 esp_http_client_close(client);
                 esp_http_client_cleanup(client);
                 return false;
@@ -224,6 +262,11 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
             if (n <= 0)
                 break;
             body_out.insert(body_out.end(), buf, buf + n);
+            if (body_out.size() - last_log_bytes >= 16 * 1024) {
+                last_log_bytes = body_out.size();
+                ESP_LOGI(kTag, "HTTP read progress %s bytes=%u after %lldms", path.c_str(),
+                         (unsigned)body_out.size(), (long long)(NowMs() - started_ms));
+            }
             if (body_out.size() > kMaxResponseBytes) {
                 ESP_LOGW(kTag, "%s: response body exceeded %u B, aborting", path.c_str(), (unsigned)kMaxResponseBytes);
                 esp_http_client_close(client);
@@ -232,8 +275,8 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
             }
         }
         if (content_length > 0 && body_out.size() != static_cast<size_t>(content_length)) {
-            ESP_LOGW(kTag, "%s: short response body %u/%lld B", path.c_str(), (unsigned)body_out.size(),
-                     (long long)content_length);
+            ESP_LOGW(kTag, "%s: short response body after %lldms %u/%lld B", path.c_str(),
+                     (long long)(NowMs() - started_ms), (unsigned)body_out.size(), (long long)content_length);
             esp_http_client_close(client);
             esp_http_client_cleanup(client);
             return false;
@@ -244,10 +287,14 @@ static bool DoRequest(const std::string& path, esp_http_client_method_t method, 
 
     if (status == 304) {
         s_consecutive_401.store(0, std::memory_order_relaxed);
+        ESP_LOGI(kTag, "HTTP done %s status=304 bytes=0 total=%lldms", path.c_str(),
+                 (long long)(NowMs() - started_ms));
         return true;
     }
     if (status / 100 == 2) {
         s_consecutive_401.store(0, std::memory_order_relaxed);
+        ESP_LOGI(kTag, "HTTP done %s status=%d bytes=%u total=%lldms", path.c_str(), status,
+                 (unsigned)body_out.size(), (long long)(NowMs() - started_ms));
         return true;
     }
     if (status == 401 && need_auth) {

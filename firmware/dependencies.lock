@@ -1,4 +1,30 @@
 dependencies:
+  78/esp-ml307:
+    component_hash: 5231991281a2f48f0e34ec705c2982936264d8b14f6f9373e60b153fd4b62123
+    dependencies:
+    - name: 78/uart-uhci
+      registry_url: https://components.espressif.com
+      require: private
+      rules:
+      - if: target not in [esp32]
+      version: ~0.2.1
+    - name: idf
+      require: private
+      version: '>=5.5.2'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 3.6.5
+  78/uart-uhci:
+    component_hash: d33e4cd9f634a561bfddcad79be6fa30f0ee279a9e4d1a2df91eabccbca5d362
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.5.2'
+    source:
+      registry_url: https://components.espressif.com
+      type: service
+    version: 0.2.2
   espressif/button:
     component_hash: d0afa32f0e50d60bc0c6fc23f7eea98adc6b02cfe70b590bc52c23c506745287
     dependencies:
@@ -23,6 +49,23 @@ dependencies:
       registry_url: https://components.espressif.com
       type: service
     version: 1.1.1
+  espressif/esp_audio_codec:
+    component_hash: af4663830bc73eca58febcc34a976d003465e78ed57458aa00a14b231e392ca1
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=4.4'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 2.4.1
+  espressif/esp_audio_effects:
+    component_hash: 8fa2bf7356a3c7fb9a9c7d2185aba474fa033b0506886c70752f67c42cd81b3f
+    dependencies: []
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.2.1
   espressif/esp_codec_dev:
     component_hash: 9293329ccb361f67c6e847ab8f693b2d9158b2e438eff583c28558c29cdf3dca
     dependencies:
@@ -69,12 +112,15 @@ dependencies:
       type: service
     version: 9.5.0
 direct_dependencies:
+- 78/esp-ml307
 - espressif/button
+- espressif/esp_audio_codec
+- espressif/esp_audio_effects
 - espressif/esp_codec_dev
 - espressif/esp_lvgl_port
 - idf
 - joltwallet/littlefs
 - lvgl/lvgl
-manifest_hash: 7b5dced873a714b5823dda82d6b7d745fb42c32ea01d1a153ac7e31fcbae455b
+manifest_hash: eab6b31acd589e52bd9abd0363b6cc63892211cf79f4b96589fa6b3011be8d44
 target: esp32s3
 version: 2.0.0
