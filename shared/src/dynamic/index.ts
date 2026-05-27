@@ -138,17 +138,21 @@ export function normalizeWeatherAlertProvince(value: string): string {
   return weatherAlertProvinceAliases.get(text) ?? '';
 }
 
-export const WeatherAlertConfig = z.object({
-  type: z.literal('weather_alert'),
-  province: z.string().max(16).default(''),
-  refresh_interval_sec: z.coerce.number().int().min(300).max(86400).default(600),
-});
+export const WeatherAlertConfig = z
+  .object({
+    type: z.literal('weather_alert'),
+    province: z.string().max(16).default(''),
+    refresh_interval_sec: z.coerce.number().int().min(300).max(86400).default(600),
+  })
+  .merge(DynamicAudioOptions);
 export type WeatherAlertConfigT = z.infer<typeof WeatherAlertConfig>;
 
-export const EarthquakeReportConfig = z.object({
-  type: z.literal('earthquake_report'),
-  refresh_interval_sec: z.coerce.number().int().min(300).max(86400).default(600),
-});
+export const EarthquakeReportConfig = z
+  .object({
+    type: z.literal('earthquake_report'),
+    refresh_interval_sec: z.coerce.number().int().min(300).max(86400).default(600),
+  })
+  .merge(DynamicAudioOptions);
 export type EarthquakeReportConfigT = z.infer<typeof EarthquakeReportConfig>;
 
 const DeviceRect = z.object({
@@ -232,11 +236,11 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
   version: 1,
   name: 'AI 使用统计',
   blocks: [
-    { type: 'metric', x: 20, y: 34, w: 110, h: 52, label: '余额', value: '{balance|usd2}' },
+    { type: 'metric', x: 20, y: 43, w: 110, h: 52, label: '余额', value: '{balance|usd2}' },
     {
       type: 'metric',
       x: 145,
-      y: 34,
+      y: 43,
       w: 110,
       h: 52,
       label: '累计Token',
@@ -245,7 +249,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'metric',
       x: 270,
-      y: 34,
+      y: 43,
       w: 110,
       h: 52,
       label: 'API Key',
@@ -254,7 +258,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'metric',
       x: 20,
-      y: 94,
+      y: 103,
       w: 110,
       h: 52,
       label: '今日请求',
@@ -263,7 +267,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'metric',
       x: 145,
-      y: 94,
+      y: 103,
       w: 110,
       h: 52,
       label: '今日消费',
@@ -272,17 +276,17 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'metric',
       x: 270,
-      y: 94,
+      y: 103,
       w: 110,
       h: 52,
       label: '今日Token',
       value: '{today_tokens|tokens}',
     },
-    { type: 'metric', x: 20, y: 154, w: 110, h: 46, label: 'RPM', value: '{rpm|int}' },
+    { type: 'metric', x: 20, y: 163, w: 110, h: 46, label: 'RPM', value: '{rpm|int}' },
     {
       type: 'metric',
       x: 145,
-      y: 154,
+      y: 163,
       w: 110,
       h: 46,
       label: '平均响应',
@@ -291,17 +295,17 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'metric',
       x: 270,
-      y: 154,
+      y: 163,
       w: 110,
       h: 46,
       label: '更新',
       value: '{updated_label}',
     },
-    { type: 'line', x1: 20, y1: 214, x2: 380, y2: 214, style: 'dashed' },
+    { type: 'line', x1: 20, y1: 223, x2: 380, y2: 223, style: 'dashed' },
     {
       type: 'text',
       x: 20,
-      y: 224,
+      y: 233,
       w: 48,
       h: 12,
       value: '平台',
@@ -310,7 +314,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 90,
-      y: 224,
+      y: 233,
       w: 46,
       h: 12,
       value: '今日',
@@ -320,7 +324,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 142,
-      y: 224,
+      y: 233,
       w: 48,
       h: 12,
       value: '累计',
@@ -330,7 +334,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 20,
-      y: 242,
+      y: 251,
       w: 68,
       h: 12,
       value: '{by_platform.0.platform}',
@@ -339,7 +343,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 90,
-      y: 242,
+      y: 251,
       w: 46,
       h: 12,
       value: '{by_platform.0.today_actual_cost|usd2}',
@@ -349,7 +353,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 142,
-      y: 242,
+      y: 251,
       w: 48,
       h: 12,
       value: '{by_platform.0.total_tokens|tokens}',
@@ -359,7 +363,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 20,
-      y: 260,
+      y: 269,
       w: 68,
       h: 12,
       value: '{by_platform.1.platform}',
@@ -368,7 +372,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 90,
-      y: 260,
+      y: 269,
       w: 46,
       h: 12,
       value: '{by_platform.1.today_actual_cost|usd2}',
@@ -378,7 +382,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 142,
-      y: 260,
+      y: 269,
       w: 48,
       h: 12,
       value: '{by_platform.1.total_tokens|tokens}',
@@ -388,7 +392,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 216,
-      y: 224,
+      y: 233,
       w: 48,
       h: 12,
       value: '模型',
@@ -397,7 +401,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 328,
-      y: 224,
+      y: 233,
       w: 52,
       h: 12,
       value: 'Token',
@@ -407,7 +411,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 216,
-      y: 242,
+      y: 251,
       w: 106,
       h: 12,
       value: '{models.0.model}',
@@ -416,7 +420,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 328,
-      y: 242,
+      y: 251,
       w: 52,
       h: 12,
       value: '{models.0.total_tokens|tokens}',
@@ -426,7 +430,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 216,
-      y: 260,
+      y: 269,
       w: 106,
       h: 12,
       value: '{models.1.model}',
@@ -435,7 +439,7 @@ export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'text',
       x: 328,
-      y: 260,
+      y: 269,
       w: 52,
       h: 12,
       value: '{models.1.total_tokens|tokens}',
@@ -553,13 +557,13 @@ export const DASHBOARD_AI_QUOTA_MONITOR_TEMPLATE = DashboardTemplate.parse({
   version: 1,
   name: 'AI 限额监控',
   blocks: [
-    { type: 'metric', x: 20, y: 34, w: 110, h: 52, label: '服务', value: '{service_label}' },
-    { type: 'metric', x: 145, y: 34, w: 110, h: 52, label: '套餐', value: '{plan_label}' },
-    { type: 'metric', x: 270, y: 34, w: 110, h: 52, label: '状态', value: '{status_label}' },
+    { type: 'metric', x: 20, y: 44, w: 110, h: 52, label: '服务', value: '{service_label}' },
+    { type: 'metric', x: 145, y: 44, w: 110, h: 52, label: '套餐', value: '{plan_label}' },
+    { type: 'metric', x: 270, y: 44, w: 110, h: 52, label: '状态', value: '{status_label}' },
     {
       type: 'progress',
       x: 20,
-      y: 110,
+      y: 120,
       w: 360,
       h: 26,
       label: '{primary_window_label}',
@@ -569,17 +573,17 @@ export const DASHBOARD_AI_QUOTA_MONITOR_TEMPLATE = DashboardTemplate.parse({
     {
       type: 'progress',
       x: 20,
-      y: 150,
+      y: 160,
       w: 360,
       h: 26,
       label: '{secondary_window_label}',
       percentage: '{secondary_used_percent}',
       value_text: '{secondary_used_percent|int}%',
     },
-    { type: 'line', x1: 20, y1: 200, x2: 380, y2: 200, style: 'dashed' },
-    { type: 'metric', x: 20, y: 218, w: 110, h: 52, label: '5h重置', value: '{primary_reset_at_label}' },
-    { type: 'metric', x: 145, y: 218, w: 110, h: 52, label: '周重置', value: '{secondary_reset_at_label}' },
-    { type: 'metric', x: 270, y: 218, w: 110, h: 52, label: '更新', value: '{updated_label}' },
+    { type: 'line', x1: 20, y1: 210, x2: 380, y2: 210, style: 'dashed' },
+    { type: 'metric', x: 20, y: 228, w: 110, h: 52, label: '5h重置', value: '{primary_reset_at_label}' },
+    { type: 'metric', x: 145, y: 228, w: 110, h: 52, label: '周重置', value: '{secondary_reset_at_label}' },
+    { type: 'metric', x: 270, y: 228, w: 110, h: 52, label: '更新', value: '{updated_label}' },
   ],
 });
 
@@ -634,14 +638,16 @@ export const DashboardTemplateRef = z.discriminatedUnion('kind', [
 ]);
 export type DashboardTemplateRefT = z.infer<typeof DashboardTemplateRef>;
 
-export const DashboardConfig = z.object({
-  type: z.literal('dashboard'),
-  template: DashboardTemplateRef.default({
-    kind: 'custom',
-    template: DASHBOARD_CUSTOM_STARTER_TEMPLATE,
-  }),
-  test_data: z.record(z.string().max(64), z.unknown()).default(DASHBOARD_CUSTOM_STARTER_TEST_DATA),
-});
+export const DashboardConfig = z
+  .object({
+    type: z.literal('dashboard'),
+    template: DashboardTemplateRef.default({
+      kind: 'custom',
+      template: DASHBOARD_CUSTOM_STARTER_TEMPLATE,
+    }),
+    test_data: z.record(z.string().max(64), z.unknown()).default(DASHBOARD_CUSTOM_STARTER_TEST_DATA),
+    refresh_interval_sec: z.coerce.number().int().min(60).max(86400).default(600),
+  });
 export type DashboardConfigT = z.infer<typeof DashboardConfig>;
 
 export const ICON_FONT_TEST_SAMPLE =
@@ -994,13 +1000,23 @@ export function isAudioDynamicConfig(
   config: DynamicConfigT
 ): config is Extract<
   DynamicConfigT,
-  { type: 'daily_calendar' | 'month_calendar' | 'weather' | 'history_today' }
+  {
+    type:
+      | 'daily_calendar'
+      | 'month_calendar'
+      | 'weather'
+      | 'history_today'
+      | 'weather_alert'
+      | 'earthquake_report';
+  }
 > {
   return (
     config.type === 'daily_calendar' ||
     config.type === 'month_calendar' ||
     config.type === 'weather' ||
-    config.type === 'history_today'
+    config.type === 'history_today' ||
+    config.type === 'weather_alert' ||
+    config.type === 'earthquake_report'
   );
 }
 

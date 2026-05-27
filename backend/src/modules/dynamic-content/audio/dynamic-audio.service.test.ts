@@ -136,4 +136,113 @@ describe('buildDynamicAudioTextForContent', () => {
 
     expect(text).toBe('');
   });
+
+  it('weather_alert summarizes current warnings', () => {
+    const text = buildDynamicAudioTextForContent(
+      'weather_alert',
+      {
+        type: 'weather_alert',
+        province: '',
+        refresh_interval_sec: 600,
+        audio_enabled: true,
+        audio_voice: DEFAULT_TTS_VOICE,
+      },
+      {
+        province: '',
+        items: [
+          {
+            title: '中央气象台发布暴雨黄色预警',
+            issuedAt: '2026-05-21T02:00:00.000Z',
+          },
+          {
+            title: '广东省发布雷雨大风蓝色预警信号',
+            issuedAt: '2026-05-21T01:00:00.000Z',
+          },
+          {
+            title: '四川省发布高温橙色预警',
+            issuedAt: '2026-05-21T00:00:00.000Z',
+          },
+          {
+            title: '浙江省发布大雾黄色预警',
+            issuedAt: '2026-05-20T23:00:00.000Z',
+          },
+        ],
+      },
+      new Date('2026-05-21T10:00:00+08:00')
+    );
+
+    expect(text).toBe(
+      '全国气象预警，播报最新三条。中央气象台发布暴雨黄色预警。广东发布雷雨大风蓝色预警。四川发布高温橙色预警'
+    );
+  });
+
+  it('weather_alert reports the actual warning count', () => {
+    const text = buildDynamicAudioTextForContent(
+      'weather_alert',
+      {
+        type: 'weather_alert',
+        province: '广东省',
+        refresh_interval_sec: 600,
+        audio_enabled: true,
+        audio_voice: DEFAULT_TTS_VOICE,
+      },
+      {
+        province: '广东省',
+        items: [
+          {
+            title: '广东省发布雷雨大风蓝色预警信号',
+            issuedAt: '2026-05-21T01:00:00.000Z',
+          },
+        ],
+      },
+      new Date('2026-05-21T10:00:00+08:00')
+    );
+
+    expect(text).toBe('广东气象预警，播报最新一条。广东发布雷雨大风蓝色预警');
+  });
+
+  it('earthquake_report summarizes latest reports', () => {
+    const text = buildDynamicAudioTextForContent(
+      'earthquake_report',
+      {
+        type: 'earthquake_report',
+        refresh_interval_sec: 600,
+        audio_enabled: true,
+        audio_voice: DEFAULT_TTS_VOICE,
+      },
+      {
+        items: [
+          {
+            occurredAt: '2026-05-21 11:27:06',
+            magnitude: '4.1',
+            depthKm: '10',
+            location: '青海海西州唐古拉地区',
+          },
+          {
+            occurredAt: '2026-05-21 01:16:27',
+            magnitude: '3.2',
+            depthKm: '-',
+            location: '山西大同市云冈区',
+          },
+          {
+            occurredAt: '2026-05-20 23:08:44',
+            magnitude: '3.6',
+            depthKm: '8',
+            location: '四川雅安市石棉县',
+          },
+          {
+            occurredAt: '2026-05-20 19:42:10',
+            magnitude: '4.8',
+            depthKm: '12',
+            location: '台湾花莲县海域',
+          },
+        ],
+      },
+      new Date('2026-05-21T10:00:00+08:00')
+    );
+
+    expect(text).toBe(
+      '中国地震台网最新速报。最新一条，青海海西州唐古拉地区。震级4.1级。震源深度10千米。发生时间5月21日11点27分。其余三条：山西大同市云冈区，震级3.2级；四川雅安市石棉县，震级3.6级；台湾花莲县海域，震级4.8级'
+    );
+  });
 });

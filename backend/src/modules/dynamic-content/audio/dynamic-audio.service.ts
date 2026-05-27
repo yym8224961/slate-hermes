@@ -397,6 +397,10 @@ function buildDynamicAudioText(
       return buildWeatherAudio(data, config);
     case 'history_today':
       return buildHistoryTodayAudio(data, config, now);
+    case 'weather_alert':
+      return buildWeatherAlertAudio(data, config);
+    case 'earthquake_report':
+      return buildEarthquakeReportAudio(data);
     default:
       return '';
   }
@@ -463,6 +467,32 @@ function buildHistoryTodayAudio(data: unknown, config: DynamicConfigT, now: Date
   return compactSentence([`历史上的${label.replace(/\s+/g, '')}`, ...items]);
 }
 
+function buildWeatherAlertAudio(data: unknown, config: DynamicConfigT): string {
+  const items = recordArray(recordValue(data, 'items'));
+  const province =
+    valueText(recordValue(data, 'province')) || valueText(recordValue(config, 'province')) || '';
+  const region = province ? shortRegionName(province) : '全国';
+  if (items.length === 0) return `${region}暂无气象预警`;
+
+  const warnings = items.slice(0, 3).flatMap((item): string[] => {
+    const title = valueText(recordValue(item, 'title'));
+    if (!title) return [];
+    return [weatherAlertAudioLine(title)];
+  });
+  if (warnings.length === 0) return `${region}暂无气象预警`;
+  return compactSentence([`${region}气象预警，播报最新${cnCount(warnings.length)}条`, ...warnings]);
+}
+
+function buildEarthquakeReportAudio(data: unknown): string {
+  const items = recordArray(recordValue(data, 'items'));
+  if (items.length === 0) return '暂无地震速报';
+
+  const latest = earthquakeLatestAudio(items[0]);
+  const rest = items.slice(1, 4).map(earthquakeBriefAudio).filter(Boolean);
+  const restText = rest.length > 0 ? `其余${cnCount(rest.length)}条：${rest.join('；')}` : '';
+  return compactSentence(['中国地震台网最新速报', latest, restText]);
+}
+
 function historyAudioItems(data: HistoryTodayProviderData): string[] {
   return data.items.map((item) => `${formatSpokenYear(item.year)}，${item.display}`);
 }
@@ -479,4 +509,64 @@ function compactSentence(parts: string[]): string {
     .filter(Boolean)
     .join('。')
     .slice(0, 500);
+}
+
+function recordArray(value: unknown): Record<string, unknown>[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => {
+        return !!item && typeof item === 'object' && !Array.isArray(item);
+      })
+    : [];
+}
+
+function weatherAlertAudioLine(title: string): string {
+  const normalized = title.replace(/\s+/g, '');
+  const match = normalized.match(/^(.*?)发布(.+?)预警(?:信号)?$/);
+  if (!match) return normalized.replace(/预警信号/g, '预警');
+
+  const source = shortRegionName(match[1] ?? '');
+  const signal = (match[2] ?? '').replace(/预警(?:信号)?$/g, '');
+  return source ? `${source}发布${signal}预警` : `${signal}预警`;
+}
+
+function earthquakeLatestAudio(item: Record<string, unknown>): string {
+  const location = valueText(recordValue(item, 'location')) ?? '';
+  const magnitude = valueText(recordValue(item, 'magnitude')) ?? '';
+  const depth = valueText(recordValue(item, 'depthKm')) ?? '';
+  const occurredAt = valueText(recordValue(item, 'occurredAt')) ?? '';
+  return compactSentence([
+    `最新一条，${location || '未知位置'}`,
+    magnitude ? `震级${magnitude}级` : '',
+    depth && depth !== '-' && depth !== '--' ? `震源深度${depth}千米` : '',
+    occurredAt ? `发生时间${shortSpokenTime(occurredAt)}` : '',
+  ]);
+}
+
+function earthquakeBriefAudio(item: Record<string, unknown>): string {
+  const location = valueText(recordValue(item, 'location')) ?? '';
+  const magnitude = valueText(recordValue(item, 'magnitude')) ?? '';
+  return [location || '未知位置', magnitude ? `震级${magnitude}级` : ''].filter(Boolean).join('，');
+}
+
+function cnCount(value: number): string {
+  return ['零', '一', '二', '三', '四'][value] ?? String(value);
+}
+
+function shortRegionName(value: string): string {
+  if (value.includes('中央气象台')) return '中央气象台';
+  return value
+    .replace('广西壮族自治区', '广西')
+    .replace('宁夏回族自治区', '宁夏')
+    .replace('新疆维吾尔自治区', '新疆')
+    .replace('内蒙古自治区', '内蒙古')
+    .replace('西藏自治区', '西藏')
+    .replace(/省|市|气象台|特别行政区/g, '')
+    .slice(0, 12);
+}
+
+function shortSpokenTime(value: string): string {
+  const text = value.trim();
+  const match = text.match(/(?:(\d{4})[-/年])?(\d{1,2})[-/月](\d{1,2})日?\s+(\d{1,2}):(\d{2})/);
+  if (!match) return text;
+  return `${Number(match[2])}月${Number(match[3])}日${Number(match[4])}点${match[5]}分`;
 }

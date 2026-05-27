@@ -423,7 +423,7 @@ export class DynamicFrameRendererService implements OnModuleInit {
 
     if (items.length === 0) {
       const province = pickText(data.province, '');
-      const text = province ? `${weatherAlertSourceShort(province)}暂无预警` : '暂无气象预警';
+      const text = province ? `${weatherAlertSourceLabel(province)}暂无预警` : '暂无气象预警';
       this.drawText(c, fonts.sans16, text, FRAME_WIDTH / 2, 146, {
         align: 'center',
         maxWidth: CONTENT_WIDTH,
@@ -447,7 +447,7 @@ export class DynamicFrameRendererService implements OnModuleInit {
       this.drawBadge(
         c,
         fonts,
-        summary.kindLabel,
+        summary.kindLabel || summary.levelShort,
         CONTENT_LEFT,
         Math.round(centerY - badgeH / 2),
         badgeW,
@@ -1840,7 +1840,7 @@ function weatherAlertLevel(title: string): { label: string; filled: boolean } {
 function weatherAlertSummary(title: string): {
   headline: string;
   source: string;
-  sourceShort: string;
+  sourceLabel: string;
   kindLabel: string;
   levelShort: string;
   level: { label: string; filled: boolean };
@@ -1855,7 +1855,7 @@ function weatherAlertSummary(title: string): {
   return {
     headline: `${levelName}${signal}预警`,
     source,
-    sourceShort: weatherAlertSourceShort(source),
+    sourceLabel: weatherAlertSourceLabel(source),
     kindLabel: weatherAlertKindLabel(signal),
     levelShort: weatherAlertLevelShort(levelName),
     level,
@@ -1892,30 +1892,33 @@ function weatherAlertLevelShort(levelName: string): string {
   return '警';
 }
 
-function weatherAlertSourceShort(source: string): string {
-  if (!source) return '';
-  if (source.includes('中央气象台')) return '中央气象台';
-  return source
-    .replace('广西壮族自治区', '广西自治区')
-    .replace('宁夏回族自治区', '宁夏自治区')
-    .replace('新疆维吾尔自治区', '新疆自治区')
+function weatherAlertSourceLabel(source: string): string {
+  const text = source.replace(/\s+/g, '').trim();
+  if (!text) return '';
+  if (text.includes('中央气象台')) return '中央气象台';
+  return text
+    .replace('广西壮族自治区', '广西')
+    .replace('宁夏回族自治区', '宁夏')
+    .replace('新疆维吾尔自治区', '新疆')
     .replace('内蒙古自治区', '内蒙古')
     .replace('西藏自治区', '西藏')
     .replace(/特别行政区/g, '')
-    .slice(0, 6);
+    .replace(/气象台$/, '')
+    .replace(/气象局$/, '');
 }
 
 function weatherAlertLine(summary: {
   headline: string;
   source: string;
-  sourceShort: string;
+  sourceLabel: string;
   kindLabel: string;
   levelShort: string;
   level: { label: string; filled: boolean };
 }): string {
-  return summary.sourceShort
-    ? `${summary.levelShort} · ${summary.sourceShort}`
-    : summary.levelShort;
+  if (summary.levelShort && summary.sourceLabel) {
+    return `${summary.levelShort} · ${summary.sourceLabel}`;
+  }
+  return summary.sourceLabel || summary.levelShort || summary.headline;
 }
 
 function earthquakeFields(item: Record<string, unknown>): {

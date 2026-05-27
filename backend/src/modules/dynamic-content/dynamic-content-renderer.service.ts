@@ -341,13 +341,16 @@ function isRefreshIntervalDynamicType(dynamicType: string): boolean {
   return (
     dynamicType === 'hot_list' ||
     dynamicType === 'weather_alert' ||
-    dynamicType === 'earthquake_report'
+    dynamicType === 'earthquake_report' ||
+    dynamicType === 'dashboard'
   );
 }
 
 function refreshIntervalSec(config: unknown): number | null {
   if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
-  const raw = (config as Record<string, unknown>).refresh_interval_sec;
+  const record = config as Record<string, unknown>;
+  const raw = record.refresh_interval_sec;
   if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
-  return Math.max(Math.floor(raw), 300);
+  const min = record.type === 'dashboard' ? 60 : 300;
+  return Math.max(Math.floor(raw), min);
 }

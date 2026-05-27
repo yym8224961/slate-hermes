@@ -523,7 +523,7 @@ export class ContentsService {
       if (
         currentType === 'dashboard' &&
         validated.type === 'dashboard' &&
-        stableJson(content.dynamicConfig) !== stableJson(validated)
+        dashboardPayloadConfigChanged(content.dynamicConfig, validated)
       ) {
         data.dynamicData = validated.test_data as Prisma.InputJsonValue;
       }
@@ -1085,6 +1085,22 @@ export class ContentsService {
 
 function stableJson(value: unknown): string {
   return JSON.stringify(sortJsonValue(value));
+}
+
+function dashboardPayloadConfigChanged(current: unknown, next: unknown): boolean {
+  return (
+    stableJson(dashboardPayloadConfigSignature(current)) !==
+    stableJson(dashboardPayloadConfigSignature(next))
+  );
+}
+
+function dashboardPayloadConfigSignature(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const config = value as Record<string, unknown>;
+  return {
+    template: config.template,
+    test_data: config.test_data,
+  };
 }
 
 function sortJsonValue(value: unknown): unknown {

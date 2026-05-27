@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { join } from 'node:path';
 import {
   DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA,
   DASHBOARD_AI_USAGE_STATS_TEST_DATA,
@@ -9,13 +10,16 @@ import {
   FRAME_HEIGHT,
   FRAME_WIDTH,
 } from 'shared';
+import { loadBitmapFont, textWidth, type BitmapFont } from './bitmap-font';
 import {
   DynamicFrameRendererService,
   type DynamicRenderContext,
 } from './dynamic-frame-renderer.service';
+import { BITMAP_1BPP_FONT_DIR } from '../../infra/assets/asset-paths';
 
 const renderer = new DynamicFrameRendererService();
 const renderedAt = new Date('2026-05-17T04:00:00.000Z');
+const STATUS_BAR_H = 24;
 
 describe('DynamicFrameRendererService', () => {
   it('renders dynamic frames as nonblank 400x300 1bpp images', async () => {
@@ -252,6 +256,35 @@ describe('DynamicFrameRendererService', () => {
     }
   });
 
+  it('keeps dashboard system templates centered below the status bar', async () => {
+    const contexts: DynamicRenderContext[] = [
+      {
+        type: 'dashboard',
+        frameName: '外部数据',
+        config: { type: 'dashboard', template: { kind: 'system', id: 'ai_usage_stats' } },
+        data: DASHBOARD_AI_USAGE_STATS_TEST_DATA,
+        renderedAt,
+      },
+      {
+        type: 'dashboard',
+        frameName: 'AI 限额监控',
+        config: { type: 'dashboard', template: { kind: 'system', id: 'ai_quota_monitor' } },
+        data: DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA,
+        renderedAt,
+      },
+    ];
+
+    for (const ctx of contexts) {
+      const frame = await renderer.render(ctx);
+      const bounds = blackBounds(frame, 0, STATUS_BAR_H, FRAME_WIDTH, FRAME_HEIGHT - STATUS_BAR_H);
+
+      expect(bounds).not.toBeNull();
+      const topGap = bounds!.top - STATUS_BAR_H;
+      const bottomGap = FRAME_HEIGHT - 1 - bounds!.bottom;
+      expect(Math.abs(topGap - bottomGap)).toBeLessThanOrEqual(2);
+    }
+  });
+
   it('centers hot-list rank boxes and title glyphs between row rules', async () => {
     const frame = await renderer.render({
       type: 'hot_list',
@@ -303,6 +336,65 @@ describe('DynamicFrameRendererService', () => {
       expect(Math.abs(centerY(titleBounds!) - rowCenter)).toBeLessThanOrEqual(1);
     }
   });
+
+  it('renders weather-alert rows with alert kind badge and source text', async () => {
+    const frame = await renderer.render({
+      type: 'weather_alert',
+      frameName: '气象预警',
+      config: {
+        type: 'weather_alert',
+        province: '',
+        refresh_interval_sec: 600,
+      },
+      data: {
+        title: '全国气象预警',
+        province: '',
+        updatedAt: '2026-05-17T04:00:00.000Z',
+        items: [
+          {
+            id: 'a1',
+            title: '中央气象台发布暴雨黄色预警',
+            issuedAt: '2026-05-17T03:30:00.000Z',
+          },
+        ],
+      },
+      renderedAt,
+    });
+    const font = await loadTestFont('source-han-sans-16-slim.json');
+    const badgeFont = await loadTestFont('fusion-pixel-10.json');
+
+    expect(hasTextPixels(frame, badgeFont, '暴雨', 20, 33, 34, 30)).toBe(true);
+    expect(hasTextPixels(frame, font, '黄', 64, 33, 40, 22)).toBe(true);
+    expect(hasTextPixels(frame, font, '中央气象台', 64, 33, 170, 22)).toBe(true);
+  });
+
+  it('does not hard truncate weather-alert local source names before fitting', async () => {
+    const frame = await renderer.render({
+      type: 'weather_alert',
+      frameName: '气象预警',
+      config: {
+        type: 'weather_alert',
+        province: '',
+        refresh_interval_sec: 600,
+      },
+      data: {
+        title: '全国气象预警',
+        province: '',
+        updatedAt: '2026-05-17T04:00:00.000Z',
+        items: [
+          {
+            id: 'a1',
+            title: '贵州省黔西南布依族苗族自治州发布暴雨黄色预警信号',
+            issuedAt: '2026-05-17T03:30:00.000Z',
+          },
+        ],
+      },
+      renderedAt,
+    });
+    const font = await loadTestFont('source-han-sans-16-slim.json');
+
+    expect(hasTextPixels(frame, font, '黔西南', 114, 33, 130, 22)).toBe(true);
+  });
 });
 
 function countPixels(frame: Buffer): { black: number; white: number } {
@@ -347,4 +439,71 @@ function isBlack(frame: Buffer, x: number, y: number): boolean {
   const bpr = FRAME_WIDTH >> 3;
   const byte = frame[y * bpr + (x >> 3)]!;
   return ((byte >> (7 - (x & 7))) & 1) === 0;
+}
+
+function loadTestFont(file: string): Promise<BitmapFont> {
+  return loadBitmapFont(join(BITMAP_1BPP_FONT_DIR, file));
+}
+
+function hasTextPixels(
+  frame: Buffer,
+  font: BitmapFont,
+  text: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): boolean {
+  const target = renderTextMask(font, text);
+  for (let yy = y; yy <= y + h - font.lineHeight; yy++) {
+    for (let xx = x; xx <= x + w - target.width; xx++) {
+      if (matchesTextMask(frame, target, xx, yy)) return true;
+    }
+  }
+  return false;
+}
+
+function renderTextMask(font: BitmapFont, text: string): { width: number; height: number; pixels: Uint8Array } {
+  const width = textWidth(font, text);
+  const height = font.lineHeight;
+  const pixels = new Uint8Array(width * height);
+  let penX = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    const glyph = font.glyphs.get(cp);
+    if (!glyph) continue;
+    const baselineY = font.lineHeight - font.baseLine;
+    const startX = penX + glyph.ofs_x;
+    const startY = baselineY - glyph.ofs_y - glyph.box_h;
+    let bit = glyph.bitmap_index * 8;
+    for (let yy = 0; yy < glyph.box_h; yy++) {
+      for (let xx = 0; xx < glyph.box_w; xx++) {
+        const byte = font.bitmap[bit >> 3] ?? 0;
+        const on = (byte & (0x80 >> (bit & 7))) !== 0;
+        if (on) {
+          const px = startX + xx;
+          const py = startY + yy;
+          if (px >= 0 && py >= 0 && px < width && py < height) pixels[py * width + px] = 1;
+        }
+        bit++;
+      }
+    }
+    penX += Math.round(glyph.adv_w / 16);
+  }
+  return { width, height, pixels };
+}
+
+function matchesTextMask(
+  frame: Buffer,
+  target: { width: number; height: number; pixels: Uint8Array },
+  x: number,
+  y: number
+): boolean {
+  for (let yy = 0; yy < target.height; yy++) {
+    for (let xx = 0; xx < target.width; xx++) {
+      if (!target.pixels[yy * target.width + xx]) continue;
+      if (!isBlack(frame, x + xx, y + yy)) return false;
+    }
+  }
+  return true;
 }

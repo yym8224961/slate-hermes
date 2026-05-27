@@ -46,13 +46,13 @@ export const TYPE_META: Record<AllContentType, TypeMeta> = {
     label: '气象预警',
     description: '显示中央气象台全国或指定省份气象预警。',
     hasConfigurableParams: true,
-    supportsAudio: false,
+    supportsAudio: true,
   },
   earthquake_report: {
     label: '地震速报',
     description: '显示中国地震台网最新地震速报。',
     hasConfigurableParams: true,
-    supportsAudio: false,
+    supportsAudio: true,
   },
   dashboard: {
     label: '外部数据',

@@ -127,7 +127,15 @@ export function DynamicConfigForm({
 
 type AudioDynamicConfig = Extract<
   DynamicConfigT,
-  { type: 'daily_calendar' | 'month_calendar' | 'weather' | 'history_today' }
+  {
+    type:
+      | 'daily_calendar'
+      | 'month_calendar'
+      | 'weather'
+      | 'history_today'
+      | 'weather_alert'
+      | 'earthquake_report';
+  }
 >;
 
 export function DynamicAudioSection({
@@ -170,20 +178,23 @@ function DynamicRefreshSettings({
 }: {
   config:
     | AudioDynamicConfig
-    | Extract<DynamicConfigT, { type: 'hot_list' | 'weather_alert' | 'earthquake_report' }>;
+    | Extract<
+        DynamicConfigT,
+        { type: 'hot_list' | 'weather_alert' | 'earthquake_report' | 'dashboard' }
+      >;
   onChange: (c: DynamicConfigT) => void;
 }) {
   const current = config.refresh_interval_sec ?? defaultRefreshInterval(config.type);
   return (
     <div>
       <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
-        数据刷新
+        刷新间隔
       </p>
       <Select
         value={String(current)}
         onValueChange={(v) => onChange({ ...config, refresh_interval_sec: Number(v) })}
       >
-        {refreshOptions().map((item) => (
+        {refreshOptions(config.type).map((item) => (
           <SelectItem key={item.value} value={String(item.value)} hint={item.hint}>
             {item.label}
           </SelectItem>
@@ -385,6 +396,8 @@ function DashboardConfigPanel({
           {activeDescription}
         </p>
       </div>
+
+      <DynamicRefreshSettings config={config} onChange={onChange} />
 
       {templateSelection === CUSTOM_DASHBOARD_TEMPLATE_VALUE && (
         <JsonEditor
@@ -683,7 +696,7 @@ function stableJson(value: unknown): string {
 }
 
 function defaultRefreshInterval(
-  _type: AudioDynamicConfig['type'] | 'hot_list' | 'weather_alert' | 'earthquake_report'
+  _type: AudioDynamicConfig['type'] | 'hot_list' | 'weather_alert' | 'earthquake_report' | 'dashboard'
 ): number {
   return 600;
 }
@@ -717,12 +730,13 @@ function searchWeatherAlertRegions(query: string): typeof WEATHER_ALERT_REGIONS 
   });
 }
 
-function refreshOptions(): Array<{
+function refreshOptions(type?: string): Array<{
   value: number;
   label: string;
   hint: string;
 }> {
   return [
+    ...(type === 'dashboard' ? [{ value: 60, label: '1 分钟', hint: '高频' }] : []),
     { value: 300, label: '5 分钟', hint: '更实时' },
     { value: 600, label: '10 分钟', hint: '推荐' },
     { value: 1800, label: '30 分钟', hint: '省电' },

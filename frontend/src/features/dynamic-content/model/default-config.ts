@@ -48,17 +48,22 @@ export function defaultConfig(type: DynamicTypeT): DynamicConfigT {
         type: 'weather_alert',
         province: '',
         refresh_interval_sec: 600,
+        audio_enabled: false,
+        audio_voice: DEFAULT_TTS_VOICE,
       };
     case 'earthquake_report':
       return {
         type: 'earthquake_report',
         refresh_interval_sec: 600,
+        audio_enabled: false,
+        audio_voice: DEFAULT_TTS_VOICE,
       };
     case 'dashboard':
       return {
         type: 'dashboard',
         template: { kind: 'custom', template: DASHBOARD_CUSTOM_STARTER_TEMPLATE },
         test_data: DASHBOARD_CUSTOM_STARTER_TEST_DATA,
+        refresh_interval_sec: 600,
       };
     case 'font_test':
       return {
