@@ -2,10 +2,13 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import {
+  DASHBOARD_SYSTEM_TEMPLATES,
+  DashboardConfig,
   FRAME_BYTES,
   FRAME_HEIGHT,
   FRAME_WIDTH,
   ICON_FONT_TEST_SAMPLE,
+  type DashboardTemplateT,
   type FontTestFontIdT,
 } from 'shared';
 import { BITMAP_1BPP_FONT_DIR } from '../../infra/assets/asset-paths';
@@ -57,7 +60,6 @@ interface FontSpecimen {
 }
 
 const STATUS_BAR_H = 24;
-const CONTENT_TOP = STATUS_BAR_H + 10;
 const CONTENT_SAFE_TOP = STATUS_BAR_H;
 const CONTENT_SAFE_BOTTOM = FRAME_HEIGHT;
 const CONTENT_LEFT = 20;
@@ -572,91 +574,21 @@ export class DynamicFrameRendererService implements OnModuleInit {
   }
 
   private renderDashboard(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
-    const data = ctx.data ?? {};
-    if (isRecord(data.layout) && Array.isArray(data.layout.blocks)) {
-      this.renderDashboardLayout(c, fonts, ctx, data.layout);
-      return;
-    }
-
-    const metrics = isRecord(data.metrics) ? Object.entries(data.metrics).slice(0, 4) : [];
-    const heading = pickText(data.heading, pickText(data.title, ctx.frameName ?? '数据看板'));
-    const subtitle = pickText(data.subtitle, '');
-
-    if (metrics.length === 0) {
+    const resolved = resolveDashboardRenderInput(ctx);
+    if (!resolved) {
       const centerY = Math.round((CONTENT_SAFE_TOP + CONTENT_SAFE_BOTTOM) / 2);
-      const lineGap = 12;
-      const totalH = fonts.sans16.lineHeight + lineGap + fonts.metric12.lineHeight;
-      const top = Math.round(centerY - totalH / 2);
-      this.drawText(c, fonts.sans16, '等待数据推送', FRAME_WIDTH / 2, top, {
+      this.drawText(c, fonts.sans16, '等待外部数据', FRAME_WIDTH / 2, centerY - 20, {
         align: 'center',
         maxWidth: CONTENT_WIDTH,
       });
-      this.drawText(
-        c,
-        fonts.metric12,
-        'POST /api/v1/contents/:id/data',
-        FRAME_WIDTH / 2,
-        top + 28,
-        {
-          align: 'center',
-          maxWidth: CONTENT_WIDTH,
-        }
-      );
+      this.drawText(c, fonts.sans12, 'POST /api/v1/contents/:id/data', FRAME_WIDTH / 2, centerY + 12, {
+        align: 'center',
+        maxWidth: CONTENT_WIDTH,
+      });
       return;
     }
 
-    this.drawText(c, fonts.sans16, heading, CONTENT_LEFT, CONTENT_TOP + 2, {
-      maxWidth: 220,
-      ellipsis: true,
-    });
-    this.drawText(
-      c,
-      fonts.sans12,
-      formatShortTime(data.updated_at, ctx.renderedAt, timezoneFromConfig(ctx.config)),
-      CONTENT_RIGHT,
-      CONTENT_TOP + 2,
-      {
-        align: 'right',
-        maxWidth: 110,
-        ellipsis: true,
-      }
-    );
-    if (subtitle) {
-      this.drawText(c, fonts.sans12, subtitle, CONTENT_LEFT, 58, {
-        maxWidth: CONTENT_WIDTH,
-        ellipsis: true,
-      });
-    }
-    this.drawRule(c, CONTENT_LEFT, subtitle ? 82 : 66, CONTENT_WIDTH, 'solid');
-
-    const startY = subtitle ? 96 : 82;
-    const colW = 166;
-    metrics.forEach(([key, value], i) => {
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      const x = CONTENT_LEFT + col * (colW + 18);
-      const y = startY + row * 86;
-      this.drawText(c, fonts.sans16, formatLabel(key), x + 8, y + 8, {
-        maxWidth: colW,
-        ellipsis: true,
-      });
-      const valueText = pickText(value, '--');
-      this.drawText(c, fonts.sans16, valueText, x + 8, y + 38, {
-        maxWidth: colW - 16,
-        ellipsis: true,
-      });
-      const series = readNumberArray(data.series);
-      if (series.length >= 2) this.drawSparkline(c, x + 8, y + 60, colW - 16, 9, series);
-      else
-        this.drawSmallSpark(
-          c,
-          x + 8,
-          y + 68,
-          colW - 16,
-          String(key).length + String(valueText).length
-        );
-      c.strokeRect(x, y, colW, 74, PIXEL_BLACK);
-    });
+    this.renderDashboardTemplate(c, fonts, resolved.template, resolved.data);
   }
 
   private renderFallback(c: BitmapCanvas, fonts: FontSet, message: string): void {
@@ -892,46 +824,35 @@ export class DynamicFrameRendererService implements OnModuleInit {
     }
   }
 
-  private renderDashboardLayout(
+  private renderDashboardTemplate(
     c: BitmapCanvas,
     fonts: FontSet,
-    ctx: DynamicRenderContext,
-    layout: Record<string, unknown>
+    template: DashboardTemplateT,
+    dataRoot: Record<string, unknown>
   ): void {
-    const dataRoot = isRecord(ctx.data?.data)
-      ? (ctx.data.data as Record<string, unknown>)
-      : (ctx.data ?? {});
-    const heading = pickText(
-      layout.heading,
-      pickText(
-        layout.title,
-        pickText(ctx.data?.heading, pickText(ctx.data?.title, ctx.frameName ?? '数据看板'))
-      )
-    );
-    if (heading) {
-      this.drawText(c, fonts.sans16, heading, CONTENT_LEFT, 34, { maxWidth: 220, ellipsis: true });
-    }
-    const blocks = Array.isArray(layout.blocks) ? layout.blocks.slice(0, 24) : [];
-    for (const rawBlock of blocks) {
-      if (!isRecord(rawBlock)) continue;
-      const type = pickText(rawBlock.type, '');
+    for (const rawBlock of template.blocks) {
+      const type = rawBlock.type;
       if (type === 'text') {
         const rect = blockRect(rawBlock);
         if (!rect) continue;
-        const font = rawBlock.size === 'sm' ? fonts.sans12 : fonts.sans16;
-        this.drawText(
-          c,
-          font,
-          resolveTemplate(pickText(rawBlock.value, ''), dataRoot),
-          rect.x,
-          rect.y,
-          {
-            align: readAlign(rawBlock.align),
-            maxWidth: rect.w,
-            maxLines: readInt(rawBlock.max_lines, 1, 1, 4),
-            ellipsis: true,
-          }
-        );
+        const font = rawBlock.font_size === 12 ? fonts.sans12 : fonts.sans16;
+        const color = rawBlock.color === 'white' ? PIXEL_WHITE : PIXEL_BLACK;
+        const align = readAlign(rawBlock.align);
+        const text = resolveTemplate(pickText(rawBlock.value, ''), dataRoot);
+        const anchorX =
+          align === 'center'
+            ? rect.x + Math.round(rect.w / 2)
+            : align === 'right'
+              ? rect.x + rect.w
+              : rect.x;
+        const textOptions = {
+          align,
+          maxWidth: rect.w,
+          maxLines: readInt(rawBlock.max_lines, 1, 1, 4),
+          ellipsis: true,
+          color,
+        };
+        this.drawText(c, font, text, anchorX, rect.y, textOptions);
       } else if (type === 'metric') {
         const rect = blockRect(rawBlock);
         if (!rect) continue;
@@ -945,6 +866,20 @@ export class DynamicFrameRendererService implements OnModuleInit {
           resolveTemplate(pickText(rawBlock.label, ''), dataRoot),
           resolveTemplate(pickText(rawBlock.value, ''), dataRoot),
           resolveSeries(rawBlock.sparkline, dataRoot)
+        );
+      } else if (type === 'progress') {
+        const rect = blockRect(rawBlock);
+        if (!rect) continue;
+        this.drawProgressBlock(
+          c,
+          fonts,
+          rect.x,
+          rect.y,
+          rect.w,
+          rect.h,
+          resolveTemplate(pickText(rawBlock.label, ''), dataRoot),
+          resolveTemplate(pickText(rawBlock.value_text, ''), dataRoot),
+          resolvePercentage(rawBlock.percentage, rawBlock.value, rawBlock.max, dataRoot)
         );
       } else if (type === 'sparkline') {
         const rect = blockRect(rawBlock);
@@ -1167,9 +1102,49 @@ export class DynamicFrameRendererService implements OnModuleInit {
   ): void {
     c.strokeRect(x, y, w, h, PIXEL_BLACK);
     this.drawText(c, fonts.sans12, label, x + 7, y + 4, { maxWidth: w - 14, ellipsis: true });
-    this.drawText(c, fonts.sans16, value, x + 7, y + 32, { maxWidth: w - 14, ellipsis: true });
+    this.drawText(c, fonts.sans16, value, x + 7, y + 27, { maxWidth: w - 14, ellipsis: true });
     if (series.length >= 2 && h >= 54) {
       this.drawSparkline(c, x + 7, y + h - 18, w - 14, 10, series);
+    }
+  }
+
+  private drawProgressBlock(
+    c: BitmapCanvas,
+    fonts: FontSet,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    label: string,
+    valueText: string,
+    percentage: number
+  ): void {
+    const labelFont = fonts.sans12;
+    const valueFont = fonts.sans12;
+    const labelTextW = textWidthFallback(labelFont, this.fallbackForFont(labelFont), label);
+    const valueTextW = valueText
+      ? textWidthFallback(valueFont, this.fallbackForFont(valueFont), valueText)
+      : 0;
+    const labelW = Math.min(Math.max(labelTextW + 8, 58), Math.round(w * 0.36));
+    const barX = x + labelW;
+    const valueW = valueText ? Math.min(Math.max(valueTextW + 4, 34), 78) : 0;
+    const barW = Math.max(12, w - labelW - valueW - 10);
+    const barH = 9;
+    const centerY = y + Math.round(h / 2);
+    const barY = centerY - Math.floor(barH / 2);
+    this.drawTextCenteredY(c, labelFont, label, x, centerY, {
+      maxWidth: labelW - 6,
+      ellipsis: true,
+    });
+    c.strokeRect(barX, barY, barW, barH, PIXEL_BLACK);
+    const fillW = Math.max(0, Math.min(barW - 2, Math.round(((barW - 2) * percentage) / 100)));
+    if (fillW > 0) c.fillRect(barX + 1, barY + 1, fillW, barH - 2, PIXEL_BLACK);
+    if (valueText) {
+      this.drawTextCenteredY(c, valueFont, valueText, x + w, centerY, {
+        align: 'right',
+        maxWidth: valueW,
+        ellipsis: true,
+      });
     }
   }
 
@@ -1194,18 +1169,6 @@ export class DynamicFrameRendererService implements OnModuleInit {
     for (let i = 1; i < values.length; i++) {
       const xx = x + Math.round((w * i) / (values.length - 1));
       const yy = y + h - Math.round(((values[i]! - min) / range) * h);
-      c.drawLine(lastX, lastY, xx, yy, PIXEL_BLACK);
-      lastX = xx;
-      lastY = yy;
-    }
-  }
-
-  private drawSmallSpark(c: BitmapCanvas, x: number, y: number, w: number, seed: number): void {
-    let lastX = x;
-    let lastY = y + 10;
-    for (let i = 1; i <= 8; i++) {
-      const xx = x + Math.round((w * i) / 8);
-      const yy = y + 4 + ((seed + i * 7) % 14);
       c.drawLine(lastX, lastY, xx, yy, PIXEL_BLACK);
       lastX = xx;
       lastY = yy;
@@ -1493,20 +1456,40 @@ function blockRect(
   };
 }
 
+function resolveDashboardRenderInput(
+  ctx: DynamicRenderContext
+): { template: DashboardTemplateT; data: Record<string, unknown> } | null {
+  const config = DashboardConfig.safeParse(ctx.config);
+  if (!config.success) return null;
+  const data = ctx.data ?? config.data.test_data;
+  if (!isRecord(data)) return null;
+  if (config.data.template.kind === 'custom') {
+    return { template: config.data.template.template, data };
+  }
+  const system = DASHBOARD_SYSTEM_TEMPLATES[config.data.template.id];
+  return { template: system.template, data };
+}
+
 function resolveTemplate(template: string, data: Record<string, unknown>): string {
-  return template.replace(/\{([a-zA-Z0-9_.-]+)\}/g, (_m, path: string) => {
+  return template.replace(/\{([a-zA-Z0-9_.-]+)(?:\|([a-zA-Z0-9_]+))?\}/g, (_m, path: string, format?: string) => {
     const value = resolvePath(data, path);
     if (Array.isArray(value)) return value.join(' ');
     if (value === null || value === undefined) return '';
-    return String(value);
+    return formatDashboardValue(value, format);
   });
 }
 
 function resolvePath(data: Record<string, unknown>, path: string): unknown {
+  const parts = path.split('.');
   let cur: unknown = data;
-  for (const part of path.split('.')) {
+  for (let i = 0; i < parts.length; i += 1) {
+    const part = parts[i]!;
     if (!isRecord(cur) && !Array.isArray(cur)) return undefined;
     if (Array.isArray(cur)) {
+      if (part === '*') {
+        const rest = parts.slice(i + 1).join('.');
+        return rest ? cur.map((item) => resolvePathFromUnknown(item, rest)) : cur;
+      }
       const idx = Number(part);
       cur = Number.isInteger(idx) ? cur[idx] : undefined;
     } else {
@@ -1516,10 +1499,15 @@ function resolvePath(data: Record<string, unknown>, path: string): unknown {
   return cur;
 }
 
+function resolvePathFromUnknown(value: unknown, path: string): unknown {
+  if (!isRecord(value) && !Array.isArray(value)) return undefined;
+  return resolvePath(value as Record<string, unknown>, path);
+}
+
 function resolveSeries(value: unknown, data: Record<string, unknown>): number[] {
   if (Array.isArray(value)) return readNumberArray(value);
   if (typeof value !== 'string') return [];
-  const match = value.match(/^\{([a-zA-Z0-9_.-]+)\}$/);
+  const match = value.match(/^\{([a-zA-Z0-9_.*-]+)\}$/);
   if (match) return readNumberArray(resolvePath(data, match[1]!));
   return readNumberArray(
     value
@@ -1527,6 +1515,74 @@ function resolveSeries(value: unknown, data: Record<string, unknown>): number[] 
       .map((v) => v.trim())
       .filter(Boolean)
   );
+}
+
+function resolvePercentage(
+  value: unknown,
+  rawUsed: unknown,
+  rawMax: unknown,
+  data: Record<string, unknown>
+): number {
+  const direct =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string'
+        ? Number(resolveTemplate(value, data).replace(/%$/, ''))
+        : NaN;
+  if (Number.isFinite(direct)) return clamp(direct, 0, 100);
+
+  const used = Number(resolveTemplate(pickText(rawUsed, ''), data));
+  const max = Number(resolveTemplate(pickText(rawMax, ''), data));
+  if (!Number.isFinite(used) || !Number.isFinite(max) || max <= 0) return 0;
+  return clamp((used / max) * 100, 0, 100);
+}
+
+function formatDashboardValue(value: unknown, format: string | undefined): string {
+  const n =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim() !== ''
+        ? Number(value)
+        : NaN;
+  if (!format || !Number.isFinite(n)) return String(value);
+  switch (format) {
+    case 'int':
+      return Math.trunc(n).toLocaleString('en-US');
+    case 'tokens':
+      return formatCompact(n);
+    case 'compact':
+      return formatCompact(n);
+    case 'usd':
+      return `$${formatUsd(n, 2)}`;
+    case 'usd2':
+      return `$${formatUsd(n, 2)}`;
+    case 'usd4':
+      return `$${formatUsd(n, 4)}`;
+    case 'duration':
+      return n >= 1000 ? `${trimFixed(n / 1000, 2)}s` : `${Math.round(n)}ms`;
+    default:
+      return String(value);
+  }
+}
+
+function formatCompact(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000) return `${trimFixed(value / 1_000_000_000, 1)}B`;
+  if (abs >= 1_000_000) return `${trimFixed(value / 1_000_000, 1)}M`;
+  if (abs >= 1_000) return `${trimFixed(value / 1_000, 1)}K`;
+  return String(Math.trunc(value));
+}
+
+function formatUsd(value: number, digits: number): string {
+  return value.toFixed(digits);
+}
+
+function trimFixed(value: number, digits: number): string {
+  return value.toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function forecastTextFromVal(value: unknown): string {
@@ -1885,16 +1941,6 @@ function normalizeWeatherCode(value: unknown): number | null {
     if (Number.isFinite(n)) return n;
   }
   return null;
-}
-
-function formatLabel(key: string): string {
-  const map: Record<string, string> = {
-    today: '今日',
-    yesterday: '昨日',
-    this_week: '本周',
-    this_month: '本月',
-  };
-  return map[key] ?? key.replace(/_/g, ' ');
 }
 
 function pad2(n: number): string {

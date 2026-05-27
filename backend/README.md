@@ -152,6 +152,21 @@ POST /api/v1/contents/:contentId/data            dashboard 动态内容外部数
                                                  无 JWT；contentId 作为 capability，IngestLimitGuard 限速
 ```
 
+Body 固定为：
+
+```json
+{
+  "version": 1,
+  "data": {
+    "service_label": "Claude Code",
+    "primary_used_percent": 68,
+    "primary_reset_at_label": "05-27 20:00"
+  }
+}
+```
+
+模板保存在内容配置中，推送接口不接收模板定义。
+
 ### 设备协议（`Authorization: Bearer <device_secret>`，除 register 外）
 
 ```

@@ -263,12 +263,14 @@ export function usePreviewDynamicContent(contentId: string | undefined) {
     mutationFn: async ({
       config,
       frameName,
+      data: previewData,
     }: {
       config: DynamicConfigT;
       frameName?: string | null;
+      data?: unknown;
     }) => {
       const url = contentId ? `${V1}/contents/${contentId}/preview` : `${V1}/contents/preview`;
-      const body = { config, frame_name: frameName };
+      const body = { config, frame_name: frameName, data: previewData };
       const { data } = await api.post<ArrayBuffer>(url, body, {
         responseType: 'arraybuffer',
       });

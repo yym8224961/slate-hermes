@@ -254,7 +254,7 @@ export class ContentsController {
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply
   ): Promise<void> {
-    const body = (req.body ?? {}) as { config?: unknown; frame_name?: unknown };
+    const body = (req.body ?? {}) as { config?: unknown; frame_name?: unknown; data?: unknown };
     const configParsed = DynamicConfig.safeParse(body.config);
     if (!configParsed.success) {
       throw new BadRequestException(configParsed.error.issues[0]?.message ?? '配置非法');
@@ -264,6 +264,7 @@ export class ContentsController {
     const data = await this.contents.previewDynamic(contentId, user.userId, {
       config: configParsed.data,
       frame_name: frameName,
+      data: body.data,
     });
     void reply.header('Cache-Control', 'no-store').type('application/octet-stream').send(data);
   }

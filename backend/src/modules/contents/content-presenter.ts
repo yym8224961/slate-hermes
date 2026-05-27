@@ -9,6 +9,7 @@ import {
   type DynamicTypeT,
 } from 'shared';
 import {
+  dashboardStatusBarText,
   deviceStatusBarText,
   fontTestStatusBarText,
   hotListStatusBarText,
@@ -107,7 +108,7 @@ export function defaultDynamicFrameName(
     case 'weather':
       return weatherStatusBarText(config);
     case 'dashboard':
-      return '数据看板';
+      return dashboardStatusBarText(config);
     case 'font_test':
       return fontTestStatusBarText(config);
     case 'hot_list':

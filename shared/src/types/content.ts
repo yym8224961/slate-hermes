@@ -79,6 +79,7 @@ export type PatchDynamicContentRequestT = z.infer<typeof PatchDynamicContentRequ
 export const PreviewDynamicContentRequest = z.object({
   config: DynamicConfig,
   frame_name: z.string().max(64).nullable().optional(),
+  data: z.unknown().optional(),
 });
 export type PreviewDynamicContentRequestT = z.infer<typeof PreviewDynamicContentRequest>;
 

@@ -2,7 +2,16 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
-import { DEFAULT_TTS_VOICE, FONT_TEST_FONTS, FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
+import {
+  DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA,
+  DASHBOARD_AI_USAGE_STATS_TEST_DATA,
+  DASHBOARD_CUSTOM_STARTER_TEMPLATE,
+  DASHBOARD_CUSTOM_STARTER_TEST_DATA,
+  DEFAULT_TTS_VOICE,
+  FONT_TEST_FONTS,
+  FRAME_HEIGHT,
+  FRAME_WIDTH,
+} from 'shared';
 import {
   DynamicFrameRendererService,
   type DynamicRenderContext,
@@ -216,25 +225,29 @@ const contexts: DynamicRenderContext[] = [
   },
   {
     type: 'dashboard',
-    frameName: '数据看板',
-    config: {},
-    data: {
-      heading: '运营数据',
-      subtitle: '今日实时指标',
-      metrics: {
-        today: '12,480',
-        yesterday: '11,932',
-        this_week: '+8.6%',
-        this_month: '283k',
-      },
-    },
+    frameName: '外部数据',
+    config: { type: 'dashboard', template: { kind: 'system', id: 'ai_usage_stats' } },
+    data: DASHBOARD_AI_USAGE_STATS_TEST_DATA,
     renderedAt,
   },
   {
     type: 'dashboard',
-    frameName: '数据看板',
-    config: {},
-    data: {},
+    frameName: 'AI 限额监控',
+    config: { type: 'dashboard', template: { kind: 'system', id: 'ai_quota_monitor' } },
+    data: DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA,
+    renderedAt,
+  },
+  {
+    type: 'dashboard',
+    frameName: '自定义模板',
+    config: {
+      type: 'dashboard',
+      template: {
+        kind: 'custom',
+        template: DASHBOARD_CUSTOM_STARTER_TEMPLATE,
+      },
+    },
+    data: DASHBOARD_CUSTOM_STARTER_TEST_DATA,
     renderedAt,
   },
   ...FONT_TEST_FONTS.map((font) => ({
@@ -269,14 +282,19 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function debugFileName(ctx: DynamicRenderContext): string {
-  if (ctx.type === 'dashboard' && isEmptyDashboardData(ctx.data)) return 'dashboard-empty';
+  if (ctx.type === 'dashboard' && isCustomDashboardConfig(ctx.config)) return 'dashboard-custom';
+  if (ctx.type === 'dashboard') return `dashboard-${dashboardSystemTemplateId(ctx.config) ?? 'system'}`;
   if (ctx.type !== 'font_test') return ctx.type;
   return `font-test-${String(ctx.config.font_id ?? 'unknown').replace(/[^a-z0-9_-]+/gi, '-')}`;
 }
 
-function isEmptyDashboardData(data: Record<string, unknown> | null): boolean {
-  if (!data) return true;
-  return !data.layout && !isNonEmptyRecord(data.metrics);
+function isCustomDashboardConfig(config: Record<string, unknown>): boolean {
+  return isNonEmptyRecord(config.template) && config.template.kind === 'custom';
+}
+
+function dashboardSystemTemplateId(config: Record<string, unknown>): string | null {
+  if (!isNonEmptyRecord(config.template) || config.template.kind !== 'system') return null;
+  return typeof config.template.id === 'string' ? config.template.id : null;
 }
 
 function unpack1bpp(buf: Buffer): Buffer {

@@ -78,13 +78,17 @@ export class DynamicContentRendererService {
   async renderPreviewDirect(
     dynamicType: string,
     configOverride: unknown,
-    frameName?: string | null
+    frameName?: string | null,
+    dataOverride?: unknown
   ): Promise<Buffer> {
     const entry = this.registry.get(dynamicType);
     if (!entry) throw new ValidationError(`未知动态类型: ${dynamicType}`);
     const config = entry.provider.validateConfig(configOverride);
     const now = new Date();
-    const data = await entry.provider.fetchData(config, { now, lastData: undefined });
+    const data =
+      dataOverride === undefined
+        ? await entry.provider.fetchData(config, { now, lastData: undefined })
+        : dataOverride;
     return this.renderAndValidate({
       type: dynamicType,
       frameName,

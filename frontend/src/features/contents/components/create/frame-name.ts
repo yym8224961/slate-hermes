@@ -1,6 +1,9 @@
 import type { DynamicConfigT, DynamicTypeT } from 'shared';
 import type { AllContentType } from './content-create-types';
-import { dynamicStatusTitle } from '@/features/dynamic-content/model/status-title';
+import {
+  dashboardStatusTitle,
+  dynamicStatusTitle,
+} from '@/features/dynamic-content/model/status-title';
 
 export function defaultFrameName(type: DynamicTypeT, config: DynamicConfigT): string {
   switch (type) {
@@ -19,7 +22,7 @@ export function defaultFrameName(type: DynamicTypeT, config: DynamicConfigT): st
     case 'earthquake_report':
       return '地震速报';
     case 'dashboard':
-      return '数据看板';
+      return config.type === 'dashboard' ? dashboardStatusTitle(config) : '外部数据';
     case 'font_test':
       return dynamicStatusTitle(config) ?? '字体测试';
     case 'hot_list':
@@ -44,6 +47,11 @@ export function effectiveStatusBarText(
   config: DynamicConfigT | null,
   frameName: string
 ): string | null {
-  if (type === 'dashboard') return frameName.trim() || '数据看板';
+  if (type === 'dashboard') {
+    return (
+      frameName.trim() ||
+      (config?.type === 'dashboard' ? dashboardStatusTitle(config) : '外部数据')
+    );
+  }
   return dynamicStatusTitle(config);
 }

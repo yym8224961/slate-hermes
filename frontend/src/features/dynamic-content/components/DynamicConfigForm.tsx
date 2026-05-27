@@ -1,6 +1,10 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Copy, Check } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Check, Copy } from 'lucide-react';
 import {
+  DASHBOARD_CUSTOM_STARTER_TEMPLATE,
+  DASHBOARD_CUSTOM_STARTER_TEST_DATA,
+  DASHBOARD_SYSTEM_TEMPLATES,
+  DashboardTemplate,
   FONT_TEST_FONTS,
   HOT_LIST_SOURCES_BY_NAME,
   TTS_VOICES,
@@ -9,6 +13,8 @@ import {
   isWeatherAlertProvince,
   normalizeWeatherAlertProvince,
   type CurrentHotListSourceIdT,
+  type DashboardSystemTemplateIdT,
+  type DashboardTemplateT,
   type DynamicConfigT,
   type FontTestFontIdT,
   type TtsVoiceT,
@@ -26,6 +32,9 @@ const WEATHER_ALERT_REGIONS: Array<{ label: string; value: string; hint?: string
     hint: province.endsWith('市') ? '直辖市' : undefined,
   })),
 ];
+
+const CUSTOM_DASHBOARD_TEMPLATE_VALUE = 'custom';
+const DASHBOARD_SYSTEM_TEMPLATE_OPTIONS = Object.values(DASHBOARD_SYSTEM_TEMPLATES);
 
 // 按动态类型渲染不同的配置字段集合。
 export function DynamicConfigForm({
@@ -66,7 +75,7 @@ export function DynamicConfigForm({
     case 'earthquake_report':
       return <DynamicRefreshSettings config={config} onChange={onChange} />;
     case 'dashboard':
-      return contentId ? <DashboardPushPanel contentId={contentId} /> : null;
+      return <DashboardConfigPanel config={config} onChange={onChange} contentId={contentId} />;
     case 'font_test': {
       const font = FONT_TEST_FONTS.find((item) => item.id === config.font_id);
       return (
@@ -280,6 +289,142 @@ function UnsupportedConfigNotice({ config }: { config: DynamicConfigT }) {
   );
 }
 
+function DashboardConfigPanel({
+  config,
+  onChange,
+  contentId,
+}: {
+  config: Extract<DynamicConfigT, { type: 'dashboard' }>;
+  onChange: (c: DynamicConfigT) => void;
+  contentId?: string;
+}) {
+  const templateSelection =
+    config.template.kind === 'system' ? config.template.id : CUSTOM_DASHBOARD_TEMPLATE_VALUE;
+  const customTemplate = config.template.kind === 'custom' ? config.template.template : null;
+  const activeDescription =
+    config.template.kind === 'custom'
+      ? '编辑 JSON 模板和测试数据；推送接口只接收 version + data，模板保存在内容配置中。'
+      : DASHBOARD_SYSTEM_TEMPLATES[config.template.id].description;
+  const [customTemplateText, setCustomTemplateText] = useState(() =>
+    JSON.stringify(
+      config.template.kind === 'custom' ? config.template.template : DASHBOARD_CUSTOM_STARTER_TEMPLATE,
+      null,
+      2
+    )
+  );
+  const [testDataText, setTestDataText] = useState(() => JSON.stringify(config.test_data, null, 2));
+  const [templateError, setTemplateError] = useState<string | null>(null);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const localTemplateKeyRef = useRef<string | null>(null);
+  const localTestDataKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    const key = stableJson(config.test_data);
+    if (localTestDataKeyRef.current === key) {
+      localTestDataKeyRef.current = null;
+      return;
+    }
+    setTestDataText(JSON.stringify(config.test_data, null, 2));
+    setDataError(null);
+  }, [config.test_data]);
+
+  useEffect(() => {
+    if (!customTemplate) return;
+    const key = stableJson(customTemplate);
+    if (localTemplateKeyRef.current === key) {
+      localTemplateKeyRef.current = null;
+      return;
+    }
+    setCustomTemplateText(JSON.stringify(customTemplate, null, 2));
+    setTemplateError(null);
+  }, [customTemplate]);
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
+          模板
+        </p>
+        <Select
+          value={templateSelection}
+          onValueChange={(v) => {
+            if (v === CUSTOM_DASHBOARD_TEMPLATE_VALUE) {
+              const parsed = parseDashboardTemplate(customTemplateText);
+              const template = parsed.ok ? parsed.template : DASHBOARD_CUSTOM_STARTER_TEMPLATE;
+              onChange({
+                ...config,
+                template: { kind: 'custom', template },
+                test_data:
+                  config.template.kind === 'custom'
+                    ? config.test_data
+                    : DASHBOARD_CUSTOM_STARTER_TEST_DATA,
+              });
+              setTemplateError(parsed.ok ? null : parsed.error);
+            } else {
+              const id = v as DashboardSystemTemplateIdT;
+              const system = DASHBOARD_SYSTEM_TEMPLATES[id];
+              onChange({
+                ...config,
+                template: { kind: 'system', id },
+                test_data: system.test_data,
+              });
+              setTemplateError(null);
+            }
+          }}
+        >
+          <SelectItem value={CUSTOM_DASHBOARD_TEMPLATE_VALUE} hint="JSON">
+            自定义模板
+          </SelectItem>
+          {DASHBOARD_SYSTEM_TEMPLATE_OPTIONS.map((item) => (
+            <SelectItem key={item.id} value={item.id} hint="内置">
+              {item.label}
+            </SelectItem>
+          ))}
+        </Select>
+        <p className="mt-2 font-sans text-[11px] text-stone leading-snug">
+          {activeDescription}
+        </p>
+      </div>
+
+      {templateSelection === CUSTOM_DASHBOARD_TEMPLATE_VALUE && (
+        <JsonEditor
+          label="自定义模板 JSON"
+          value={customTemplateText}
+          error={templateError}
+          minRows={8}
+          onChange={(text) => {
+            setCustomTemplateText(text);
+            const parsed = parseDashboardTemplate(text);
+            setTemplateError(parsed.ok ? null : parsed.error);
+            if (parsed.ok) {
+              localTemplateKeyRef.current = stableJson(parsed.template);
+              onChange({ ...config, template: { kind: 'custom', template: parsed.template } });
+            }
+          }}
+        />
+      )}
+
+      <JsonEditor
+        label="测试数据 JSON"
+        value={testDataText}
+        error={dataError}
+        minRows={6}
+        onChange={(text) => {
+          setTestDataText(text);
+          const parsed = parseJsonRecord(text);
+          setDataError(parsed.ok ? null : parsed.error);
+          if (parsed.ok) {
+            localTestDataKeyRef.current = stableJson(parsed.data);
+            onChange({ ...config, test_data: parsed.data });
+          }
+        }}
+      />
+
+      {contentId && <DashboardPushPanel contentId={contentId} config={config} />}
+    </div>
+  );
+}
+
 function CitySearch({
   value,
   onSelect,
@@ -469,6 +614,74 @@ function Checkbox({
   );
 }
 
+function JsonEditor({
+  label,
+  value,
+  error,
+  minRows,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  error: string | null;
+  minRows: number;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="block font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">
+        {label}
+      </span>
+      <textarea
+        className={cn(
+          fieldBaseCls,
+          'block w-full resize-y font-mono text-[11px] leading-relaxed px-2 py-2 border border-ink bg-cream/30'
+        )}
+        rows={minRows}
+        value={value}
+        spellCheck={false}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      {error && <p className="mt-1.5 font-sans text-[11px] text-red-700">{error}</p>}
+    </label>
+  );
+}
+
+function parseDashboardTemplate(
+  text: string
+): { ok: true; template: DashboardTemplateT } | { ok: false; error: string } {
+  const parsed = parseJson(text);
+  if (!parsed.ok) return parsed;
+  const template = DashboardTemplate.safeParse(parsed.data);
+  if (!template.success) {
+    return { ok: false, error: template.error.issues[0]?.message ?? '模板格式非法' };
+  }
+  return { ok: true, template: template.data };
+}
+
+function parseJsonRecord(
+  text: string
+): { ok: true; data: Record<string, unknown> } | { ok: false; error: string } {
+  const parsed = parseJson(text);
+  if (!parsed.ok) return parsed;
+  if (!parsed.data || typeof parsed.data !== 'object' || Array.isArray(parsed.data)) {
+    return { ok: false, error: '必须是 JSON object' };
+  }
+  return { ok: true, data: parsed.data as Record<string, unknown> };
+}
+
+function parseJson(text: string): { ok: true; data: unknown } | { ok: false; error: string } {
+  try {
+    return { ok: true, data: JSON.parse(text) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'JSON 解析失败' };
+  }
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
 function defaultRefreshInterval(
   _type: AudioDynamicConfig['type'] | 'hot_list' | 'weather_alert' | 'earthquake_report'
 ): number {
@@ -517,16 +730,25 @@ function refreshOptions(): Array<{
   ];
 }
 
-function DashboardPushPanel({ contentId }: { contentId: string }) {
+function DashboardPushPanel({
+  contentId,
+  config,
+}: {
+  contentId: string;
+  config: Extract<DynamicConfigT, { type: 'dashboard' }>;
+}) {
   const [copied, setCopied] = useState(false);
   const url = useMemo(
     () => `${window.location.origin}/api/v1/contents/${contentId}/data`,
     [contentId]
   );
+  const examplePayload = useMemo(() => {
+    return { version: 1, data: config.test_data };
+  }, [config]);
   const exampleCurl = useMemo(
     () =>
-      `curl -X POST -H 'Content-Type: application/json' \\\n  -d '{"heading":"销售","metrics":{"today":1234,"yesterday":1100}}' \\\n  ${url}`,
-    [url]
+      `curl -X POST -H 'Content-Type: application/json' --data-binary @- \\\n  ${url} <<'JSON'\n${JSON.stringify(examplePayload, null, 2)}\nJSON`,
+    [examplePayload, url]
   );
   function copy() {
     void navigator.clipboard.writeText(url);

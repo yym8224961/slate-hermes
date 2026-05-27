@@ -1,5 +1,7 @@
 import type { ContentKind, Prisma } from '@prisma/client';
 import {
+  DASHBOARD_SYSTEM_TEMPLATES,
+  DashboardConfig,
   FONT_TEST_FONTS,
   HotListConfig,
   hotListSourceShortLabel,
@@ -39,7 +41,7 @@ export function deviceStatusBarText(row: ContentStatusBarSource): string {
     case 'weather':
       return weatherStatusBarText(row.dynamicConfig);
     case 'dashboard':
-      return row.frameName ?? '数据看板';
+      return row.frameName ?? dashboardStatusBarText(row.dynamicConfig);
     case 'font_test':
       return fontTestStatusBarText(row.dynamicConfig);
     case 'hot_list':
@@ -86,6 +88,15 @@ export function weatherStatusBarText(config: unknown): string {
 export function weatherAlertStatusBarText(config: unknown): string {
   const province = normalizeWeatherAlertProvince(valueText(recordValue(config, 'province')) ?? '');
   return `${province || '全国'}气象预警`;
+}
+
+export function dashboardStatusBarText(config: unknown): string {
+  const parsed = DashboardConfig.safeParse(config);
+  if (!parsed.success) return '外部数据';
+  if (parsed.data.template.kind === 'system') {
+    return DASHBOARD_SYSTEM_TEMPLATES[parsed.data.template.id].label;
+  }
+  return parsed.data.template.template.name?.trim() || '自定义模板';
 }
 
 export function fontTestStatusBarText(config: unknown): string {

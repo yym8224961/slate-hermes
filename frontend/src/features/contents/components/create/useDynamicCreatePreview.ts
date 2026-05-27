@@ -7,7 +7,7 @@ import { effectiveFrameName } from './frame-name';
 type PreviewMutation = UseMutationResult<
   ArrayBuffer,
   Error,
-  { config: DynamicConfigT; frameName?: string | null }
+  { config: DynamicConfigT; frameName?: string | null; data?: unknown }
 >;
 
 export function useDynamicCreatePreview({
@@ -44,7 +44,14 @@ export function useDynamicCreatePreview({
     setLivePreviewData(null);
     const timer = setTimeout(() => {
       mutate(
-        { config: parsed.data, frameName: effectiveFrameName(type, parsed.data, frameName) },
+        {
+          config: parsed.data,
+          frameName: effectiveFrameName(type, parsed.data, frameName),
+          data:
+            parsed.data.type === 'dashboard'
+              ? { version: 1, data: parsed.data.test_data }
+              : undefined,
+        },
         {
           onSuccess: (data) => {
             if (seq === previewSeq.current) setLivePreviewData(data);

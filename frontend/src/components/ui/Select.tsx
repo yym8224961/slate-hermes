@@ -50,11 +50,11 @@ export function Select({
       </RS.Trigger>
       <RS.Portal>
         <RS.Content position="popper" sideOffset={6} className={selectContentCls}>
-          <RS.ScrollUpButton className="flex h-5 items-center justify-center bg-paper text-stone">
+          <RS.ScrollUpButton className="flex h-5 items-center justify-center bg-paper text-stone outline-none focus-visible:!outline-none">
             <ChevronDown size={13} className="rotate-180" />
           </RS.ScrollUpButton>
           <RS.Viewport className={selectViewportCls}>{children}</RS.Viewport>
-          <RS.ScrollDownButton className="flex h-5 items-center justify-center bg-paper text-stone">
+          <RS.ScrollDownButton className="flex h-5 items-center justify-center bg-paper text-stone outline-none focus-visible:!outline-none">
             <ChevronDown size={13} />
           </RS.ScrollDownButton>
         </RS.Content>

@@ -37,17 +37,19 @@ export const selectContentCls = [
   'bg-paper border border-ink',
   'shadow-dropdown',
   'py-1 z-[60] overflow-hidden',
+  'outline-none focus-visible:!outline-none',
 ].join(' ');
 
 export const selectViewportCls = [
   'max-h-[min(22rem,var(--radix-select-content-available-height))]',
   'overflow-y-auto',
+  'outline-none focus-visible:!outline-none',
 ].join(' ');
 
 // Radix Select 单条 item
 export const selectItemCls = [
   'flex min-w-0 items-center gap-2 mx-1 px-3 py-2 text-[14px]',
-  'cursor-pointer outline-none',
+  'cursor-pointer outline-none focus-visible:!outline-none',
   'hover:bg-cream',
   'data-[highlighted]:bg-cream',
   'data-[state=checked]:text-ink data-[state=checked]:font-medium data-[state=checked]:bg-cream-deep',

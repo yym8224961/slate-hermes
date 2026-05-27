@@ -1,5 +1,5 @@
 import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
-import { IngestPayload, type IngestPayloadT, type IngestResponseT } from 'shared';
+import { IngestPayload, type IngestResponseT } from 'shared';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser, type WebUserContext } from '../../common/decorators/current-user.decorator';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
@@ -32,7 +32,7 @@ export class ContentDataController {
     if (!parsed.success) {
       throw new ValidationError(`payload 非法: ${parsed.error.message}`);
     }
-    const r = await this.contents.ingestDashboard(contentId, parsed.data as IngestPayloadT);
+    const r = await this.contents.ingestDashboard(contentId, parsed.data);
     return {
       id: r.id,
       image_etag: r.image_etag,

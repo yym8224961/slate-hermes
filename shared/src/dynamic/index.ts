@@ -151,9 +151,496 @@ export const EarthquakeReportConfig = z.object({
 });
 export type EarthquakeReportConfigT = z.infer<typeof EarthquakeReportConfig>;
 
+const DeviceRect = z.object({
+  x: z.number().int().min(0).max(399),
+  y: z.number().int().min(24).max(299),
+  w: z.number().int().min(1).max(400),
+  h: z.number().int().min(1).max(276),
+});
+
+const BindingText = z.string().min(1).max(160);
+const TemplateColor = z.enum(['black', 'white']);
+const DashboardTextFontSize = z.union([z.literal(12), z.literal(16)]);
+
+export const DashboardTemplateBlock = z.discriminatedUnion('type', [
+  DeviceRect.extend({
+    type: z.literal('text'),
+    value: BindingText,
+    font_size: DashboardTextFontSize.default(16),
+    align: z.enum(['left', 'center', 'right']).default('left'),
+    color: TemplateColor.default('black'),
+    max_lines: z.number().int().min(1).max(4).default(1),
+  }),
+  DeviceRect.extend({
+    type: z.literal('metric'),
+    label: BindingText,
+    value: BindingText,
+    sparkline: z.union([BindingText, z.array(z.number()).min(2).max(60)]).optional(),
+  }),
+  DeviceRect.extend({
+    type: z.literal('progress'),
+    label: BindingText,
+    value: BindingText.optional(),
+    max: BindingText.optional(),
+    value_text: BindingText.optional(),
+    percentage: z.union([BindingText, z.number().min(0).max(100)]).optional(),
+  }),
+  DeviceRect.extend({
+    type: z.literal('sparkline'),
+    values: z.union([BindingText, z.array(z.number()).min(2).max(60)]),
+  }),
+  z.object({
+    type: z.literal('line'),
+    x1: z.number().int().min(0).max(399),
+    y1: z.number().int().min(24).max(299),
+    x2: z.number().int().min(0).max(399),
+    y2: z.number().int().min(24).max(299),
+    style: z.enum(['solid', 'dashed']).default('solid'),
+  }),
+  DeviceRect.extend({
+    type: z.literal('rect'),
+    stroke: z.boolean().default(true),
+    fill: z.enum(['none', 'black', 'white']).default('none'),
+  }),
+]);
+export type DashboardTemplateBlockT = z.infer<typeof DashboardTemplateBlock>;
+
+export const DashboardTemplate = z
+  .object({
+    version: z.literal(1).default(1),
+    name: z.string().max(48).optional(),
+    blocks: z.array(DashboardTemplateBlock).min(1).max(32),
+  })
+  .superRefine((template, ctx) => {
+    template.blocks.forEach((block, i) => {
+      if (!('x' in block)) return;
+      if (block.x + block.w > 400) {
+        ctx.addIssue({ code: 'custom', path: ['blocks', i], message: 'x + w 超出屏幕宽度 400' });
+      }
+      if (block.y + block.h > 300) {
+        ctx.addIssue({ code: 'custom', path: ['blocks', i], message: 'y + h 超出屏幕高度 300' });
+      }
+    });
+  });
+export type DashboardTemplateT = z.infer<typeof DashboardTemplate>;
+
+export const DashboardSystemTemplateIdValues = ['ai_usage_stats', 'ai_quota_monitor'] as const;
+export const DashboardSystemTemplateId = z.enum(DashboardSystemTemplateIdValues);
+export type DashboardSystemTemplateIdT = z.infer<typeof DashboardSystemTemplateId>;
+
+export const DASHBOARD_AI_USAGE_STATS_TEMPLATE = DashboardTemplate.parse({
+  version: 1,
+  name: 'AI 使用统计',
+  blocks: [
+    { type: 'metric', x: 20, y: 34, w: 110, h: 52, label: '余额', value: '{balance|usd2}' },
+    {
+      type: 'metric',
+      x: 145,
+      y: 34,
+      w: 110,
+      h: 52,
+      label: '累计Token',
+      value: '{total_tokens|tokens}',
+    },
+    {
+      type: 'metric',
+      x: 270,
+      y: 34,
+      w: 110,
+      h: 52,
+      label: 'API Key',
+      value: '{active_api_keys|int}/{total_api_keys|int}',
+    },
+    {
+      type: 'metric',
+      x: 20,
+      y: 94,
+      w: 110,
+      h: 52,
+      label: '今日请求',
+      value: '{today_requests|int}',
+    },
+    {
+      type: 'metric',
+      x: 145,
+      y: 94,
+      w: 110,
+      h: 52,
+      label: '今日消费',
+      value: '{today_actual_cost|usd2}',
+    },
+    {
+      type: 'metric',
+      x: 270,
+      y: 94,
+      w: 110,
+      h: 52,
+      label: '今日Token',
+      value: '{today_tokens|tokens}',
+    },
+    { type: 'metric', x: 20, y: 154, w: 110, h: 46, label: 'RPM', value: '{rpm|int}' },
+    {
+      type: 'metric',
+      x: 145,
+      y: 154,
+      w: 110,
+      h: 46,
+      label: '平均响应',
+      value: '{average_duration_ms|duration}',
+    },
+    {
+      type: 'metric',
+      x: 270,
+      y: 154,
+      w: 110,
+      h: 46,
+      label: '更新',
+      value: '{updated_label}',
+    },
+    { type: 'line', x1: 20, y1: 214, x2: 380, y2: 214, style: 'dashed' },
+    {
+      type: 'text',
+      x: 20,
+      y: 224,
+      w: 48,
+      h: 12,
+      value: '平台',
+      font_size: 12,
+    },
+    {
+      type: 'text',
+      x: 90,
+      y: 224,
+      w: 46,
+      h: 12,
+      value: '今日',
+      font_size: 12,
+      align: 'right',
+    },
+    {
+      type: 'text',
+      x: 142,
+      y: 224,
+      w: 48,
+      h: 12,
+      value: '累计',
+      font_size: 12,
+      align: 'right',
+    },
+    {
+      type: 'text',
+      x: 20,
+      y: 242,
+      w: 68,
+      h: 12,
+      value: '{by_platform.0.platform}',
+      font_size: 12,
+    },
+    {
+      type: 'text',
+      x: 90,
+      y: 242,
+      w: 46,
+      h: 12,
+      value: '{by_platform.0.today_actual_cost|usd2}',
+      font_size: 12,
+      align: 'right',
+    },
+    {
+      type: 'text',
+      x: 142,
+      y: 242,
+      w: 48,
+      h: 12,
+      value: '{by_platform.0.total_tokens|tokens}',
+      font_size: 12,
+      align: 'right',
+    },
+    {
+      type: 'text',
+      x: 20,
+      y: 260,
+      w: 68,
+      h: 12,
+      value: '{by_platform.1.platform}',
+      font_size: 12,
+    },
+    {
+      type: 'text',
+      x: 90,
+      y: 260,
+      w: 46,
+      h: 12,
+      value: '{by_platform.1.today_actual_cost|usd2}',
+      font_size: 12,
+      align: 'right',
+    },
+    {
+      type: 'text',
+      x: 142,
+      y: 260,
+      w: 48,
+      h: 12,
+      value: '{by_platform.1.total_tokens|tokens}',
+      font_size: 12,
+      align: 'right',
+    },
+    {
+      type: 'text',
+      x: 216,
+      y: 224,
+      w: 48,
+      h: 12,
+      value: '模型',
+      font_size: 12,
+    },
+    {
+      type: 'text',
+      x: 328,
+      y: 224,
+      w: 52,
+      h: 12,
+      value: 'Token',
+      font_size: 12,
+      align: 'right',
+    },
+    {
+      type: 'text',
+      x: 216,
+      y: 242,
+      w: 106,
+      h: 12,
+      value: '{models.0.model}',
+      font_size: 12,
+    },
+    {
+      type: 'text',
+      x: 328,
+      y: 242,
+      w: 52,
+      h: 12,
+      value: '{models.0.total_tokens|tokens}',
+      font_size: 12,
+      align: 'right',
+    },
+    {
+      type: 'text',
+      x: 216,
+      y: 260,
+      w: 106,
+      h: 12,
+      value: '{models.1.model}',
+      font_size: 12,
+    },
+    {
+      type: 'text',
+      x: 328,
+      y: 260,
+      w: 52,
+      h: 12,
+      value: '{models.1.total_tokens|tokens}',
+      font_size: 12,
+      align: 'right',
+    },
+  ],
+});
+
+export const DASHBOARD_CUSTOM_STARTER_TEMPLATE = DashboardTemplate.parse({
+  version: 1,
+  name: '自定义模板',
+  blocks: [
+    { type: 'metric', x: 20, y: 34, w: 170, h: 62, label: '{primary_label}', value: '{primary_value}', sparkline: '{primary_trend}' },
+    { type: 'metric', x: 210, y: 34, w: 170, h: 62, label: '{secondary_label}', value: '{secondary_value}' },
+    { type: 'metric', x: 20, y: 106, w: 170, h: 62, label: '{third_label}', value: '{third_value}' },
+    { type: 'metric', x: 210, y: 106, w: 170, h: 62, label: '{fourth_label}', value: '{fourth_value}' },
+    { type: 'line', x1: 20, y1: 184, x2: 380, y2: 184, style: 'dashed' },
+    {
+      type: 'progress',
+      x: 20,
+      y: 198,
+      w: 360,
+      h: 24,
+      label: '{primary_progress_label}',
+      percentage: '{primary_progress_percent}',
+      value_text: '{primary_progress_text}',
+    },
+    {
+      type: 'progress',
+      x: 20,
+      y: 228,
+      w: 360,
+      h: 24,
+      label: '{secondary_progress_label}',
+      percentage: '{secondary_progress_percent}',
+      value_text: '{secondary_progress_text}',
+    },
+    { type: 'text', x: 20, y: 270, w: 170, h: 14, value: '{footer_left}', font_size: 12 },
+    { type: 'text', x: 210, y: 270, w: 170, h: 14, value: '{footer_right}', font_size: 12, align: 'right' },
+  ],
+});
+
+export const DASHBOARD_CUSTOM_STARTER_TEST_DATA = {
+  primary_label: '收入',
+  primary_value: '128k',
+  primary_trend: [3, 8, 5, 13, 21, 18, 26],
+  secondary_label: '请求',
+  secondary_value: '42.8k',
+  third_label: '转化率',
+  third_value: '12.6%',
+  fourth_label: '延迟',
+  fourth_value: '183ms',
+  primary_progress_label: '目标',
+  primary_progress_percent: 72,
+  primary_progress_text: '72%',
+  secondary_progress_label: '健康',
+  secondary_progress_percent: 91,
+  secondary_progress_text: '91%',
+  footer_left: '05-27 16:30',
+  footer_right: '业务看板',
+} as const;
+
+export const DASHBOARD_AI_USAGE_STATS_TEST_DATA = {
+  balance: 8139.8,
+  total_api_keys: 8,
+  active_api_keys: 8,
+  total_requests: 20305,
+  total_input_tokens: 124300000,
+  total_output_tokens: 11300000,
+  total_cache_creation_tokens: 0,
+  total_cache_read_tokens: 1966700000,
+  total_tokens: 2102300000,
+  total_cost: 1860.1969,
+  total_actual_cost: 1860.1969,
+  today_requests: 1602,
+  today_input_tokens: 11700000,
+  today_output_tokens: 798100,
+  today_cache_creation_tokens: 0,
+  today_cache_read_tokens: 160001900,
+  today_tokens: 172500000,
+  today_cost: 155.7732,
+  today_actual_cost: 155.7732,
+  average_duration_ms: 17270,
+  rpm: 2,
+  by_platform: [
+    {
+      platform: 'OpenAI',
+      total_requests: 17012,
+      total_tokens: 1880900000,
+      total_actual_cost: 1743.2521,
+      today_requests: 1602,
+      today_tokens: 172500000,
+      today_actual_cost: 146.2964,
+    },
+    {
+      platform: 'Claude',
+      total_requests: 3282,
+      total_tokens: 221400000,
+      total_actual_cost: 116.9448,
+      today_requests: 0,
+      today_tokens: 0,
+      today_actual_cost: 9.4768,
+    },
+  ],
+  models: [
+    { model: 'gpt-5.5', requests: 10075, input_tokens: 82000000, output_tokens: 5200000, cache_creation_tokens: 0, cache_read_tokens: 1008300000, total_tokens: 1090500000, cost: 1022.593, actual_cost: 1022.593, account_cost: 0 },
+    { model: 'claude-sonnet-4-6', requests: 1500, input_tokens: 7600000, output_tokens: 640000, cache_creation_tokens: 0, cache_read_tokens: 91860000, total_tokens: 100100000, cost: 57.8415, actual_cost: 57.8415, account_cost: 0 },
+    { model: 'gpt-5.4-mini', requests: 2, input_tokens: 11000, output_tokens: 7400, cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: 18400, cost: 0.0063, actual_cost: 0.0063, account_cost: 0 },
+  ],
+  updated_label: '05-26 16:30',
+} as const;
+
+export const DASHBOARD_AI_QUOTA_MONITOR_TEMPLATE = DashboardTemplate.parse({
+  version: 1,
+  name: 'AI 限额监控',
+  blocks: [
+    { type: 'metric', x: 20, y: 34, w: 110, h: 52, label: '服务', value: '{service_label}' },
+    { type: 'metric', x: 145, y: 34, w: 110, h: 52, label: '套餐', value: '{plan_label}' },
+    { type: 'metric', x: 270, y: 34, w: 110, h: 52, label: '状态', value: '{status_label}' },
+    {
+      type: 'progress',
+      x: 20,
+      y: 110,
+      w: 360,
+      h: 26,
+      label: '{primary_window_label}',
+      percentage: '{primary_used_percent}',
+      value_text: '{primary_used_percent|int}%',
+    },
+    {
+      type: 'progress',
+      x: 20,
+      y: 150,
+      w: 360,
+      h: 26,
+      label: '{secondary_window_label}',
+      percentage: '{secondary_used_percent}',
+      value_text: '{secondary_used_percent|int}%',
+    },
+    { type: 'line', x1: 20, y1: 200, x2: 380, y2: 200, style: 'dashed' },
+    { type: 'metric', x: 20, y: 218, w: 110, h: 52, label: '5h重置', value: '{primary_reset_at_label}' },
+    { type: 'metric', x: 145, y: 218, w: 110, h: 52, label: '周重置', value: '{secondary_reset_at_label}' },
+    { type: 'metric', x: 270, y: 218, w: 110, h: 52, label: '更新', value: '{updated_label}' },
+  ],
+});
+
+export const DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA = {
+  service_label: 'Claude Code',
+  plan_label: 'Pro',
+  status_label: '正常',
+  primary_window_label: '5h窗口',
+  primary_used_percent: 68,
+  primary_reset_at_label: '05-27 20:00',
+  secondary_window_label: '周限额',
+  secondary_used_percent: 41,
+  secondary_reset_at_label: '06-03 08:00',
+  updated_label: '05-27 16:30',
+} as const;
+
+export const DASHBOARD_SYSTEM_TEMPLATES = {
+  ai_usage_stats: {
+    id: 'ai_usage_stats',
+    label: 'AI 使用统计',
+    description: '展示余额、API Key、请求、消费、Token、响应时间、更新时间、平台和模型分布。',
+    template: DASHBOARD_AI_USAGE_STATS_TEMPLATE,
+    test_data: DASHBOARD_AI_USAGE_STATS_TEST_DATA,
+  },
+  ai_quota_monitor: {
+    id: 'ai_quota_monitor',
+    label: 'AI 限额监控',
+    description: '展示 Claude Code 或 Codex/OpenAI 单服务限额快照；只放使用率、状态、绝对重置时间和更新时间。',
+    template: DASHBOARD_AI_QUOTA_MONITOR_TEMPLATE,
+    test_data: DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA,
+  },
+} as const satisfies Record<
+  DashboardSystemTemplateIdT,
+  {
+    id: DashboardSystemTemplateIdT;
+    label: string;
+    description: string;
+    template: DashboardTemplateT;
+    test_data: Record<string, unknown>;
+  }
+>;
+
+export const DashboardTemplateRef = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('system'),
+    id: DashboardSystemTemplateId.default('ai_usage_stats'),
+  }),
+  z.object({
+    kind: z.literal('custom'),
+    template: DashboardTemplate,
+  }),
+]);
+export type DashboardTemplateRefT = z.infer<typeof DashboardTemplateRef>;
+
 export const DashboardConfig = z.object({
   type: z.literal('dashboard'),
-  layout: z.enum(['metrics', 'sparkline']).default('metrics'),
+  template: DashboardTemplateRef.default({
+    kind: 'custom',
+    template: DASHBOARD_CUSTOM_STARTER_TEMPLATE,
+  }),
+  test_data: z.record(z.string().max(64), z.unknown()).default(DASHBOARD_CUSTOM_STARTER_TEST_DATA),
 });
 export type DashboardConfigT = z.infer<typeof DashboardConfig>;
 
@@ -517,89 +1004,17 @@ export function isAudioDynamicConfig(
   );
 }
 
-const DeviceRect = z.object({
-  x: z.number().int().min(0).max(399),
-  y: z.number().int().min(24).max(299),
-  w: z.number().int().min(1).max(400),
-  h: z.number().int().min(1).max(276),
-});
-
-const BindingText = z.string().min(1).max(160);
-
-export const DashboardLayoutBlock = z.discriminatedUnion('type', [
-  DeviceRect.extend({
-    type: z.literal('text'),
-    value: BindingText,
-    size: z.enum(['sm', 'md', 'lg']).default('md'),
-    align: z.enum(['left', 'center', 'right']).default('left'),
-    weight: z.enum(['normal', 'bold']).default('normal'),
-    max_lines: z.number().int().min(1).max(4).default(1),
-  }),
-  DeviceRect.extend({
-    type: z.literal('metric'),
-    label: BindingText,
-    value: BindingText,
-    sparkline: z.union([BindingText, z.array(z.number()).min(2).max(60)]).optional(),
-  }),
-  DeviceRect.extend({
-    type: z.literal('sparkline'),
-    values: z.union([BindingText, z.array(z.number()).min(2).max(60)]),
-  }),
-  z.object({
-    type: z.literal('line'),
-    x1: z.number().int().min(0).max(399),
-    y1: z.number().int().min(24).max(299),
-    x2: z.number().int().min(0).max(399),
-    y2: z.number().int().min(24).max(299),
-    style: z.enum(['solid', 'dashed']).default('solid'),
-  }),
-  DeviceRect.extend({
-    type: z.literal('rect'),
-    stroke: z.boolean().default(true),
-    fill: z.enum(['none', 'black', 'white']).default('none'),
-  }),
-]);
-export type DashboardLayoutBlockT = z.infer<typeof DashboardLayoutBlock>;
-
-export const DashboardLayout = z
-  .object({
-    version: z.literal(1).default(1),
-    heading: z.string().max(48).optional(),
-    blocks: z.array(DashboardLayoutBlock).min(1).max(24),
-  })
-  .superRefine((layout, ctx) => {
-    layout.blocks.forEach((block, i) => {
-      if (!('x' in block)) return;
-      if (block.x + block.w > 400) {
-        ctx.addIssue({ code: 'custom', path: ['blocks', i], message: 'x + w 超出屏幕宽度 400' });
-      }
-      if (block.y + block.h > 300) {
-        ctx.addIssue({ code: 'custom', path: ['blocks', i], message: 'y + h 超出屏幕高度 300' });
-      }
-    });
-  });
-export type DashboardLayoutT = z.infer<typeof DashboardLayout>;
+const DashboardDataPayload = z.record(z.string().max(64), z.unknown());
 
 // POST /api/v1/contents/:contentId/data —— 外部数据推送（仅 dashboard 动态内容）。
 //   capability URL: contentId(cuid，~110 bit 熵) 本身充当访问能力，不需要额外 token。
 //   防滥用靠 bodyLimit 64KB + rate-limit 30/min/contentId。
-export const IngestPayload = z.object({
-  heading: z.string().max(48).optional(),
-  subtitle: z.string().max(48).optional(),
-  /** 自由 key/value：number / string / boolean，最多 8 个 metric。 */
-  metrics: z
-    .record(z.string().max(32), z.union([z.number(), z.string().max(64), z.boolean()]))
-    .refine((r) => Object.keys(r).length <= 8, '最多 8 个 metric')
-    .optional(),
-  /** sparkline 数据点序列，最多 60 个。 */
-  series: z.array(z.number()).max(60).optional(),
-  /** 受限设备版式 DSL。外部可自定义 dashboard 布局，但不支持 HTML/CSS/JS。 */
-  layout: DashboardLayout.optional(),
-  /** layout 绑定用的自由 JSON 数据根。 */
-  data: z.record(z.string().max(64), z.unknown()).optional(),
-  /** 客户端时间，仅展示，不参与校时。 */
-  updated_at: z.string().datetime().optional(),
-});
+export const IngestPayload = z
+  .object({
+    version: z.literal(1),
+    data: DashboardDataPayload,
+  })
+  .strict();
 export type IngestPayloadT = z.infer<typeof IngestPayload>;
 
 export const IngestResponse = z.object({

@@ -84,7 +84,7 @@ export function DynamicContentEditor({
   // 实时预览
   const preview = usePreviewDynamicContent(content.id);
   const { livePreviewData } = useDynamicCreatePreview({ type, config, frameName, preview });
-  const showParams = shouldRenderParams(type, { contentId: content.id });
+  const showParams = shouldRenderParams(type);
 
   async function onSubmit() {
     // 提交前用 shared 的 DynamicConfig zod 校验，避免后端 400 后才知道错。
@@ -164,7 +164,7 @@ export function DynamicContentEditor({
               <div className="border-t border-line" />
             </div>
 
-            {/* 帧名称（仅 dashboard）*/}
+            {/* 帧名称（仅外部数据）*/}
             {type === 'dashboard' && (
               <FormSection label="帧名称（选填，最多 64 字）">
                 <Input
@@ -172,7 +172,7 @@ export function DynamicContentEditor({
                   maxLength={64}
                   value={frameName}
                   onChange={(e) => setFrameName(e.target.value)}
-                  placeholder="如：运营数据"
+                  placeholder="如：AI 使用统计"
                 />
               </FormSection>
             )}

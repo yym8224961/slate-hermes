@@ -17,7 +17,7 @@ import weatherDefinition from './definitions/weather.json' with { type: 'json' }
 import historyTodayDefinition from './definitions/history-today.json' with { type: 'json' };
 import weatherAlertDefinition from './definitions/weather-alert.json' with { type: 'json' };
 import earthquakeReportDefinition from './definitions/earthquake-report.json' with { type: 'json' };
-import dashboardDefinition from './definitions/dashboard-metrics.json' with { type: 'json' };
+import dashboardDefinition from './definitions/dashboard.json' with { type: 'json' };
 import fontTestDefinition from './definitions/font-test.json' with { type: 'json' };
 import hotListDefinition from './definitions/hot-list.json' with { type: 'json' };
 

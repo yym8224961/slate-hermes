@@ -71,8 +71,8 @@ const TYPE_ITEMS: Array<{
   },
   {
     type: 'dashboard',
-    title: '数据看板',
-    hint: '外部 POST 数据，立即刷新',
+    title: '外部数据',
+    hint: '模板 + JSON 数据推送',
     Icon: BarChart3,
   },
   {

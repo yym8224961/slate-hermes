@@ -4,8 +4,10 @@ import { Prisma } from '@prisma/client';
 import type { ContentAudioSource, ContentKind } from '@prisma/client';
 import {
   DynamicConfig,
+  IngestPayload,
   isAudioDynamicConfig,
   type ContentDetailT,
+  type IngestPayloadT,
   type ContentMutationResponseT,
   type ContentSummaryT,
   type CreateDynamicContentRequestT,
@@ -319,21 +321,55 @@ export class ContentsService {
   async previewDynamicDirect(raw: {
     config: unknown;
     frame_name?: string | null;
+    data?: unknown;
   }): Promise<Buffer> {
     const config = DynamicConfig.parse(raw.config);
+    const previewData =
+      config.type === 'dashboard' && raw.data !== undefined
+        ? IngestPayload.parse(raw.data).data
+        : undefined;
     return this.dynamicRenderer.renderPreviewDirect(
       config.type,
       config,
-      raw.frame_name ?? defaultDynamicFrameName(config.type, config)
+      raw.frame_name ?? defaultDynamicFrameName(config.type, config),
+      previewData
     );
   }
 
   async previewDynamic(
     contentId: string,
     ownerUserId: string,
-    body: { config: unknown; frame_name?: string | null }
+    body: { config: unknown; frame_name?: string | null; data?: unknown }
   ): Promise<Buffer> {
-    return this.dynamicRenderer.renderPreview(contentId, ownerUserId, body.config, body.frame_name);
+    if (body.data === undefined) {
+      return this.dynamicRenderer.renderPreview(contentId, ownerUserId, body.config, body.frame_name);
+    }
+
+    const content = await this.prisma.content.findUnique({
+      where: { id: contentId },
+      select: {
+        kind: true,
+        dynamicType: true,
+        frameName: true,
+        group: { select: { ownerUserId: true } },
+      },
+    });
+    if (!content || content.group.ownerUserId !== ownerUserId)
+      throw new NotFoundError('内容不存在');
+    if (content.kind !== 'dynamic' || !content.dynamicType)
+      throw new ValidationError('该内容不是动态类型');
+    const config = DynamicConfig.parse(body.config);
+    if (config.type !== content.dynamicType) {
+      throw new ValidationError(
+        `dynamic_type 与 config.type 不一致: ${content.dynamicType} vs ${config.type}`
+      );
+    }
+    if (config.type !== 'dashboard') {
+      throw new ValidationError('只有外部数据预览支持 data 参数');
+    }
+    const frameName = body.frame_name === undefined ? content.frameName : body.frame_name;
+    const previewData = IngestPayload.parse(body.data).data;
+    return this.dynamicRenderer.renderPreviewDirect(config.type, config, frameName, previewData);
   }
 
   async appendImage(
@@ -460,6 +496,7 @@ export class ContentsService {
         sortOrder: true,
         kind: true,
         dynamicType: true,
+        dynamicConfig: true,
       },
     });
     if (!content) throw new NotFoundError('内容不存在');
@@ -483,6 +520,13 @@ export class ContentsService {
       data.dynamicConfig = validated as unknown as Prisma.InputJsonValue;
       data.dynamicRefreshDueAt = new Date();
       data.dynamicRefreshLeaseUntil = null;
+      if (
+        currentType === 'dashboard' &&
+        validated.type === 'dashboard' &&
+        stableJson(content.dynamicConfig) !== stableJson(validated)
+      ) {
+        data.dynamicData = validated.test_data as Prisma.InputJsonValue;
+      }
       if (body.frame_name === undefined && currentType !== 'dashboard') {
         data.frameName = defaultDynamicFrameName(currentType, validated);
       }
@@ -535,17 +579,14 @@ export class ContentsService {
 
   async ingestDashboard(
     contentId: string,
-    data: unknown
+    payload: IngestPayloadT
   ): Promise<ContentMutationResponseT & { updatedAt: Date }> {
     const content = await this.prisma.content.findUnique({
       where: { id: contentId },
       select: {
-        id: true,
-        groupId: true,
         sortOrder: true,
         kind: true,
         dynamicType: true,
-        audioEtag: true,
       },
     });
     if (!content || content.kind !== 'dynamic' || content.dynamicType !== 'dashboard') {
@@ -553,7 +594,7 @@ export class ContentsService {
     }
     const rendered = await this.renderDynamicAndReadEtag(contentId, {
       force: true,
-      dataOverride: data,
+      dataOverride: payload.data,
     });
     return {
       ...this.toMutationResponse(
@@ -1040,6 +1081,20 @@ export class ContentsService {
     if (!row) throw new NotFoundError('内容不存在');
     return row.contentEtag;
   }
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(sortJsonValue(value));
+}
+
+function sortJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJsonValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, entry]) => [key, sortJsonValue(entry)])
+  );
 }
 
 async function restoreBlob(

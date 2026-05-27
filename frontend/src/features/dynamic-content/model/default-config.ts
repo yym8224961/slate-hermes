@@ -1,4 +1,10 @@
-import { DEFAULT_TTS_VOICE, type DynamicConfigT, type DynamicTypeT } from 'shared';
+import {
+  DASHBOARD_CUSTOM_STARTER_TEMPLATE,
+  DASHBOARD_CUSTOM_STARTER_TEST_DATA,
+  DEFAULT_TTS_VOICE,
+  type DynamicConfigT,
+  type DynamicTypeT,
+} from 'shared';
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -49,7 +55,11 @@ export function defaultConfig(type: DynamicTypeT): DynamicConfigT {
         refresh_interval_sec: 600,
       };
     case 'dashboard':
-      return { type: 'dashboard', layout: 'metrics' };
+      return {
+        type: 'dashboard',
+        template: { kind: 'custom', template: DASHBOARD_CUSTOM_STARTER_TEMPLATE },
+        test_data: DASHBOARD_CUSTOM_STARTER_TEST_DATA,
+      };
     case 'font_test':
       return {
         type: 'font_test',

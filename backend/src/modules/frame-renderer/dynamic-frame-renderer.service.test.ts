@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'bun:test';
-import { FONT_TEST_FONTS, FRAME_BYTES, FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
+import {
+  DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA,
+  DASHBOARD_AI_USAGE_STATS_TEST_DATA,
+  DASHBOARD_CUSTOM_STARTER_TEMPLATE,
+  DASHBOARD_CUSTOM_STARTER_TEST_DATA,
+  FONT_TEST_FONTS,
+  FRAME_BYTES,
+  FRAME_HEIGHT,
+  FRAME_WIDTH,
+} from 'shared';
 import {
   DynamicFrameRendererService,
   type DynamicRenderContext,
@@ -151,42 +160,29 @@ describe('DynamicFrameRendererService', () => {
       },
       {
         type: 'dashboard',
-        frameName: '数据',
-        config: {},
-        data: {
-          heading: '运营数据',
-          subtitle: '今日实时指标',
-          metrics: { today: '12,480', yesterday: '11,932', this_week: '+8.6%', this_month: '283k' },
-        },
+        frameName: '外部数据',
+        config: { type: 'dashboard', template: { kind: 'system', id: 'ai_usage_stats' } },
+        data: DASHBOARD_AI_USAGE_STATS_TEST_DATA,
         renderedAt,
       },
       {
         type: 'dashboard',
-        frameName: '布局数据',
-        config: {},
-        data: {
-          heading: '布局数据',
-          data: { label: '销售额', value: '128k', trend: [3, 8, 5, 13, 21] },
-          layout: {
-            version: 1,
-            heading: '布局数据',
-            blocks: [
-              {
-                type: 'metric',
-                x: 24,
-                y: 72,
-                w: 170,
-                h: 80,
-                label: '{label}',
-                value: '{value}',
-                sparkline: '{trend}',
-              },
-              { type: 'sparkline', x: 220, y: 82, w: 130, h: 58, values: '{trend}' },
-              { type: 'line', x1: 24, y1: 166, x2: 360, y2: 166, style: 'dashed' },
-              { type: 'rect', x: 220, y: 188, w: 80, h: 42, stroke: true, fill: 'none' },
-            ],
+        frameName: 'AI 限额监控',
+        config: { type: 'dashboard', template: { kind: 'system', id: 'ai_quota_monitor' } },
+        data: DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA,
+        renderedAt,
+      },
+      {
+        type: 'dashboard',
+        frameName: '自定义模板',
+        config: {
+          type: 'dashboard',
+          template: {
+            kind: 'custom',
+            template: DASHBOARD_CUSTOM_STARTER_TEMPLATE,
           },
         },
+        data: DASHBOARD_CUSTOM_STARTER_TEST_DATA,
         renderedAt,
       },
       {

@@ -55,8 +55,8 @@ export const TYPE_META: Record<AllContentType, TypeMeta> = {
     supportsAudio: false,
   },
   dashboard: {
-    label: '数据看板',
-    description: '由你的系统推送 JSON，设备拉取后渲染指标卡片。',
+    label: '外部数据',
+    description: '选择系统模板或自定义模板，后续只推送数据即可刷新画面。',
     hasConfigurableParams: true,
     supportsAudio: false,
   },
@@ -75,13 +75,9 @@ export const TYPE_META: Record<AllContentType, TypeMeta> = {
 };
 
 /**
- * 是否应渲染「类型参数」section。dashboard 在没有 contentId 时无可配项（URL 创建后才生成）。
+ * 是否应渲染「类型参数」section。
  */
-export function shouldRenderParams(
-  t: AllContentType,
-  opts?: { contentId?: string | null }
-): boolean {
+export function shouldRenderParams(t: AllContentType): boolean {
   if (!TYPE_META[t].hasConfigurableParams) return false;
-  if (t === 'dashboard') return !!opts?.contentId;
   return true;
 }

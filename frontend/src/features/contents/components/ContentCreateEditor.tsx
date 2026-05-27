@@ -179,7 +179,13 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
   }
 
   const frameNamePlaceholder =
-    type === 'image' ? '如：挖掘机' : type === 'weather' ? '如：北京天气' : '';
+    type === 'image'
+      ? '如：挖掘机'
+      : type === 'dashboard'
+        ? '如：AI 使用统计'
+        : type === 'weather'
+          ? '如：北京天气'
+          : '';
 
   return (
     <div>
@@ -261,7 +267,7 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
 
             {type && (
               <>
-                {/* 帧名称（仅 image / dashboard）*/}
+                {/* 帧名称（仅 image / 外部数据）*/}
                 {(type === 'image' || type === 'dashboard') && (
                   <FormSection label="帧名称（选填，最多 64 字）">
                     <Input

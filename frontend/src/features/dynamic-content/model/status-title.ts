@@ -1,5 +1,7 @@
 import {
+  DASHBOARD_SYSTEM_TEMPLATES,
   FONT_TEST_FONTS,
+  type DashboardConfigT,
   hotListSourceShortLabel,
   normalizeWeatherAlertProvince,
   type DynamicConfigT,
@@ -22,7 +24,7 @@ export function dynamicStatusTitle(config: DynamicConfigT | null | undefined): s
     case 'weather':
       return config.location_label ? `${config.location_label}天气` : '天气';
     case 'dashboard':
-      return '数据看板';
+      return dashboardStatusTitle(config);
     case 'font_test':
       return FONT_TEST_FONTS.find((font) => font.id === config.font_id)?.label ?? '字体测试';
     case 'hot_list':
@@ -30,6 +32,13 @@ export function dynamicStatusTitle(config: DynamicConfigT | null | undefined): s
     default:
       return null;
   }
+}
+
+export function dashboardStatusTitle(config: DashboardConfigT): string {
+  if (config.template.kind === 'system') {
+    return DASHBOARD_SYSTEM_TEMPLATES[config.template.id].label;
+  }
+  return config.template.template.name?.trim() || '自定义模板';
 }
 
 function dateParts(date: Date, timeZone: string): { year: number; month: number; day: number } {
