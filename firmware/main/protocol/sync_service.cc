@@ -9,12 +9,14 @@
 #include <cstring>
 
 #include <utility>
+#include <vector>
 
 #include "api_client.h"
 #include "cache.h"
 #include "event_bus.h"
 #include "power_state.h"
 #include "sntp.h"
+#include "scoped_mutex_lock.h"
 
 namespace {
 constexpr char kTag[]           = "Sync";
@@ -24,6 +26,7 @@ constexpr int  BIT_CYCLE_NEXT   = BIT2;
 constexpr int  BIT_CYCLE_PREV   = BIT3;
 constexpr int  BIT_WAKE_REFRESH = BIT4;
 constexpr int  kBoundPollSec    = 60;
+constexpr int  kStopWaitMs      = 30000;
 
 // unbound 期阶梯退避轮询: 用户在 Web 端输码后快速屏切「等待相册」。
 // bound 后由 SleepManager 允许 deep sleep,设备活跃时 poll 间隔固定 60s。
@@ -34,32 +37,31 @@ constexpr int64_t    kUnboundFastMs                 = 10LL * 60 * 1000;
 constexpr int64_t    kUnboundMediumMs               = 30LL * 60 * 1000;
 constexpr TickType_t kCurrentGroupMutexTimeoutTicks = pdMS_TO_TICKS(200);
 
-class MutexLockGuard {
-   public:
-    MutexLockGuard(SemaphoreHandle_t mutex, TickType_t timeout_ticks)
-        : mutex_(mutex), locked_(mutex && xSemaphoreTake(mutex, timeout_ticks) == pdTRUE) {
-    }
-    ~MutexLockGuard() {
-        if (locked_)
-            xSemaphoreGive(mutex_);
-    }
-    MutexLockGuard(const MutexLockGuard&)            = delete;
-    MutexLockGuard& operator=(const MutexLockGuard&) = delete;
-    bool            locked() const {
-        return locked_;
-    }
-
-   private:
-    SemaphoreHandle_t mutex_  = nullptr;
-    bool              locked_ = false;
-};
-
 void UpdateCurrentFrameScheduleFromMeta(int seq, const cache::FrameMeta& meta) {
-    power_state::CurrentFrameSchedule schedule;
-    schedule.dynamic         = meta.has_ttl;
-    schedule.server_sync_sec = meta.ttl_sec;
-    power_state::SetCurrentFrameSchedule(schedule);
-    power_state::SetCurrentFrameSeq(seq);
+    power_state::SetCurrentFrameFromMeta(seq, meta);
+}
+
+std::string ExistingImageEtag(const std::string& gid, int seq, const std::string& expected_etag) {
+    cache::FrameMeta meta;
+    if (cache::ReadFrameMeta(gid, seq, meta) && cache::FrameImageExists(gid, seq, meta.image_etag)) {
+        return meta.image_etag;
+    }
+    if (cache::FrameImageExists(gid, seq, expected_etag)) {
+        return expected_etag;
+    }
+    return "";
+}
+
+std::string ExistingAudioEtag(const std::string& gid, int seq, const std::string& expected_etag) {
+    cache::FrameMeta meta;
+    if (cache::ReadFrameMeta(gid, seq, meta) && !meta.audio_etag.empty() &&
+        cache::FrameAudioExists(gid, seq, meta.audio_etag)) {
+        return meta.audio_etag;
+    }
+    if (cache::FrameAudioExists(gid, seq, expected_etag)) {
+        return expected_etag;
+    }
+    return "";
 }
 }  // namespace
 
@@ -69,14 +71,30 @@ SyncService& SyncService::Get() {
 }
 
 void SyncService::TaskEntry(void* arg) {
-    static_cast<SyncService*>(arg)->Loop();
+    auto* self = static_cast<SyncService*>(arg);
+    self->Loop();
+    {
+        std::lock_guard<std::mutex> lock(self->task_mutex_);
+        if (self->task_handle_ == xTaskGetCurrentTaskHandle())
+            self->task_handle_ = nullptr;
+    }
+    if (self->exit_sem_)
+        xSemaphoreGive(self->exit_sem_);
     vTaskDelete(nullptr);
 }
 
 void SyncService::Start(SyncDeps deps) {
-    if (running_.load())
+    if (running_.load(std::memory_order_acquire))
         return;
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        if (task_handle_) {
+            ESP_LOGW(kTag, "Start ignored: previous sync task has not exited");
+            return;
+        }
+    }
     deps_ = std::move(deps);
+    std::atomic_thread_fence(std::memory_order_release);
     if (!current_group_mutex_) {
         current_group_mutex_ = xSemaphoreCreateMutex();
         if (!current_group_mutex_) {
@@ -91,19 +109,46 @@ void SyncService::Start(SyncDeps deps) {
             return;
         }
     }
-    running_.store(true);
-    BaseType_t ok = xTaskCreatePinnedToCore(&TaskEntry, "slate_sync", 10 * 1024, this, 4, nullptr, 0);
-    if (ok != pdPASS) {
-        running_.store(false);
-        ESP_LOGE(kTag, "sync task create failed");
-        return;
+    if (!exit_sem_) {
+        exit_sem_ = xSemaphoreCreateBinary();
+        if (!exit_sem_) {
+            ESP_LOGE(kTag, "Failed to create exit semaphore");
+            return;
+        }
+    }
+    xSemaphoreTake(exit_sem_, 0);
+    running_.store(true, std::memory_order_release);
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        BaseType_t ok = xTaskCreatePinnedToCore(&TaskEntry, "slate_sync", 10 * 1024, this, 4, &task_handle_, 0);
+        if (ok != pdPASS) {
+            running_.store(false, std::memory_order_release);
+            task_handle_ = nullptr;
+            ESP_LOGE(kTag, "sync task create failed");
+            return;
+        }
     }
 }
 
 void SyncService::Stop() {
-    running_.store(false);
-    if (event_group_) {
+    const bool was_running = running_.exchange(false, std::memory_order_acq_rel);
+    bool has_task = false;
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        has_task = task_handle_ != nullptr;
+    }
+    if (!was_running && !has_task)
+        return;
+    if (was_running && event_group_) {
         xEventGroupSetBits(event_group_, BIT_STOP);
+    }
+    if (exit_sem_ && xSemaphoreTake(exit_sem_, pdMS_TO_TICKS(kStopWaitMs)) != pdTRUE) {
+        ESP_LOGW(kTag, "sync task did not exit within %dms", kStopWaitMs);
+        return;
+    }
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        task_handle_ = nullptr;
     }
 }
 
@@ -134,7 +179,7 @@ std::string SyncService::CurrentGroupId() const {
 std::string SyncService::GetCurrentGroupLocked() const {
     if (!current_group_mutex_)
         return current_group_;
-    MutexLockGuard lock(current_group_mutex_, kCurrentGroupMutexTimeoutTicks);
+    ScopedMutexLock lock(current_group_mutex_, kCurrentGroupMutexTimeoutTicks);
     if (!lock.locked()) {
         ESP_LOGW(kTag, "current_group mutex timeout on read");
         return "";
@@ -148,7 +193,7 @@ void SyncService::SetCurrentGroupLocked(const std::string& gid) {
         current_group_ = gid;
         return;
     }
-    MutexLockGuard lock(current_group_mutex_, kCurrentGroupMutexTimeoutTicks);
+    ScopedMutexLock lock(current_group_mutex_, kCurrentGroupMutexTimeoutTicks);
     if (!lock.locked()) {
         ESP_LOGW(kTag, "current_group mutex timeout on write");
         return;
@@ -161,7 +206,7 @@ void SyncService::ClearCurrentGroupLocked() {
         current_group_.clear();
         return;
     }
-    MutexLockGuard lock(current_group_mutex_, kCurrentGroupMutexTimeoutTicks);
+    ScopedMutexLock lock(current_group_mutex_, kCurrentGroupMutexTimeoutTicks);
     if (!lock.locked()) {
         ESP_LOGW(kTag, "current_group mutex timeout on clear");
         return;
@@ -276,9 +321,14 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     int old_content_count = 0;
     cache::ReadManifestContentCount(gid, old_content_count);
 
-    const int total    = static_cast<int>(mf.contents.size());
-    int       done     = 0;
-    bool      complete = true;
+    const int            total    = static_cast<int>(mf.contents.size());
+    int                  done     = 0;
+    bool                 complete = true;
+    std::vector<uint8_t> download_buf;
+    if (!cache::BeginFrameStage(gid)) {
+        ESP_LOGW(kTag, "Frame stage init failed");
+        return false;
+    }
     // 防日志噪音：同一 gid 的协议不匹配只 warn 一次/轮同步，避免每 tick 反复刷屏。
     // 不用 static：切组后应重新允许打 warn，便于用户修复数据后确认日志恢复。
     bool warned_missing_id = false;
@@ -309,12 +359,16 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
             evt::Post(e, 0);
             continue;
         }
-        if (!cache::FrameImageExists(gid, f.seq, f.image_etag)) {
-            std::vector<uint8_t> buf;
-            bool                 nm = false;
-            const int64_t        image_started_ms = esp_timer_get_time() / 1000;
-            if (api::DownloadContentImage(f.id, "", buf, nm)) {
-                if (!cache::WriteFrameImage(gid, f.seq, buf, f.image_etag)) {
+        if (!cache::StagedFrameImageExists(gid, f.seq, f.image_etag)) {
+            bool          nm               = false;
+            const int64_t image_started_ms = esp_timer_get_time() / 1000;
+            const auto    image_if_none    = ExistingImageEtag(gid, f.seq, f.image_etag);
+            download_buf.clear();
+            if (api::DownloadContentImage(f.id, image_if_none, download_buf, nm)) {
+                if (nm) {
+                    ESP_LOGW(kTag, "Frame %d image returned unexpected 304", f.seq);
+                    complete = false;
+                } else if (!cache::WriteStagedFrameImage(gid, f.seq, download_buf, f.image_etag)) {
                     ESP_LOGW(kTag, "Frame %d image write failed", f.seq);
                     complete = false;
                 }
@@ -324,14 +378,16 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
                 complete = false;
             }
         }
-        if (f.audio_etag.empty()) {
-            cache::DeleteFrameAudio(gid, f.seq);
-        } else if (!cache::FrameAudioExists(gid, f.seq, f.audio_etag)) {
-            std::vector<uint8_t> buf;
-            bool                 nm = false;
-            const int64_t        audio_started_ms = esp_timer_get_time() / 1000;
-            if (api::DownloadContentAudio(f.id, "", buf, nm)) {
-                if (!cache::WriteFrameAudio(gid, f.seq, buf, f.audio_etag)) {
+        if (!f.audio_etag.empty() && !cache::StagedFrameAudioExists(gid, f.seq, f.audio_etag)) {
+            bool          nm               = false;
+            const int64_t audio_started_ms = esp_timer_get_time() / 1000;
+            const auto    audio_if_none    = ExistingAudioEtag(gid, f.seq, f.audio_etag);
+            download_buf.clear();
+            if (api::DownloadContentAudio(f.id, audio_if_none, download_buf, nm)) {
+                if (nm) {
+                    ESP_LOGW(kTag, "Frame %d audio returned unexpected 304", f.seq);
+                    complete = false;
+                } else if (!cache::WriteStagedFrameAudio(gid, f.seq, download_buf, f.audio_etag)) {
                     ESP_LOGW(kTag, "Frame %d audio write failed", f.seq);
                     complete = false;
                 }
@@ -342,14 +398,16 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
             }
         }
 
-        if (cache::FrameImageExists(gid, f.seq, f.image_etag) &&
-            (f.audio_etag.empty() || cache::FrameAudioExists(gid, f.seq, f.audio_etag))) {
+        if (cache::StagedFrameImageExists(gid, f.seq, f.image_etag) &&
+            (f.audio_etag.empty() || cache::StagedFrameAudioExists(gid, f.seq, f.audio_etag))) {
             cache::FrameMeta fm;
             fm.status_bar_text = f.device_status_bar_text;
             fm.content_etag    = f.content_etag;
+            fm.image_etag      = f.image_etag;
+            fm.audio_etag      = f.audio_etag;
             fm.has_ttl         = f.has_next_wake_sec && f.next_wake_sec >= 0;
             fm.ttl_sec         = f.next_wake_sec > 0 ? static_cast<uint32_t>(f.next_wake_sec) : 0;
-            if (!cache::WriteFrameMeta(gid, f.seq, fm)) {
+            if (!cache::WriteStagedFrameMeta(gid, f.seq, fm)) {
                 ESP_LOGW(kTag, "Frame %d meta write failed", f.seq);
                 complete = false;
             }
@@ -367,19 +425,34 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     }
     if (!complete) {
         ESP_LOGW(kTag, "Manifest sync incomplete, not committing state");
+        cache::AbortFrameStage(gid);
         return false;
     }
-    for (int idx = total; idx < old_content_count; ++idx) {
-        cache::DeleteFrameFiles(gid, idx);
+    for (auto& f : mf.contents) {
+        if (!cache::CommitStagedFrame(gid, f.seq, f.image_etag, f.audio_etag)) {
+            ESP_LOGW(kTag, "Frame %d stage commit failed", f.seq);
+            cache::AbortFrameStage(gid);
+            return false;
+        }
     }
     if (!cache::WriteManifest(gid, mf.manifest_etag, mf.contents.size())) {
         ESP_LOGW(kTag, "Manifest write failed, not committing state");
+        cache::AbortFrameStage(gid);
         return false;
     }
     if (!cache::WriteStateMeta(gid, mf.manifest_etag)) {
         ESP_LOGW(kTag, "State write failed, not switching group");
+        cache::AbortFrameStage(gid);
         return false;
     }
+    for (auto& f : mf.contents) {
+        if (f.audio_etag.empty())
+            cache::DeleteFrameAudio(gid, f.seq);
+    }
+    for (int idx = total; idx < old_content_count; ++idx) {
+        cache::DeleteFrameFiles(gid, idx);
+    }
+    cache::AbortFrameStage(gid);
     SetCurrentGroupLocked(gid);
     group_changed = true;
     // 真有内容变化(新增/修改/删除帧),让 FrameScene 重读当前帧并触发 EPD 刷新。
@@ -394,36 +467,50 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
         return false;
 
     cache::FrameMeta old_meta;
-    cache::ReadFrameMeta(gid, f.seq, old_meta);
+    const bool       old_meta_ok = cache::ReadFrameMeta(gid, f.seq, old_meta);
     cache::FrameMeta next_meta;
     next_meta.status_bar_text = f.device_status_bar_text;
     next_meta.content_etag    = f.content_etag;
+    next_meta.image_etag      = f.image_etag;
+    next_meta.audio_etag      = f.audio_etag;
     next_meta.has_ttl         = f.has_next_wake_sec && f.next_wake_sec >= 0;
     next_meta.ttl_sec         = f.next_wake_sec > 0 ? static_cast<uint32_t>(f.next_wake_sec) : 0;
 
-    if (!f.content_etag.empty() && old_meta.content_etag == f.content_etag &&
+    if (old_meta_ok && !f.content_etag.empty() && old_meta.content_etag == f.content_etag &&
         cache::FrameImageExists(gid, f.seq, f.image_etag) &&
         (f.audio_etag.empty() || cache::FrameAudioExists(gid, f.seq, f.audio_etag))) {
         if (old_meta.status_bar_text != next_meta.status_bar_text || old_meta.has_ttl != next_meta.has_ttl ||
-            old_meta.ttl_sec != next_meta.ttl_sec) {
+            old_meta.ttl_sec != next_meta.ttl_sec || old_meta.image_etag != next_meta.image_etag ||
+            old_meta.audio_etag != next_meta.audio_etag) {
             if (!cache::WriteFrameMeta(gid, f.seq, next_meta)) {
                 ESP_LOGW(kTag, "Frame %d meta write failed", f.seq);
                 return false;
             }
         }
         UpdateCurrentFrameScheduleFromMeta(f.seq, next_meta);
+        changed = old_meta.status_bar_text != next_meta.status_bar_text ||
+                  (!old_meta.image_etag.empty() && old_meta.image_etag != next_meta.image_etag);
         return true;
     }
 
+    const bool image_etag_changed =
+        !old_meta_ok || (!old_meta.image_etag.empty() && old_meta.image_etag != f.image_etag);
+    const bool           status_bar_changed = !old_meta_ok || old_meta.status_bar_text != next_meta.status_bar_text;
+    bool                 image_downloaded   = false;
+    std::vector<uint8_t> download_buf;
     if (!cache::FrameImageExists(gid, f.seq, f.image_etag)) {
-        std::vector<uint8_t> buf;
-        bool                 nm = false;
-        if (api::DownloadContentImage(f.id, "", buf, nm)) {
-            if (!cache::WriteFrameImage(gid, f.seq, buf, f.image_etag)) {
+        bool       nm            = false;
+        const auto image_if_none = ExistingImageEtag(gid, f.seq, f.image_etag);
+        if (api::DownloadContentImage(f.id, image_if_none, download_buf, nm)) {
+            if (nm) {
+                ESP_LOGW(kTag, "Frame %d image returned unexpected 304", f.seq);
+                return false;
+            }
+            if (!cache::WriteFrameImage(gid, f.seq, download_buf, f.image_etag)) {
                 ESP_LOGW(kTag, "Frame %d image write failed", f.seq);
                 return false;
             }
-            changed = true;
+            image_downloaded = true;
         } else {
             return false;
         }
@@ -431,11 +518,17 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
     if (f.audio_etag.empty()) {
         cache::DeleteFrameAudio(gid, f.seq);
     } else if (!cache::FrameAudioExists(gid, f.seq, f.audio_etag)) {
-        std::vector<uint8_t> buf;
-        bool                 nm = false;
-        if (api::DownloadContentAudio(f.id, "", buf, nm)) {
-            if (cache::WriteFrameAudio(gid, f.seq, buf, f.audio_etag)) {
-                changed = true;
+        bool       nm            = false;
+        const auto audio_if_none = ExistingAudioEtag(gid, f.seq, f.audio_etag);
+        download_buf.clear();
+        if (api::DownloadContentAudio(f.id, audio_if_none, download_buf, nm)) {
+            if (nm) {
+                ESP_LOGW(kTag, "Frame %d audio returned unexpected 304", f.seq);
+                return false;
+            }
+            if (cache::WriteFrameAudio(gid, f.seq, download_buf, f.audio_etag)) {
+                // Audio-only current-content updates should update cache without
+                // waking the EPD path; "changed" here means visible pixels changed.
             } else {
                 ESP_LOGW(kTag, "Frame %d audio write failed", f.seq);
                 return false;
@@ -451,14 +544,16 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
         return false;
     }
     UpdateCurrentFrameScheduleFromMeta(f.seq, next_meta);
-    changed = changed || old_meta.content_etag != f.content_etag;
+    changed = image_downloaded || image_etag_changed || status_bar_changed;
     return true;
 }
 
 void SyncService::SyncOnce(SyncMode mode) {
+    std::string telemetry_group = GetCurrentGroupLocked();
     if (mode == SyncMode::kBackgroundRefresh) {
+        power_state::RestoreCurrentFrameScheduleFromCache();
         if (deps_.current_group)
-            SetCurrentGroupLocked(deps_.current_group());
+            telemetry_group = deps_.current_group();
     }
     // Poll 是设备接收远程状态变更的保活通道，不能按本地按键活跃度节流。
     // UI 刷新频率由 epd_display_mode 决定，不在这里控制。
@@ -469,7 +564,7 @@ void SyncService::SyncOnce(SyncMode mode) {
         evt::Post(e, 0);
     }
 
-    api::Telemetry tel = BuildTelemetry(deps_, GetCurrentGroupLocked());
+    api::Telemetry tel = BuildTelemetry(deps_, telemetry_group);
 
     api::DeviceState state;
     if (!api::Poll(tel, state)) {
@@ -541,16 +636,21 @@ void SyncService::SyncOnce(SyncMode mode) {
     } else if (mode == SyncMode::kBackgroundRefresh && state.has_group) {
         if (tel.manifest_etag != state.manifest_etag) {
             sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
+        } else {
+            ESP_LOGW(kTag, "Background refresh missing current_content; keep cached frame schedule");
+            power_state::RestoreCurrentFrameScheduleFromCache();
+            sync_ok = false;
         }
     } else if (mode == SyncMode::kBackgroundRefresh) {
         ClearCurrentGroupLocked();
-        power_state::SetCurrentFrameSchedule({});
+        power_state::ClearCurrentFrame();
         sync_ok = cache::WriteStateMeta("", "");
     } else if (state.has_group) {
         sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
     } else {
         // 没选组:清掉 current_group_(scene 等下一次 ready 事件)
         ClearCurrentGroupLocked();
+        power_state::ClearCurrentFrame();
         sync_ok = cache::WriteStateMeta("", "");
     }
 
@@ -585,6 +685,7 @@ void SyncService::DoCycle(const std::string& direction) {
         sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
     } else {
         ClearCurrentGroupLocked();
+        power_state::ClearCurrentFrame();
         sync_ok = cache::WriteStateMeta("", "");
     }
 
@@ -596,14 +697,14 @@ void SyncService::DoCycle(const std::string& direction) {
 }
 
 void SyncService::Loop() {
-    while (running_.load()) {
+    while (running_.load(std::memory_order_acquire)) {
         const int         interval_s = NextIntervalSec();
         const EventBits_t bits       = xEventGroupWaitBits(
             event_group_, BIT_TRIGGER | BIT_STOP | BIT_CYCLE_NEXT | BIT_CYCLE_PREV | BIT_WAKE_REFRESH, pdTRUE, pdFALSE,
             pdMS_TO_TICKS(interval_s * 1000));
         if (bits & BIT_STOP)
             break;
-        if (!running_.load())
+        if (!running_.load(std::memory_order_acquire))
             break;
 
         // cycle 优先于普通轮询:cycle 后会自然把新 group 的 manifest 拉下来,

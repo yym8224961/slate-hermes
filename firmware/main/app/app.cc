@@ -10,14 +10,15 @@
 #include <nvs_flash.h>
 #include <sdkconfig.h>
 
+#include <atomic>
 #include <cstdio>
 #include <cstring>
 #include <memory>
 #include <string>
 #include <utility>
 
-#include "board.h"
 #include "bg_refresh_scene.h"
+#include "board.h"
 #include "boot_mode.h"
 #include "button.h"
 #include "config.h"
@@ -47,27 +48,38 @@ constexpr int  kSaveSecretRetryDelayMs = 200;
 // 「当前按住中」标志：两个键都处于按住中时立即触发 + 标记 consumed，本次按键
 // 周期内的 OnClick / OnLongPress 一律 skip,避免组合键又触发单按动作。
 // 下一次 OnPressDown 来时清 consumed,开新会话。
-struct ComboState {
-    bool up_held       = false;
-    bool down_held     = false;
-    bool up_consumed   = false;
-    bool down_consumed = false;
-};
-ComboState g_combo;
+constexpr uint8_t kComboUpHeld       = 1u << 0;
+constexpr uint8_t kComboDownHeld     = 1u << 1;
+constexpr uint8_t kComboUpConsumed   = 1u << 2;
+constexpr uint8_t kComboDownConsumed = 1u << 3;
 
-bool IsSettingsSceneName(const char* name) {
-    return name && (std::strcmp(name, "Settings") == 0 || std::strcmp(name, "Volume") == 0 ||
-                    std::strcmp(name, "DeviceInfo") == 0 || std::strcmp(name, "RestartDevice") == 0 ||
-                    std::strcmp(name, "FactoryReset") == 0);
+std::atomic<uint8_t> g_combo{0};
+
+void UpdateCombo(uint8_t set_bits, uint8_t clear_bits) {
+    uint8_t cur = g_combo.load(std::memory_order_acquire);
+    while (true) {
+        const uint8_t next = (cur | set_bits) & static_cast<uint8_t>(~clear_bits);
+        if (g_combo.compare_exchange_weak(cur, next, std::memory_order_acq_rel, std::memory_order_acquire))
+            return;
+    }
+}
+
+bool ComboBit(uint8_t bit) {
+    return (g_combo.load(std::memory_order_acquire) & bit) != 0;
 }
 
 void TryFireCombo() {
-    if (!g_combo.up_held || !g_combo.down_held)
-        return;
-    if (g_combo.up_consumed && g_combo.down_consumed)
-        return;  // 已触发过
-    g_combo.up_consumed   = true;
-    g_combo.down_consumed = true;
+    uint8_t cur = g_combo.load(std::memory_order_acquire);
+    while (true) {
+        const bool both_held = (cur & (kComboUpHeld | kComboDownHeld)) == (kComboUpHeld | kComboDownHeld);
+        const bool consumed =
+            (cur & (kComboUpConsumed | kComboDownConsumed)) == (kComboUpConsumed | kComboDownConsumed);
+        if (!both_held || consumed)
+            return;
+        const uint8_t next = cur | kComboUpConsumed | kComboDownConsumed;
+        if (g_combo.compare_exchange_weak(cur, next, std::memory_order_acq_rel, std::memory_order_acquire))
+            break;
+    }
     if (auto* epd = Board::Get().epd())
         epd->RequestUrgentFullRefresh();
 }
@@ -94,6 +106,21 @@ void EmitBootStage(BootStage stage, const char* ssid, const char* pair_code) {
     else
         e.u.boot_stage.pair_code[0] = 0;
     evt::Post(e);
+}
+
+void GracefulRestart() {
+    xiaozhi::ChatService::Get().SuspendForSleep();
+    SyncService::Get().Stop();
+    AudioPlayer::Get().Stop();
+    if (auto* epd = Board::Get().epd()) {
+        constexpr int kRestartEpdWaitMs = 8000;
+        int waited = 0;
+        while (epd->IsRefreshPending() && waited < kRestartEpdWaitMs) {
+            vTaskDelay(pdMS_TO_TICKS(50));
+            waited += 50;
+        }
+    }
+    esp_restart();
 }
 
 // 联网 + 注册流程。c 是 in/out:首次 register 成功后会回填 device_id/device_secret,
@@ -145,7 +172,7 @@ bool TryConnectAndSetup(cred::Credentials& c) {
         }
         if (!saved) {
             ESP_LOGE(kTag, "Fatal: SaveSecret failed, restarting");
-            esp_restart();
+            GracefulRestart();
         }
         c.device_id     = rr.id;
         c.device_secret = rr.device_secret;
@@ -169,20 +196,17 @@ void PostWifiState(bool connected, int rssi) {
 }
 
 bool PostCachedGroupReadyIfAny() {
-    std::string gid, etag;
-    if (!cache::ReadStateMeta(gid, etag) || gid.empty())
-        return false;
-    int content_count = 0;
-    if (!cache::ReadManifestContentCount(gid, content_count) || content_count <= 0)
+    cache::CachedGroupSummary summary;
+    if (!cache::ReadCachedGroupSummary(summary))
         return false;
 
     UiEvent e{};
     e.kind = UiEventKind::kCachedGroupReady;
-    std::strncpy(e.u.group.gid, gid.c_str(), sizeof(e.u.group.gid) - 1);
+    std::strncpy(e.u.group.gid, summary.gid.c_str(), sizeof(e.u.group.gid) - 1);
     e.u.group.gid[sizeof(e.u.group.gid) - 1] = '\0';
     // cache 不存 group name；SyncService 下一轮拉到 manifest 后会 Post 带 name 的事件。
     e.u.group.name[0]         = '\0';
-    e.u.group.content_count   = content_count;
+    e.u.group.content_count   = summary.content_count;
     e.u.group.content_changed = false;
     evt::Post(e);
     return true;
@@ -219,16 +243,7 @@ void App::InitSceneStack() {
     ctx.audio = &AudioPlayer::Get();
     ctx.stack = &scene_stack_;
 
-    ctx.read_battery = [](int* mv, int* pct) -> bool {
-        uint16_t   mv16 = 0;
-        uint8_t    p8   = 0;
-        const bool ok   = Board::Get().ReadBattery(&mv16, &p8);
-        if (mv)
-            *mv = mv16;
-        if (pct)
-            *pct = p8;
-        return ok;
-    };
+    ctx.read_battery   = [this](int* mv, int* pct) -> bool { return ReadBattery(mv, pct); };
     ctx.read_charge    = []() { return Board::Get().charge()->Get(); };
     ctx.wifi_connected = []() { return Wifi::Get().IsConnected(); };
     ctx.wifi_rssi      = []() -> int { return Wifi::Get().GetRssi(); };
@@ -236,8 +251,19 @@ void App::InitSceneStack() {
     scene_stack_.SetContext(ctx);
 }
 
+bool App::ReadBattery(int* mv, int* pct) {
+    uint16_t   mv16 = 0;
+    uint8_t    p8   = 0;
+    const bool ok   = Board::Get().ReadBattery(&mv16, &p8);
+    if (mv)
+        *mv = mv16;
+    if (pct)
+        *pct = p8;
+    return ok;
+}
+
 void App::StartUiLoop() {
-    ui_loop_running_ = true;
+    ui_loop_running_.store(true, std::memory_order_release);
     // ui_loop 8 KB：与 home_worker 一致；LVGL render+flush_cb 调用栈装得下，
     // esp_timer task / button cb task 装不下（栈 3584 B）。
     BaseType_t ok = xTaskCreatePinnedToCore(&App::UiLoopEntry, "ui_loop", 8 * 1024, this, 5, nullptr, 0);
@@ -281,7 +307,7 @@ void App::UiLoopTask() {
             break;
     }
 
-    while (ui_loop_running_) {
+    while (ui_loop_running_.load(std::memory_order_acquire)) {
         UiEvent e;
         if (!evt::Wait(&e, pdMS_TO_TICKS(1000))) {
             // 1s 超时只是为了让 SleepManager 有机会做 Tick；不强制每秒做事。
@@ -330,8 +356,10 @@ void App::UiLoopTask() {
         }
         if (e.kind == UiEventKind::kButtonDouble && e.u.button.btn == ButtonId::kEnter) {
             Scene* top = scene_stack_.Top();
-            if (top && IsSettingsSceneName(top->Name())) {
+            if (top && top->IsSettings()) {
+                scene_stack_.Dispatch(e);
                 sleep_mgr_.OnEvent(e);
+                scene_stack_.ApplyPending();
                 continue;
             }
             if (!top || std::strcmp(top->Name(), "Xiaozhi") != 0) {
@@ -349,26 +377,10 @@ void App::UiLoopTask() {
 }
 
 void App::AttachInputs() {
-    auto post_short = [](ButtonId b) {
-        return [b]() {
+    auto post_button = [](UiEventKind kind, ButtonId b) {
+        return [kind, b]() {
             UiEvent e{};
-            e.kind         = UiEventKind::kButtonShort;
-            e.u.button.btn = b;
-            evt::Post(e);
-        };
-    };
-    auto post_long = [](ButtonId b) {
-        return [b]() {
-            UiEvent e{};
-            e.kind         = UiEventKind::kButtonLong;
-            e.u.button.btn = b;
-            evt::Post(e);
-        };
-    };
-    auto post_double = [](ButtonId b) {
-        return [b]() {
-            UiEvent e{};
-            e.kind         = UiEventKind::kButtonDouble;
+            e.kind         = kind;
             e.u.button.btn = b;
             evt::Post(e);
         };
@@ -379,43 +391,41 @@ void App::AttachInputs() {
     // UP/DOWN 走组合键拦截: PressDown 维护 held + 检测组合; Click/LongPress
     // 检查 consumed,若组合键已触发则 skip 单按动作。ENTER 不参与组合,直走。
     board->up_btn()->OnPressDown([] {
-        g_combo.up_held     = true;
-        g_combo.up_consumed = false;  // 新会话
+        UpdateCombo(kComboUpHeld, kComboUpConsumed);  // 新会话
         TryFireCombo();
     });
-    board->up_btn()->OnPressUp([] { g_combo.up_held = false; });
-    board->up_btn()->OnClick([cb = post_short(ButtonId::kUp)] {
-        if (g_combo.up_consumed)
+    board->up_btn()->OnPressUp([] { UpdateCombo(0, kComboUpHeld); });
+    board->up_btn()->OnClick([cb = post_button(UiEventKind::kButtonShort, ButtonId::kUp)] {
+        if (ComboBit(kComboUpConsumed))
             return;
         cb();
     });
-    board->up_btn()->OnLongPress([cb = post_long(ButtonId::kUp)] {
-        if (g_combo.up_consumed)
+    board->up_btn()->OnLongPress([cb = post_button(UiEventKind::kButtonLong, ButtonId::kUp)] {
+        if (ComboBit(kComboUpConsumed))
             return;
         cb();
     });
 
     board->down_btn()->OnPressDown([] {
-        g_combo.down_held     = true;
-        g_combo.down_consumed = false;
+        UpdateCombo(kComboDownHeld, kComboDownConsumed);
         TryFireCombo();
     });
-    board->down_btn()->OnPressUp([] { g_combo.down_held = false; });
-    board->down_btn()->OnClick([cb = post_short(ButtonId::kDown)] {
-        if (g_combo.down_consumed)
+    board->down_btn()->OnPressUp([] { UpdateCombo(0, kComboDownHeld); });
+    board->down_btn()->OnClick([cb = post_button(UiEventKind::kButtonShort, ButtonId::kDown)] {
+        if (ComboBit(kComboDownConsumed))
             return;
         cb();
     });
-    board->down_btn()->OnLongPress([cb = post_long(ButtonId::kDown)] {
-        if (g_combo.down_consumed)
+    board->down_btn()->OnLongPress([cb = post_button(UiEventKind::kButtonLong, ButtonId::kDown)] {
+        if (ComboBit(kComboDownConsumed))
             return;
         cb();
     });
 
-    board->boot_btn()->OnClick(post_short(ButtonId::kEnter));
-    board->boot_btn()->OnDoubleClick(post_double(ButtonId::kEnter));
+    board->boot_btn()->OnClick(post_button(UiEventKind::kButtonShort, ButtonId::kEnter));
+    board->boot_btn()->OnDoubleClick(post_button(UiEventKind::kButtonDouble, ButtonId::kEnter));
     // ENTER 长按 1s → frame_scene 接 ButtonLong{kEnter} push SettingsScene。
-    board->boot_btn()->OnLongPress(post_long(ButtonId::kEnter));
+    board->boot_btn()->OnLongPress(post_button(UiEventKind::kButtonLong, ButtonId::kEnter));
 
     // 充电状态变化转发到 EventBus（HAL 不直接知道 EventBus 存在）
     Board::Get().charge()->OnStateChanged([](const ChargeStatus::Snapshot& snap) {
@@ -453,16 +463,7 @@ bool App::InitWifiAndSync(cred::Credentials& creds) {
 
         // 启动 SyncService（依赖注入）。首轮同步由 App 根据 boot_mode 显式 Trigger。
         SyncDeps deps;
-        deps.read_battery = [](int* mv, int* pct) -> bool {
-            uint16_t   mv16 = 0;
-            uint8_t    p8   = 0;
-            const bool ok   = Board::Get().ReadBattery(&mv16, &p8);
-            if (mv)
-                *mv = mv16;
-            if (pct)
-                *pct = p8;
-            return ok;
-        };
+        deps.read_battery  = [this](int* mv, int* pct) -> bool { return ReadBattery(mv, pct); };
         deps.read_rssi     = []() -> int { return Wifi::Get().GetRssi(); };
         deps.current_group = []() -> std::string {
             std::string gid, etag;

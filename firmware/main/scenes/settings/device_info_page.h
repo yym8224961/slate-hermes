@@ -17,6 +17,9 @@ class DeviceInfoPage : public Scene {
     const char* Name() const override {
         return "DeviceInfo";
     }
+    bool IsSettings() const override {
+        return true;
+    }
     void      OnEnter(SceneContext& ctx) override;
     void      OnExit(SceneContext& ctx) override;
     void      OnEvent(SceneContext& ctx, const UiEvent& e) override;
@@ -26,8 +29,8 @@ class DeviceInfoPage : public Scene {
 
    private:
     // returns true if 文本内容真的变了(用于跳过无意义 partial 刷)
+    void LoadStaticInfo();
     bool Refresh(SceneContext& ctx);
-    void SyncRender(SceneContext& ctx);
     void ScrollBy(SceneContext& ctx, int dy);
     // 按当前 scroll_y / 内容高度刷新 thumb 几何。OnEnter / Refresh / ScrollBy 后调。
     void UpdateThumb();
@@ -43,4 +46,7 @@ class DeviceInfoPage : public Scene {
     // Refresh 后,内容如果跟上次完全一样就不刷 EPD,避免长时间停留在本页
     // 时累计 partial 触发自动 full 闪屏。
     std::string last_text_;
+    std::string wifi_ssid_;
+    std::string server_url_;
+    char        mac_str_[18] = {};
 };

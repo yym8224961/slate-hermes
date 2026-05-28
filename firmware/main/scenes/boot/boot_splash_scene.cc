@@ -65,15 +65,7 @@ void BootSplashScene::OnEnter(SceneContext& ctx) {
     cred::Credentials creds;
     state_ = cred::Load(creds) ? State::kInitializing : State::kProvisioning;
 
-    auto* screen = lv_screen_active();
-    root_        = lv_obj_create(screen);
-    lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_pos(root_, 0, 0);
-    lv_obj_set_style_bg_color(root_, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(root_, 0, 0);
-    lv_obj_set_style_border_width(root_, 0, 0);
-    lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
+    root_ = CreateFullscreenRoot();
 
     // 主文案(中文 + 阿拉伯数字),Awaiting pair 状态下放在码上方做提示。
     text_label_ = lv_label_create(root_);
@@ -108,16 +100,11 @@ void BootSplashScene::OnEnter(SceneContext& ctx) {
 }
 
 void BootSplashScene::OnExit(SceneContext& ctx) {
-    if (!ctx.epd->Lock(500))
-        return;
-    if (root_) {
-        lv_obj_del(root_);
-        root_       = nullptr;
+    DestroyRoot(ctx, root_, [this]() {
         text_label_ = nullptr;
         code_label_ = nullptr;
         hint_label_ = nullptr;
-    }
-    ctx.epd->Unlock();
+    });
 }
 
 void BootSplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
@@ -188,12 +175,12 @@ void BootSplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         }
     }
 
-    if (need_render)
+    if (need_render && root_)
         Render(ctx);
 }
 
 void BootSplashScene::RenderContent() {
-    if (!text_label_ || !code_label_)
+    if (!root_ || !text_label_ || !code_label_)
         return;
 
     char buf[192];
@@ -259,10 +246,7 @@ void BootSplashScene::RenderContent() {
 }
 
 void BootSplashScene::Render(SceneContext& ctx) {
-    if (!ctx.epd || !ctx.epd->Lock(500))
+    if (!root_)
         return;
-    RenderContent();
-    lv_refr_now(NULL);
-    ctx.epd->Unlock();
-    ctx.epd->RequestUrgentPartialRefresh();
+    SyncRender(ctx, [this]() { RenderContent(); });
 }

@@ -8,13 +8,13 @@
 namespace xiaozhi {
 
 struct ConfigResult {
-    bool ok                 = false;
-    bool has_activation     = false;
-    bool has_activation_challenge = false;
-    bool has_protocol       = false;
-    bool server_time_synced = false;
-    int  activation_timeout_ms = 30000;
-    int  http_status        = 0;
+    bool        ok                       = false;
+    bool        has_activation           = false;
+    bool        has_activation_challenge = false;
+    bool        has_protocol             = false;
+    bool        server_time_synced       = false;
+    int         activation_timeout_ms    = 30000;
+    int         http_status              = 0;
     std::string activation_message;
     std::string activation_code;
     std::string activation_challenge;
@@ -29,18 +29,15 @@ class ConfigClient {
     static constexpr const char* kLanguage  = "zh-CN";
 
     ConfigResult Fetch();
-    esp_err_t Activate(const std::string& challenge);
-    std::string DeviceId() const;
+    esp_err_t    Activate(const std::string& challenge);
+    std::string  DeviceId() const;
 
    private:
     std::string UserAgent() const;
     std::string SystemInfoJson() const;
     std::string SerialNumber() const;
-    void SetupHeaders(esp_http_client_handle_t client,
-                      const std::string& device_id,
-                      const std::string& client_id,
-                      const std::string& user_agent,
-                      const std::string& serial_number) const;
+    void SetupHeaders(esp_http_client_handle_t client, const std::string& device_id, const std::string& client_id,
+                      const std::string& user_agent, const std::string& serial_number) const;
     std::string ActivationPayload(const std::string& challenge, const std::string& serial_number) const;
 };
 

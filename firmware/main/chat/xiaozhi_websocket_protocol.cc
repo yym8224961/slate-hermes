@@ -1,6 +1,5 @@
 #include "xiaozhi_websocket_protocol.h"
 
-#include <arpa/inet.h>
 #include <cJSON.h>
 #include <esp_log.h>
 #include <esp_network.h>
@@ -9,7 +8,8 @@
 #include <memory>
 #include <string>
 
-#include "event_bus.h"
+#include "byte_utils.h"
+#include "json_utils.h"
 #include "xiaozhi_config_client.h"
 #include "xiaozhi_settings.h"
 
@@ -19,40 +19,9 @@ constexpr char kTag[] = "XiaoWS";
 constexpr size_t kBinaryProtocol2HeaderSize = 16;
 constexpr size_t kBinaryProtocol3HeaderSize = 4;
 
-uint16_t ReadBe16(const char* data) {
-    uint16_t value = 0;
-    std::memcpy(&value, data, sizeof(value));
-    return ntohs(value);
-}
-
-uint32_t ReadBe32(const char* data) {
-    uint32_t value = 0;
-    std::memcpy(&value, data, sizeof(value));
-    return ntohl(value);
-}
-
-void WriteBe16(char* data, uint16_t value) {
-    value = htons(value);
-    std::memcpy(data, &value, sizeof(value));
-}
-
-void WriteBe32(char* data, uint32_t value) {
-    value = htonl(value);
-    std::memcpy(data, &value, sizeof(value));
-}
-
 }  // namespace
 
 namespace xiaozhi {
-
-namespace {
-void PostChannelClosed(uint32_t token) {
-    UiEvent e{};
-    e.kind                    = UiEventKind::kXiaozhiChannelClosed;
-    e.u.xiaozhi_channel.token = token;
-    evt::Post(e, 0);
-}
-}  // namespace
 
 WebsocketProtocol::WebsocketProtocol() {
     event_group_ = xEventGroupCreate();
@@ -72,18 +41,26 @@ bool WebsocketProtocol::Start() {
 }
 
 bool WebsocketProtocol::OpenAudioChannel() {
+    auto close_failed_channel = [this](const char* error) {
+        if (error)
+            SetError(error);
+        CloseAudioChannel(false);
+        return false;
+    };
+
     settings::WebsocketConfig cfg;
     if (!settings::LoadWebsocket(cfg)) {
         SetError("未获取 WebSocket 配置");
         return false;
     }
     if (cfg.version > 0)
-        version_ = cfg.version;
+        version_.store(cfg.version, std::memory_order_release);
 
-    error_occurred_ = false;
+    error_occurred_.store(false, std::memory_order_release);
     mcp_accepting_.store(true, std::memory_order_relaxed);
     audio_channel_ready_.store(false, std::memory_order_relaxed);
-    session_id_.clear();
+    ClearSessionId();
+    ResetIncomingTimeout();
     {
         std::lock_guard<std::mutex> lock(channel_mutex_);
         channel_open_notified_ = false;
@@ -94,7 +71,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
     if (IsAudioChannelCloseRequested())
         return false;
 
-    auto network = std::make_unique<EspNetwork>();
+    auto network   = std::make_unique<EspNetwork>();
     auto websocket = network->CreateWebSocket(1);
     if (!websocket) {
         SetError("WebSocket 初始化失败");
@@ -106,9 +83,9 @@ bool WebsocketProtocol::OpenAudioChannel() {
             token = "Bearer " + token;
         websocket->SetHeader("Authorization", token.c_str());
     }
-    const std::string protocol_version = std::to_string(version_);
+    const std::string protocol_version = std::to_string(version_.load(std::memory_order_acquire));
     websocket->SetHeader("Protocol-Version", protocol_version.c_str());
-    ConfigClient client;
+    ConfigClient      client;
     const std::string device_id = client.DeviceId();
     const std::string client_id = settings::GetUuid();
     websocket->SetHeader("Device-Id", device_id.c_str());
@@ -117,32 +94,36 @@ bool WebsocketProtocol::OpenAudioChannel() {
         if (binary) {
             if (!on_incoming_audio_)
                 return;
-            if (version_ == 2 && len >= kBinaryProtocol2HeaderSize) {
-                const uint32_t timestamp = ReadBe32(data + 8);
-                const uint32_t payload_size = ReadBe32(data + 12);
+            int sample_rate    = 0;
+            int frame_duration = 0;
+            GetServerAudioParams(sample_rate, frame_duration);
+            const int version = version_.load(std::memory_order_acquire);
+            if (version == 2 && len >= kBinaryProtocol2HeaderSize) {
+                const uint32_t timestamp    = util::ReadBe32(data + 8);
+                const uint32_t payload_size = util::ReadBe32(data + 12);
                 if (payload_size > len - kBinaryProtocol2HeaderSize)
                     return;
-                auto payload = reinterpret_cast<const uint8_t*>(data + kBinaryProtocol2HeaderSize);
-                auto packet = std::make_unique<AudioStreamPacket>();
-                packet->sample_rate = server_sample_rate_;
-                packet->frame_duration = server_frame_duration_;
-                packet->timestamp = timestamp;
+                auto payload           = reinterpret_cast<const uint8_t*>(data + kBinaryProtocol2HeaderSize);
+                auto packet            = std::make_unique<AudioStreamPacket>();
+                packet->sample_rate    = sample_rate;
+                packet->frame_duration = frame_duration;
+                packet->timestamp      = timestamp;
                 packet->payload.assign(payload, payload + payload_size);
                 on_incoming_audio_(std::move(packet));
-            } else if (version_ == 3 && len >= kBinaryProtocol3HeaderSize) {
-                const uint16_t payload_size = ReadBe16(data + 2);
+            } else if (version == 3 && len >= kBinaryProtocol3HeaderSize) {
+                const uint16_t payload_size = util::ReadBe16(data + 2);
                 if (payload_size > len - kBinaryProtocol3HeaderSize)
                     return;
-                auto payload = reinterpret_cast<const uint8_t*>(data + kBinaryProtocol3HeaderSize);
-                auto packet = std::make_unique<AudioStreamPacket>();
-                packet->sample_rate = server_sample_rate_;
-                packet->frame_duration = server_frame_duration_;
+                auto payload           = reinterpret_cast<const uint8_t*>(data + kBinaryProtocol3HeaderSize);
+                auto packet            = std::make_unique<AudioStreamPacket>();
+                packet->sample_rate    = sample_rate;
+                packet->frame_duration = frame_duration;
                 packet->payload.assign(payload, payload + payload_size);
                 on_incoming_audio_(std::move(packet));
             } else {
-                auto packet = std::make_unique<AudioStreamPacket>();
-                packet->sample_rate = server_sample_rate_;
-                packet->frame_duration = server_frame_duration_;
+                auto packet            = std::make_unique<AudioStreamPacket>();
+                packet->sample_rate    = sample_rate;
+                packet->frame_duration = frame_duration;
                 packet->payload.assign(reinterpret_cast<const uint8_t*>(data),
                                        reinterpret_cast<const uint8_t*>(data) + len);
                 on_incoming_audio_(std::move(packet));
@@ -164,25 +145,23 @@ bool WebsocketProtocol::OpenAudioChannel() {
             }
             cJSON_Delete(root);
         }
-        last_incoming_time_ = std::chrono::steady_clock::now();
+        MarkIncomingNow();
     });
     websocket->OnDisconnected([this]() {
         ESP_LOGW(kTag, "WS disconnected");
         bool notify_closed = false;
         {
             std::lock_guard<std::mutex> lock(channel_mutex_);
-            notify_closed = channel_open_notified_;
+            notify_closed          = channel_open_notified_;
             channel_open_notified_ = false;
         }
         audio_channel_ready_.store(false, std::memory_order_relaxed);
         if (event_group_)
             xEventGroupSetBits(event_group_, kChannelClosedEvent);
         if (notify_closed)
-            PostChannelClosed(owner_token_);
+            PostChannelClosedEvent();
     });
-    websocket->OnError([this](int err) {
-        ESP_LOGW(kTag, "WS error: %d", err);
-    });
+    websocket->OnError([this](int err) { ESP_LOGW(kTag, "WS error: %d", err); });
 
     if (!websocket->Connect(cfg.url.c_str())) {
         SetError("连接小智 WebSocket 失败");
@@ -192,57 +171,64 @@ bool WebsocketProtocol::OpenAudioChannel() {
         std::lock_guard<std::mutex> lock(channel_mutex_);
         if (IsAudioChannelCloseRequested())
             return false;
-        network_ = std::move(network);
+        network_   = std::move(network);
         websocket_ = std::move(websocket);
     }
     const std::string hello = GetHelloMessage();
     if (!SendText(hello))
-        return false;
+        return close_failed_channel("发送小智 WebSocket hello 失败");
 
-    const EventBits_t bits = xEventGroupWaitBits(event_group_,
-                                                 kServerHelloEvent | kChannelClosedEvent,
-                                                 pdTRUE,
-                                                 pdFALSE,
+    const EventBits_t bits = xEventGroupWaitBits(event_group_, kServerHelloEvent | kChannelClosedEvent, pdTRUE, pdFALSE,
                                                  pdMS_TO_TICKS(10000));
     if (bits & kChannelClosedEvent) {
-        if (!IsAudioChannelCloseRequested())
+        // ParseServerHello 失败时已 SetError 具体原因,这里只在还未设过 error 时
+        // 兜底报"连接已断开",避免覆盖具体诊断信息。
+        if (!IsAudioChannelCloseRequested() && !error_occurred_.load(std::memory_order_acquire))
             SetError("小智 WebSocket 连接已断开");
-        return false;
+        return close_failed_channel(nullptr);
     }
     if (!(bits & kServerHelloEvent)) {
-        ESP_LOGW(kTag, "WS server hello timeout: connected=%d",
-                 websocket_ && websocket_->IsConnected() ? 1 : 0);
-        SetError("小智 WebSocket 响应超时");
-        return false;
+        ESP_LOGW(kTag, "WS server hello timeout: connected=%d", websocket_ && websocket_->IsConnected() ? 1 : 0);
+        return close_failed_channel("小智 WebSocket 响应超时");
     }
+    bool close_requested = false;
     {
         std::lock_guard<std::mutex> lock(channel_mutex_);
-        if (IsAudioChannelCloseRequested())
-            return false;
-        channel_open_notified_ = true;
-        audio_channel_ready_.store(true, std::memory_order_relaxed);
+        close_requested = IsAudioChannelCloseRequested();
+        if (!close_requested) {
+            channel_open_notified_ = true;
+            audio_channel_ready_.store(true, std::memory_order_relaxed);
+        }
     }
+    if (close_requested)
+        return close_failed_channel(nullptr);
     if (on_audio_channel_opened_)
         on_audio_channel_opened_();
     return true;
 }
 
 void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
-    (void)send_goodbye;
     MarkAudioChannelCloseRequested();
     if (event_group_)
         xEventGroupSetBits(event_group_, kChannelClosedEvent);
     mcp_accepting_.store(false, std::memory_order_relaxed);
     StopMcpSendTask();
-    std::unique_ptr<WebSocket> websocket;
+    const std::string session_id = SessionIdCopy();
+    if (send_goodbye && !session_id.empty()) {
+        std::lock_guard<std::mutex> lock(channel_mutex_);
+        if (websocket_ && websocket_->IsConnected()) {
+            websocket_->Send("{\"session_id\":" + json_utils::JsonStringLiteral(session_id) + ",\"type\":\"goodbye\"}");
+        }
+    }
+    std::unique_ptr<WebSocket>  websocket;
     std::unique_ptr<EspNetwork> network;
-    bool notify_closed = false;
+    bool                        notify_closed = false;
     {
         std::lock_guard<std::mutex> lock(channel_mutex_);
-        notify_closed = channel_open_notified_;
+        notify_closed          = channel_open_notified_;
         channel_open_notified_ = false;
-        websocket = std::move(websocket_);
-        network = std::move(network_);
+        websocket              = std::move(websocket_);
+        network                = std::move(network_);
     }
     audio_channel_ready_.store(false, std::memory_order_relaxed);
     websocket.reset();
@@ -253,34 +239,35 @@ void WebsocketProtocol::CloseAudioChannel(bool send_goodbye) {
 
 bool WebsocketProtocol::IsAudioChannelOpened() const {
     std::lock_guard<std::mutex> lock(channel_mutex_);
-    return websocket_ && websocket_->IsConnected() && !error_occurred_ && !IsTimeout();
+    return websocket_ && websocket_->IsConnected() && !error_occurred_.load(std::memory_order_acquire) && !IsTimeout();
 }
 
 bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     std::lock_guard<std::mutex> lock(channel_mutex_);
     if (!websocket_ || !websocket_->IsConnected() || !packet)
         return false;
-    if (version_ == 2) {
+    const int version = version_.load(std::memory_order_acquire);
+    if (version == 2) {
         if (packet->payload.size() > UINT32_MAX)
             return false;
-        std::string out;
+        auto& out = send_buffer_;
         out.resize(kBinaryProtocol2HeaderSize + packet->payload.size());
-        WriteBe16(out.data(), static_cast<uint16_t>(version_));
-        WriteBe16(out.data() + 2, 0);
-        WriteBe32(out.data() + 4, 0);
-        WriteBe32(out.data() + 8, packet->timestamp);
-        WriteBe32(out.data() + 12, static_cast<uint32_t>(packet->payload.size()));
+        util::WriteBe16(out.data(), static_cast<uint16_t>(version));
+        util::WriteBe16(out.data() + 2, 0);
+        util::WriteBe32(out.data() + 4, 0);
+        util::WriteBe32(out.data() + 8, packet->timestamp);
+        util::WriteBe32(out.data() + 12, static_cast<uint32_t>(packet->payload.size()));
         std::memcpy(out.data() + kBinaryProtocol2HeaderSize, packet->payload.data(), packet->payload.size());
         return websocket_->Send(out.data(), out.size(), true);
     }
-    if (version_ == 3) {
+    if (version == 3) {
         if (packet->payload.size() > UINT16_MAX)
             return false;
-        std::string out;
+        auto& out = send_buffer_;
         out.resize(kBinaryProtocol3HeaderSize + packet->payload.size());
         out[0] = 0;
         out[1] = 0;
-        WriteBe16(out.data() + 2, static_cast<uint16_t>(packet->payload.size()));
+        util::WriteBe16(out.data() + 2, static_cast<uint16_t>(packet->payload.size()));
         std::memcpy(out.data() + kBinaryProtocol3HeaderSize, packet->payload.data(), packet->payload.size());
         return websocket_->Send(out.data(), out.size(), true);
     }
@@ -300,7 +287,7 @@ bool WebsocketProtocol::SendText(const std::string& text) {
 std::string WebsocketProtocol::GetHelloMessage() const {
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "type", "hello");
-    cJSON_AddNumberToObject(root, "version", version_);
+    cJSON_AddNumberToObject(root, "version", version_.load(std::memory_order_acquire));
     cJSON* features = cJSON_CreateObject();
     cJSON_AddBoolToObject(features, "mcp", true);
     cJSON_AddItemToObject(root, "features", features);
@@ -311,32 +298,54 @@ std::string WebsocketProtocol::GetHelloMessage() const {
     cJSON_AddNumberToObject(audio, "channels", 1);
     cJSON_AddNumberToObject(audio, "frame_duration", kOpusFrameDurationMs);
     cJSON_AddItemToObject(root, "audio_params", audio);
-    char* raw = cJSON_PrintUnformatted(root);
-    std::string out(raw ? raw : "{}");
-    cJSON_free(raw);
-    cJSON_Delete(root);
-    return out;
+    return json_utils::PrintAndDelete(root);
 }
 
 void WebsocketProtocol::ParseServerHello(const cJSON* root) {
+    // 失败路径走 SetError + setBits(kChannelClosedEvent),让 OpenAudioChannel 立刻
+    // 退出等待并保留具体错误原因,不再等满 10s 才报"响应超时"。
+    auto fail = [this](const char* reason) {
+        SetError(reason);
+        xEventGroupSetBits(event_group_, kChannelClosedEvent);
+    };
     cJSON* transport = cJSON_GetObjectItem(root, "transport");
     if (!cJSON_IsString(transport) || std::strcmp(transport->valuestring, "websocket") != 0) {
         ESP_LOGW(kTag, "Server hello ignored: transport=%s",
                  cJSON_IsString(transport) ? transport->valuestring : "(missing)");
+        fail("小智 WebSocket 协议不匹配");
         return;
     }
     cJSON* sid = cJSON_GetObjectItem(root, "session_id");
     if (cJSON_IsString(sid))
-        session_id_ = sid->valuestring;
+        SetSessionId(sid->valuestring);
+    cJSON* version = cJSON_GetObjectItem(root, "version");
+    if (cJSON_IsNumber(version) && version->valueint >= 1 && version->valueint <= 3)
+        version_.store(version->valueint, std::memory_order_release);
+    int sample_rate    = server_sample_rate_;
+    int frame_duration = server_frame_duration_;
+    GetServerAudioParams(sample_rate, frame_duration);
     cJSON* audio = cJSON_GetObjectItem(root, "audio_params");
     if (cJSON_IsObject(audio)) {
-        cJSON* sample_rate = cJSON_GetObjectItem(audio, "sample_rate");
-        cJSON* frame_duration = cJSON_GetObjectItem(audio, "frame_duration");
-        if (cJSON_IsNumber(sample_rate))
-            server_sample_rate_ = sample_rate->valueint;
-        if (cJSON_IsNumber(frame_duration))
-            server_frame_duration_ = frame_duration->valueint;
+        cJSON* sample_rate_item    = cJSON_GetObjectItem(audio, "sample_rate");
+        cJSON* frame_duration_item = cJSON_GetObjectItem(audio, "frame_duration");
+        if (cJSON_IsNumber(sample_rate_item)) {
+            if (!IsSupportedOpusSampleRate(sample_rate_item->valueint)) {
+                ESP_LOGW(kTag, "Server hello ignored: invalid sample_rate=%d", sample_rate_item->valueint);
+                fail("小智 WebSocket 音频采样率不支持");
+                return;
+            }
+            sample_rate = sample_rate_item->valueint;
+        }
+        if (cJSON_IsNumber(frame_duration_item)) {
+            if (!IsSupportedOpusFrameDuration(frame_duration_item->valueint)) {
+                ESP_LOGW(kTag, "Server hello ignored: invalid frame_duration=%d", frame_duration_item->valueint);
+                fail("小智 WebSocket 音频帧长不支持");
+                return;
+            }
+            frame_duration = frame_duration_item->valueint;
+        }
     }
+    SetServerAudioParams(sample_rate, frame_duration);
     xEventGroupSetBits(event_group_, kServerHelloEvent);
 }
 

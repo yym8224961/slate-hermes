@@ -10,8 +10,8 @@
 #ifdef SOC_HMAC_SUPPORTED
 #include <esp_hmac.h>
 #endif
-#include <esp_http_client.h>
 #include <esp_heap_caps.h>
+#include <esp_http_client.h>
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_ota_ops.h>
@@ -19,8 +19,11 @@
 #include <esp_psram.h>
 #include <sys/time.h>
 
+#include <cmath>
 #include <cstring>
 
+#include "byte_utils.h"
+#include "json_utils.h"
 #include "xiaozhi_settings.h"
 
 namespace {
@@ -34,34 +37,9 @@ esp_err_t HttpEventHandler(esp_http_client_event_t* evt) {
     return ESP_OK;
 }
 
-std::string GetJsonString(cJSON* obj, const char* key) {
-    cJSON* item = cJSON_GetObjectItem(obj, key);
-    return cJSON_IsString(item) && item->valuestring ? item->valuestring : "";
-}
-
-int GetJsonInt(cJSON* obj, const char* key, int fallback = 0) {
-    cJSON* item = cJSON_GetObjectItem(obj, key);
-    return cJSON_IsNumber(item) ? item->valueint : fallback;
-}
-
-std::string PrintAndDelete(cJSON* root) {
-    char* raw = cJSON_PrintUnformatted(root);
-    std::string out(raw ? raw : "{}");
-    cJSON_free(raw);
-    cJSON_Delete(root);
-    return out;
-}
-
-std::string HexLower(const uint8_t* data, size_t len) {
-    static constexpr char kHex[] = "0123456789abcdef";
-    std::string out;
-    out.reserve(len * 2);
-    for (size_t i = 0; i < len; ++i) {
-        out.push_back(kHex[data[i] >> 4]);
-        out.push_back(kHex[data[i] & 0x0f]);
-    }
-    return out;
-}
+using json_utils::JsonInt;
+using json_utils::JsonString;
+using json_utils::PrintAndDelete;
 
 std::string ActivationUrl() {
     std::string url = xiaozhi::ConfigClient::kConfigUrl;
@@ -78,14 +56,13 @@ std::string ConfigClient::DeviceId() const {
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_STA);
     char buf[18];
-    std::snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x",
-                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    std::snprintf(buf, sizeof(buf), "%02x:%02x:%02x:%02x:%02x:%02x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     return buf;
 }
 
 std::string ConfigClient::UserAgent() const {
     const auto* app = esp_app_get_description();
-    std::string ua = kBoardName;
+    std::string ua  = kBoardName;
     ua += "/";
     ua += app ? app->version : "unknown";
     return ua;
@@ -135,15 +112,16 @@ std::string ConfigClient::SystemInfoJson() const {
         compile_time = std::string(app->date) + "T" + app->time + "Z";
         cJSON_AddStringToObject(application, "compile_time", compile_time.c_str());
         cJSON_AddStringToObject(application, "idf_version", app->idf_ver);
-        cJSON_AddStringToObject(application, "elf_sha256", HexLower(app->app_elf_sha256, sizeof(app->app_elf_sha256)).c_str());
+        cJSON_AddStringToObject(application, "elf_sha256",
+                                util::HexLower(app->app_elf_sha256, sizeof(app->app_elf_sha256)).c_str());
     }
     cJSON_AddItemToObject(root, "application", application);
 
-    cJSON* partitions = cJSON_CreateArray();
+    cJSON*                   partitions = cJSON_CreateArray();
     esp_partition_iterator_t it = esp_partition_find(ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, nullptr);
     while (it) {
         const esp_partition_t* partition = esp_partition_get(it);
-        cJSON* item = cJSON_CreateObject();
+        cJSON*                 item      = cJSON_CreateObject();
         cJSON_AddStringToObject(item, "label", partition->label);
         cJSON_AddNumberToObject(item, "type", partition->type);
         cJSON_AddNumberToObject(item, "subtype", partition->subtype);
@@ -152,9 +130,10 @@ std::string ConfigClient::SystemInfoJson() const {
         cJSON_AddItemToArray(partitions, item);
         it = esp_partition_next(it);
     }
+    esp_partition_iterator_release(it);
     cJSON_AddItemToObject(root, "partition_table", partitions);
 
-    cJSON* ota = cJSON_CreateObject();
+    cJSON*                 ota     = cJSON_CreateObject();
     const esp_partition_t* running = esp_ota_get_running_partition();
     cJSON_AddStringToObject(ota, "label", running ? running->label : "unknown");
     cJSON_AddItemToObject(root, "ota", ota);
@@ -174,10 +153,8 @@ std::string ConfigClient::SystemInfoJson() const {
     return PrintAndDelete(root);
 }
 
-void ConfigClient::SetupHeaders(esp_http_client_handle_t client,
-                                const std::string& device_id,
-                                const std::string& client_id,
-                                const std::string& user_agent,
+void ConfigClient::SetupHeaders(esp_http_client_handle_t client, const std::string& device_id,
+                                const std::string& client_id, const std::string& user_agent,
                                 const std::string& serial_number) const {
     esp_http_client_set_header(client, "Activation-Version", serial_number.empty() ? "1" : "2");
     esp_http_client_set_header(client, "Device-Id", device_id.c_str());
@@ -197,16 +174,14 @@ std::string ConfigClient::ActivationPayload(const std::string& challenge, const 
 
     std::string hmac_hex;
 #ifdef SOC_HMAC_SUPPORTED
-    uint8_t hmac_result[32] = {0};
-    esp_err_t ret = esp_hmac_calculate(HMAC_KEY0,
-                                       reinterpret_cast<const uint8_t*>(challenge.data()),
-                                       challenge.size(),
+    uint8_t   hmac_result[32] = {0};
+    esp_err_t ret = esp_hmac_calculate(HMAC_KEY0, reinterpret_cast<const uint8_t*>(challenge.data()), challenge.size(),
                                        hmac_result);
     if (ret != ESP_OK) {
         ESP_LOGE(kTag, "Activation HMAC failed: %s", esp_err_to_name(ret));
         return "{}";
     }
-    hmac_hex = HexLower(hmac_result, sizeof(hmac_result));
+    hmac_hex = util::HexLower(hmac_result, sizeof(hmac_result));
 #else
     ESP_LOGW(kTag, "Activation HMAC unsupported by target");
 #endif
@@ -225,22 +200,22 @@ esp_err_t ConfigClient::Activate(const std::string& challenge) {
         return ESP_FAIL;
     }
 
-    std::string body;
-    const std::string device_id = DeviceId();
-    const std::string client_id = settings::GetUuid();
-    const std::string user_agent = UserAgent();
+    std::string       body;
+    const std::string device_id     = DeviceId();
+    const std::string client_id     = settings::GetUuid();
+    const std::string user_agent    = UserAgent();
     const std::string serial_number = SerialNumber();
-    const std::string payload = ActivationPayload(challenge, serial_number);
-    const std::string url = ActivationUrl();
+    const std::string payload       = ActivationPayload(challenge, serial_number);
+    const std::string url           = ActivationUrl();
 
     esp_http_client_config_t cfg = {};
-    cfg.url                     = url.c_str();
-    cfg.method                  = HTTP_METHOD_POST;
-    cfg.timeout_ms              = 15000;
-    cfg.crt_bundle_attach       = esp_crt_bundle_attach;
-    cfg.event_handler           = HttpEventHandler;
-    cfg.user_data               = &body;
-    cfg.disable_auto_redirect   = false;
+    cfg.url                      = url.c_str();
+    cfg.method                   = HTTP_METHOD_POST;
+    cfg.timeout_ms               = 15000;
+    cfg.crt_bundle_attach        = esp_crt_bundle_attach;
+    cfg.event_handler            = HttpEventHandler;
+    cfg.user_data                = &body;
+    cfg.disable_auto_redirect    = false;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client)
@@ -248,12 +223,10 @@ esp_err_t ConfigClient::Activate(const std::string& challenge) {
     SetupHeaders(client, device_id, client_id, user_agent, serial_number);
     esp_http_client_set_post_field(client, payload.c_str(), payload.size());
 
-    esp_err_t err = esp_http_client_perform(client);
+    esp_err_t err    = esp_http_client_perform(client);
     const int status = esp_http_client_get_status_code(client);
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "Activate failed: err=%s status=%d body_len=%u",
-                 esp_err_to_name(err),
-                 status,
+        ESP_LOGW(kTag, "Activate failed: err=%s status=%d body_len=%u", esp_err_to_name(err), status,
                  static_cast<unsigned>(body.size()));
     }
     esp_http_client_cleanup(client);
@@ -266,22 +239,22 @@ esp_err_t ConfigClient::Activate(const std::string& challenge) {
 }
 
 ConfigResult ConfigClient::Fetch() {
-    ConfigResult result;
-    std::string  body;
-    std::string  request = SystemInfoJson();
-    const std::string device_id = DeviceId();
-    const std::string client_id = settings::GetUuid();
-    const std::string user_agent = UserAgent();
+    ConfigResult      result;
+    std::string       body;
+    std::string       request       = SystemInfoJson();
+    const std::string device_id     = DeviceId();
+    const std::string client_id     = settings::GetUuid();
+    const std::string user_agent    = UserAgent();
     const std::string serial_number = SerialNumber();
 
     esp_http_client_config_t cfg = {};
-    cfg.url                     = kConfigUrl;
-    cfg.method                  = HTTP_METHOD_POST;
-    cfg.timeout_ms              = 15000;
-    cfg.crt_bundle_attach       = esp_crt_bundle_attach;
-    cfg.event_handler           = HttpEventHandler;
-    cfg.user_data               = &body;
-    cfg.disable_auto_redirect   = false;
+    cfg.url                      = kConfigUrl;
+    cfg.method                   = HTTP_METHOD_POST;
+    cfg.timeout_ms               = 15000;
+    cfg.crt_bundle_attach        = esp_crt_bundle_attach;
+    cfg.event_handler            = HttpEventHandler;
+    cfg.user_data                = &body;
+    cfg.disable_auto_redirect    = false;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
     if (!client) {
@@ -291,7 +264,7 @@ ConfigResult ConfigClient::Fetch() {
     SetupHeaders(client, device_id, client_id, user_agent, serial_number);
     esp_http_client_set_post_field(client, request.c_str(), request.size());
 
-    esp_err_t err = esp_http_client_perform(client);
+    esp_err_t err      = esp_http_client_perform(client);
     result.http_status = esp_http_client_get_status_code(client);
     if (err != ESP_OK) {
         result.error = esp_err_to_name(err);
@@ -303,9 +276,7 @@ ConfigResult ConfigClient::Fetch() {
 
     if (result.http_status != 200) {
         result.error = "HTTP " + std::to_string(result.http_status);
-        ESP_LOGW(kTag, "Fetch status=%d body_len=%u",
-                 result.http_status,
-                 static_cast<unsigned>(body.size()));
+        ESP_LOGW(kTag, "Fetch status=%d body_len=%u", result.http_status, static_cast<unsigned>(body.size()));
         return result;
     }
 
@@ -316,22 +287,22 @@ ConfigResult ConfigClient::Fetch() {
     }
 
     if (cJSON* activation = cJSON_GetObjectItem(root, "activation"); cJSON_IsObject(activation)) {
-        result.activation_message = GetJsonString(activation, "message");
-        result.activation_code    = GetJsonString(activation, "code");
-        result.has_activation     = !result.activation_code.empty();
-        result.activation_challenge = GetJsonString(activation, "challenge");
+        result.activation_message       = JsonString(activation, "message");
+        result.activation_code          = JsonString(activation, "code");
+        result.has_activation           = !result.activation_code.empty();
+        result.activation_challenge     = JsonString(activation, "challenge");
         result.has_activation_challenge = !result.activation_challenge.empty();
-        result.activation_timeout_ms = GetJsonInt(activation, "timeout_ms", 30000);
+        result.activation_timeout_ms    = JsonInt(activation, "timeout_ms", 30000);
     }
 
     if (cJSON* mqtt = cJSON_GetObjectItem(root, "mqtt"); cJSON_IsObject(mqtt)) {
         settings::MqttConfig m;
-        m.endpoint      = GetJsonString(mqtt, "endpoint");
-        m.client_id     = GetJsonString(mqtt, "client_id");
-        m.username      = GetJsonString(mqtt, "username");
-        m.password      = GetJsonString(mqtt, "password");
-        m.publish_topic = GetJsonString(mqtt, "publish_topic");
-        m.keepalive     = GetJsonInt(mqtt, "keepalive", 240);
+        m.endpoint      = JsonString(mqtt, "endpoint");
+        m.client_id     = JsonString(mqtt, "client_id");
+        m.username      = JsonString(mqtt, "username");
+        m.password      = JsonString(mqtt, "password");
+        m.publish_topic = JsonString(mqtt, "publish_topic");
+        m.keepalive     = JsonInt(mqtt, "keepalive", 240);
         if (settings::SaveMqtt(m)) {
             result.has_protocol = true;
         }
@@ -339,25 +310,25 @@ ConfigResult ConfigClient::Fetch() {
 
     if (cJSON* websocket = cJSON_GetObjectItem(root, "websocket"); cJSON_IsObject(websocket)) {
         settings::WebsocketConfig ws;
-        ws.url     = GetJsonString(websocket, "url");
-        ws.token   = GetJsonString(websocket, "token");
-        ws.version = GetJsonInt(websocket, "version", 0);
+        ws.url     = JsonString(websocket, "url");
+        ws.token   = JsonString(websocket, "token");
+        ws.version = JsonInt(websocket, "version", 0);
         if (settings::SaveWebsocket(ws)) {
             result.has_protocol = true;
         }
     }
 
     if (cJSON* server_time = cJSON_GetObjectItem(root, "server_time"); cJSON_IsObject(server_time)) {
-        cJSON* timestamp = cJSON_GetObjectItem(server_time, "timestamp");
+        cJSON* timestamp       = cJSON_GetObjectItem(server_time, "timestamp");
         cJSON* timezone_offset = cJSON_GetObjectItem(server_time, "timezone_offset");
         if (cJSON_IsNumber(timestamp)) {
-            double ts = timestamp->valuedouble;
+            int64_t ts_ms = static_cast<int64_t>(std::llround(timestamp->valuedouble));
             if (cJSON_IsNumber(timezone_offset)) {
-                ts += static_cast<double>(timezone_offset->valueint) * 60.0 * 1000.0;
+                ts_ms += static_cast<int64_t>(timezone_offset->valueint) * 60 * 1000;
             }
             timeval tv = {};
-            tv.tv_sec  = static_cast<time_t>(ts / 1000.0);
-            tv.tv_usec = static_cast<suseconds_t>(static_cast<long long>(ts) % 1000) * 1000;
+            tv.tv_sec  = static_cast<time_t>(ts_ms / 1000);
+            tv.tv_usec = static_cast<suseconds_t>(ts_ms % 1000) * 1000;
             if (settimeofday(&tv, nullptr) == 0) {
                 result.server_time_synced = true;
             }
@@ -365,7 +336,7 @@ ConfigResult ConfigClient::Fetch() {
     }
 
     cJSON_Delete(root);
-    result.ok = true;
+    result.ok           = true;
     result.has_protocol = result.has_protocol || settings::HasProtocolConfig();
     return result;
 }

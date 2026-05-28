@@ -10,7 +10,7 @@
 // 重连策略:
 //   1. 快速:STA_DISCONNECTED 立即 esp_wifi_connect,最多 5 次。
 //   2. 慢速:5 次用完转 esp_timer + 主动 esp_wifi_scan_start 全信道扫描,
-//      指数退避 10s → 20 → 40 → 80 → 160 → 300s。scan 找到 SSID 即拿
+//      指数退避 10s → 20 → 40 → 80 → 120 → 120s。scan 找到 SSID 即拿
 //      bssid+channel 设回 wc.sta 再 connect。
 //   3. IP_GOT_IP 后清 fail_count_ + 重置 backoff_idx_,timer 停。
 //   4. want_reconnect_=false (Disconnect / TryConnect 主动断 / StopAp) 时
@@ -22,10 +22,14 @@
 #include <esp_netif.h>
 #include <esp_timer.h>
 #include <esp_wifi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <lwip/inet.h>
 
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#include <mutex>
 #include <string>
 
 class Wifi {
@@ -95,6 +99,8 @@ class Wifi {
     void UnregisterEventHandlers();
 
     static void EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data);
+    void        SetIpString(const char* ip);
+    void        ClearIpString();
 
     // 慢速重连子系统:fast retry 用完 → 启 timer → DoSlowScan → SCAN_DONE → 找 AP → connect。
     // 找不到 → 递增 backoff_idx_ 再 ScheduleSlowReconnect 一次。
@@ -106,10 +112,11 @@ class Wifi {
     static void OnSlowReconnectTimer(void* arg);
 
     // 仅 Init 调一次的底座
-    bool inited_ = false;
+    std::mutex init_mutex_;
+    bool       inited_ = false;
 
-    // 当前模式(单线程修改:仅在 Connect/StartAp/Stop* 中)
-    Mode mode_ = Mode::Off;
+    // 当前模式。主线程修改，慢速重连 timer/event handler 读取。
+    std::atomic<Mode> mode_{Mode::Off};
 
     // 按需创建/销毁
     esp_netif_t* sta_netif_ = nullptr;
@@ -121,15 +128,17 @@ class Wifi {
 
     // STA 状态
     std::atomic<State> state_{State::Idle};
-    int                fail_count_     = 0;
-    int                max_fast_fail_  = 5;
-    bool               want_reconnect_ = false;
+    std::atomic<int>   fail_count_{0};
+    int                max_fast_fail_ = 5;
+    std::atomic<bool>  want_reconnect_{false};
+    mutable std::mutex callback_mutex_;
     DisconnectCb       on_disconnect_;
-    char               ip_str_[16]             = {0};
-    int                last_disconnect_reason_ = 0;
+    mutable std::mutex ip_mutex_;
+    char               ip_str_[INET6_ADDRSTRLEN] = {0};
+    std::atomic<int>   last_disconnect_reason_{0};
 
     // 慢速重连
-    esp_timer_handle_t reconnect_timer_   = nullptr;
-    size_t             backoff_idx_       = 0;
-    bool               slow_scan_pending_ = false;  // 区分本次 SCAN_DONE 是不是我们发起的
+    esp_timer_handle_t  reconnect_timer_ = nullptr;
+    std::atomic<size_t> backoff_idx_{0};
+    std::atomic<bool>   slow_scan_pending_{false};  // 区分本次 SCAN_DONE 是不是我们发起的
 };

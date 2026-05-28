@@ -3,6 +3,7 @@
 // 音量子页：0~10 级，UP/DOWN 调，ENTER 短按播 200 ms 测试音，ENTER 长按 pop。
 
 #include <memory>
+#include <vector>
 
 #include "scene.h"
 #include "status_bar.h"
@@ -17,6 +18,9 @@ class VolumePage : public Scene {
     const char* Name() const override {
         return "Volume";
     }
+    bool IsSettings() const override {
+        return true;
+    }
     void      OnEnter(SceneContext& ctx) override;
     void      OnExit(SceneContext& ctx) override;
     void      OnEvent(SceneContext& ctx, const UiEvent& e) override;
@@ -25,11 +29,11 @@ class VolumePage : public Scene {
     }
 
    private:
-    void RedrawValue();
-    void SaveLevel();
+    void        RedrawValue();
+    void        ApplyLevel();
+    void        SaveLevel();
     const char* Caption() const;
-    void SyncRender(SceneContext& ctx);
-    void PlayTestTone(SceneContext& ctx);
+    void        PlayTestTone(SceneContext& ctx);
 
     lv_obj_t*                  root_        = nullptr;
     lv_obj_t*                  bar_track_   = nullptr;  // 进度条底
@@ -38,5 +42,7 @@ class VolumePage : public Scene {
     lv_obj_t*                  hint_label_  = nullptr;  // 底部提示
     std::unique_ptr<StatusBar> status_bar_;
     Target                     target_ = Target::kAlbum;
-    int                        level_ = 0;
+    int                        level_  = 0;
+    bool                       dirty_  = false;
+    std::vector<uint8_t>       test_tone_;
 };

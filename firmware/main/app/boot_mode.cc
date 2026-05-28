@@ -49,13 +49,8 @@ const char* WakeReason(WakeCause cause) {
 }
 
 bool HasCachedGroup() {
-    std::string gid;
-    std::string etag;
-    if (!cache::ReadStateMeta(gid, etag) || gid.empty())
-        return false;
-
-    int content_count = 0;
-    return cache::ReadManifestContentCount(gid, content_count) && content_count > 0;
+    cache::CachedGroupSummary summary;
+    return cache::ReadCachedGroupSummary(summary);
 }
 
 }  // namespace

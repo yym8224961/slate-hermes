@@ -1,16 +1,6 @@
 #ifndef FONT_AWESOME_H
 #define FONT_AWESOME_H
 
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>
-
-// 符号结构体
-typedef struct {
-    const char* name;
-    const char* utf8_string;
-} font_awesome_symbol_t;
-
 #define FONT_AWESOME_NEUTRAL                "\xef\x96\xa4"
 #define FONT_AWESOME_HAPPY                  "\xef\x84\x98"
 #define FONT_AWESOME_LAUGHING               "\xef\x96\x9b"
@@ -146,22 +136,5 @@ typedef struct {
 #define FONT_AWESOME_WIND                   "\xef\x9c\xae"
 #define FONT_AWESOME_HURRICANE              "\xef\x9d\x91"
 #define FONT_AWESOME_TORNADO                "\xef\x9d\xaf"
-
-// 符号数据表声明
-extern const font_awesome_symbol_t font_awesome_symbols[];
-extern const size_t                font_awesome_symbol_count;
-
-// 内联函数实现
-static inline const char* font_awesome_get_utf8(const char* name) {
-    if (!name)
-        return NULL;
-
-    for (size_t i = 0; i < font_awesome_symbol_count; i++) {
-        if (strcmp(font_awesome_symbols[i].name, name) == 0) {
-            return font_awesome_symbols[i].utf8_string;
-        }
-    }
-    return NULL;
-}
 
 #endif

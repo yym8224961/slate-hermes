@@ -25,7 +25,7 @@
 // ── Buttons ────────────────────────────────────────────────────
 #define BOOT_BUTTON_GPIO GPIO_NUM_0
 #define UP_BUTTON_GPIO   GPIO_NUM_39
-#define DOWN_BUTTON_GPIO GPIO_NUM_18  // 与 VBAT_PWR_GPIO 复用:开机时电源键 = 下键
+#define DOWN_BUTTON_GPIO GPIO_NUM_18  // 与 POWER_KEY_GPIO 复用:开机时电源键 = 下键
 
 // ── Charge IC ──────────────────────────────────────────────────
 #define CHARGE_DETECT_GPIO           GPIO_NUM_2
@@ -46,5 +46,5 @@
 #define EPD_PWR_PIN           GPIO_NUM_6   // EPD 电源,EpdSsd1683 自管
 #define AUDIO_PWR_PIN         GPIO_NUM_42  // AVDD_3V3 rail (I²C 上拉也在这条 rail)
 #define AUDIO_PWR_FORCE_LEVEL 1
-#define VBAT_PWR_PIN          GPIO_NUM_17  // 系统软锁存,拉低 = 关机
-#define VBAT_PWR_GPIO         GPIO_NUM_18  // SW1=下键开机,松开时 board_power 等其松开
+#define VBAT_PWR_PIN          GPIO_NUM_17       // 系统软锁存,拉低 = 关机
+#define POWER_KEY_GPIO        DOWN_BUTTON_GPIO  // SW1=下键开机,松开时 board_power 等其松开

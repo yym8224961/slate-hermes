@@ -4,7 +4,7 @@
 // Post 进来，唯一一个 ui_loop task 用 Wait 串行消费。
 //
 // 设计决策：
-//   - FreeRTOS xQueue 长度 32，元素是 trivially-copyable 的 UiEvent。
+//   - FreeRTOS xQueue 长度 64，元素是 trivially-copyable 的 UiEvent。
 //   - 不在 UiEvent 里塞 std::string / std::vector：Queue 是 byte-copy，
 //     带 heap 句柄的对象进 queue = use-after-free。group.gid 是定长 char[32]。
 //   - 满了 timeout 后丢新事件（不丢老的），打 ESP_LOGW，让开发者发现 ui_loop 卡住。
@@ -13,6 +13,7 @@
 #include <freertos/queue.h>
 
 #include <cstdint>
+#include <type_traits>
 
 enum class UiEventKind : uint8_t {
     kButtonShort,       // u.button.btn
@@ -115,6 +116,11 @@ struct UiEvent {
     UiEvent() : kind(UiEventKind::kMinuteTick), u() {
     }
 };
+
+static_assert(std::is_trivially_copyable_v<UiEvent>, "UiEvent must stay byte-copyable for FreeRTOS queues");
+static_assert(std::is_standard_layout_v<UiEvent>, "UiEvent must stay layout-stable for FreeRTOS queues");
+static_assert(std::is_trivially_destructible_v<UiEvent>, "UiEvent must not own resources in FreeRTOS queues");
+static_assert(sizeof(UiEvent) <= 128, "UiEvent queue item grew unexpectedly");
 
 namespace evt {
 

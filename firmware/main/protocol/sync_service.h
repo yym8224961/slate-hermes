@@ -8,11 +8,13 @@
 
 #include <atomic>
 #include <functional>
+#include <mutex>
 #include <string>
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <freertos/semphr.h>
+#include <freertos/task.h>
 
 #include "api_client.h"
 
@@ -64,7 +66,10 @@ class SyncService {
 
     SyncDeps            deps_;
     std::atomic<bool>   running_{false};
+    mutable std::mutex  task_mutex_;
     EventGroupHandle_t  event_group_         = nullptr;
+    SemaphoreHandle_t   exit_sem_            = nullptr;
+    TaskHandle_t        task_handle_         = nullptr;
     SemaphoreHandle_t   current_group_mutex_ = nullptr;
     mutable std::string current_group_;
     enum class BoundState : uint8_t { kUnknown, kBound, kUnbound };

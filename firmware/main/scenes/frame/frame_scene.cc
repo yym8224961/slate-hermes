@@ -37,15 +37,7 @@ void FrameScene::OnEnter(SceneContext& ctx) {
         return;
     }
 
-    auto* screen = lv_screen_active();
-    root_        = lv_obj_create(screen);
-    lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_pos(root_, 0, 0);
-    lv_obj_set_style_bg_color(root_, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(root_, 0, 0);
-    lv_obj_set_style_border_width(root_, 0, 0);
-    lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
+    root_ = CreateFullscreenRoot();
 
     frame_view_ = std::make_unique<FrameView>(root_);
 
@@ -64,7 +56,7 @@ void FrameScene::OnEnter(SceneContext& ctx) {
 
     ctx.epd->Unlock();
 
-    RefreshStatusBarFromSensors(ctx);
+    RefreshStatusBarFromSensors(ctx, *status_bar_);
     ApplyEmptyState();
 
     if (!gid_.empty() && content_count_ > 0) {
@@ -79,19 +71,16 @@ void FrameScene::OnEnter(SceneContext& ctx) {
 void FrameScene::OnExit(SceneContext& ctx) {
     if (ctx.audio)
         ctx.audio->Stop();
-    if (!ctx.epd->Lock(500))
-        return;
-    frame_view_.reset();
-    status_bar_.reset();
-    if (root_) {
-        lv_obj_del(root_);
-        root_        = nullptr;
+    DestroyRoot(ctx, root_, [this]() {
+        frame_view_.reset();
+        status_bar_.reset();
         empty_label_ = nullptr;
-    }
-    ctx.epd->Unlock();
+    });
 }
 
 void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
+    if (!root_)
+        return;
     switch (e.kind) {
         case UiEventKind::kButtonShort: {
             switch (e.u.button.btn) {
@@ -193,7 +182,7 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             break;
         }
         case UiEventKind::kMinuteTick:
-            RefreshStatusBarFromSensors(ctx);
+            RefreshStatusBarAndRender(ctx, status_bar_.get());
             break;
         case UiEventKind::kUnbound: {
             ESP_LOGW(kTag, "Unbound -> back to BootSplashScene");
@@ -235,8 +224,7 @@ void FrameScene::RebindGroup(SceneContext& ctx, const char* gid, int content_cou
     gid_           = gid ? gid : "";
     content_count_ = content_count > 0 ? content_count : 0;
     idx_           = 0;
-    power_state::SetCurrentFrameSeq(idx_);
-    power_state::SetCurrentFrameSchedule({});
+    power_state::ClearCurrentFrame();
     first_loaded_ = false;
 }
 
@@ -276,7 +264,7 @@ void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full, AudioBeh
 
     if (ctx.audio) {
         std::vector<uint8_t> pcm;
-        if (cache::ReadFrameAudio(gid_, idx, pcm) && !pcm.empty()) {
+        if (!meta.audio_etag.empty() && cache::ReadFrameAudio(gid_, idx, pcm) && !pcm.empty()) {
             if (audio_behavior == AudioBehavior::RestartIfAvailable) {
                 ctx.audio->Play(pcm.data(), pcm.size());
             }
@@ -285,31 +273,7 @@ void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full, AudioBeh
         }
     }
 
-    power_state::CurrentFrameSchedule schedule;
-    schedule.dynamic         = meta.has_ttl;
-    schedule.server_sync_sec = meta.ttl_sec;
-    power_state::SetCurrentFrameSchedule(schedule);
-    power_state::SetCurrentFrameSeq(idx);
-}
-
-void FrameScene::RefreshStatusBarFromSensors(SceneContext& ctx) {
-    if (!status_bar_)
-        return;
-    bool changed = false;
-    if (ctx.wifi_connected && ctx.wifi_rssi) {
-        changed |= status_bar_->SetWifi(ctx.wifi_connected(), ctx.wifi_rssi());
-    }
-    if (ctx.read_charge) {
-        const auto snap = ctx.read_charge();
-        int        pct  = -1;
-        if (!snap.no_battery && ctx.read_battery) {
-            int mv = 0;
-            ctx.read_battery(&mv, &pct);
-        }
-        changed |= status_bar_->SetBattery(pct, snap.charging, snap.full);
-    }
-    if (changed)
-        SyncRender(ctx, /*force_full*/ false);
+    power_state::SetCurrentFrameFromMeta(idx, meta);
 }
 
 void FrameScene::ApplyEmptyState() {
@@ -330,19 +294,4 @@ void FrameScene::ApplyEmptyState() {
         status_bar_->SetCaption("");
         cached_status_bar_text_.clear();
     }
-}
-
-void FrameScene::SyncRender(SceneContext& ctx, bool force_full) {
-    if (!ctx.epd)
-        return;
-    if (!ctx.epd->Lock(500)) {
-        ESP_LOGW(kTag, "SyncRender: epd lock timeout");
-        return;
-    }
-    lv_refr_now(NULL);
-    ctx.epd->Unlock();
-    if (force_full)
-        ctx.epd->RequestUrgentFullRefresh();
-    else
-        ctx.epd->RequestUrgentPartialRefresh();
 }

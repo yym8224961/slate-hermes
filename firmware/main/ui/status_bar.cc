@@ -93,19 +93,19 @@ StatusBar::StatusBar(lv_obj_t* parent) {
 
 bool StatusBar::SetWifi(bool connected, int rssi) {
     const char* icon = WifiIcon(connected, rssi);
-    if (icon == shown_wifi_)
+    if (shown_wifi_ == icon)
         return false;
-    shown_wifi_ = icon;
-    lv_label_set_text(wifi_label_, icon);
+    shown_wifi_ = icon ? icon : "";
+    lv_label_set_text(wifi_label_, shown_wifi_.c_str());
     return true;
 }
 
 bool StatusBar::SetBattery(int pct, bool charging, bool full) {
     bool        changed = false;
     const char* icon    = BatteryIcon(pct, charging, full);
-    if (icon != shown_battery_) {
-        shown_battery_ = icon;
-        lv_label_set_text(battery_label_, icon);
+    if (shown_battery_ != icon) {
+        shown_battery_ = icon ? icon : "";
+        lv_label_set_text(battery_label_, shown_battery_.c_str());
         changed = true;
     }
 

@@ -40,20 +40,42 @@ Button::~Button() {
     }
 }
 
+bool Button::RegisterCallback(button_event_t event, button_event_args_t* args, button_cb_t cb, void* user_data,
+                              bool& registered) {
+    if (button_handle_ == nullptr) {
+        return false;
+    }
+    if (registered) {
+        esp_err_t err = iot_button_unregister_cb(button_handle_, event, args);
+        if (err != ESP_OK) {
+            ESP_LOGW(kTag, "unregister event %d failed: %s", static_cast<int>(event), esp_err_to_name(err));
+            return false;
+        }
+        registered = false;
+    }
+    esp_err_t err = iot_button_register_cb(button_handle_, event, args, cb, user_data);
+    if (err != ESP_OK) {
+        ESP_LOGW(kTag, "register event %d failed: %s", static_cast<int>(event), esp_err_to_name(err));
+        return false;
+    }
+    registered = true;
+    return true;
+}
+
 void Button::OnPressDown(std::function<void()> callback) {
     if (button_handle_ == nullptr) {
         return;
     }
     on_press_down_ = callback;
-    iot_button_register_cb(
-        button_handle_, BUTTON_PRESS_DOWN, nullptr,
+    RegisterCallback(
+        BUTTON_PRESS_DOWN, nullptr,
         [](void* handle, void* usr_data) {
             Button* button = static_cast<Button*>(usr_data);
             if (button->on_press_down_) {
                 button->on_press_down_();
             }
         },
-        this);
+        this, press_down_registered_);
 }
 
 void Button::OnPressUp(std::function<void()> callback) {
@@ -61,15 +83,15 @@ void Button::OnPressUp(std::function<void()> callback) {
         return;
     }
     on_press_up_ = callback;
-    iot_button_register_cb(
-        button_handle_, BUTTON_PRESS_UP, nullptr,
+    RegisterCallback(
+        BUTTON_PRESS_UP, nullptr,
         [](void* handle, void* usr_data) {
             Button* button = static_cast<Button*>(usr_data);
             if (button->on_press_up_) {
                 button->on_press_up_();
             }
         },
-        this);
+        this, press_up_registered_);
 }
 
 void Button::OnLongPress(std::function<void()> callback) {
@@ -77,15 +99,15 @@ void Button::OnLongPress(std::function<void()> callback) {
         return;
     }
     on_long_press_ = callback;
-    iot_button_register_cb(
-        button_handle_, BUTTON_LONG_PRESS_START, nullptr,
+    RegisterCallback(
+        BUTTON_LONG_PRESS_START, nullptr,
         [](void* handle, void* usr_data) {
             Button* button = static_cast<Button*>(usr_data);
             if (button->on_long_press_) {
                 button->on_long_press_();
             }
         },
-        this);
+        this, long_press_registered_);
 }
 
 void Button::OnClick(std::function<void()> callback) {
@@ -93,15 +115,15 @@ void Button::OnClick(std::function<void()> callback) {
         return;
     }
     on_click_ = callback;
-    iot_button_register_cb(
-        button_handle_, BUTTON_SINGLE_CLICK, nullptr,
+    RegisterCallback(
+        BUTTON_SINGLE_CLICK, nullptr,
         [](void* handle, void* usr_data) {
             Button* button = static_cast<Button*>(usr_data);
             if (button->on_click_) {
                 button->on_click_();
             }
         },
-        this);
+        this, click_registered_);
 }
 
 void Button::OnDoubleClick(std::function<void()> callback) {
@@ -109,30 +131,41 @@ void Button::OnDoubleClick(std::function<void()> callback) {
         return;
     }
     on_double_click_ = callback;
-    iot_button_register_cb(
-        button_handle_, BUTTON_DOUBLE_CLICK, nullptr,
+    RegisterCallback(
+        BUTTON_DOUBLE_CLICK, nullptr,
         [](void* handle, void* usr_data) {
             Button* button = static_cast<Button*>(usr_data);
             if (button->on_double_click_) {
                 button->on_double_click_();
             }
         },
-        this);
+        this, double_click_registered_);
 }
 
 void Button::OnMultipleClick(std::function<void()> callback, uint8_t click_count) {
     if (button_handle_ == nullptr) {
         return;
     }
+    if (multiple_click_registered_) {
+        button_event_args_t old_args = {.multiple_clicks = {.clicks = multiple_click_count_}};
+        esp_err_t           err      = iot_button_unregister_cb(button_handle_, BUTTON_MULTIPLE_CLICK, &old_args);
+        if (err != ESP_OK) {
+            ESP_LOGW(kTag, "unregister event %d failed: %s", static_cast<int>(BUTTON_MULTIPLE_CLICK),
+                     esp_err_to_name(err));
+            return;
+        }
+        multiple_click_registered_ = false;
+    }
     on_multiple_click_             = callback;
-    button_event_args_t event_args = {.multiple_clicks = {.clicks = click_count}};
-    iot_button_register_cb(
-        button_handle_, BUTTON_MULTIPLE_CLICK, &event_args,
+    multiple_click_count_          = click_count;
+    button_event_args_t event_args = {.multiple_clicks = {.clicks = multiple_click_count_}};
+    RegisterCallback(
+        BUTTON_MULTIPLE_CLICK, &event_args,
         [](void* handle, void* usr_data) {
             Button* button = static_cast<Button*>(usr_data);
             if (button->on_multiple_click_) {
                 button->on_multiple_click_();
             }
         },
-        this);
+        this, multiple_click_registered_);
 }

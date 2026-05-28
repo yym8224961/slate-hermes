@@ -15,11 +15,8 @@ std::string GenerateUuid() {
     uuid[6] = (uuid[6] & 0x0F) | 0x40;
     uuid[8] = (uuid[8] & 0x3F) | 0x80;
     char out[37];
-    std::snprintf(out, sizeof(out),
-                  "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-                  uuid[0], uuid[1], uuid[2], uuid[3],
-                  uuid[4], uuid[5], uuid[6], uuid[7],
-                  uuid[8], uuid[9], uuid[10], uuid[11],
+    std::snprintf(out, sizeof(out), "%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x", uuid[0],
+                  uuid[1], uuid[2], uuid[3], uuid[4], uuid[5], uuid[6], uuid[7], uuid[8], uuid[9], uuid[10], uuid[11],
                   uuid[12], uuid[13], uuid[14], uuid[15]);
     return out;
 }
@@ -50,12 +47,14 @@ bool SaveMqtt(const MqttConfig& cfg) {
 }
 
 bool LoadMqtt(MqttConfig& out) {
-    out.endpoint      = nvs_store::GetString(nvs_schema::kChatMqtt, nvs_schema::mqtt::kEndpoint);
-    out.client_id     = nvs_store::GetString(nvs_schema::kChatMqtt, nvs_schema::mqtt::kClientId);
-    out.username      = nvs_store::GetString(nvs_schema::kChatMqtt, nvs_schema::mqtt::kUsername);
-    out.password      = nvs_store::GetString(nvs_schema::kChatMqtt, nvs_schema::mqtt::kPassword);
-    out.publish_topic = nvs_store::GetString(nvs_schema::kChatMqtt, nvs_schema::mqtt::kPubTopic);
-    out.keepalive     = nvs_store::GetInt32(nvs_schema::kChatMqtt, nvs_schema::mqtt::kKeepalive, 240);
+    nvs_store::GetStrings(nvs_schema::kChatMqtt, {
+                                                     {nvs_schema::mqtt::kEndpoint, &out.endpoint},
+                                                     {nvs_schema::mqtt::kClientId, &out.client_id},
+                                                     {nvs_schema::mqtt::kUsername, &out.username},
+                                                     {nvs_schema::mqtt::kPassword, &out.password},
+                                                     {nvs_schema::mqtt::kPubTopic, &out.publish_topic},
+                                                 });
+    out.keepalive = nvs_store::GetInt32(nvs_schema::kChatMqtt, nvs_schema::mqtt::kKeepalive, 240);
     return !out.endpoint.empty() && !out.client_id.empty() && !out.publish_topic.empty();
 }
 
@@ -73,8 +72,10 @@ bool SaveWebsocket(const WebsocketConfig& cfg) {
 }
 
 bool LoadWebsocket(WebsocketConfig& out) {
-    out.url     = nvs_store::GetString(nvs_schema::kChatWs, nvs_schema::ws::kUrl);
-    out.token   = nvs_store::GetString(nvs_schema::kChatWs, nvs_schema::ws::kToken);
+    nvs_store::GetStrings(nvs_schema::kChatWs, {
+                                                   {nvs_schema::ws::kUrl, &out.url},
+                                                   {nvs_schema::ws::kToken, &out.token},
+                                               });
     out.version = nvs_store::GetInt32(nvs_schema::kChatWs, nvs_schema::ws::kVersion, 0);
     return !out.url.empty();
 }
@@ -84,11 +85,10 @@ void ClearWebsocket() {
 }
 
 bool HasProtocolConfig() {
-    MqttConfig mqtt;
-    if (LoadMqtt(mqtt))
+    if (nvs_store::HasStrings(nvs_schema::kChatMqtt,
+                              {nvs_schema::mqtt::kEndpoint, nvs_schema::mqtt::kClientId, nvs_schema::mqtt::kPubTopic}))
         return true;
-    WebsocketConfig ws;
-    return LoadWebsocket(ws);
+    return nvs_store::HasString(nvs_schema::kChatWs, nvs_schema::ws::kUrl);
 }
 
 int GetVolume() {

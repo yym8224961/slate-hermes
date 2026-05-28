@@ -12,20 +12,22 @@ constexpr char kTag[] = "Cred";
 namespace cred {
 
 bool Load(Credentials& out) {
-    out.wifi_ssid     = nvs_store::GetString(nvs_schema::kNet, nvs_schema::net::kSsid);
-    out.wifi_pwd      = nvs_store::GetString(nvs_schema::kNet, nvs_schema::net::kPwd);
-    out.server_url    = nvs_store::GetString(nvs_schema::kNet, nvs_schema::net::kUrl);
-    out.device_id     = nvs_store::GetString(nvs_schema::kNet, nvs_schema::net::kDevId);
-    out.device_secret = nvs_store::GetString(nvs_schema::kNet, nvs_schema::net::kDevSec);
+    nvs_store::GetStrings(nvs_schema::kNet, {
+                                                {nvs_schema::net::kSsid, &out.wifi_ssid},
+                                                {nvs_schema::net::kPwd, &out.wifi_pwd},
+                                                {nvs_schema::net::kUrl, &out.server_url},
+                                                {nvs_schema::net::kDevId, &out.device_id},
+                                                {nvs_schema::net::kDevSec, &out.device_secret},
+                                            });
     return !out.wifi_ssid.empty() && !out.server_url.empty();
 }
 
 bool Save(const Credentials& c) {
     bool ok = nvs_store::SetStrings(nvs_schema::kNet, {
-        {nvs_schema::net::kSsid, c.wifi_ssid},
-        {nvs_schema::net::kPwd, c.wifi_pwd},
-        {nvs_schema::net::kUrl, c.server_url},
-    });
+                                                          {nvs_schema::net::kSsid, c.wifi_ssid},
+                                                          {nvs_schema::net::kPwd, c.wifi_pwd},
+                                                          {nvs_schema::net::kUrl, c.server_url},
+                                                      });
     if (!ok) {
         ESP_LOGE(kTag, "Save credentials failed");
     }
@@ -34,9 +36,9 @@ bool Save(const Credentials& c) {
 
 bool SaveSecret(const std::string& device_id, const std::string& device_secret) {
     bool ok = nvs_store::SetStrings(nvs_schema::kNet, {
-        {nvs_schema::net::kDevId, device_id},
-        {nvs_schema::net::kDevSec, device_secret},
-    });
+                                                          {nvs_schema::net::kDevId, device_id},
+                                                          {nvs_schema::net::kDevSec, device_secret},
+                                                      });
     if (!ok) {
         ESP_LOGE(kTag, "SaveSecret failed");
         return false;

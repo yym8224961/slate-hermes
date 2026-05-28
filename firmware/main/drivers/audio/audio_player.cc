@@ -14,7 +14,7 @@
 
 // Board::Init 已经在 InitPower 阶段把 GPIO42（AVDD_3V3 rail）拉高 + hold_en，
 // 所以这里不再直调 BoardI2cForcePowerOn。i2c_device.cc 仍然在异常路径上调
-// BoardI2cForcePowerOn 自救，hook 保留在 drivers/i2c_power_hook.cc。
+// BoardI2cForcePowerOn 自救，hook 保留在 drivers/bus/i2c_power_hook.cc。
 
 namespace {
 constexpr char kTag[] = "Audio";
@@ -28,6 +28,10 @@ AudioPlayer& AudioPlayer::Get() {
 bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     if (initialized_)
         return true;
+    auto fail = [this]() {
+        CleanupInitResources();
+        return false;
+    };
 
     // ── I2S0 master duplex 16 kHz mono 16-bit。相册只用 TX；小智对话进入时
     // 使用同一套 RX/TX，避免重复创建 I2S0 channel。
@@ -40,7 +44,11 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     // (老代码用 .auto_clear,IDF 5.4+ 已 deprecated 改为 alias)
     chan_cfg.auto_clear_after_cb = true;
     chan_cfg.intr_priority       = 0;
-    ESP_ERROR_CHECK(i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_));
+    esp_err_t err = i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_);
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "I2S channel create failed: %s", esp_err_to_name(err));
+        return fail();
+    }
 
     i2s_std_config_t std_cfg        = {};
     std_cfg.clk_cfg.sample_rate_hz  = AUDIO_OUTPUT_SAMPLE_RATE;
@@ -65,8 +73,16 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     std_cfg.gpio_cfg.ws   = static_cast<gpio_num_t>(AUDIO_I2S_GPIO_WS);
     std_cfg.gpio_cfg.dout = static_cast<gpio_num_t>(AUDIO_I2S_GPIO_DOUT);
     std_cfg.gpio_cfg.din  = static_cast<gpio_num_t>(AUDIO_I2S_GPIO_DIN);
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(tx_handle_, &std_cfg));
-    ESP_ERROR_CHECK(i2s_channel_init_std_mode(rx_handle_, &std_cfg));
+    err = i2s_channel_init_std_mode(tx_handle_, &std_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "I2S tx init failed: %s", esp_err_to_name(err));
+        return fail();
+    }
+    err = i2s_channel_init_std_mode(rx_handle_, &std_cfg);
+    if (err != ESP_OK) {
+        ESP_LOGE(kTag, "I2S rx init failed: %s", esp_err_to_name(err));
+        return fail();
+    }
     // 不在这里 i2s_channel_enable:esp_codec_dev_open 内部会 enable channel,
     // 早 enable 反而触发 codec lib 一条 "channel has not been enabled yet"
     // E 级 log(它 enable 前会先尝试 disable 一个 INIT 状态的 channel),
@@ -80,7 +96,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     data_if_                           = audio_codec_new_i2s_data(&i2s_data_cfg);
     if (!data_if_) {
         ESP_LOGE(kTag, "Audio codec new_i2s_data failed");
-        return false;
+        return fail();
     }
 
     audio_codec_i2c_cfg_t i2c_cfg = {};
@@ -94,11 +110,14 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     }
     if (!ctrl_if_) {
         ESP_LOGE(kTag, "Audio codec new_i2c_ctrl failed");
-        return false;
+        return fail();
     }
 
     gpio_if_ = audio_codec_new_gpio();
-    assert(gpio_if_);
+    if (!gpio_if_) {
+        ESP_LOGE(kTag, "Audio codec new_gpio failed");
+        return fail();
+    }
 
     // PA pin 自管:codec lib 默认在 enable(true) 内 DAC start → pa_power(ENABLE)
     // → set_mute(false),三步紧挨,DAC 还没稳到零 PA 就上电了 → 喇叭"啵"。
@@ -111,7 +130,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     es_cfg.ctrl_if                   = ctrl_if_;
     es_cfg.gpio_if                   = gpio_if_;
     es_cfg.codec_mode                = ESP_CODEC_DEV_WORK_MODE_BOTH;
-    es_cfg.pa_pin                    = -1;                           // 自管(见上方注释)
+    es_cfg.pa_pin                    = -1;  // 自管(见上方注释)
     es_cfg.use_mclk                  = true;
     es_cfg.hw_gain.pa_voltage        = 5.0;
     es_cfg.hw_gain.codec_dac_voltage = 3.3;
@@ -119,7 +138,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     codec_if_                        = es8311_codec_new(&es_cfg);
     if (!codec_if_) {
         ESP_LOGE(kTag, "ES8311 codec_new failed (I2C error?)");
-        return false;
+        return fail();
     }
 
     // 创建 codec dev handle,但不 open。Lazy 模式:第一次 Play 时才
@@ -133,10 +152,10 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     dev_cfg.codec_if            = codec_if_;
     dev_cfg.data_if             = data_if_;
     dev_                        = esp_codec_dev_new(&dev_cfg);
-    assert(dev_);
-
-    // 仅缓存音量,首次 Lazy open 后再 set 到 codec
-    volume_.store(vol::ToCodec(vol::Get()), std::memory_order_relaxed);
+    if (!dev_) {
+        ESP_LOGE(kTag, "ESP codec_dev_new failed");
+        return fail();
+    }
 
     // 后台 task 等通知,有 PCM 时阻塞写
     shared_mutex_ = xSemaphoreCreateMutex();
@@ -144,16 +163,65 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     notify_       = xSemaphoreCreateBinary();
     if (!shared_mutex_ || !codec_mutex_ || !notify_) {
         ESP_LOGE(kTag, "Audio sync primitive create failed");
-        return false;
+        return fail();
     }
     BaseType_t task_ok = xTaskCreatePinnedToCore(&AudioPlayer::TaskEntry, "audio_play", 6 * 1024, this, 5, &task_, 1);
     if (task_ok != pdPASS) {
         ESP_LOGE(kTag, "Audio task create failed");
-        return false;
+        return fail();
     }
+
+    // 仅缓存音量,首次 Lazy open 后再 set 到 codec。放在同步原语创建之后，
+    // 即使 Init 中途失败，未初始化实例的默认值也保持与 volume_store 默认值一致。
+    volume_.store(vol::ToCodec(vol::GetAlbum()), std::memory_order_relaxed);
 
     initialized_ = true;
     return true;
+}
+
+void AudioPlayer::CleanupInitResources() {
+    if (dev_) {
+        esp_codec_dev_delete(dev_);
+        dev_ = nullptr;
+    }
+    if (codec_if_) {
+        audio_codec_delete_codec_if(codec_if_);
+        codec_if_ = nullptr;
+    }
+    if (gpio_if_) {
+        audio_codec_delete_gpio_if(gpio_if_);
+        gpio_if_ = nullptr;
+    }
+    if (ctrl_if_) {
+        audio_codec_delete_ctrl_if(ctrl_if_);
+        ctrl_if_ = nullptr;
+    }
+    if (data_if_) {
+        audio_codec_delete_data_if(data_if_);
+        data_if_ = nullptr;
+    }
+    if (tx_handle_) {
+        i2s_del_channel(tx_handle_);
+        tx_handle_ = nullptr;
+    }
+    if (rx_handle_) {
+        i2s_del_channel(rx_handle_);
+        rx_handle_ = nullptr;
+    }
+    if (shared_mutex_) {
+        vSemaphoreDelete(shared_mutex_);
+        shared_mutex_ = nullptr;
+    }
+    if (codec_mutex_) {
+        vSemaphoreDelete(codec_mutex_);
+        codec_mutex_ = nullptr;
+    }
+    if (notify_) {
+        vSemaphoreDelete(notify_);
+        notify_ = nullptr;
+    }
+    codec_opened_.store(false, std::memory_order_release);
+    codec_in_progress_.store(false, std::memory_order_release);
 }
 
 bool AudioPlayer::EnsureCodecOpen() {
@@ -206,6 +274,8 @@ void AudioPlayer::Play(const uint8_t* pcm_bytes, size_t len_bytes) {
         return;
     if (len_bytes & 1)
         len_bytes &= ~1;  // 取偶,16bit 对齐
+    if (len_bytes == 0)
+        return;
 
     // 深拷贝(LittleFS 缓冲生命周期短),共享 mutex 保护
     uint8_t* copy = static_cast<uint8_t*>(malloc(len_bytes));
@@ -220,7 +290,7 @@ void AudioPlayer::Play(const uint8_t* pcm_bytes, size_t len_bytes) {
         free(pending_pcm_);
     pending_pcm_ = copy;
     pending_len_ = len_bytes;
-    stop_flag_.store(true, std::memory_order_relaxed);  // 中断当前播放
+    stop_flag_.store(true, std::memory_order_release);  // 中断当前播放
     xSemaphoreGive(shared_mutex_);
     xSemaphoreGive(notify_);
 }
@@ -234,8 +304,10 @@ void AudioPlayer::Stop() {
         pending_pcm_ = nullptr;
         pending_len_ = 0;
     }
-    stop_flag_.store(true, std::memory_order_relaxed);
+    stop_flag_.store(true, std::memory_order_release);
     xSemaphoreGive(shared_mutex_);
+    if (notify_)
+        xSemaphoreGive(notify_);
 }
 
 void AudioPlayer::SetVolume(int v) {
@@ -245,8 +317,7 @@ void AudioPlayer::SetVolume(int v) {
         v = 100;
     volume_.store(v, std::memory_order_relaxed);
     // Codec 还没 lazy open 就只更新缓存,首次 open 时一并 set。
-    if (dev_ && codec_opened_.load(std::memory_order_acquire) &&
-        !chat_active_.load(std::memory_order_relaxed)) {
+    if (dev_ && codec_opened_.load(std::memory_order_acquire) && !chat_active_.load(std::memory_order_relaxed)) {
         xSemaphoreTake(codec_mutex_, portMAX_DELAY);
         ScopedI2cBusLock lock("AudioPlayer::SetVolume");
         if (lock.status() == ESP_OK) {
@@ -287,8 +358,7 @@ void AudioPlayer::SetChatVolume(int codec_volume) {
     if (codec_volume > 100)
         codec_volume = 100;
     chat_volume_.store(codec_volume, std::memory_order_relaxed);
-    if (!dev_ || !codec_opened_.load(std::memory_order_acquire) ||
-        !chat_active_.load(std::memory_order_relaxed))
+    if (!dev_ || !codec_opened_.load(std::memory_order_acquire) || !chat_active_.load(std::memory_order_relaxed))
         return;
     xSemaphoreTake(codec_mutex_, portMAX_DELAY);
     ScopedI2cBusLock lock("AudioPlayer::SetChatVolume");
@@ -315,6 +385,7 @@ bool AudioPlayer::WriteChatPcm(const int16_t* data, size_t samples) {
     if (!EnsureCodecOpen())
         return false;
     xSemaphoreTake(codec_mutex_, portMAX_DELAY);
+    // esp_audio_codec 的 C API 没有 const-correct；当前 ES8311 write path 不会修改输入 PCM。
     const int ret = esp_codec_dev_write(dev_, const_cast<int16_t*>(data), static_cast<int>(samples * sizeof(int16_t)));
     xSemaphoreGive(codec_mutex_);
     return ret == ESP_OK;
@@ -341,7 +412,7 @@ void AudioPlayer::TaskLoop() {
         size_t   len = pending_len_;
         pending_pcm_ = nullptr;
         pending_len_ = 0;
-        stop_flag_.store(false, std::memory_order_relaxed);
+        stop_flag_.store(false, std::memory_order_release);
         xSemaphoreGive(shared_mutex_);
 
         if (!buf || len == 0)
@@ -364,7 +435,7 @@ void AudioPlayer::TaskLoop() {
         // 旧实现 i2s_channel_disable+enable 想“清 DMA”，但 disable 让 DAC 输入断，
         // enable 重启又是一次跳变，自己引发“啵”，反效果。
         bool need_unmute_after = false;
-        if (codec_in_progress_) {
+        if (codec_in_progress_.load(std::memory_order_relaxed)) {
             xSemaphoreTake(codec_mutex_, portMAX_DELAY);
             ScopedI2cBusLock lock("AudioPlayer::switch_mute");
             if (lock.status() == ESP_OK) {
@@ -377,14 +448,14 @@ void AudioPlayer::TaskLoop() {
             // 衰减生效,人耳基本听不到)。
             vTaskDelay(pdMS_TO_TICKS(20));
         }
-        codec_in_progress_ = true;
+        codec_in_progress_.store(true, std::memory_order_relaxed);
 
         // 分块写,每块检查 stop_flag_(用户又切歌时立即跳出)。
         size_t off         = 0;
         bool   wrote_first = false;
         while (off < len) {
             xSemaphoreTake(shared_mutex_, portMAX_DELAY);
-            bool stop = stop_flag_.load(std::memory_order_relaxed);
+            bool stop = stop_flag_.load(std::memory_order_acquire);
             xSemaphoreGive(shared_mutex_);
             if (chat_active_.load(std::memory_order_relaxed))
                 stop = true;
@@ -393,14 +464,18 @@ void AudioPlayer::TaskLoop() {
 
             size_t to_write = (len - off) > kChunk ? kChunk : (len - off);
             xSemaphoreTake(codec_mutex_, portMAX_DELAY);
-            esp_codec_dev_write(dev_, const_cast<uint8_t*>(buf + off), to_write);
+            // esp_audio_codec 的 C API 没有 const-correct；当前 ES8311 write path 不会修改输入 PCM。
+            const int ret = esp_codec_dev_write(dev_, const_cast<uint8_t*>(buf + off), static_cast<int>(to_write));
             xSemaphoreGive(codec_mutex_);
+            if (ret != ESP_CODEC_DEV_OK) {
+                ESP_LOGW(kTag, "esp_codec_dev_write failed ret=0x%x, stop current PCM", ret);
+                break;
+            }
             off += to_write;
 
             // 第一段 PCM 写下去之后再恢复音量:确保新 PCM 已经到达 DAC 才解 mute,
             // 0 → volume_ 的爬坡跟新 PCM 起始波形混在一起,听感上没有"接通"感。
-            if (!wrote_first && need_unmute_after &&
-                !chat_active_.load(std::memory_order_relaxed)) {
+            if (!wrote_first && need_unmute_after && !chat_active_.load(std::memory_order_relaxed)) {
                 xSemaphoreTake(codec_mutex_, portMAX_DELAY);
                 ScopedI2cBusLock lock("AudioPlayer::switch_unmute");
                 if (lock.status() == ESP_OK) {
@@ -412,8 +487,7 @@ void AudioPlayer::TaskLoop() {
         }
         // 兜底:走完整段都没解 mute(比如 PCM < kChunk 又被中断),下次进入
         // 还会再次 set_out_vol(0)→delay→恢复,所以保持 codec_in_progress_=true。
-        if (need_unmute_after && !wrote_first &&
-            !chat_active_.load(std::memory_order_relaxed)) {
+        if (need_unmute_after && !wrote_first && !chat_active_.load(std::memory_order_relaxed)) {
             xSemaphoreTake(codec_mutex_, portMAX_DELAY);
             ScopedI2cBusLock lock("AudioPlayer::switch_unmute_fallback");
             if (lock.status() == ESP_OK) {

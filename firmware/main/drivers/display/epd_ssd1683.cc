@@ -8,9 +8,9 @@
 
 #include <algorithm>
 #include <cstring>
-#include <vector>
 
 #include "config.h"
+#include "epd_utils.h"
 #include "gpio_util.h"
 
 namespace {
@@ -36,125 +36,6 @@ class LvglPortLockGuard {
     bool locked_ = false;
 };
 
-struct R {
-    int x, y, w, h;
-};
-inline int Area(const R& r) {
-    return (r.w > 0 && r.h > 0) ? r.w * r.h : 0;
-}
-inline R Union(const R& a, const R& b) {
-    if (Area(a) == 0)
-        return b;
-    if (Area(b) == 0)
-        return a;
-    int x1 = std::min(a.x, b.x), y1 = std::min(a.y, b.y);
-    int x2 = std::max(a.x + a.w, b.x + b.w);
-    int y2 = std::max(a.y + a.h, b.y + b.h);
-    return {x1, y1, x2 - x1, y2 - y1};
-}
-inline R Clamp(const R& r, int W, int H) {
-    int x1 = std::max(0, r.x), y1 = std::max(0, r.y);
-    int x2 = std::min(W, r.x + r.w), y2 = std::min(H, r.y + r.h);
-    return {x1, y1, x2 - x1, y2 - y1};
-}
-inline R AlignX8(const R& r) {
-    int x0 = (r.x / 8) * 8;
-    int x1 = ((r.x + r.w + 7) / 8) * 8;
-    return {x0, r.y, x1 - x0, r.h};
-}
-inline bool Rgb565IsWhite(uint16_t c, uint8_t thr) {
-    uint8_t r5 = (c >> 11) & 0x1F, g6 = (c >> 5) & 0x3F, b5 = c & 0x1F;
-    uint8_t R8 = (r5 * 255 + 15) / 31, G8 = (g6 * 255 + 31) / 63, B8 = (b5 * 255 + 15) / 31;
-    return ((77 * R8 + 150 * G8 + 29 * B8) >> 8) >= thr;
-}
-inline void SetPx1(uint8_t* fb, int W, int x, int y, bool white) {
-    int      bpr = (W + 7) >> 3;
-    uint32_t i   = (uint32_t)y * bpr + (uint32_t)(x >> 3);
-    uint8_t  m   = 1 << (7 - (x & 7));
-    if (white)
-        fb[i] |= m;
-    else
-        fb[i] &= ~m;
-}
-inline bool GetPx1(const uint8_t* fb, int W, int x, int y) {
-    int      bpr = (W + 7) >> 3;
-    uint32_t i   = (uint32_t)y * bpr + (uint32_t)(x >> 3);
-    uint8_t  m   = 1 << (7 - (x & 7));
-    return (fb[i] & m) != 0;
-}
-// 把外部 1bpp raw 拷进 framebuffer 的指定区域。x=0 且 w 跨满整行时走 memcpy 快路径，
-// 否则逐像素 SetPx1（处理非 8 对齐的 x/w）。仅做拷贝，不维护 dirty/notify，由调用方决定。
-inline void Copy1bppInto(uint8_t* fb, int fb_w, int fb_h, int x, int y, int w, int h, const uint8_t* data) {
-    const int src_bpr = (w + 7) >> 3;
-    const int dst_bpr = (fb_w + 7) >> 3;
-    if (x == 0 && w == fb_w) {
-        for (int row = 0; row < h; row++) {
-            int dy = y + row;
-            if (dy < 0 || dy >= fb_h)
-                continue;
-            memcpy(fb + dy * dst_bpr, data + row * src_bpr, src_bpr);
-        }
-        return;
-    }
-    for (int row = 0; row < h; row++) {
-        int dy = y + row;
-        if (dy < 0 || dy >= fb_h)
-            continue;
-        const uint8_t* src_row = data + row * src_bpr;
-        for (int col = 0; col < w; col++) {
-            int dx = x + col;
-            if (dx < 0 || dx >= fb_w)
-                continue;
-            bool white = (src_row[col >> 3] >> (7 - (col & 7))) & 1;
-            SetPx1(fb, fb_w, dx, dy, white);
-        }
-    }
-}
-inline void Copy1bppFrom(const uint8_t* fb, int fb_w, int fb_h, int x, int y, int w, int h, uint8_t* data) {
-    const int dst_bpr = (w + 7) >> 3;
-    const int src_bpr = (fb_w + 7) >> 3;
-    if (x == 0 && w == fb_w) {
-        for (int row = 0; row < h; row++) {
-            int sy = y + row;
-            if (sy < 0 || sy >= fb_h) {
-                memset(data + row * dst_bpr, 0xFF, dst_bpr);
-                continue;
-            }
-            memcpy(data + row * dst_bpr, fb + sy * src_bpr, src_bpr);
-        }
-        return;
-    }
-    memset(data, 0xFF, dst_bpr * h);
-    for (int row = 0; row < h; row++) {
-        int sy = y + row;
-        if (sy < 0 || sy >= fb_h)
-            continue;
-        uint8_t* dst_row = data + row * dst_bpr;
-        for (int col = 0; col < w; col++) {
-            int sx = x + col;
-            if (sx < 0 || sx >= fb_w)
-                continue;
-            const bool white = GetPx1(fb, fb_w, sx, sy);
-            const uint8_t mask = 1 << (7 - (col & 7));
-            if (white)
-                dst_row[col >> 3] |= mask;
-            else
-                dst_row[col >> 3] &= ~mask;
-        }
-    }
-}
-inline void Pack1bppTo2683(uint8_t in, uint8_t& o0, uint8_t& o1) {
-    uint8_t b0 = 0, b1 = 0;
-    for (uint8_t i = 0; i < 8; ++i) {
-        uint8_t bit = (in >> (7 - i)) & 1;
-        if (i < 4)
-            b0 |= bit << (8 - 2 * (i + 1));
-        else
-            b1 |= bit << (14 - 2 * i);
-    }
-    o0 = b0;
-    o1 = b1;
-}
 }  // namespace
 
 EpdSsd1683::EpdSsd1683() {
@@ -168,6 +49,45 @@ EpdSsd1683::EpdSsd1683() {
 }
 
 EpdSsd1683::~EpdSsd1683() {
+    if (refresh_task_) {
+        xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+        refresh_task_stop_ = true;
+        xSemaphoreGive(dirty_mutex_);
+        xTaskNotifyGive(refresh_task_);
+        if (refresh_exit_)
+            xSemaphoreTake(refresh_exit_, portMAX_DELAY);
+        refresh_task_ = nullptr;
+    }
+    LvglPortLockGuard lvgl_lock;
+    if (lvgl_display_ && lvgl_lock.locked()) {
+        lv_display_delete(lvgl_display_);
+        lvgl_display_ = nullptr;
+    }
+    if (spi_ && spi_inited_) {
+        ESP_ERROR_CHECK_WITHOUT_ABORT(spi_bus_remove_device(spi_));
+        spi_ = nullptr;
+    }
+    if (spi_inited_) {
+        esp_err_t free_ret = spi_bus_free(spi_host_);
+        if (free_ret != ESP_OK && free_ret != ESP_ERR_INVALID_STATE) {
+            ESP_ERROR_CHECK_WITHOUT_ABORT(free_ret);
+        }
+        spi_inited_ = false;
+    }
+    if (dirty_mutex_) {
+        vSemaphoreDelete(dirty_mutex_);
+        dirty_mutex_ = nullptr;
+    }
+    if (refresh_exit_) {
+        vSemaphoreDelete(refresh_exit_);
+        refresh_exit_ = nullptr;
+    }
+    heap_caps_free(buffer_);
+    heap_caps_free(prev_buffer_);
+    heap_caps_free(tx_buf_);
+    heap_caps_free(prev_tx_buf_);
+    heap_caps_free(lvgl_render_buf_);
+    buffer_ = prev_buffer_ = tx_buf_ = prev_tx_buf_ = lvgl_render_buf_ = nullptr;
 }
 
 void EpdSsd1683::Init() {
@@ -192,17 +112,25 @@ void EpdSsd1683::Init() {
     buffer_      = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
     prev_buffer_ = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
     tx_buf_      = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
-    if (!buffer_ || !prev_buffer_ || !tx_buf_) {
+    prev_tx_buf_ = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
+    if (!buffer_ || !prev_buffer_ || !tx_buf_ || !prev_tx_buf_) {
         ESP_LOGE(kTag, "Failed to allocate framebuffers; restarting");
         esp_restart();
     }
     memset(buffer_, 0xFF, kBufferLen);
     memset(prev_buffer_, 0xFF, kBufferLen);
     memset(tx_buf_, 0xFF, kBufferLen);
+    memset(prev_tx_buf_, 0xFF, kBufferLen);
+    epd_line_.resize(((kWidth + 7) >> 3) * 2);
 
     dirty_mutex_ = xSemaphoreCreateMutex();
     if (!dirty_mutex_) {
         ESP_LOGE(kTag, "Failed to create dirty_mutex; restarting");
+        esp_restart();
+    }
+    refresh_exit_ = xSemaphoreCreateBinary();
+    if (!refresh_exit_) {
+        ESP_LOGE(kTag, "Failed to create refresh_exit; restarting");
         esp_restart();
     }
 
@@ -214,13 +142,14 @@ void EpdSsd1683::Init() {
     lv_display_set_flush_cb(lvgl_display_, LvglFlushCb);
     lv_display_set_user_data(lvgl_display_, this);
 
-    constexpr int kRender = kWidth * kHeight * 2;
-    auto*         rb      = (uint8_t*)heap_caps_malloc(kRender, MALLOC_CAP_SPIRAM);
-    if (!rb) {
+    constexpr int kRenderRows = 40;
+    constexpr int kRender     = kWidth * kRenderRows * 2;
+    lvgl_render_buf_      = (uint8_t*)heap_caps_malloc(kRender, MALLOC_CAP_SPIRAM);
+    if (!lvgl_render_buf_) {
         ESP_LOGE(kTag, "Failed to allocate render buffer; restarting");
         esp_restart();
     }
-    lv_display_set_buffers(lvgl_display_, rb, NULL, kRender, LV_DISPLAY_RENDER_MODE_PARTIAL);
+    lv_display_set_buffers(lvgl_display_, lvgl_render_buf_, NULL, kRender, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     StartRefreshTask();
 }
@@ -246,19 +175,18 @@ void EpdSsd1683::LvglFlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t*
     for (int yy = 0; yy < h; ++yy) {
         const uint16_t* row = src + (yy + (y1 - area->y1)) * sw + (x1 - area->x1);
         for (int xx = 0; xx < w; ++xx) {
-            bool white = Rgb565IsWhite(row[xx], self->bw_threshold_);
-            SetPx1(self->buffer_, kWidth, x1 + xx, y1 + yy, white);
+            bool white = epd::Rgb565IsWhite(row[xx], self->bw_threshold_);
+            epd::SetPx1(self->buffer_, kWidth, x1 + xx, y1 + yy, white);
         }
     }
 
-    R r                    = {x1, y1, w, h};
-    r                      = Clamp(AlignX8(r), kWidth, kHeight);
+    epd::Rect r            = {x1, y1, w, h};
+    r                      = epd::Clamp(epd::AlignX8(r), kWidth, kHeight);
     bool         do_notify = false;
     TaskHandle_t task      = nullptr;
-    if (Area(r) > 0) {
-        R cur                  = {self->dirty_.x, self->dirty_.y, self->dirty_.w, self->dirty_.h};
-        R u                    = Union(cur, r);
-        self->dirty_           = {u.x, u.y, u.w, u.h};
+    if (epd::Area(r) > 0) {
+        epd::Rect u            = epd::Union(self->dirty_, r);
+        self->dirty_           = u;
         self->pending_         = true;
         self->last_flush_tick_ = xTaskGetTickCount();
         // flush_cb notify refresh_task。LVGL 整屏 invalidate 可能分多个 chunk
@@ -315,12 +243,11 @@ void EpdSsd1683::WriteRaw1bpp(int x, int y, int w, int h, const uint8_t* data, s
     if (len < static_cast<size_t>(src_bpr * h))
         return;
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-    Copy1bppInto(buffer_, kWidth, kHeight, x, y, w, h, data);
-    R r = Clamp(AlignX8({x, y, w, h}), kWidth, kHeight);
-    if (Area(r) > 0) {
-        R cur            = {dirty_.x, dirty_.y, dirty_.w, dirty_.h};
-        R u              = Union(cur, r);
-        dirty_           = {u.x, u.y, u.w, u.h};
+    epd::Copy1bppInto(buffer_, kWidth, kHeight, x, y, w, h, data);
+    epd::Rect r = epd::Clamp(epd::AlignX8({x, y, w, h}), kWidth, kHeight);
+    if (epd::Area(r) > 0) {
+        epd::Rect u      = epd::Union(dirty_, r);
+        dirty_           = u;
         pending_         = true;
         last_flush_tick_ = xTaskGetTickCount();
         if (refresh_task_)
@@ -337,8 +264,8 @@ void EpdSsd1683::SeedPreviousRaw1bpp(int x, int y, int w, int h, const uint8_t* 
         return;
 
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-    Copy1bppInto(buffer_, kWidth, kHeight, x, y, w, h, data);
-    Copy1bppInto(prev_buffer_, kWidth, kHeight, x, y, w, h, data);
+    epd::Copy1bppInto(buffer_, kWidth, kHeight, x, y, w, h, data);
+    epd::Copy1bppInto(prev_buffer_, kWidth, kHeight, x, y, w, h, data);
     prev_buffer_synced_ = true;
     xSemaphoreGive(dirty_mutex_);
 }
@@ -353,29 +280,11 @@ bool EpdSsd1683::ReadPreviousRaw1bpp(int x, int y, int w, int h, uint8_t* out, s
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
     const bool synced = prev_buffer_synced_;
     if (synced) {
-        Copy1bppFrom(prev_buffer_, kWidth, kHeight, x, y, w, h, out);
+        epd::Copy1bppFrom(prev_buffer_, kWidth, kHeight, x, y, w, h, out);
     }
     xSemaphoreGive(dirty_mutex_);
     return synced;
 }
-
-namespace {
-struct DiffR {
-    size_t bits;
-    float  ratio;
-};
-DiffR Diff(const uint8_t* a, const uint8_t* b, size_t n) {
-    DiffR r{0, 0};
-    for (size_t i = 0; i < n; ++i) {
-        uint8_t x = a[i] ^ b[i];
-        if (x)
-            r.bits += __builtin_popcount(x);
-    }
-    r.ratio = (float)r.bits / (n * 8);
-    return r;
-}
-
-}  // namespace
 
 void EpdSsd1683::StartRefreshTask() {
     BaseType_t ok = xTaskCreatePinnedToCore(RefreshTaskEntry, "epd_refresh", 8192, this, 3, &refresh_task_, 1);
@@ -395,6 +304,12 @@ void EpdSsd1683::RefreshTaskLoop() {
         // 第一次阻塞等 notify。来源:flush_cb / RequestUrgentXxxRefresh / 周期采样(已废)。
         if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY) == 0)
             continue;
+
+        xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+        bool should_stop = refresh_task_stop_;
+        xSemaphoreGive(dirty_mutex_);
+        if (should_stop)
+            break;
 
         // Sliding debounce：在 50 ms 窗口内吸收所有新 notify，每来一次重置窗口，
         // 直到 50 ms 没有新 notify 才进入真正的刷新。这一步把 LVGL 把整屏
@@ -416,10 +331,16 @@ void EpdSsd1683::RefreshTaskLoop() {
         // read-and-clear at start:防止 refresh_task 跑刷新期间又有
         // RequestUrgentXxxRefresh 设 flag 时,本轮完成时把它误清。
         xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-        bool urgent            = urgent_refresh_;
-        urgent_refresh_        = false;
-        bool force_full        = force_full_refresh_;
-        force_full_refresh_    = false;
+        should_stop = refresh_task_stop_;
+        if (should_stop) {
+            refresh_in_progress_ = false;
+            xSemaphoreGive(dirty_mutex_);
+            break;
+        }
+        bool urgent         = urgent_refresh_;
+        urgent_refresh_     = false;
+        bool force_full     = force_full_refresh_;
+        force_full_refresh_ = false;
         if (pending_) {
             pending_ = false;
             dirty_   = {0, 0, 0, 0};
@@ -440,10 +361,12 @@ void EpdSsd1683::RefreshTaskLoop() {
 
         xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
         memcpy(tx_buf_, buffer_, kBufferLen);
+        memcpy(prev_tx_buf_, prev_buffer_, kBufferLen);
+        bool prev_synced = prev_buffer_synced_;
         xSemaphoreGive(dirty_mutex_);
         last_sample_tick_ = xTaskGetTickCount();
 
-        DiffR d = Diff(prev_buffer_, tx_buf_, kBufferLen);
+        epd::DiffResult d = epd::Diff(prev_tx_buf_, tx_buf_, kBufferLen);
         if (d.bits == 0 && !force_full) {
             xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
             refresh_in_progress_ = false;
@@ -459,10 +382,8 @@ void EpdSsd1683::RefreshTaskLoop() {
         // 2) partial 路径靠 EpdInit 把 EPD 拉回默认/partial 模式,否则上一轮
         //    full 留下的 0xA5 LUT 会让本轮 partial 视觉上变成全刷闪一下。
         constexpr float kForceFullDiffRatio = 0.30f;
-        bool do_full = force_full ||
-                       partial_since_full_ >= kPartialBeforeFullCleanup ||
-                       d.ratio >= kForceFullDiffRatio ||
-                       !prev_buffer_synced_;
+        bool            do_full             = force_full || partial_since_full_ >= kPartialBeforeFullCleanup ||
+                       d.ratio >= kForceFullDiffRatio || !prev_synced;
 
         if (do_full) {
             EpdInit();
@@ -478,15 +399,18 @@ void EpdSsd1683::RefreshTaskLoop() {
             EpdInit();
             EpdDisplayPartial();
         }
-        memcpy(prev_buffer_, tx_buf_, kBufferLen);
-        prev_buffer_synced_ = true;
 
         // force_full_refresh_ 已在 start 处清(read-and-clear)。这里不要重设,
         // 否则会覆盖全刷期间又有新 RequestUrgentFullRefresh 设的 true。
         xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+        memcpy(prev_buffer_, tx_buf_, kBufferLen);
+        prev_buffer_synced_  = true;
         refresh_in_progress_ = false;
         xSemaphoreGive(dirty_mutex_);
     }
+    if (refresh_exit_)
+        xSemaphoreGive(refresh_exit_);
+    vTaskDelete(nullptr);
 }
 
 // SPI 反复 free + reinit 是为了切换 DI 数据线方向(EPD 单数据线复用 MOSI/MISO):
@@ -550,6 +474,9 @@ void EpdSsd1683::SpiPortRxInit() {
 }
 
 uint8_t EpdSsd1683::EpdRecvData() {
+    // SPI RX/TX 模式切换会 remove/free/reinit bus。当前只允许 refresh_task
+    // 在刷新序列里调用,避免其它任务同时操作同一组 EPD 引脚。
+    configASSERT(refresh_task_ == nullptr || xTaskGetCurrentTaskHandle() == refresh_task_);
     SpiPortRxInit();
     uint8_t           rx = 0;
     spi_transaction_t t  = {};
@@ -695,9 +622,9 @@ void EpdSsd1683::ApplyTemperatureBoost() {
 }
 
 void EpdSsd1683::EpdDisplayFull() {
-    int                  bpr     = (kWidth + 7) >> 3;
-    int                  bpr_out = bpr * 2;
-    std::vector<uint8_t> line(bpr_out);
+    int      bpr     = (kWidth + 7) >> 3;
+    int      bpr_out = bpr * 2;
+    uint8_t* line    = epd_line_.data();
 
     ApplyTemperatureBoost();
     EpdSendCommand(0xA5);  // Master Activation:加载 LUT(full 模式必需)
@@ -707,22 +634,22 @@ void EpdSsd1683::EpdDisplayFull() {
     EpdSendCommand(0x10);
     for (int y = 0; y < kHeight; ++y) {
         const uint8_t* src = tx_buf_ + y * bpr;
-        uint8_t*       dst = line.data();
+        uint8_t*       dst = line;
         for (int xb = 0; xb < bpr; ++xb) {
             uint8_t a, b;
-            Pack1bppTo2683(src[xb], a, b);
+            epd::Pack1bppTo2683(src[xb], a, b);
             *dst++ = a;
             *dst++ = b;
         }
-        WriteBytes(line.data(), bpr_out);
+        WriteBytes(line, bpr_out);
     }
     EpdTurnOnDisplay();
 }
 
 void EpdSsd1683::EpdDisplayPartial() {
-    int                  bpr     = (kWidth + 7) >> 3;
-    int                  bpr_out = bpr * 2;
-    std::vector<uint8_t> line(bpr_out);
+    int      bpr     = (kWidth + 7) >> 3;
+    int      bpr_out = bpr * 2;
+    uint8_t* line    = epd_line_.data();
 
     // 不要重写 booster!
     // 之前这里调了 ApplyTemperatureBoost 想"低温补偿",但实测每次 partial 前
@@ -734,7 +661,7 @@ void EpdSsd1683::EpdDisplayPartial() {
     EpdSendCommand(0x10);
     ReadBusy();  // 跟参考实现对齐:0x10 之后等 BUSY 回 HIGH
     for (int y = 0; y < kHeight; ++y) {
-        const uint8_t* prev = prev_buffer_ + y * bpr;
+        const uint8_t* prev = prev_tx_buf_ + y * bpr;
         const uint8_t* now  = tx_buf_ + y * bpr;
         for (int xb = 0; xb < bpr; ++xb) {
             uint8_t  b1 = prev[xb], b2 = now[xb];
@@ -747,7 +674,7 @@ void EpdSsd1683::EpdDisplayPartial() {
             line[2 * xb + 0] = r >> 8;
             line[2 * xb + 1] = r & 0xFF;
         }
-        WriteBytes(line.data(), bpr_out);
+        WriteBytes(line, bpr_out);
     }
     EpdTurnOnDisplay();
 }

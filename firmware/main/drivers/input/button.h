@@ -25,12 +25,23 @@ class Button {
     gpio_num_t      gpio_num_      = GPIO_NUM_NC;
     button_handle_t button_handle_ = nullptr;
 
+    bool RegisterCallback(button_event_t event, button_event_args_t* args, button_cb_t cb, void* user_data,
+                          bool& registered);
+
     std::function<void()> on_press_down_;
     std::function<void()> on_press_up_;
     std::function<void()> on_long_press_;
     std::function<void()> on_click_;
     std::function<void()> on_double_click_;
     std::function<void()> on_multiple_click_;
+
+    bool    press_down_registered_     = false;
+    bool    press_up_registered_       = false;
+    bool    long_press_registered_     = false;
+    bool    click_registered_          = false;
+    bool    double_click_registered_   = false;
+    bool    multiple_click_registered_ = false;
+    uint8_t multiple_click_count_      = 0;
 };
 
 #if CONFIG_SOC_ADC_SUPPORTED

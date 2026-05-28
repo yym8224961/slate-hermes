@@ -3,8 +3,8 @@
 #include <esp_log.h>
 
 #include <algorithm>
-#include <cstdio>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <string>
 
@@ -16,7 +16,7 @@
 #include "xiaozhi_chat_service.h"
 
 namespace {
-constexpr char kTag[] = "ChatScene";
+constexpr char kTag[]                    = "ChatScene";
 constexpr int  kStandbyBottomHintReserve = 46;
 
 int RootCenterYOffset(int y) {
@@ -31,11 +31,11 @@ std::string TrimForScreen(const std::string& text, size_t max_len) {
     if (max_len == 0 || text.empty())
         return "";
 
-    size_t pos = 0;
+    size_t pos   = 0;
     size_t count = 0;
     while (pos < text.size() && count < max_len) {
-        const auto ch = static_cast<unsigned char>(text[pos]);
-        size_t step = 1;
+        const auto ch   = static_cast<unsigned char>(text[pos]);
+        size_t     step = 1;
         if ((ch & 0x80) == 0) {
             step = 1;
         } else if ((ch & 0xE0) == 0xC0) {
@@ -72,7 +72,7 @@ bool DecodeUtf8Codepoint(const std::string& text, size_t pos, uint32_t& cp, size
 
     const auto ch = static_cast<unsigned char>(text[pos]);
     if ((ch & 0x80) == 0) {
-        cp = ch;
+        cp   = ch;
         step = 1;
         return true;
     }
@@ -80,13 +80,13 @@ bool DecodeUtf8Codepoint(const std::string& text, size_t pos, uint32_t& cp, size
     uint32_t value = 0;
     if ((ch & 0xE0) == 0xC0) {
         value = ch & 0x1F;
-        step = 2;
+        step  = 2;
     } else if ((ch & 0xF0) == 0xE0) {
         value = ch & 0x0F;
-        step = 3;
+        step  = 3;
     } else if ((ch & 0xF8) == 0xF0) {
         value = ch & 0x07;
-        step = 4;
+        step  = 4;
     } else {
         step = 1;
         return false;
@@ -105,11 +105,8 @@ bool DecodeUtf8Codepoint(const std::string& text, size_t pos, uint32_t& cp, size
         value = (value << 6) | (cont & 0x3F);
     }
 
-    if ((step == 2 && value < 0x80) ||
-        (step == 3 && value < 0x800) ||
-        (step == 4 && value < 0x10000) ||
-        value > 0x10FFFF ||
-        (value >= 0xD800 && value <= 0xDFFF)) {
+    if ((step == 2 && value < 0x80) || (step == 3 && value < 0x800) || (step == 4 && value < 0x10000) ||
+        value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) {
         step = 1;
         return false;
     }
@@ -140,8 +137,8 @@ std::string SanitizeForScreen(const std::string& text) {
     bool previous_space = false;
 
     for (size_t pos = 0; pos < text.size();) {
-        uint32_t cp = 0;
-        size_t step = 1;
+        uint32_t cp   = 0;
+        size_t   step = 1;
         if (!DecodeUtf8Codepoint(text, pos, cp, step)) {
             pos += step;
             continue;
@@ -281,21 +278,32 @@ void StyleBubble(lv_obj_t* bubble) {
 }
 }  // namespace
 
+void ChatScene::EnsureServiceStarted(SceneContext& ctx) {
+    if (service_entered_)
+        return;
+    if (!xiaozhi::ChatService::Get().Start(ctx.audio)) {
+        if (!root_ || !status_bar_ || !hint_label_)
+            return;
+        status_bar_->SetCaption("小智异常");
+        status_bar_->SetCaptionIcon(FONT_AWESOME_SAD);
+        HideContentViews();
+        RenderSystemMessage("小智音频初始化失败\n\n请稍后重试或重启设备", false, "");
+        lv_obj_clear_flag(hint_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_label_set_text(hint_label_, "双击确认 返回");
+        return;
+    }
+    xiaozhi::ChatService::Get().EnterMode();
+    service_entered_ = true;
+}
+
 void ChatScene::OnEnter(SceneContext& ctx) {
     if (!ctx.epd->Lock(2000)) {
         ESP_LOGW(kTag, "EPD lock timeout in OnEnter");
+        EnsureServiceStarted(ctx);
         return;
     }
 
-    auto* screen = lv_screen_active();
-    root_        = lv_obj_create(screen);
-    lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_pos(root_, 0, 0);
-    lv_obj_set_style_bg_color(root_, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(root_, 0, 0);
-    lv_obj_set_style_border_width(root_, 0, 0);
-    lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
+    root_ = CreateFullscreenRoot();
 
     status_bar_ = std::make_unique<StatusBar>(root_);
     status_bar_->SetCaption("小智AI");
@@ -366,16 +374,9 @@ void ChatScene::OnEnter(SceneContext& ctx) {
     lv_obj_set_width(hint_label_, LV_HOR_RES - 16);
     lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -10);
 
-    RefreshStatus(ctx);
-    if (!xiaozhi::ChatService::Get().Start(ctx.audio)) {
-        status_bar_->SetCaption("小智异常");
-        status_bar_->SetCaptionIcon(FONT_AWESOME_SAD);
-        HideContentViews();
-        RenderSystemMessage("小智音频初始化失败\n\n请稍后重试或重启设备", false, "");
-        lv_obj_clear_flag(hint_label_, LV_OBJ_FLAG_HIDDEN);
-        lv_label_set_text(hint_label_, "双击确认 返回");
-    } else {
-        xiaozhi::ChatService::Get().EnterMode();
+    RefreshStatusBarFromSensors(ctx, *status_bar_);
+    EnsureServiceStarted(ctx);
+    if (service_entered_) {
         RenderContent();
     }
 
@@ -385,27 +386,28 @@ void ChatScene::OnEnter(SceneContext& ctx) {
 }
 
 void ChatScene::OnExit(SceneContext& ctx) {
-    if (!ctx.epd->Lock(500))
-        return;
-    status_bar_.reset();
-    if (root_) {
-        lv_obj_del(root_);
-        root_                 = nullptr;
-        standby_icon_label_   = nullptr;
-        standby_body_label_   = nullptr;
-        system_label_         = nullptr;
-        code_label_           = nullptr;
-        chat_area_            = nullptr;
-        chat_content_         = nullptr;
-        chat_empty_label_     = nullptr;
-        hint_label_           = nullptr;
+    DestroyRoot(ctx, root_, [this]() {
+        status_bar_.reset();
+        standby_icon_label_     = nullptr;
+        standby_body_label_     = nullptr;
+        system_label_           = nullptr;
+        code_label_             = nullptr;
+        chat_area_              = nullptr;
+        chat_content_           = nullptr;
+        chat_empty_label_       = nullptr;
+        hint_label_             = nullptr;
         rendered_message_count_ = 0;
         rendered_messages_key_.clear();
+    });
+    if (service_entered_) {
+        xiaozhi::ChatService::Get().LeaveMode();
+        service_entered_ = false;
     }
-    ctx.epd->Unlock();
 }
 
 void ChatScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
+    if (!root_)
+        return;
     switch (e.kind) {
         case UiEventKind::kButtonShort:
             switch (e.u.button.btn) {
@@ -439,8 +441,13 @@ void ChatScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         case UiEventKind::kBatteryUpdated:
         case UiEventKind::kWifiStateChanged:
         case UiEventKind::kMinuteTick:
-            RefreshStatus(ctx);
-            Render(ctx);
+            if (root_) {
+                SyncRender(ctx, [this, &ctx]() {
+                    if (status_bar_)
+                        RefreshStatusBarFromSensors(ctx, *status_bar_);
+                    RenderContent();
+                });
+            }
             break;
         default:
             break;
@@ -448,19 +455,13 @@ void ChatScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
 }
 
 void ChatScene::Render(SceneContext& ctx, bool full) {
-    if (!ctx.epd || !ctx.epd->Lock(500))
+    if (!root_)
         return;
-    RenderContent();
-    lv_refr_now(NULL);
-    ctx.epd->Unlock();
-    if (full)
-        ctx.epd->RequestUrgentFullRefresh();
-    else
-        ctx.epd->RequestUrgentPartialRefresh();
+    SyncRender(ctx, [this]() { RenderContent(); }, full);
 }
 
 void ChatScene::RenderContent() {
-    if (!status_bar_ || !system_label_ || !code_label_ || !hint_label_)
+    if (!root_ || !status_bar_ || !system_label_ || !code_label_ || !hint_label_)
         return;
 
     const auto snap = xiaozhi::ChatService::Get().Snapshot();
@@ -468,7 +469,7 @@ void ChatScene::RenderContent() {
     HideContentViews();
 
     if (snap.alert_active) {
-        const std::string title = DisplayText(snap.alert_status.empty() ? "小智提醒" : snap.alert_status);
+        const std::string title   = DisplayText(snap.alert_status.empty() ? "小智提醒" : snap.alert_status);
         const std::string message = TrimForScreen(SanitizeForScreen(snap.alert_message), 72);
         RenderSystemMessage(title + (message.empty() ? "" : "\n\n" + message), false, "");
     } else {
@@ -477,9 +478,9 @@ void ChatScene::RenderContent() {
                 RenderSystemMessage("正在获取小智配置...", false, "");
                 break;
             case xiaozhi::ChatState::kAwaitingActivation:
-                RenderSystemMessage(snap.activation_message.empty() ? "请在小智控制台输入激活码" : snap.activation_message,
-                                    true,
-                                    snap.activation_code);
+                RenderSystemMessage(
+                    snap.activation_message.empty() ? "请在小智控制台输入激活码" : snap.activation_message, true,
+                    snap.activation_code);
                 break;
             case xiaozhi::ChatState::kReadyIdle:
                 lv_obj_clear_flag(standby_icon_label_, LV_OBJ_FLAG_HIDDEN);
@@ -530,11 +531,10 @@ void ChatScene::RenderSystemMessage(const std::string& text, bool show_code, con
 
 void ChatScene::RenderChatMessages(const xiaozhi::ChatSnapshot& snap) {
     lv_obj_clear_flag(chat_area_, LV_OBJ_FLAG_HIDDEN);
-    const bool state_changed = rendered_state_ != snap.state;
-    const std::string messages_key = MessagesKey(snap);
-    const bool should_rebuild = state_changed ||
-                                rendered_message_count_ != snap.messages.size() ||
-                                rendered_messages_key_ != messages_key;
+    const bool        state_changed = rendered_state_ != snap.state;
+    const std::string messages_key  = MessagesKey(snap);
+    const bool        should_rebuild =
+        state_changed || rendered_message_count_ != snap.messages.size() || rendered_messages_key_ != messages_key;
     if (state_changed && snap.state == xiaozhi::ChatState::kListening && snap.messages.empty())
         ClearChatMessages();
 
@@ -543,7 +543,7 @@ void ChatScene::RenderChatMessages(const xiaozhi::ChatSnapshot& snap) {
         for (const auto& msg : snap.messages)
             AppendChatBubble(msg.role, msg.text);
         rendered_message_count_ = snap.messages.size();
-        rendered_messages_key_ = messages_key;
+        rendered_messages_key_  = messages_key;
     }
 
     if (chat_content_ && lv_obj_get_child_cnt(chat_content_) == 0)
@@ -574,9 +574,9 @@ void ChatScene::AppendChatBubble(const std::string& role, const std::string& tex
     if (display_text.empty())
         return;
 
-    const bool user = role == "user";
+    const bool user   = role == "user";
     const bool system = role == "system";
-    lv_obj_t* row = lv_obj_create(chat_content_);
+    lv_obj_t*  row    = lv_obj_create(chat_content_);
     lv_obj_set_width(row, LV_HOR_RES);
     lv_obj_set_height(row, LV_SIZE_CONTENT);
     lv_obj_set_style_flex_grow(row, 0, 0);
@@ -609,8 +609,8 @@ void ChatScene::LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::strin
 
     constexpr int kMaxTextW = 308;
     constexpr int kMinTextW = 36;
-    const int measured = lv_obj_get_width(label);
-    const int text_w = std::clamp(measured, kMinTextW, kMaxTextW);
+    const int     measured  = lv_obj_get_width(label);
+    const int     text_w    = std::clamp(measured, kMinTextW, kMaxTextW);
     if (measured > kMaxTextW) {
         lv_obj_set_width(label, kMaxTextW);
         lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
@@ -631,21 +631,5 @@ void ChatScene::UpdateStatusBarTitle(const xiaozhi::ChatSnapshot& snap) {
         status_bar_->SetCaptionIcon(nullptr);
     } else {
         status_bar_->SetCaptionIcon(EmotionIcon(snap.emotion, snap.state));
-    }
-}
-
-void ChatScene::RefreshStatus(SceneContext& ctx) {
-    if (!status_bar_)
-        return;
-    if (ctx.wifi_connected && ctx.wifi_rssi)
-        status_bar_->SetWifi(ctx.wifi_connected(), ctx.wifi_rssi());
-    if (ctx.read_charge) {
-        const auto snap = ctx.read_charge();
-        int        pct  = -1;
-        if (!snap.no_battery && ctx.read_battery) {
-            int mv = 0;
-            ctx.read_battery(&mv, &pct);
-        }
-        status_bar_->SetBattery(pct, snap.charging, snap.full);
     }
 }

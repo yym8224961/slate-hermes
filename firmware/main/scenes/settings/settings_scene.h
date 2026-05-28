@@ -23,6 +23,9 @@ class SettingsScene : public Scene {
     const char* Name() const override {
         return "Settings";
     }
+    bool IsSettings() const override {
+        return true;
+    }
     void      OnEnter(SceneContext& ctx) override;
     void      OnExit(SceneContext& ctx) override;
     void      OnEvent(SceneContext& ctx, const UiEvent& e) override;
@@ -31,8 +34,6 @@ class SettingsScene : public Scene {
     }
 
    private:
-    void SyncRender(SceneContext& ctx);
-
     lv_obj_t*                  root_ = nullptr;
     std::unique_ptr<StatusBar> status_bar_;
     std::unique_ptr<MenuList>  menu_;

@@ -46,10 +46,13 @@ class SceneStack {
     void Dispatch(const UiEvent& e);
 
    private:
-    enum class PendingKind { kNone, kPush, kPop, kReplace };
+    enum class PendingKind { kPush, kPop, kReplace };
+    struct PendingOp {
+        PendingKind            kind;
+        std::unique_ptr<Scene> scene;
+    };
 
     SceneContext                        ctx_;
     std::vector<std::unique_ptr<Scene>> stack_;
-    PendingKind                         pending_kind_ = PendingKind::kNone;
-    std::unique_ptr<Scene>              pending_scene_;
+    std::vector<PendingOp>              pending_ops_;
 };

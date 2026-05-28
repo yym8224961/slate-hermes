@@ -5,6 +5,7 @@ set(SOURCES
     "app/boot_mode.cc"
     "app/event_bus.cc"
     "app/power_state.cc"
+    "app/scene.cc"
     "app/scene_stack.cc"
     "app/sleep_manager.cc"
     "app/time_tick.cc"
@@ -12,12 +13,13 @@ set(SOURCES
     "bsp/board.cc"
     "bsp/board_power.cc"
 
-    "drivers/button.cc"
-    "drivers/charge_status.cc"
-    "drivers/i2c_power_hook.cc"
-    "drivers/i2c_device.cc"
-    "drivers/i2c_bus_lock.cc"
+    "drivers/input/button.cc"
+    "drivers/power/charge_status.cc"
+    "drivers/bus/i2c_power_hook.cc"
+    "drivers/bus/i2c_device.cc"
+    "drivers/bus/i2c_bus_lock.cc"
     "drivers/display/epd_ssd1683.cc"
+    "drivers/display/epd_utils.cc"
     "drivers/audio/audio_player.cc"
     "drivers/audio/volume_store.cc"
 
@@ -57,6 +59,8 @@ set(SOURCES
 
     "generated/fonts/source_han_sans_sc_regular_slim.c"
     "generated/fonts/fusion_pixel_12.c"
+    "generated/fonts/font_awesome_14_1.c"
+    "generated/fonts/font_awesome_30_1.c"
 )
 
 set(INCLUDE_DIRS
@@ -66,7 +70,10 @@ set(INCLUDE_DIRS
     "chat"
     "drivers"
     "drivers/audio"
+    "drivers/bus"
     "drivers/display"
+    "drivers/input"
+    "drivers/power"
     "generated"
     "generated/fonts"
     "network"
@@ -78,13 +85,13 @@ set(INCLUDE_DIRS
     "scenes/settings"
     "storage"
     "ui"
+    "utils"
 )
 
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
     PRIV_REQUIRES
-        xiaozhi-fonts
         78__esp-ml307
         espressif__esp_audio_codec
         espressif__esp_audio_effects

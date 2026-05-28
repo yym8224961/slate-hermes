@@ -10,6 +10,7 @@
 #include <nvs_flash.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <utility>
@@ -22,9 +23,10 @@ constexpr int      BIT_CONNECTED = BIT0;
 constexpr int      BIT_FAIL      = BIT1;
 
 // 慢速重连指数退避序列(秒)。fast retry 5 次用完后,从 idx=0 开始排队 scan,
-// 每次失败 idx++ 直到上限(300s/5min)。IP_GOT_IP 后回 0。
-constexpr uint32_t kBackoffSec[] = {10, 20, 40, 80, 120, 120};
-constexpr size_t   kBackoffSize  = sizeof(kBackoffSec) / sizeof(kBackoffSec[0]);
+// 每次失败 idx++ 直到上限(120s)。IP_GOT_IP 后回 0。
+constexpr uint32_t kBackoffSec[]       = {10, 20, 40, 80, 120, 120};
+constexpr size_t   kBackoffSize        = sizeof(kBackoffSec) / sizeof(kBackoffSec[0]);
+constexpr uint16_t kMaxSlowScanRecords = 20;
 
 size_t BoundedSsidLen(const uint8_t ssid[32]) {
     size_t len = 0;
@@ -37,6 +39,30 @@ bool SsidEquals(const uint8_t lhs[32], const uint8_t rhs[32]) {
     const size_t lhs_len = BoundedSsidLen(lhs);
     const size_t rhs_len = BoundedSsidLen(rhs);
     return lhs_len == rhs_len && std::memcmp(lhs, rhs, lhs_len) == 0;
+}
+
+bool FillStaConfig(wifi_config_t& wc, const std::string& ssid, const std::string& password, std::string* reason) {
+    if (ssid.empty()) {
+        if (reason)
+            *reason = "SSID 不能为空";
+        return false;
+    }
+    if (ssid.size() > sizeof(wc.sta.ssid)) {
+        if (reason)
+            *reason = "SSID 过长";
+        return false;
+    }
+    if (password.size() >= sizeof(wc.sta.password)) {
+        if (reason)
+            *reason = "Wi-Fi 密码过长";
+        return false;
+    }
+    std::memcpy(wc.sta.ssid, ssid.data(), ssid.size());
+    std::memcpy(wc.sta.password, password.data(), password.size());
+    wc.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    wc.sta.pmf_cfg.capable    = true;
+    wc.sta.pmf_cfg.required   = false;
+    return true;
 }
 }  // namespace
 
@@ -55,14 +81,21 @@ void Wifi::EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data
         // 注意:WIFI_EVENT_STA_START 不在这里 esp_wifi_connect。Connect/TryConnect
         // 走显式触发,因为 set_config 在 start 之后执行。
         if (id == WIFI_EVENT_STA_DISCONNECTED) {
-            auto* d = static_cast<wifi_event_sta_disconnected_t*>(data);
-            ESP_LOGW(kTag, "STA disconnected: reason=%d want_reconnect=%d fail_count=%d/%d", d->reason,
-                     self->want_reconnect_, self->fail_count_, self->max_fast_fail_);
-            self->last_disconnect_reason_ = d->reason;
-            if (self->on_disconnect_)
-                self->on_disconnect_(d->reason);
+            auto*      d              = static_cast<wifi_event_sta_disconnected_t*>(data);
+            const bool want_reconnect = self->want_reconnect_.load(std::memory_order_acquire);
+            const int  fail_count     = self->fail_count_.load(std::memory_order_acquire);
+            ESP_LOGW(kTag, "STA disconnected: reason=%d want_reconnect=%d fail_count=%d/%d", d->reason, want_reconnect,
+                     fail_count, self->max_fast_fail_);
+            self->last_disconnect_reason_.store(d->reason, std::memory_order_release);
+            DisconnectCb on_disconnect;
+            {
+                std::lock_guard<std::mutex> lock(self->callback_mutex_);
+                on_disconnect = self->on_disconnect_;
+            }
+            if (on_disconnect)
+                on_disconnect(d->reason);
 
-            if (!self->want_reconnect_) {
+            if (!want_reconnect) {
                 // TryConnect 验证完主动断 / Disconnect() / StopAp / Stop:都属于主动断,
                 // 不再重连。Connect() 也会在同步等待超时后置 want_reconnect_=false,
                 // 让上层走 captive portal fallback。
@@ -71,10 +104,10 @@ void Wifi::EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data
                 return;
             }
 
-            if (self->fail_count_ < self->max_fast_fail_) {
+            if (fail_count < self->max_fast_fail_) {
                 // 快速 retry:STA_DISCONNECTED 立即 esp_wifi_connect。fast_scan 路径,
                 // 适合 AP 短暂抖动 / beacon 偶发丢失场景。
-                self->fail_count_++;
+                self->fail_count_.fetch_add(1, std::memory_order_acq_rel);
                 esp_err_t e = esp_wifi_connect();
                 if (e != ESP_OK) {
                     ESP_LOGW(kTag, "ESP wifi_connect retry failed: %s", esp_err_to_name(e));
@@ -93,8 +126,7 @@ void Wifi::EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data
         if (id == WIFI_EVENT_SCAN_DONE) {
             // 仅响应慢速重连发起的 scan;captive portal 用的 /scan 端点是 blocking
             // (esp_wifi_scan_start(_, true)),不会走到 SCAN_DONE event。
-            if (self->slow_scan_pending_) {
-                self->slow_scan_pending_ = false;
+            if (self->slow_scan_pending_.exchange(false, std::memory_order_acq_rel)) {
                 self->HandleSlowScanResult();
             }
             return;
@@ -111,10 +143,12 @@ void Wifi::EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data
 
     if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         auto* e = static_cast<ip_event_got_ip_t*>(data);
-        std::snprintf(self->ip_str_, sizeof(self->ip_str_), IPSTR, IP2STR(&e->ip_info.ip));
+        char  ip[INET6_ADDRSTRLEN];
+        std::snprintf(ip, sizeof(ip), IPSTR, IP2STR(&e->ip_info.ip));
+        self->SetIpString(ip);
         // 重置 fast retry 配额 + 慢速 backoff:下次断开重新从最快重试开始。
-        self->fail_count_  = 0;
-        self->backoff_idx_ = 0;
+        self->fail_count_.store(0, std::memory_order_release);
+        self->backoff_idx_.store(0, std::memory_order_release);
         self->StopSlowReconnect();
         self->state_.store(State::Connected);
         xEventGroupSetBits(s_event_group, BIT_CONNECTED);
@@ -143,6 +177,7 @@ void Wifi::UnregisterEventHandlers() {
 }
 
 void Wifi::Init() {
+    std::lock_guard<std::mutex> init_lock(init_mutex_);
     if (inited_)
         return;
 
@@ -153,8 +188,10 @@ void Wifi::Init() {
         ESP_ERROR_CHECK(nvs_flash_init());
     }
 
-    ESP_ERROR_CHECK(esp_netif_init());
-    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    err = esp_netif_init();
+    ESP_ERROR_CHECK(err == ESP_ERR_INVALID_STATE ? ESP_OK : err);
+    err = esp_event_loop_create_default();
+    ESP_ERROR_CHECK(err == ESP_ERR_INVALID_STATE ? ESP_OK : err);
 
     // 关键:nvs_enable=false 禁用 wifi 内置 NVS 持久化,否则 mode/config 会被
     // 写入 NVS,重启后 wifi 自动恢复 → 出现"配过网重启 AP 还在"的诡异现象。
@@ -163,7 +200,9 @@ void Wifi::Init() {
     cfg.nvs_enable         = false;
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    s_event_group = xEventGroupCreate();
+    if (!s_event_group)
+        s_event_group = xEventGroupCreate();
+    configASSERT(s_event_group != nullptr);
     inited_       = true;
 }
 
@@ -174,11 +213,11 @@ void Wifi::StartStationInternal() {
     RegisterEventHandlers();
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_start());
-    mode_ = Mode::Station;
+    mode_.store(Mode::Station, std::memory_order_release);
 }
 
 void Wifi::StopStationInternal() {
-    if (mode_ != Mode::Station)
+    if (mode_.load(std::memory_order_acquire) != Mode::Station)
         return;
     StopSlowReconnect();
     UnregisterEventHandlers();
@@ -189,15 +228,15 @@ void Wifi::StopStationInternal() {
         sta_netif_ = nullptr;
     }
     state_.store(State::Idle);
-    want_reconnect_ = false;
-    ip_str_[0]      = '\0';
-    mode_           = Mode::Off;
+    want_reconnect_.store(false, std::memory_order_release);
+    ClearIpString();
+    mode_.store(Mode::Off, std::memory_order_release);
 }
 
 // ─── AP 模式生命周期 ───────────────────────────────────────────────
 void Wifi::StartApInternal(const std::string& ssid_prefix) {
     // 调用方保证 mode_ != AccessPoint。先清掉可能的旧 STA。
-    if (mode_ == Mode::Station)
+    if (mode_.load(std::memory_order_acquire) == Mode::Station)
         StopStationInternal();
 
     // APSTA 共存:配网期 TryConnect 复用同一个 wifi 跑 STA 验证。
@@ -222,11 +261,11 @@ void Wifi::StartApInternal(const std::string& ssid_prefix) {
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &apc));
     ESP_ERROR_CHECK(esp_wifi_start());
-    mode_ = Mode::AccessPoint;
+    mode_.store(Mode::AccessPoint, std::memory_order_release);
 }
 
 void Wifi::StopApInternal() {
-    if (mode_ != Mode::AccessPoint)
+    if (mode_.load(std::memory_order_acquire) != Mode::AccessPoint)
         return;
     StopSlowReconnect();
     UnregisterEventHandlers();
@@ -242,9 +281,9 @@ void Wifi::StopApInternal() {
         sta_netif_ = nullptr;
     }
     state_.store(State::Idle);
-    want_reconnect_ = false;
-    ip_str_[0]      = '\0';
-    mode_           = Mode::Off;
+    want_reconnect_.store(false, std::memory_order_release);
+    ClearIpString();
+    mode_.store(Mode::Off, std::memory_order_release);
 }
 
 // ─── 公共 API ─────────────────────────────────────────────────────
@@ -254,25 +293,26 @@ bool Wifi::Connect(const std::string& ssid, const std::string& password, int tim
         ESP_LOGW(kTag, "Connect: empty SSID");
         return false;
     }
-    if (mode_ == Mode::AccessPoint)
+    if (mode_.load(std::memory_order_acquire) == Mode::AccessPoint)
         StopApInternal();
-    if (mode_ != Mode::Station)
+    if (mode_.load(std::memory_order_acquire) != Mode::Station)
         StartStationInternal();
 
     wifi_config_t wc = {};
-    std::strncpy(reinterpret_cast<char*>(wc.sta.ssid), ssid.c_str(), sizeof(wc.sta.ssid) - 1);
-    std::strncpy(reinterpret_cast<char*>(wc.sta.password), password.c_str(), sizeof(wc.sta.password) - 1);
-    wc.sta.threshold.authmode = WIFI_AUTH_OPEN;  // 空密码兼容,密码非空 wifi 自动升 WPA2
-    wc.sta.pmf_cfg.capable    = true;
-    wc.sta.pmf_cfg.required   = false;
+    if (!FillStaConfig(wc, ssid, password, nullptr)) {
+        ESP_LOGW(kTag, "Connect: invalid Wi-Fi credentials ssid_len=%u password_len=%u", static_cast<unsigned>(ssid.size()),
+                 static_cast<unsigned>(password.size()));
+        return false;
+    }
+    // 空密码兼容,密码非空 wifi 自动升 WPA2
     // 首次 Connect 用默认 fast_scan(scan_method=0)。一旦 fast retry 全失败,
     // 慢速重连里会切到 ALL_CHANNEL_SCAN 主动扫,绕开 fast_scan 偏好旧 BSSID 的弱点。
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
 
     state_.store(State::Connecting);
-    fail_count_     = 0;
-    backoff_idx_    = 0;
-    want_reconnect_ = true;
+    fail_count_.store(0, std::memory_order_release);
+    backoff_idx_.store(0, std::memory_order_release);
+    want_reconnect_.store(true, std::memory_order_release);
 
     xEventGroupClearBits(s_event_group, BIT_CONNECTED | BIT_FAIL);
     // disconnect 是幂等的:首次进入 STA 还没连过,会返 NOT_CONNECTED 但无副作用
@@ -289,8 +329,9 @@ bool Wifi::Connect(const std::string& ssid, const std::string& password, int tim
     }
     // 同步等待超时或 fast retry 已用完 → 关闭自愈,避免跟调用方接下来要走的
     // captive portal fallback (StartApInternal) 状态机打架。
-    ESP_LOGW(kTag, "STA connect timeout/fail (last_reason=%d), disabling auto-reconnect", last_disconnect_reason_);
-    want_reconnect_ = false;
+    ESP_LOGW(kTag, "STA connect timeout/fail (last_reason=%d), disabling auto-reconnect",
+             last_disconnect_reason_.load(std::memory_order_acquire));
+    want_reconnect_.store(false, std::memory_order_release);
     StopSlowReconnect();
     state_.store(State::Disconnected);
     return false;
@@ -345,23 +386,20 @@ bool Wifi::TryConnect(const std::string& ssid, const std::string& password, int 
         out_reason = "SSID 不能为空";
         return false;
     }
-    if (mode_ != Mode::AccessPoint) {
+    if (mode_.load(std::memory_order_acquire) != Mode::AccessPoint) {
         out_reason = "TryConnect 必须在配网模式下调用";
         ESP_LOGE(kTag, "TryConnect called without AP mode");
         return false;
     }
     // 不开 want_reconnect_:重试由本函数控制,EventHandler 不要自动重连
-    want_reconnect_         = false;
-    fail_count_             = 0;
-    last_disconnect_reason_ = 0;
+    want_reconnect_.store(false, std::memory_order_release);
+    fail_count_.store(0, std::memory_order_release);
+    last_disconnect_reason_.store(0, std::memory_order_release);
     StopSlowReconnect();
 
     wifi_config_t wc = {};
-    std::strncpy(reinterpret_cast<char*>(wc.sta.ssid), ssid.c_str(), sizeof(wc.sta.ssid) - 1);
-    std::strncpy(reinterpret_cast<char*>(wc.sta.password), password.c_str(), sizeof(wc.sta.password) - 1);
-    wc.sta.threshold.authmode = WIFI_AUTH_OPEN;
-    wc.sta.pmf_cfg.capable    = true;
-    wc.sta.pmf_cfg.required   = false;
+    if (!FillStaConfig(wc, ssid, password, &out_reason))
+        return false;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
 
     // 8s/轮:auth+assoc+4way+DHCP 在 APSTA 共存(同信道复用)下偶尔会接近 5~6s
@@ -399,7 +437,7 @@ bool Wifi::TryConnect(const std::string& ssid, const std::string& password, int 
             return true;
         }
         if (bits & BIT_FAIL) {
-            last_reason = last_disconnect_reason_;
+            last_reason = last_disconnect_reason_.load(std::memory_order_acquire);
             ESP_LOGW(kTag, "TryConnect attempt %d failed: reason=%d", attempt, last_reason);
             vTaskDelay(pdMS_TO_TICKS(300));
         } else {
@@ -420,9 +458,9 @@ bool Wifi::TryConnect(const std::string& ssid, const std::string& password, int 
 }
 
 void Wifi::Disconnect() {
-    want_reconnect_ = false;
+    want_reconnect_.store(false, std::memory_order_release);
     StopSlowReconnect();
-    if (mode_ == Mode::Station) {
+    if (mode_.load(std::memory_order_acquire) == Mode::Station) {
         esp_wifi_disconnect();
     }
     state_.store(State::Disconnected);
@@ -442,12 +480,22 @@ int8_t Wifi::GetRssi() const {
 }
 
 std::string Wifi::GetIp() const {
+    std::lock_guard<std::mutex> lock(ip_mutex_);
     return ip_str_;
+}
+
+void Wifi::SetIpString(const char* ip) {
+    std::lock_guard<std::mutex> lock(ip_mutex_);
+    std::snprintf(ip_str_, sizeof(ip_str_), "%s", ip ? ip : "");
+}
+
+void Wifi::ClearIpString() {
+    SetIpString("");
 }
 
 bool Wifi::StartAp(const std::string& ssid_prefix) {
     Init();
-    if (mode_ == Mode::AccessPoint) {
+    if (mode_.load(std::memory_order_acquire) == Mode::AccessPoint) {
         ESP_LOGW(kTag, "StartAp called but already in AP mode");
         return true;
     }
@@ -460,6 +508,7 @@ void Wifi::StopAp() {
 }
 
 void Wifi::OnDisconnected(DisconnectCb cb) {
+    std::lock_guard<std::mutex> lock(callback_mutex_);
     on_disconnect_ = std::move(cb);
 }
 
@@ -478,16 +527,16 @@ void Wifi::EnsureReconnectTimer() {
 }
 
 void Wifi::ScheduleSlowReconnect() {
-    if (!want_reconnect_) {
+    if (!want_reconnect_.load(std::memory_order_acquire)) {
         return;
     }
     EnsureReconnectTimer();
-    const size_t   idx     = std::min(backoff_idx_, kBackoffSize - 1);
+    const size_t   idx     = std::min(backoff_idx_.load(std::memory_order_acquire), kBackoffSize - 1);
     const uint32_t seconds = kBackoffSec[idx];
     esp_timer_stop(reconnect_timer_);  // 幂等,无活跃 timer 时返回 ESP_ERR_INVALID_STATE
     ESP_ERROR_CHECK(esp_timer_start_once(reconnect_timer_, (uint64_t)seconds * 1000ULL * 1000ULL));
-    if (backoff_idx_ < kBackoffSize - 1)
-        backoff_idx_++;
+    if (idx < kBackoffSize - 1)
+        backoff_idx_.store(idx + 1, std::memory_order_release);
 }
 
 void Wifi::StopSlowReconnect() {
@@ -496,15 +545,14 @@ void Wifi::StopSlowReconnect() {
         if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
             ESP_LOGW(kTag, "esp_timer_stop failed: %s", esp_err_to_name(err));
         }
-        esp_timer_delete(reconnect_timer_);
-        reconnect_timer_ = nullptr;
     }
-    slow_scan_pending_ = false;
+    slow_scan_pending_.store(false, std::memory_order_release);
 }
 
 void Wifi::OnSlowReconnectTimer(void* arg) {
     auto* self = static_cast<Wifi*>(arg);
-    if (!self->want_reconnect_ || self->mode_ != Mode::Station) {
+    if (!self->want_reconnect_.load(std::memory_order_acquire) ||
+        self->mode_.load(std::memory_order_acquire) != Mode::Station) {
         return;
     }
     self->DoSlowScanReconnect();
@@ -512,9 +560,9 @@ void Wifi::OnSlowReconnectTimer(void* arg) {
 
 void Wifi::DoSlowScanReconnect() {
     // 重置 fast retry 配额:接下来 scan 找到 AP 后 connect,允许新一轮 5 次快速 retry。
-    fail_count_ = 0;
+    fail_count_.store(0, std::memory_order_release);
     state_.store(State::Connecting);
-    slow_scan_pending_ = true;
+    slow_scan_pending_.store(true, std::memory_order_release);
 
     // 主动全信道扫,scan_method 跟 wifi_config_t.sta.scan_method 是不同的旋钮:
     // 这里直接调 esp_wifi_scan_start 不依赖 wc.sta 设置,扫到的所有 AP 由
@@ -531,7 +579,7 @@ void Wifi::DoSlowScanReconnect() {
     esp_err_t err = esp_wifi_scan_start(&scan_cfg, false /* async */);
     if (err != ESP_OK) {
         ESP_LOGW(kTag, "ESP wifi_scan_start failed: %s, reschedule", esp_err_to_name(err));
-        slow_scan_pending_ = false;
+        slow_scan_pending_.store(false, std::memory_order_release);
         ScheduleSlowReconnect();
     }
 }
@@ -543,27 +591,21 @@ void Wifi::HandleSlowScanResult() {
         ScheduleSlowReconnect();
         return;
     }
-    auto* records = static_cast<wifi_ap_record_t*>(std::malloc(ap_num * sizeof(wifi_ap_record_t)));
-    if (!records) {
-        ESP_LOGE(kTag, "Slow scan: OOM %u records", ap_num);
-        ScheduleSlowReconnect();
-        return;
-    }
-    esp_wifi_scan_get_ap_records(&ap_num, records);
-    std::sort(records, records + ap_num,
+    ap_num = std::min<uint16_t>(ap_num, kMaxSlowScanRecords);
+    std::array<wifi_ap_record_t, kMaxSlowScanRecords> records{};
+    esp_wifi_scan_get_ap_records(&ap_num, records.data());
+    std::sort(records.begin(), records.begin() + ap_num,
               [](const wifi_ap_record_t& a, const wifi_ap_record_t& b) { return a.rssi > b.rssi; });
 
     // 拿当前配置的 ssid (Connect/TryConnect 时 set_config 进去,esp_wifi_get_config 取回)
     wifi_config_t wc = {};
     if (esp_wifi_get_config(WIFI_IF_STA, &wc) != ESP_OK) {
         ESP_LOGW(kTag, "ESP wifi_get_config failed in slow scan handler");
-        std::free(records);
         ScheduleSlowReconnect();
         return;
     }
     if (wc.sta.ssid[0] == '\0') {
         ESP_LOGW(kTag, "Slow scan: no target SSID in current config, abort");
-        std::free(records);
         return;
     }
     const wifi_ap_record_t* match = nullptr;
@@ -575,7 +617,6 @@ void Wifi::HandleSlowScanResult() {
     }
 
     if (!match) {
-        std::free(records);
         ScheduleSlowReconnect();
         return;
     }
@@ -585,7 +626,6 @@ void Wifi::HandleSlowScanResult() {
     std::memcpy(wc.sta.bssid, match->bssid, 6);
     wc.sta.channel = match->primary;
     esp_wifi_set_config(WIFI_IF_STA, &wc);
-    std::free(records);
 
     // 触发 connect。失败会走 STA_DISCONNECTED → fast retry → 满了再 ScheduleSlowReconnect。
     esp_err_t err = esp_wifi_connect();

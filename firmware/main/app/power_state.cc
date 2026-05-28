@@ -3,6 +3,7 @@
 #include <esp_attr.h>
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include <cstring>
 
@@ -17,16 +18,38 @@ constexpr uint32_t kMinWakeIntervalSec = 60u;
 // RTC slow memory 持久化变量。深睡跨越保留。
 // 注意：这些变量在 cold boot 第一次启动时是 0（BSS-like 行为）。
 //
-RTC_DATA_ATTR bool     s_frame_dynamic = false;
+RTC_DATA_ATTR bool     s_frame_dynamic         = false;
 RTC_DATA_ATTR uint32_t s_frame_server_sync_sec = 0;
-RTC_DATA_ATTR int      s_current_frame_seq = 0;
+RTC_DATA_ATTR int      s_current_frame_seq     = 0;
 
-constexpr uint32_t kStatusBarSnapshotMagic = 0x53544231u;  // "STB1"
-RTC_DATA_ATTR uint32_t s_status_bar_magic = 0;
-RTC_DATA_ATTR uint32_t s_status_bar_hash = 0;
+constexpr uint32_t     kStatusBarSnapshotMagic                        = 0x53544231u;  // "STB1"
+RTC_DATA_ATTR uint32_t s_status_bar_magic                             = 0;
+RTC_DATA_ATTR uint32_t s_status_bar_hash                              = 0;
 RTC_DATA_ATTR uint8_t  s_status_bar_snapshot[kStatusBarSnapshotBytes] = {};
 
-portMUX_TYPE           s_state_mux = portMUX_INITIALIZER_UNLOCKED;
+SemaphoreHandle_t StateMutex() {
+    static StaticSemaphore_t s_mutex_buf;
+    static SemaphoreHandle_t s_mutex = xSemaphoreCreateMutexStatic(&s_mutex_buf);
+    return s_mutex;
+}
+
+class StateLock {
+   public:
+    StateLock() : mutex_(StateMutex()) {
+        if (mutex_)
+            xSemaphoreTake(mutex_, portMAX_DELAY);
+    }
+    ~StateLock() {
+        if (mutex_)
+            xSemaphoreGive(mutex_);
+    }
+
+    StateLock(const StateLock&)            = delete;
+    StateLock& operator=(const StateLock&) = delete;
+
+   private:
+    SemaphoreHandle_t mutex_ = nullptr;
+};
 
 uint32_t NormalizeDynamicWakeSec(uint32_t sec) {
     return sec < kMinWakeIntervalSec ? kMinWakeIntervalSec : sec;
@@ -45,45 +68,84 @@ uint32_t HashBytes(const uint8_t* data, size_t len) {
 
 CurrentFrameSchedule GetCurrentFrameSchedule() {
     CurrentFrameSchedule schedule;
-    portENTER_CRITICAL(&s_state_mux);
-    schedule.dynamic = s_frame_dynamic;
+    StateLock            lock;
+    schedule.dynamic         = s_frame_dynamic;
     schedule.server_sync_sec = s_frame_server_sync_sec;
-    portEXIT_CRITICAL(&s_state_mux);
     return schedule;
 }
 
 void SetCurrentFrameSchedule(const CurrentFrameSchedule& schedule) {
-    portENTER_CRITICAL(&s_state_mux);
-    s_frame_dynamic = schedule.dynamic;
+    StateLock lock;
+    s_frame_dynamic         = schedule.dynamic;
     s_frame_server_sync_sec = schedule.dynamic ? NormalizeDynamicWakeSec(schedule.server_sync_sec) : 0;
-    portEXIT_CRITICAL(&s_state_mux);
 }
 
 int GetCurrentFrameSeq() {
-    portENTER_CRITICAL(&s_state_mux);
+    StateLock lock;
     const int seq = s_current_frame_seq;
-    portEXIT_CRITICAL(&s_state_mux);
     return seq < 0 ? 0 : seq;
 }
 
 void SetCurrentFrameSeq(int seq) {
-    portENTER_CRITICAL(&s_state_mux);
+    StateLock lock;
     s_current_frame_seq = seq < 0 ? 0 : seq;
-    portEXIT_CRITICAL(&s_state_mux);
+}
+
+void SetCurrentFrameFromMeta(int seq, const cache::FrameMeta& meta) {
+    CurrentFrameSchedule schedule;
+    schedule.dynamic         = meta.has_ttl;
+    schedule.server_sync_sec = meta.ttl_sec;
+    SetCurrentFrameSchedule(schedule);
+    SetCurrentFrameSeq(seq);
+    cache::WriteCurrentFrameSeq(seq);
+}
+
+void ClearCurrentFrame() {
+    SetCurrentFrameSchedule({});
+    SetCurrentFrameSeq(0);
+    cache::WriteCurrentFrameSeq(0);
+}
+
+bool RestoreCurrentFrameScheduleFromCache() {
+    std::string gid;
+    std::string etag;
+    if (!cache::ReadStateMeta(gid, etag) || gid.empty()) {
+        ClearCurrentFrame();
+        return false;
+    }
+
+    int content_count = 0;
+    if (!cache::ReadManifestContentCount(gid, content_count) || content_count <= 0) {
+        ClearCurrentFrame();
+        return false;
+    }
+
+    int seq = 0;
+    cache::ReadCurrentFrameSeq(seq);
+    if (seq < 0 || seq >= content_count)
+        seq = 0;
+
+    cache::FrameMeta meta;
+    if (!cache::ReadFrameMeta(gid, seq, meta)) {
+        SetCurrentFrameSchedule({});
+        SetCurrentFrameSeq(seq);
+        return false;
+    }
+
+    SetCurrentFrameFromMeta(seq, meta);
+    return true;
 }
 
 bool CurrentFrameNeedsTimerWake() {
-    portENTER_CRITICAL(&s_state_mux);
+    StateLock  lock;
     const bool needs_wake = s_frame_dynamic && s_frame_server_sync_sec > 0;
-    portEXIT_CRITICAL(&s_state_mux);
     return needs_wake;
 }
 
 uint32_t ComputeNextWakeSec() {
-    portENTER_CRITICAL(&s_state_mux);
-    const bool dynamic = s_frame_dynamic;
+    StateLock      lock;
+    const bool     dynamic         = s_frame_dynamic;
     const uint32_t server_sync_sec = s_frame_server_sync_sec;
-    portEXIT_CRITICAL(&s_state_mux);
 
     if (!dynamic) {
         return 0;
@@ -96,12 +158,12 @@ bool SaveStatusBarSnapshot(const uint8_t* data, size_t len) {
     if (!data || len != kStatusBarSnapshotBytes)
         return false;
     const uint32_t hash = HashBytes(data, len);
-    portENTER_CRITICAL(&s_state_mux);
+    StateLock      lock;
+    // magic 是提交标记:先清无效,写完 snapshot/hash 后再恢复,Load 只接受完整快照。
     s_status_bar_magic = 0;
     std::memcpy(s_status_bar_snapshot, data, kStatusBarSnapshotBytes);
     s_status_bar_hash  = hash;
     s_status_bar_magic = kStatusBarSnapshotMagic;
-    portEXIT_CRITICAL(&s_state_mux);
     ESP_LOGD(kTag, "Saved status bar snapshot hash=%08lx", static_cast<unsigned long>(hash));
     return true;
 }
@@ -111,23 +173,23 @@ bool LoadStatusBarSnapshot(uint8_t* out, size_t len) {
         return false;
     uint32_t magic = 0;
     uint32_t hash  = 0;
-    portENTER_CRITICAL(&s_state_mux);
-    magic = s_status_bar_magic;
-    hash  = s_status_bar_hash;
-    if (magic == kStatusBarSnapshotMagic) {
-        std::memcpy(out, s_status_bar_snapshot, kStatusBarSnapshotBytes);
+    {
+        StateLock lock;
+        magic = s_status_bar_magic;
+        hash  = s_status_bar_hash;
+        if (magic == kStatusBarSnapshotMagic) {
+            std::memcpy(out, s_status_bar_snapshot, kStatusBarSnapshotBytes);
+        }
     }
-    portEXIT_CRITICAL(&s_state_mux);
     if (magic != kStatusBarSnapshotMagic)
         return false;
     return HashBytes(out, len) == hash;
 }
 
 void ClearStatusBarSnapshot() {
-    portENTER_CRITICAL(&s_state_mux);
+    StateLock lock;
     s_status_bar_magic = 0;
     s_status_bar_hash  = 0;
-    portEXIT_CRITICAL(&s_state_mux);
 }
 
 }  // namespace power_state

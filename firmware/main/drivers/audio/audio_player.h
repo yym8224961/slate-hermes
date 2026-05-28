@@ -38,7 +38,7 @@ class AudioPlayer {
     // 停止当前播放(若有);保持 codec 通电,下次 Play 立即可用。
     void Stop();
 
-    // 0..100,默认 70。改 codec output volume 寄存器。
+    // 0..100,默认 90。改 codec output volume 寄存器。
     void SetVolume(int v);
 
     // 小智对话独占音频硬件。BeginChat 会停止相册播放，并把 codec 音量切到
@@ -59,21 +59,22 @@ class AudioPlayer {
     // 第一次 Play 时同步打开 codec(lazy)。开机不 open 是为了消除 codec lib
     // 的 enable→DAC start→PA on 时序在喇叭上的"啵"声。
     bool EnsureCodecOpen();
+    void CleanupInitResources();
 
-    bool initialized_  = false;
+    bool              initialized_ = false;
     std::atomic<bool> codec_opened_{false};  // lazy 标志
     // 是否已经播过至少一段 PCM。用于 TaskLoop 判断"切歌"场景需要先静音再写,
     // 避免旧 PCM 末尾和新 PCM 开头波形跳变产生"啵"。Init 后第一段不算切歌。
-    bool                         codec_in_progress_ = false;
-    i2s_chan_handle_t            tx_handle_         = nullptr;
-    i2s_chan_handle_t            rx_handle_         = nullptr;
-    const audio_codec_data_if_t* data_if_           = nullptr;
-    const audio_codec_ctrl_if_t* ctrl_if_           = nullptr;
-    const audio_codec_if_t*      codec_if_          = nullptr;
-    const audio_codec_gpio_if_t* gpio_if_           = nullptr;
-    esp_codec_dev_handle_t       dev_               = nullptr;
-    std::atomic<int>             volume_{85};
-    std::atomic<int>             chat_volume_{85};
+    std::atomic<bool>            codec_in_progress_{false};
+    i2s_chan_handle_t            tx_handle_ = nullptr;
+    i2s_chan_handle_t            rx_handle_ = nullptr;
+    const audio_codec_data_if_t* data_if_   = nullptr;
+    const audio_codec_ctrl_if_t* ctrl_if_   = nullptr;
+    const audio_codec_if_t*      codec_if_  = nullptr;
+    const audio_codec_gpio_if_t* gpio_if_   = nullptr;
+    esp_codec_dev_handle_t       dev_       = nullptr;
+    std::atomic<int>             volume_{90};
+    std::atomic<int>             chat_volume_{90};
 
     // 共享 PCM:Play 写入,task 读取并播。简单 swap,不做 ring buffer
     // (本场景 frame 切换 = 整段重播,不是流式追加)。

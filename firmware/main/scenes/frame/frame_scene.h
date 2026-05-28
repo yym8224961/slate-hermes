@@ -36,9 +36,7 @@ class FrameScene : public Scene {
     void PrevFrame(SceneContext& ctx);
     void CycleGroup(SceneContext& ctx, bool next);
     void RebindGroup(SceneContext& ctx, const char* gid, int content_count);
-    void RefreshStatusBarFromSensors(SceneContext& ctx);
     void ApplyEmptyState();
-    void SyncRender(SceneContext& ctx, bool force_full);
 
     std::string gid_;
     int         content_count_           = 0;

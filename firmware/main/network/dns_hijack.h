@@ -14,6 +14,7 @@
 #include <freertos/task.h>
 
 #include <atomic>
+#include <mutex>
 
 class DnsHijack {
    public:
@@ -25,6 +26,7 @@ class DnsHijack {
 
    private:
     void Run();
+    bool StopLocked(TickType_t wait_ticks);
 
     esp_ip4_addr_t    gateway_ = {};
     std::atomic<int>  fd_{-1};
@@ -32,4 +34,5 @@ class DnsHijack {
     TaskHandle_t      task_handle_ = nullptr;
     SemaphoreHandle_t exit_sem_    = nullptr;  // task 退出时 give,Stop 等它
     uint16_t          port_        = 53;
+    std::mutex        lifecycle_mutex_;
 };

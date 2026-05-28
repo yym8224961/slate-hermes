@@ -14,15 +14,11 @@
 
 #include <atomic>
 #include <cstdint>
-#include <functional>
-#include <utility>
 
 struct UiEvent;
 
 class SleepManager {
    public:
-    using PreSleepHook = std::function<void()>;
-
     enum class SleepOutcome {
         kSlept,
         kPausedByCharge,
@@ -50,11 +46,6 @@ class SleepManager {
     void Init(Policy p);
     void Disable();  // captive portal 等场景禁用 deep sleep
 
-    // 进睡前最后一刻调用。固定状态栏已移除，默认不需要为了状态图标刷新屏幕。
-    void SetPreSleepHook(PreSleepHook hook) {
-        pre_sleep_hook_ = std::move(hook);
-    }
-
     void OnEvent(const UiEvent& e);
     void Tick(int64_t now_ms);
 
@@ -73,14 +64,9 @@ class SleepManager {
     int                  idle_timeout_min_ = 5;
     int64_t              unbound_grace_ms_ = kUnboundGraceMs;
     int                  low_battery_pct_  = kLowBatteryPct;
-    PreSleepHook         pre_sleep_hook_;
 
     // unbound 加速窗口状态:
-    //   unbound_         = 是否处于 unbound 状态(默认 false,
-    //                      首次 kUnbound 事件到达时翻 true,kBound 时翻回 false)。
-    //   unbound_since_ms = 进入 unbound 的时刻(ms 单调时基),用于兜底超时。
-    //   battery_pct_     = 最近一次 telemetry 上报的电量,< kLowBatteryPct 时退出加速。
-    std::atomic<bool>    unbound_{false};
-    std::atomic<int64_t> unbound_since_ms_{0};
-    std::atomic<int>     battery_pct_{100};
+    // 三个字段打包成单个 32-bit atomic,让 InUnboundGrace 读到一致快照。
+    // bit31=unbound, bit24..30=battery_pct(0..100), bit0..23=since_sec(约 194 天循环)。
+    std::atomic<uint32_t> unbound_state_{uint32_t{100} << 24};
 };

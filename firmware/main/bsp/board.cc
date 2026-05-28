@@ -4,7 +4,7 @@
 #include <esp_adc/adc_cali_scheme.h>
 #include <esp_adc/adc_oneshot.h>
 #include <esp_log.h>
-#include <esp_timer.h>
+#include <esp_rom_sys.h>
 
 #include <sdkconfig.h>
 
@@ -14,6 +14,7 @@
 #include "config.h"
 #include "epd_ssd1683.h"
 #include "i2c_bus_lock.h"
+#include "time_utils.h"
 
 namespace {
 constexpr char     kTag[]          = "Board";
@@ -37,10 +38,6 @@ void Board::Init() {
     InitBatteryAdc();
 }
 
-static int64_t NowMs() {
-    return esp_timer_get_time() / 1000;
-}
-
 void Board::InitPower() {
     charge_ = std::make_unique<ChargeStatus>();
     // BoardPowerBsp 一次 gpio_config 把 audio rail / PA CTRL / VBAT 三个 pin 都
@@ -57,7 +54,7 @@ void Board::InitPower() {
     // 2s 超时是兜底:理论上电源故障跑不到这,但加上避免硬件诡异时永久挂死。
     constexpr int kMaxWaitMs = 2000;
     int           waited     = 0;
-    while (!gpio_get_level(static_cast<gpio_num_t>(VBAT_PWR_GPIO))) {
+    while (!gpio_get_level(static_cast<gpio_num_t>(POWER_KEY_GPIO))) {
         vTaskDelay(pdMS_TO_TICKS(10));
         waited += 10;
         if (waited >= kMaxWaitMs) {
@@ -83,26 +80,31 @@ void Board::InitI2c() {
 }
 
 void Board::InitChargeStatus() {
-    charge_->Init(static_cast<gpio_num_t>(CHARGE_DETECT_GPIO), static_cast<gpio_num_t>(CHARGE_FULL_GPIO), NowMs());
-    charge_tick_running_.store(true);
+    charge_->Init(static_cast<gpio_num_t>(CHARGE_DETECT_GPIO), static_cast<gpio_num_t>(CHARGE_FULL_GPIO),
+                  time_utils::NowMs());
+    if (!charge_tick_exit_) {
+        charge_tick_exit_ = xSemaphoreCreateBinary();
+        if (!charge_tick_exit_) {
+            ESP_LOGE(kTag, "charge_tick exit semaphore create failed");
+            return;
+        }
+    }
+    charge_tick_running_.store(true, std::memory_order_release);
     BaseType_t ok =
-        xTaskCreatePinnedToCore(&Board::ChargeTickTaskEntry, "charge_tick", 2 * 1024, this, 1, &charge_tick_task_, 0);
+        xTaskCreatePinnedToCore(&Board::ChargeTickTaskEntry, "charge_tick", 3 * 1024, this, 1, &charge_tick_task_, 0);
     if (ok != pdPASS) {
-        charge_tick_running_.store(false);
+        charge_tick_running_.store(false, std::memory_order_release);
         charge_tick_task_ = nullptr;
         ESP_LOGE(kTag, "charge_tick task create failed");
     }
 }
 
 void Board::StopChargeTickTask() {
-    if (!charge_tick_running_.exchange(false))
+    if (!charge_tick_running_.exchange(false, std::memory_order_acq_rel))
         return;
     // 让 task 自己跑完当前周期后退出,避免硬删带锁/带 I²C 状态时 leak。
-    if (charge_tick_task_) {
-        // 等最多 1s,task 自己 detect 完 vTaskDelete 后我们清空句柄
-        for (int i = 0; i < 50 && charge_tick_task_ != nullptr; ++i) {
-            vTaskDelay(pdMS_TO_TICKS(20));
-        }
+    if (charge_tick_exit_) {
+        xSemaphoreTake(charge_tick_exit_, pdMS_TO_TICKS(1000));
     }
 }
 
@@ -111,11 +113,14 @@ void Board::ChargeTickTaskEntry(void* arg) {
     // 500 ms 而不是 200 ms：充电 IC 状态变化以秒计，kStableHighMs=400/kAltWindowMs=1500
     // 仍然能正常去抖,但任务唤醒次数减半,light-sleep 期间收益更明显。
     const TickType_t poll = pdMS_TO_TICKS(500);
-    while (self->charge_tick_running_.load()) {
-        self->charge_->Tick(NowMs());
+    while (self->charge_tick_running_.load(std::memory_order_acquire)) {
+        self->charge_->Tick(time_utils::NowMs());
         vTaskDelay(poll);
     }
     self->charge_tick_task_ = nullptr;
+    if (self->charge_tick_exit_) {
+        xSemaphoreGive(self->charge_tick_exit_);
+    }
     vTaskDelete(nullptr);
 }
 
@@ -130,11 +135,9 @@ void Board::InitButtons() {
     // 不启用 iot_button 的 enable_power_save：它会注册一个 GPIO wake ISR，
     // flash cache 关闭期间（例如 LittleFS rename）触发会因 ISR 不在 IRAM 崩溃。
     // Deep sleep 唤醒由 SleepManager 进入睡眠前单独配置 EXT1。
-    up_btn_ = std::make_unique<Button>(static_cast<gpio_num_t>(UP_BUTTON_GPIO), false, kNavLongPressMs, 0);
-    down_btn_ =
-        std::make_unique<Button>(static_cast<gpio_num_t>(DOWN_BUTTON_GPIO), false, kNavLongPressMs, 0);
-    boot_btn_ =
-        std::make_unique<Button>(static_cast<gpio_num_t>(BOOT_BUTTON_GPIO), false, kNavLongPressMs, 0);
+    up_btn_   = std::make_unique<Button>(static_cast<gpio_num_t>(UP_BUTTON_GPIO), false, kNavLongPressMs, 0);
+    down_btn_ = std::make_unique<Button>(static_cast<gpio_num_t>(DOWN_BUTTON_GPIO), false, kNavLongPressMs, 0);
+    boot_btn_ = std::make_unique<Button>(static_cast<gpio_num_t>(BOOT_BUTTON_GPIO), false, kNavLongPressMs, 0);
 }
 
 void Board::InitBatteryAdc() {
@@ -180,6 +183,8 @@ bool Board::ReadBattery(uint16_t* voltage_mv, uint8_t* percent) {
             continue;
         sum += mv * 2;  // 板上 1:2 分压,×2 还原电池电压
         n++;
+        if (i != 9)
+            esp_rom_delay_us(100);
     }
     if (n == 0) {
         ESP_LOGW(kTag, "ReadBattery: all ADC reads failed");

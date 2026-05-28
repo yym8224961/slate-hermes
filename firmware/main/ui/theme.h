@@ -6,7 +6,7 @@
 //   - SourceHanSansSC_Regular_slim   16px Regular 1bpp，GB2312 6763 汉字 ~2.16 MB。
 //                                    所有中文显示统一用这个（BootSplash + 状态栏标题）。
 //                                    1bpp 字模在 EPD 上比 4bpp 抗锯齿二值化干净不少。
-//   - font_awesome_14_1              14px FontAwesome 图标(xiaozhi-fonts 提供)，wifi/电池用。
+//   - font_awesome_14_1              14px FontAwesome 图标，wifi/电池用。
 //
 // 像素字体:
 //   - FusionPixel_12    12px 像素体，ASCII 子集 ~18 KB，用于状态栏百分比数字。

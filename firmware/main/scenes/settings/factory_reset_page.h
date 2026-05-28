@@ -16,6 +16,9 @@ class FactoryResetPage : public Scene {
     const char* Name() const override {
         return "FactoryReset";
     }
+    bool IsSettings() const override {
+        return true;
+    }
     void      OnEnter(SceneContext& ctx) override;
     void      OnExit(SceneContext& ctx) override;
     void      OnEvent(SceneContext& ctx, const UiEvent& e) override;

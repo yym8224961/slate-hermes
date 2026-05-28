@@ -11,6 +11,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "cache.h"
+
 namespace power_state {
 
 constexpr int kStatusBarSnapshotWidth  = 400;
@@ -31,6 +33,12 @@ void                 SetCurrentFrameSchedule(const CurrentFrameSchedule& schedul
 int  GetCurrentFrameSeq();
 void SetCurrentFrameSeq(int seq);
 bool CurrentFrameNeedsTimerWake();
+void SetCurrentFrameFromMeta(int seq, const cache::FrameMeta& meta);
+void ClearCurrentFrame();
+
+// 从 LittleFS cache 恢复当前帧序号和动态刷新策略。用于 deep sleep 前兜底，
+// 防止 RTC slow memory 因 reset/cold boot 丢失后下一轮 timer wake 被关闭。
+bool RestoreCurrentFrameScheduleFromCache();
 
 // 当前动态帧的下次 RTC timer wakeup 间隔（秒）。0 表示当前帧没有动态刷新间隔。
 uint32_t ComputeNextWakeSec();

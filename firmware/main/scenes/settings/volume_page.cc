@@ -5,13 +5,13 @@
 #include <cstdlib>
 #include <vector>
 
+#include "audio_player.h"
+#include "epd_ssd1683.h"
 #include "event_bus.h"
 #include "scene_stack.h"
-#include "audio_player.h"
-#include "xiaozhi_audio_service.h"
-#include "volume_store.h"
-#include "epd_ssd1683.h"
 #include "theme.h"
+#include "volume_store.h"
+#include "xiaozhi_audio_service.h"
 
 namespace {
 constexpr int kBarWidth  = 280;
@@ -19,14 +19,14 @@ constexpr int kBarHeight = 24;
 
 // 16 kHz 单声道 16-bit PCM，440 Hz 200 ms 正弦波
 std::vector<uint8_t> MakeTestTone() {
-    constexpr int   kRate    = 16000;
-    constexpr int   kMs      = 200;
-    constexpr float kFreq    = 440.0f;
-    constexpr int   kSamples = kRate * kMs / 1000;
+    constexpr int        kRate    = 16000;
+    constexpr int        kMs      = 200;
+    constexpr float      kFreq    = 440.0f;
+    constexpr int        kSamples = kRate * kMs / 1000;
     std::vector<uint8_t> buf(kSamples * 2);
     for (int i = 0; i < kSamples; ++i) {
-        const float t = static_cast<float>(i) / kRate;
-        int16_t s = static_cast<int16_t>(0.6f * 32767.0f * std::sin(2.0f * 3.1415926f * kFreq * t));
+        const float t  = static_cast<float>(i) / kRate;
+        int16_t     s  = static_cast<int16_t>(0.6f * 32767.0f * std::sin(2.0f * 3.1415926f * kFreq * t));
         buf[2 * i + 0] = static_cast<uint8_t>(s & 0xFF);
         buf[2 * i + 1] = static_cast<uint8_t>((s >> 8) & 0xFF);
     }
@@ -39,20 +39,14 @@ VolumePage::VolumePage(Target target) : target_(target) {
 VolumePage::~VolumePage() = default;
 
 void VolumePage::OnEnter(SceneContext& ctx) {
-    if (!ctx.epd->Lock(2000)) return;
+    if (!ctx.epd->Lock(2000))
+        return;
 
-    auto* screen = lv_screen_active();
-    root_ = lv_obj_create(screen);
-    lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES);
-    lv_obj_set_pos(root_, 0, 0);
-    lv_obj_set_style_bg_color(root_, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(root_, 0, 0);
-    lv_obj_set_style_border_width(root_, 0, 0);
-    lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
+    root_ = CreateFullscreenRoot();
 
     status_bar_ = std::make_unique<StatusBar>(root_);
     status_bar_->SetCaption(Caption());
+    RefreshStatusBarFromSensors(ctx, *status_bar_);
 
     // 数值 "6 / 10",大写字号靠居中视觉强调
     value_label_ = lv_label_create(root_);
@@ -100,23 +94,30 @@ void VolumePage::OnEnter(SceneContext& ctx) {
 }
 
 void VolumePage::OnExit(SceneContext& ctx) {
-    if (!ctx.epd->Lock(500)) return;
-    status_bar_.reset();
-    if (root_) {
-        lv_obj_del(root_);
-        root_ = nullptr;
+    if (dirty_) {
+        SaveLevel();
+        dirty_ = false;
     }
-    ctx.epd->Unlock();
+    DestroyRoot(ctx, root_, [this]() {
+        status_bar_.reset();
+        bar_track_   = nullptr;
+        bar_fill_    = nullptr;
+        value_label_ = nullptr;
+        hint_label_  = nullptr;
+    });
 }
 
 void VolumePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
+    if (!root_)
+        return;
     switch (e.kind) {
         case UiEventKind::kButtonShort:
             switch (e.u.button.btn) {
                 case ButtonId::kUp:
                     if (level_ < vol::kMax) {
                         level_++;
-                        SaveLevel();
+                        dirty_ = true;
+                        ApplyLevel();
                         RedrawValue();
                         SyncRender(ctx);
                     }
@@ -124,7 +125,8 @@ void VolumePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
                 case ButtonId::kDown:
                     if (level_ > 0) {
                         level_--;
-                        SaveLevel();
+                        dirty_ = true;
+                        ApplyLevel();
                         RedrawValue();
                         SyncRender(ctx);
                     }
@@ -136,7 +138,8 @@ void VolumePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
             }
             break;
         case UiEventKind::kButtonLong:
-            if (e.u.button.btn == ButtonId::kEnter) PlayTestTone(ctx);
+            if (e.u.button.btn == ButtonId::kEnter)
+                PlayTestTone(ctx);
             break;
         default:
             break;
@@ -157,29 +160,31 @@ void VolumePage::RedrawValue() {
     }
 }
 
+void VolumePage::ApplyLevel() {
+    if (target_ == Target::kAlbum) {
+        AudioPlayer::Get().SetVolume(vol::ToCodec(level_));
+    } else {
+        xiaozhi::AudioService::Get().SetVolume(vol::ToCodec(level_));
+    }
+}
+
 void VolumePage::SaveLevel() {
     if (target_ == Target::kAlbum) {
         vol::SetAlbum(level_);
-        AudioPlayer::Get().SetVolume(vol::ToCodec(level_));
     } else {
         vol::SetXiaozhi(level_);
-        xiaozhi::AudioService::Get().SetVolume(vol::ToCodec(level_));
     }
+    ApplyLevel();
 }
 
 const char* VolumePage::Caption() const {
     return target_ == Target::kAlbum ? "相册音量" : "小智音量";
 }
 
-void VolumePage::SyncRender(SceneContext& ctx) {
-    if (!ctx.epd || !ctx.epd->Lock(500)) return;
-    lv_refr_now(NULL);
-    ctx.epd->Unlock();
-    ctx.epd->RequestUrgentPartialRefresh();
-}
-
 void VolumePage::PlayTestTone(SceneContext& ctx) {
-    if (!ctx.audio || target_ != Target::kAlbum) return;
-    static std::vector<uint8_t> tone = MakeTestTone();
-    ctx.audio->Play(tone.data(), tone.size());
+    if (!ctx.audio || target_ != Target::kAlbum)
+        return;
+    if (test_tone_.empty())
+        test_tone_ = MakeTestTone();
+    ctx.audio->Play(test_tone_.data(), test_tone_.size());
 }

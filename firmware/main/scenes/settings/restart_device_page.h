@@ -16,6 +16,9 @@ class RestartDevicePage : public Scene {
     const char* Name() const override {
         return "RestartDevice";
     }
+    bool IsSettings() const override {
+        return true;
+    }
     void      OnEnter(SceneContext& ctx) override;
     void      OnExit(SceneContext& ctx) override;
     void      OnEvent(SceneContext& ctx, const UiEvent& e) override;

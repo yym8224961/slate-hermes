@@ -8,8 +8,5 @@ dependencies:
   lvgl/lvgl: ~9.5.0                   # 黑白 EPD UI
   espressif/esp_lvgl_port: ~2.7.2     # lvgl tick / lock helpers
   joltwallet/littlefs: ~1.16.0        # M2.1 LittleFS 文件系统(缓存 frame/audio)
-  # M2.2-screensaver:FontAwesome 1bpp 字体已 fork 到本地 components/xiaozhi-fonts/
-  # (跳过 78/xiaozhi-fonts 包整套依赖,因其 emoji_32/64.c 用了 LVGL 8 API
-  # lv_imgfont_create,LVGL 9 改名 lv_binfont_create 编译失败)
   idf:
     version: ">=5.5"

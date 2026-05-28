@@ -18,6 +18,15 @@ bool FormatAll();
 bool        ReadStateMeta(std::string& selected_group_id, std::string& last_etag);
 bool        WriteStateMeta(const std::string& selected_group_id, const std::string& etag);
 std::string ReadCurrentManifestEtag();
+bool        ReadCurrentFrameSeq(int& out);
+bool        WriteCurrentFrameSeq(int seq);
+
+struct CachedGroupSummary {
+    std::string gid;
+    std::string manifest_etag;
+    int         content_count = 0;
+};
+bool ReadCachedGroupSummary(CachedGroupSummary& out);
 
 bool WriteManifest(const std::string& gid, const std::string& manifest_etag, int content_count);
 bool ReadManifestContentCount(const std::string& gid, int& out);
@@ -35,10 +44,24 @@ void DeleteFrameFiles(const std::string& gid, int idx);
 struct FrameMeta {
     std::string status_bar_text;
     std::string content_etag;
+    std::string image_etag;
+    std::string audio_etag;
     bool        has_ttl = false;
     uint32_t    ttl_sec = 0;
 };
 bool WriteFrameMeta(const std::string& gid, int idx, const FrameMeta& meta);
 bool ReadFrameMeta(const std::string& gid, int idx, FrameMeta& out);
+
+// Per-group staging area for multi-file frame updates. Writers can download all
+// required frame files into the stage and only publish them after the batch is
+// complete, so a failed sync does not partially overwrite the committed cache.
+bool BeginFrameStage(const std::string& gid);
+void AbortFrameStage(const std::string& gid);
+bool StagedFrameImageExists(const std::string& gid, int idx, const std::string& expected_etag);
+bool WriteStagedFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag);
+bool StagedFrameAudioExists(const std::string& gid, int idx, const std::string& expected_etag);
+bool WriteStagedFrameAudio(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag);
+bool WriteStagedFrameMeta(const std::string& gid, int idx, const FrameMeta& meta);
+bool CommitStagedFrame(const std::string& gid, int idx, const std::string& image_etag, const std::string& audio_etag);
 
 }  // namespace cache

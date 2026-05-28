@@ -2,11 +2,35 @@
 
 #include <driver/gpio.h>
 #include <esp_err.h>
+#include <esp_log.h>
+
+#include <type_traits>
+
 #include "config.h"
+
+namespace {
+constexpr char kTag[] = "Charge";
+static_assert(std::is_same_v<std::underlying_type_t<ChargeStatus::State>, uint8_t>,
+              "ChargeStatus::State must fit in the low 8 packed bits");
+}  // namespace
 
 void ChargeStatus::Init(gpio_num_t detect_gpio, gpio_num_t full_gpio, int64_t now_ms) {
     detect_gpio_ = detect_gpio;
     full_gpio_   = full_gpio;
+    if (!callback_mutex_) {
+        callback_mutex_ = xSemaphoreCreateMutex();
+        if (!callback_mutex_) {
+            ESP_LOGE(kTag, "Failed to create callback mutex");
+            configASSERT(callback_mutex_ != nullptr);
+        }
+    }
+    if (!tick_mutex_) {
+        tick_mutex_ = xSemaphoreCreateMutex();
+        if (!tick_mutex_) {
+            ESP_LOGE(kTag, "Failed to create tick mutex");
+            configASSERT(tick_mutex_ != nullptr);
+        }
+    }
 
     gpio_config_t cfg = {};
     cfg.intr_type     = GPIO_INTR_DISABLE;
@@ -21,14 +45,21 @@ void ChargeStatus::Init(gpio_num_t detect_gpio, gpio_num_t full_gpio, int64_t no
 }
 
 void ChargeStatus::OnStateChanged(std::function<void(const Snapshot&)> cb) {
+    if (callback_mutex_)
+        xSemaphoreTake(callback_mutex_, portMAX_DELAY);
     on_state_changed_ = cb;
+    if (callback_mutex_)
+        xSemaphoreGive(callback_mutex_);
 }
 
 void ChargeStatus::Tick(int64_t now_ms) {
-    const bool detect_high = gpio_get_level(detect_gpio_) == CHARGE_DETECT_CHARGING_LEVEL;
-    const bool full_high   = gpio_get_level(full_gpio_) == 1;
+    if (tick_mutex_)
+        xSemaphoreTake(tick_mutex_, portMAX_DELAY);
 
-    if (detect_high) {
+    const bool charging_detected = gpio_get_level(detect_gpio_) == CHARGE_DETECT_CHARGING_LEVEL;
+    const bool full_high         = gpio_get_level(full_gpio_) == 1;
+
+    if (charging_detected) {
         last_power_present_ms_ = now_ms;
         last_detect_seen_ms_   = now_ms;
         if (detect_high_start_ms_ < 0) {
@@ -83,6 +114,9 @@ void ChargeStatus::Tick(int64_t now_ms) {
     }
 
     UpdateSnapshot(state, power_present, no_battery);
+
+    if (tick_mutex_)
+        xSemaphoreGive(tick_mutex_);
 }
 
 void ChargeStatus::UpdateSnapshot(State state, bool power_present, bool no_battery) {
@@ -90,14 +124,21 @@ void ChargeStatus::UpdateSnapshot(State state, bool power_present, bool no_batte
     const bool     full     = (state == State::kFull);
     const uint32_t packed   = Pack(state, power_present, charging, full, no_battery);
     const uint32_t old      = snapshot_.exchange(packed, std::memory_order_relaxed);
-    if (old != packed && on_state_changed_) {
-        on_state_changed_(Unpack(packed));
+    if (old != packed) {
+        std::function<void(const Snapshot&)> cb;
+        if (callback_mutex_)
+            xSemaphoreTake(callback_mutex_, portMAX_DELAY);
+        cb = on_state_changed_;
+        if (callback_mutex_)
+            xSemaphoreGive(callback_mutex_);
+        if (cb)
+            cb(Unpack(packed));
     }
 }
 
 uint32_t ChargeStatus::Pack(State state, bool power_present, bool charging, bool full, bool no_battery) {
-    return (uint32_t)state | ((uint32_t)power_present << 8) | ((uint32_t)charging << 9) | ((uint32_t)full << 10) |
-           ((uint32_t)no_battery << 11);
+    return (static_cast<uint32_t>(state) & 0xFFu) | ((power_present ? 1u : 0u) << 8) | ((charging ? 1u : 0u) << 9) |
+           ((full ? 1u : 0u) << 10) | ((no_battery ? 1u : 0u) << 11);
 }
 
 ChargeStatus::Snapshot ChargeStatus::Unpack(uint32_t v) {

@@ -9,6 +9,10 @@ namespace {
 constexpr char kTag[] = "TimeTick";
 }
 
+TimeTick::~TimeTick() {
+    Stop();
+}
+
 void TimeTick::Start() {
     if (timer_)
         return;
@@ -41,9 +45,13 @@ void TimeTick::TickCb(void* arg) {
 
     struct tm tm;
     localtime_r(&now, &tm);
-    if (tm.tm_min == self->last_minute_)
+    int last = self->last_minute_.load(std::memory_order_acquire);
+    if (tm.tm_min == last)
         return;
-    self->last_minute_ = tm.tm_min;
+    if (!self->last_minute_.compare_exchange_strong(last, tm.tm_min, std::memory_order_acq_rel,
+                                                    std::memory_order_acquire)) {
+        return;
+    }
 
     UiEvent e{};
     e.kind = UiEventKind::kMinuteTick;

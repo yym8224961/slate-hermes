@@ -1,6 +1,8 @@
 #pragma once
 
 #include <driver/gpio.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <atomic>
 #include <cstdint>
 #include <functional>
@@ -25,7 +27,8 @@ class ChargeStatus {
     void     Init(gpio_num_t detect_gpio, gpio_num_t full_gpio, int64_t now_ms);
     void     Tick(int64_t now_ms);
     Snapshot Get() const;
-    void     OnStateChanged(std::function<void(const Snapshot&)> cb);
+    // 回调在 Tick() 调用方上下文同步执行;只做 evt::Post 这类轻量转发。
+    void OnStateChanged(std::function<void(const Snapshot&)> cb);
 
    private:
     void            UpdateSnapshot(State state, bool power_present, bool no_battery);
@@ -43,6 +46,8 @@ class ChargeStatus {
 
     std::atomic<uint32_t>                snapshot_{0};
     std::function<void(const Snapshot&)> on_state_changed_;
+    SemaphoreHandle_t                    callback_mutex_ = nullptr;
+    SemaphoreHandle_t                    tick_mutex_     = nullptr;
 
     static constexpr int kPowerPresentHoldMs = 1000;
     static constexpr int kStableHighMs       = 400;

@@ -7,6 +7,7 @@
 // Run() 等同 vTaskDelete(NULL)：把 main task 的 8 KB 栈让出来，
 // 由各后台 task（ui_loop / sync / charge_tick / audio / epd_refresh）继续跑。
 
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -35,6 +36,7 @@ class App {
     void AttachInputs();
     void StartTimeTick();
     bool InitWifiAndSync(cred::Credentials& creds);
+    bool ReadBattery(int* mv, int* pct);
     void StartSleep();
     void FinalizePm();
 
@@ -49,6 +51,6 @@ class App {
     SleepManager                   sleep_mgr_;
     TimeTick                       time_tick_;
     std::unique_ptr<CaptivePortal> portal_;
-    bool                           ui_loop_running_ = false;
+    std::atomic<bool>              ui_loop_running_{false};
     boot_mode::Decision            decision_;
 };

@@ -4,23 +4,24 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_wifi.h>
+#include <lwip/inet.h>
 #include <sdkconfig.h>
 
 #include <cstring>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "captive_portal_html.h"
+#include "json_utils.h"
 #include "wifi.h"
 
 namespace {
 constexpr char kTag[] = "Portal";
-}
-
-static CaptivePortal* g_portal = nullptr;
-
-namespace {
+constexpr size_t kMaxServerUrlLen = 256;
+std::mutex g_scan_mutex;
 
 std::string WifiSsidToString(const uint8_t ssid[32]) {
     size_t len = 0;
@@ -29,17 +30,41 @@ std::string WifiSsidToString(const uint8_t ssid[32]) {
     return std::string(reinterpret_cast<const char*>(ssid), len);
 }
 
-std::string JsonEscape(const std::string& value) {
-    std::string out;
-    out.reserve(value.size() + 8);
-    for (char c : value) {
-        if (c == '"' || c == '\\') {
-            out.push_back('\\');
-        }
-        out.push_back(c);
-    }
-    return out;
+CaptivePortal* PortalFromRequest(httpd_req_t* req) {
+    return req ? static_cast<CaptivePortal*>(req->user_ctx) : nullptr;
 }
+
+bool ValidServerUrl(const std::string& url, std::string& error) {
+    if (url.empty()) {
+        error = "服务端 URL 不能为空";
+        return false;
+    }
+    if (url.size() > kMaxServerUrlLen) {
+        error = "服务端 URL 过长";
+        return false;
+    }
+    for (unsigned char ch : url) {
+        if (ch <= 0x20 || ch == 0x7F) {
+            error = "服务端 URL 含非法字符";
+            return false;
+        }
+    }
+    if (url.rfind("https://", 0) != 0 && url.rfind("http://", 0) != 0) {
+        error = "服务端 URL 需以 http:// 或 https:// 开头";
+        return false;
+    }
+    return true;
+}
+
+struct FinishTaskContext {
+    std::shared_ptr<std::atomic<bool>> alive;
+    CaptivePortal::FinishedCb          on_finished;
+};
+
+struct StopTaskContext {
+    std::shared_ptr<std::atomic<bool>> alive;
+    CaptivePortal*                     portal = nullptr;
+};
 
 }  // namespace
 
@@ -75,12 +100,25 @@ esp_err_t CaptivePortal::HandleRoot(httpd_req_t* req) {
 }
 
 esp_err_t CaptivePortal::HandleScan(httpd_req_t* req) {
+    std::unique_lock<std::mutex> scan_lock(g_scan_mutex, std::try_to_lock);
+    if (!scan_lock.owns_lock()) {
+        httpd_resp_set_status(req, "429 Too Many Requests");
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, R"({"error":"scan in progress"})", -1);
+        return ESP_OK;
+    }
+
     wifi_scan_config_t scan_cfg = {};
     scan_cfg.show_hidden        = false;
+    scan_cfg.scan_type          = WIFI_SCAN_TYPE_ACTIVE;
+    scan_cfg.scan_time.active.min = 30;
+    scan_cfg.scan_time.active.max = 90;
     esp_err_t err               = esp_wifi_scan_start(&scan_cfg, true);  // blocking
     uint16_t  num               = 0;
     if (err == ESP_OK) {
         esp_wifi_scan_get_ap_num(&num);
+    } else {
+        ESP_LOGW(kTag, "WiFi scan failed: %s", esp_err_to_name(err));
     }
     std::vector<wifi_ap_record_t> recs(num);
     if (num > 0) {
@@ -116,6 +154,7 @@ esp_err_t CaptivePortal::HandleScan(httpd_req_t* req) {
 }
 
 esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
+    CaptivePortal* portal = PortalFromRequest(req);
     if (req->content_len > 1024) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body too large");
         return ESP_FAIL;
@@ -155,11 +194,18 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
         httpd_resp_send(req, R"({"success":false,"error":"missing fields"})", -1);
         return ESP_OK;
     }
+    std::string validation_error;
+    if (!ValidServerUrl(sub.server_url, validation_error)) {
+        std::string body = "{\"success\":false,\"error\":" + json_utils::JsonStringLiteral(validation_error) + "}";
+        httpd_resp_set_type(req, "application/json");
+        httpd_resp_send(req, body.c_str(), body.size());
+        return ESP_OK;
+    }
 
     bool        ok = false;
     std::string err_msg;
-    if (g_portal && g_portal->on_submit_) {
-        ok = g_portal->on_submit_(sub, err_msg);
+    if (portal && portal->on_submit_) {
+        ok = portal->on_submit_(sub, err_msg);
     } else {
         err_msg = "internal: no submit handler";
     }
@@ -172,19 +218,25 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
         // （App::OnFinished 内部 portal.Stop + esp_restart）。
         // 栈 8 KB：Stop 调链含 httpd_stop + esp_wifi_stop + esp_netif_destroy，
         // 以及 esp_restart，4 KB 偏紧。
-        if (g_portal->on_finished_) {
-            BaseType_t r = xTaskCreate(&CaptivePortal::FinishTask, "portal_done", 8 * 1024, g_portal, 3, nullptr);
+        if (portal && portal->on_finished_) {
+            auto* ctx = new (std::nothrow) FinishTaskContext{portal->alive_, portal->on_finished_};
+            if (!ctx) {
+                ESP_LOGE(kTag, "portal_done context alloc failed, firing inline");
+                portal->on_finished_(true);
+                return ESP_OK;
+            }
+            BaseType_t r = xTaskCreate(&CaptivePortal::FinishTask, "portal_done", 8 * 1024, ctx, 3, nullptr);
             if (r != pdPASS) {
+                delete ctx;
                 // 创建失败(堆紧张):同步触发 finished,避免 AP 永远不关。
                 // 缺点是浏览器看不到 success 页(连接随即断),但比 AP 一直开着好。
                 ESP_LOGE(kTag, "portal_done task create failed (heap?), firing inline");
-                g_portal->on_finished_(true);
+                portal->on_finished_(true);
             }
         }
     } else {
         // 表单失败:回 {success:false, error:中文文案}。
-        // err_msg 已是中文,做最简单的 JSON 字符串转义(双引号和反斜杠)。
-        std::string body = "{\"success\":false,\"error\":\"" + JsonEscape(err_msg) + "\"}";
+        std::string body = "{\"success\":false,\"error\":" + json_utils::JsonStringLiteral(err_msg) + "}";
         httpd_resp_send(req, body.c_str(), body.size());
     }
     return ESP_OK;
@@ -198,9 +250,16 @@ esp_err_t CaptivePortal::HandleDone(httpd_req_t* req) {
 
 esp_err_t CaptivePortal::HandleExit(httpd_req_t* req) {
     httpd_resp_send(req, "ok", -1);
-    if (g_portal) {
-        BaseType_t r = xTaskCreate(&CaptivePortal::StopTask, "portal_exit", 8 * 1024, g_portal, 3, nullptr);
+    CaptivePortal* portal = PortalFromRequest(req);
+    if (portal) {
+        auto* ctx = new (std::nothrow) StopTaskContext{portal->alive_, portal};
+        if (!ctx) {
+            ESP_LOGE(kTag, "portal_exit context alloc failed");
+            return ESP_OK;
+        }
+        BaseType_t r = xTaskCreate(&CaptivePortal::StopTask, "portal_exit", 8 * 1024, ctx, 3, nullptr);
         if (r != pdPASS) {
+            delete ctx;
             ESP_LOGE(kTag, "portal_exit task create failed");
         }
     }
@@ -209,17 +268,22 @@ esp_err_t CaptivePortal::HandleExit(httpd_req_t* req) {
 
 esp_err_t CaptivePortal::HandleCatchAll(httpd_req_t* req) {
     // captive portal:把任何未知 URL 重定向到根
+    CaptivePortal* portal = PortalFromRequest(req);
     httpd_resp_set_status(req, "302 Found");
-    httpd_resp_set_hdr(req, "Location", "http://192.168.4.1/");
+    httpd_resp_set_hdr(req, "Location", portal ? portal->ap_url_.c_str() : "http://192.168.4.1/");
     httpd_resp_send(req, nullptr, 0);
     return ESP_OK;
 }
 
 // ─── lifecycle ─────────────────────────────────────────────────────
+CaptivePortal::~CaptivePortal() {
+    alive_->store(false, std::memory_order_release);
+    Stop();
+}
+
 bool CaptivePortal::Start() {
     if (running_.load())
         return true;
-    g_portal = this;
 
     if (!Wifi::Get().StartAp(CONFIG_SLATE_AP_SSID_PREFIX)) {
         ESP_LOGE(kTag, "StartAp failed");
@@ -233,6 +297,9 @@ bool CaptivePortal::Start() {
     if (ap_netif) {
         esp_netif_ip_info_t ip_info = {};
         esp_netif_get_ip_info(ap_netif, &ip_info);
+        char ap_url[32];
+        std::snprintf(ap_url, sizeof(ap_url), "http://" IPSTR "/", IP2STR(&ip_info.ip));
+        ap_url_ = ap_url;
 
         esp_netif_dns_info_t dns = {};
         dns.ip.u_addr.ip4.addr   = ip_info.ip.addr;
@@ -260,16 +327,15 @@ bool CaptivePortal::Start() {
         ESP_LOGE(kTag, "HTTP server start failed");
         dns_.Stop();
         Wifi::Get().StopAp();
-        g_portal = nullptr;
         return false;
     }
 
-    httpd_uri_t uri_root   = {.uri = "/", .method = HTTP_GET, .handler = &HandleRoot, .user_ctx = nullptr};
-    httpd_uri_t uri_scan   = {.uri = "/scan", .method = HTTP_GET, .handler = &HandleScan, .user_ctx = nullptr};
-    httpd_uri_t uri_submit = {.uri = "/submit", .method = HTTP_POST, .handler = &HandleSubmit, .user_ctx = nullptr};
-    httpd_uri_t uri_done   = {.uri = "/done", .method = HTTP_GET, .handler = &HandleDone, .user_ctx = nullptr};
-    httpd_uri_t uri_exit   = {.uri = "/exit", .method = HTTP_POST, .handler = &HandleExit, .user_ctx = nullptr};
-    httpd_uri_t uri_catch  = {.uri = "/*", .method = HTTP_GET, .handler = &HandleCatchAll, .user_ctx = nullptr};
+    httpd_uri_t uri_root   = {.uri = "/", .method = HTTP_GET, .handler = &HandleRoot, .user_ctx = this};
+    httpd_uri_t uri_scan   = {.uri = "/scan", .method = HTTP_GET, .handler = &HandleScan, .user_ctx = this};
+    httpd_uri_t uri_submit = {.uri = "/submit", .method = HTTP_POST, .handler = &HandleSubmit, .user_ctx = this};
+    httpd_uri_t uri_done   = {.uri = "/done", .method = HTTP_GET, .handler = &HandleDone, .user_ctx = this};
+    httpd_uri_t uri_exit   = {.uri = "/exit", .method = HTTP_POST, .handler = &HandleExit, .user_ctx = this};
+    httpd_uri_t uri_catch  = {.uri = "/*", .method = HTTP_GET, .handler = &HandleCatchAll, .user_ctx = this};
 
     httpd_register_uri_handler(server_, &uri_root);
     httpd_register_uri_handler(server_, &uri_scan);
@@ -292,7 +358,6 @@ void CaptivePortal::Stop() {
     }
     Wifi::Get().StopAp();
     running_.store(false);
-    g_portal = nullptr;
 }
 
 void CaptivePortal::OnSubmit(SubmitCb cb) {
@@ -304,19 +369,18 @@ void CaptivePortal::OnFinished(FinishedCb cb) {
 }
 
 void CaptivePortal::FinishTask(void* arg) {
+    std::unique_ptr<FinishTaskContext> ctx(static_cast<FinishTaskContext*>(arg));
     vTaskDelay(pdMS_TO_TICKS(2000));
-    auto* p = static_cast<CaptivePortal*>(arg);
-    if (p->on_finished_) {
-        p->on_finished_(true);
-    } else {
-        p->Stop();
+    if (ctx && ctx->alive && ctx->alive->load(std::memory_order_acquire) && ctx->on_finished) {
+        ctx->on_finished(true);
     }
     vTaskDelete(nullptr);
 }
 
 void CaptivePortal::StopTask(void* arg) {
+    std::unique_ptr<StopTaskContext> ctx(static_cast<StopTaskContext*>(arg));
     vTaskDelay(pdMS_TO_TICKS(100));
-    auto* p = static_cast<CaptivePortal*>(arg);
-    p->Stop();
+    if (ctx && ctx->alive && ctx->alive->load(std::memory_order_acquire) && ctx->portal)
+        ctx->portal->Stop();
     vTaskDelete(nullptr);
 }

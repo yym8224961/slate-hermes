@@ -10,6 +10,7 @@
 
 #include "charge_status.h"
 
+class StatusBar;
 class EpdSsd1683;
 class AudioPlayer;
 class SceneStack;
@@ -40,5 +41,22 @@ class Scene {
     virtual void OnEvent(SceneContext& ctx, const UiEvent& e) {
     }
 
+    virtual bool IsSettings() const {
+        return false;
+    }
+
     virtual lv_obj_t* Root() = 0;
+    virtual bool      RequiresRoot() const {
+        return true;
+    }
+
+   protected:
+    lv_obj_t* CreateFullscreenRoot();
+    bool      RefreshStatusBarFromSensors(SceneContext& ctx, StatusBar& status_bar);
+    bool      RefreshStatusBarAndRender(SceneContext& ctx, StatusBar* status_bar, bool force_full = false,
+                                        int timeout_ms = 500);
+    bool      SyncRender(SceneContext& ctx, bool force_full = false, int timeout_ms = 500);
+    bool      SyncRender(SceneContext& ctx, std::function<void()> before_refresh, bool force_full = false,
+                         int timeout_ms = 500);
+    bool      DestroyRoot(SceneContext& ctx, lv_obj_t*& root, std::function<void()> cleanup = {}, int timeout_ms = 500);
 };

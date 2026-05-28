@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 #include <string>
 
 #include "dns_hijack.h"
@@ -47,12 +48,16 @@ class CaptivePortal {
         return running_.load();
     }
 
+    ~CaptivePortal();
+
    private:
-    std::atomic<bool> running_{false};
-    httpd_handle_t    server_ = nullptr;
-    SubmitCb          on_submit_;
-    FinishedCb        on_finished_;
-    DnsHijack         dns_;
+    std::atomic<bool>                  running_{false};
+    httpd_handle_t                     server_ = nullptr;
+    SubmitCb                           on_submit_;
+    FinishedCb                         on_finished_;
+    std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
+    DnsHijack                          dns_;
+    std::string                        ap_url_ = "http://192.168.4.1/";
 
     static esp_err_t HandleRoot(httpd_req_t* req);
     static esp_err_t HandleScan(httpd_req_t* req);

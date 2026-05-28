@@ -1,32 +1,29 @@
 #include "xiaozhi_audio_service.h"
 
+#include <esp_ae_rate_cvt.h>
 #include <esp_audio_dec.h>
 #include <esp_audio_enc.h>
 #include <esp_audio_types.h>
-#include <esp_ae_rate_cvt.h>
 #include <esp_heap_caps.h>
 #include <esp_log.h>
 #include <esp_opus_dec.h>
 #include <esp_opus_enc.h>
-#include <esp_timer.h>
 #include <freertos/idf_additions.h>
 
 #include <algorithm>
 #include <cstring>
 
 #include "audio_player.h"
+#include "time_utils.h"
+#include "volume_store.h"
 
 namespace {
-constexpr char kTag[] = "XiaoAudio";
-constexpr int  kMaxEncodeTasks     = 2;
-constexpr int  kMaxPlaybackTasks   = 2;
-constexpr int  kMaxDecodePackets   = 2400 / xiaozhi::kOpusFrameDurationMs;
-constexpr int  kMaxSendPackets     = 2400 / xiaozhi::kOpusFrameDurationMs;
-constexpr int  kCodecTaskDelayMs   = 20;
-
-int64_t NowMs() {
-    return esp_timer_get_time() / 1000;
-}
+constexpr char kTag[]            = "XiaoAudio";
+constexpr int  kMaxEncodeTasks   = 2;
+constexpr int  kMaxPlaybackTasks = 2;
+constexpr int  kMaxDecodePackets = 2400 / xiaozhi::kOpusFrameDurationMs;
+constexpr int  kMaxSendPackets   = 2400 / xiaozhi::kOpusFrameDurationMs;
+constexpr int  kCodecTaskDelayMs = 20;
 
 esp_opus_enc_frame_duration_t EncDurationEnum(int ms) {
     switch (ms) {
@@ -88,9 +85,12 @@ bool AudioService::Start(AudioPlayer* player) {
     player_ = player;
     if (started_.load(std::memory_order_relaxed))
         return true;
-    if (input_task_ || output_task_ || codec_task_) {
-        ESP_LOGW(kTag, "Audio service tasks are still stopping");
-        return false;
+    {
+        std::lock_guard<std::mutex> task_lock(task_mutex_);
+        if (input_task_ || output_task_ || codec_task_) {
+            ESP_LOGW(kTag, "Audio service tasks are still stopping");
+            return false;
+        }
     }
 
     if (!decode_notify_)
@@ -109,7 +109,7 @@ bool AudioService::Start(AudioPlayer* player) {
     }
     CloseCodecResources();
 
-    encoder_frame_samples_ = kClientSampleRate * kOpusFrameDurationMs / 1000;
+    encoder_frame_samples_        = kClientSampleRate * kOpusFrameDurationMs / 1000;
     esp_opus_enc_config_t enc_cfg = {
         .sample_rate      = ESP_AUDIO_SAMPLE_RATE_16K,
         .channel          = ESP_AUDIO_MONO,
@@ -170,47 +170,50 @@ bool AudioService::Start(AudioPlayer* player) {
     queue_epoch_.fetch_add(1, std::memory_order_relaxed);
 
     started_.store(true, std::memory_order_relaxed);
-    BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(&AudioService::InputTaskEntry, "xiaozhi_in", 24 * 1024,
-                                                    this, 6, &input_task_, 0, MALLOC_CAP_SPIRAM);
-    if (ok != pdPASS) {
-        ESP_LOGE(kTag, "Input task create failed: internal_free=%u largest=%u",
-                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
-        started_.store(false, std::memory_order_relaxed);
-        input_task_ = nullptr;
-        CloseCodecResources();
-        return false;
-    }
-
-    ok = xTaskCreatePinnedToCoreWithCaps(&AudioService::CodecTaskEntry, "xiaozhi_codec", 24 * 1024,
-                                         this, 4, &codec_task_, 1, MALLOC_CAP_SPIRAM);
-    if (ok != pdPASS) {
-        ESP_LOGE(kTag, "Codec task create failed: internal_free=%u largest=%u",
-                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
-        started_.store(false, std::memory_order_relaxed);
-        xSemaphoreGive(decode_notify_);
-        const bool stopped = WaitForTasksToStop(1);
-        codec_task_ = nullptr;
-        if (stopped)
+    {
+        std::unique_lock<std::mutex> task_lock(task_mutex_);
+        BaseType_t ok = xTaskCreatePinnedToCoreWithCaps(&AudioService::InputTaskEntry, "xiaozhi_in", 24 * 1024, this, 6,
+                                                        &input_task_, 0, MALLOC_CAP_SPIRAM);
+        if (ok != pdPASS) {
+            ESP_LOGE(kTag, "Input task create failed: internal_free=%u largest=%u",
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+            started_.store(false, std::memory_order_relaxed);
+            input_task_ = nullptr;
             CloseCodecResources();
-        return false;
-    }
+            return false;
+        }
 
-    ok = xTaskCreatePinnedToCoreWithCaps(&AudioService::OutputTaskEntry, "xiaozhi_out", 16 * 1024,
-                                         this, 5, &output_task_, 1, MALLOC_CAP_SPIRAM);
-    if (ok != pdPASS) {
-        ESP_LOGE(kTag, "Output task create failed: internal_free=%u largest=%u",
-                 static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
-                 static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
-        started_.store(false, std::memory_order_relaxed);
-        xSemaphoreGive(decode_notify_);
-        xSemaphoreGive(playback_notify_);
-        const bool stopped = WaitForTasksToStop(2);
-        output_task_ = nullptr;
-        if (stopped)
-            CloseCodecResources();
-        return false;
+        ok = xTaskCreatePinnedToCoreWithCaps(&AudioService::CodecTaskEntry, "xiaozhi_codec", 24 * 1024, this, 4,
+                                             &codec_task_, 1, MALLOC_CAP_SPIRAM);
+        if (ok != pdPASS) {
+            ESP_LOGE(kTag, "Codec task create failed: internal_free=%u largest=%u",
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+            started_.store(false, std::memory_order_relaxed);
+            xSemaphoreGive(decode_notify_);
+            task_lock.unlock();
+            const bool stopped = WaitForTasksToStop(1);
+            if (stopped)
+                CloseCodecResources();
+            return false;
+        }
+
+        ok = xTaskCreatePinnedToCoreWithCaps(&AudioService::OutputTaskEntry, "xiaozhi_out", 16 * 1024, this, 5,
+                                             &output_task_, 1, MALLOC_CAP_SPIRAM);
+        if (ok != pdPASS) {
+            ESP_LOGE(kTag, "Output task create failed: internal_free=%u largest=%u",
+                     static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
+                     static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
+            started_.store(false, std::memory_order_relaxed);
+            xSemaphoreGive(decode_notify_);
+            xSemaphoreGive(playback_notify_);
+            task_lock.unlock();
+            const bool stopped = WaitForTasksToStop(2);
+            if (stopped)
+                CloseCodecResources();
+            return false;
+        }
     }
     return true;
 }
@@ -230,12 +233,15 @@ void AudioService::Stop() {
         xSemaphoreGive(send_notify_);
 
     int expected = 0;
-    if (input_task_)
-        ++expected;
-    if (output_task_)
-        ++expected;
-    if (codec_task_)
-        ++expected;
+    {
+        std::lock_guard<std::mutex> task_lock(task_mutex_);
+        if (input_task_)
+            ++expected;
+        if (output_task_)
+            ++expected;
+        if (codec_task_)
+            ++expected;
+    }
     const bool stopped = WaitForTasksToStop(expected);
     {
         std::lock_guard<std::mutex> lock(queue_mutex_);
@@ -268,7 +274,7 @@ bool AudioService::Begin(int xiaozhi_codec_volume) {
     return true;
 }
 
-void AudioService::End(int album_codec_volume) {
+void AudioService::EndAndRestoreAlbumVolume(int album_level) {
     voice_processing_.store(false, std::memory_order_relaxed);
     const bool was_active = active_.exchange(false, std::memory_order_relaxed);
     {
@@ -289,7 +295,7 @@ void AudioService::End(int album_codec_volume) {
             esp_ae_rate_cvt_reset(reinterpret_cast<esp_ae_rate_cvt_handle_t>(output_resampler_));
     }
     if (was_active && player_)
-        player_->EndChat(album_codec_volume);
+        player_->EndChat(vol::ToCodec(album_level));
 }
 
 void AudioService::SetVolume(int codec_volume) {
@@ -341,7 +347,7 @@ std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
     auto packet = std::move(send_queue_.front());
     send_queue_.pop_front();
     send_pop_count_.fetch_add(1, std::memory_order_relaxed);
-    last_send_pop_ms_.store(NowMs(), std::memory_order_relaxed);
+    last_send_pop_ms_.store(time_utils::NowMs(), std::memory_order_relaxed);
     if (decode_notify_)
         xSemaphoreGive(decode_notify_);
     return packet;
@@ -350,8 +356,7 @@ std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
 bool AudioService::IsIdle() {
     std::lock_guard<std::mutex> lock(queue_mutex_);
     return encode_queue_.empty() && decode_queue_.empty() && playback_queue_.empty() && send_queue_.empty() &&
-           !decode_active_.load(std::memory_order_relaxed) &&
-           !playback_active_.load(std::memory_order_relaxed);
+           !decode_active_.load(std::memory_order_relaxed) && !playback_active_.load(std::memory_order_relaxed);
 }
 
 bool AudioService::WaitForPlaybackQueueEmpty(int timeout_ms) {
@@ -361,8 +366,7 @@ bool AudioService::WaitForPlaybackQueueEmpty(int timeout_ms) {
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
             idle = decode_queue_.empty() && playback_queue_.empty() &&
-                   !decode_active_.load(std::memory_order_relaxed) &&
-                   !playback_active_.load(std::memory_order_relaxed);
+                   !decode_active_.load(std::memory_order_relaxed) && !playback_active_.load(std::memory_order_relaxed);
         }
         if (idle)
             return true;
@@ -376,7 +380,7 @@ bool AudioService::WaitForPlaybackQueueEmpty(int timeout_ms) {
 void AudioService::InputTaskEntry(void* arg) {
     auto* self = static_cast<AudioService*>(arg);
     self->InputTask();
-    self->input_task_ = nullptr;
+    self->ClearTaskHandle(xTaskGetCurrentTaskHandle());
     self->SignalTaskStopped();
     vTaskDeleteWithCaps(nullptr);
 }
@@ -384,7 +388,7 @@ void AudioService::InputTaskEntry(void* arg) {
 void AudioService::OutputTaskEntry(void* arg) {
     auto* self = static_cast<AudioService*>(arg);
     self->OutputTask();
-    self->output_task_ = nullptr;
+    self->ClearTaskHandle(xTaskGetCurrentTaskHandle());
     self->SignalTaskStopped();
     vTaskDeleteWithCaps(nullptr);
 }
@@ -392,7 +396,7 @@ void AudioService::OutputTaskEntry(void* arg) {
 void AudioService::CodecTaskEntry(void* arg) {
     auto* self = static_cast<AudioService*>(arg);
     self->CodecTask();
-    self->codec_task_ = nullptr;
+    self->ClearTaskHandle(xTaskGetCurrentTaskHandle());
     self->SignalTaskStopped();
     vTaskDeleteWithCaps(nullptr);
 }
@@ -407,7 +411,7 @@ void AudioService::InputTask() {
             continue;
         }
 
-        pcm.assign(encoder_frame_samples_, 0);
+        pcm.resize(encoder_frame_samples_);
         if (!player_->ReadChatPcm(pcm.data(), pcm.size())) {
             input_read_fail_.fetch_add(1, std::memory_order_relaxed);
             const uint32_t fail_count = input_read_fail_.load(std::memory_order_relaxed);
@@ -422,7 +426,7 @@ void AudioService::InputTask() {
             continue;
         }
         input_read_ok_.fetch_add(1, std::memory_order_relaxed);
-        last_input_ok_ms_.store(NowMs(), std::memory_order_relaxed);
+        last_input_ok_ms_.store(time_utils::NowMs(), std::memory_order_relaxed);
         int peak = 0;
         for (int16_t sample : pcm) {
             const int value = sample < 0 ? -static_cast<int>(sample) : static_cast<int>(sample);
@@ -483,9 +487,9 @@ void AudioService::CodecTask() {
         if (decode_packet) {
             did_work = true;
             decode_active_.store(true, std::memory_order_relaxed);
-            auto task = std::make_unique<PcmTask>();
+            auto task       = std::make_unique<PcmTask>();
             task->timestamp = decode_packet->timestamp;
-            task->epoch = decode_packet->epoch;
+            task->epoch     = decode_packet->epoch;
 
             bool decoded = false;
             {
@@ -505,7 +509,7 @@ void AudioService::CodecTask() {
                         .decoded_size = 0,
                     };
                     esp_audio_dec_info_t info = {};
-                    auto ret = esp_opus_dec_decode(opus_decoder_, &raw, &frame, &info);
+                    auto                 ret  = esp_opus_dec_decode(opus_decoder_, &raw, &frame, &info);
                     if (ret != ESP_AUDIO_ERR_OK || frame.decoded_size == 0) {
                         ESP_LOGW(kTag, "Decode failed: %d", ret);
                     } else {
@@ -541,39 +545,40 @@ void AudioService::CodecTask() {
             if (encode_task->pcm.size() != static_cast<size_t>(encoder_frame_samples_)) {
                 ESP_LOGW(kTag, "Skip encode: invalid frame samples=%u expected=%d",
                          static_cast<unsigned>(encode_task->pcm.size()), encoder_frame_samples_);
-                continue;
-            }
-            std::vector<uint8_t> encoded(encoder_output_bytes_);
-            esp_audio_enc_in_frame_t in = {
-                .buffer = reinterpret_cast<uint8_t*>(encode_task->pcm.data()),
-                .len    = static_cast<uint32_t>(encode_task->pcm.size() * sizeof(int16_t)),
-            };
-            esp_audio_enc_out_frame_t out = {};
-            out.buffer = encoded.data();
-            out.len = static_cast<uint32_t>(encoded.size());
-            out.encoded_bytes = 0;
-            auto ret = esp_opus_enc_process(opus_encoder_, &in, &out);
-            if (ret == ESP_AUDIO_ERR_OK && out.encoded_bytes == 0) {
-                encode_empty_.fetch_add(1, std::memory_order_relaxed);
-            } else if (ret != ESP_AUDIO_ERR_OK) {
                 encode_fail_.fetch_add(1, std::memory_order_relaxed);
-                ESP_LOGW(kTag, "Encode failed: %d", ret);
             } else {
-                encode_ok_.fetch_add(1, std::memory_order_relaxed);
-                last_encode_ok_ms_.store(NowMs(), std::memory_order_relaxed);
-                auto packet            = std::make_unique<AudioStreamPacket>();
-                packet->sample_rate    = kClientSampleRate;
-                packet->frame_duration = kOpusFrameDurationMs;
-                packet->timestamp      = encode_task->timestamp;
-                packet->epoch          = encode_task->epoch;
-                packet->payload.assign(encoded.data(), encoded.data() + out.encoded_bytes);
-                {
-                    std::lock_guard<std::mutex> lock(queue_mutex_);
-                    if (packet->epoch == queue_epoch_.load(std::memory_order_relaxed))
-                        send_queue_.push_back(std::move(packet));
+                std::vector<uint8_t>     encoded(encoder_output_bytes_);
+                esp_audio_enc_in_frame_t in = {
+                    .buffer = reinterpret_cast<uint8_t*>(encode_task->pcm.data()),
+                    .len    = static_cast<uint32_t>(encode_task->pcm.size() * sizeof(int16_t)),
+                };
+                esp_audio_enc_out_frame_t out = {};
+                out.buffer                    = encoded.data();
+                out.len                       = static_cast<uint32_t>(encoded.size());
+                out.encoded_bytes             = 0;
+                auto ret                      = esp_opus_enc_process(opus_encoder_, &in, &out);
+                if (ret == ESP_AUDIO_ERR_OK && out.encoded_bytes == 0) {
+                    encode_empty_.fetch_add(1, std::memory_order_relaxed);
+                } else if (ret != ESP_AUDIO_ERR_OK) {
+                    encode_fail_.fetch_add(1, std::memory_order_relaxed);
+                    ESP_LOGW(kTag, "Encode failed: %d", ret);
+                } else {
+                    encode_ok_.fetch_add(1, std::memory_order_relaxed);
+                    last_encode_ok_ms_.store(time_utils::NowMs(), std::memory_order_relaxed);
+                    auto packet            = std::make_unique<AudioStreamPacket>();
+                    packet->sample_rate    = kClientSampleRate;
+                    packet->frame_duration = kOpusFrameDurationMs;
+                    packet->timestamp      = encode_task->timestamp;
+                    packet->epoch          = encode_task->epoch;
+                    packet->payload.assign(encoded.data(), encoded.data() + out.encoded_bytes);
+                    {
+                        std::lock_guard<std::mutex> lock(queue_mutex_);
+                        if (packet->epoch == queue_epoch_.load(std::memory_order_relaxed))
+                            send_queue_.push_back(std::move(packet));
+                    }
+                    if (send_notify_)
+                        xSemaphoreGive(send_notify_);
                 }
-                if (send_notify_)
-                    xSemaphoreGive(send_notify_);
             }
         }
 
@@ -587,14 +592,13 @@ bool AudioService::PushTaskToEncodeQueue(std::vector<int16_t>&& pcm) {
     if (pcm.empty() || !active_.load(std::memory_order_relaxed))
         return false;
 
-    while (started_.load(std::memory_order_relaxed) &&
-           active_.load(std::memory_order_relaxed) &&
+    while (started_.load(std::memory_order_relaxed) && active_.load(std::memory_order_relaxed) &&
            voice_processing_.load(std::memory_order_relaxed)) {
         {
             std::lock_guard<std::mutex> lock(queue_mutex_);
             if (encode_queue_.size() < kMaxEncodeTasks) {
-                auto task = std::make_unique<PcmTask>();
-                task->pcm = std::move(pcm);
+                auto task   = std::make_unique<PcmTask>();
+                task->pcm   = std::move(pcm);
                 task->epoch = queue_epoch_.load(std::memory_order_relaxed);
                 encode_queue_.push_back(std::move(task));
                 if (decode_notify_)
@@ -612,6 +616,14 @@ bool AudioService::EnsureDecoderLocked(int sample_rate, int frame_duration) {
         sample_rate = kClientSampleRate;
     if (frame_duration <= 0)
         frame_duration = kOpusFrameDurationMs;
+    if (!IsSupportedOpusSampleRate(sample_rate)) {
+        ESP_LOGW(kTag, "Reject decoder sample rate: %d", sample_rate);
+        return false;
+    }
+    if (!IsSupportedOpusFrameDuration(frame_duration)) {
+        ESP_LOGW(kTag, "Reject decoder frame duration: %d", frame_duration);
+        return false;
+    }
     if (opus_decoder_ && decoder_sample_rate_ == sample_rate && decoder_frame_duration_ == frame_duration)
         return true;
 
@@ -623,9 +635,9 @@ bool AudioService::EnsureDecoderLocked(int sample_rate, int frame_duration) {
         esp_ae_rate_cvt_close(output_resampler_);
         output_resampler_ = nullptr;
     }
-    decoder_sample_rate_ = 0;
+    decoder_sample_rate_    = 0;
     decoder_frame_duration_ = 0;
-    decoder_frame_samples_ = 0;
+    decoder_frame_samples_  = 0;
 
     esp_opus_dec_cfg_t dec_cfg = {
         .sample_rate    = static_cast<uint32_t>(sample_rate),
@@ -660,11 +672,11 @@ bool AudioService::EnsureDecoderLocked(int sample_rate, int frame_duration) {
             if (output_resampler_)
                 esp_ae_rate_cvt_close(output_resampler_);
             esp_opus_dec_close(opus_decoder_);
-            opus_decoder_ = nullptr;
-            output_resampler_ = nullptr;
-            decoder_sample_rate_ = 0;
+            opus_decoder_           = nullptr;
+            output_resampler_       = nullptr;
+            decoder_sample_rate_    = 0;
             decoder_frame_duration_ = 0;
-            decoder_frame_samples_ = 0;
+            decoder_frame_samples_  = 0;
             return false;
         }
     }
@@ -675,11 +687,11 @@ bool AudioService::ResampleToDeviceRateLocked(std::vector<int16_t>& pcm, int sam
     if (sample_rate == kClientSampleRate || !output_resampler_)
         return true;
     uint32_t max_out = 0;
-    auto ret = esp_ae_rate_cvt_get_max_out_sample_num(output_resampler_, pcm.size(), &max_out);
+    auto     ret     = esp_ae_rate_cvt_get_max_out_sample_num(output_resampler_, pcm.size(), &max_out);
     if (ret != ESP_AE_ERR_OK || max_out == 0)
         return false;
     std::vector<int16_t> out(max_out);
-    uint32_t actual = max_out;
+    uint32_t             actual = max_out;
     ret = esp_ae_rate_cvt_process(output_resampler_, reinterpret_cast<esp_ae_sample_t>(pcm.data()), pcm.size(),
                                   reinterpret_cast<esp_ae_sample_t>(out.data()), &actual);
     if (ret != ESP_AE_ERR_OK)
@@ -703,12 +715,22 @@ void AudioService::CloseCodecResources() {
         esp_ae_rate_cvt_close(output_resampler_);
         output_resampler_ = nullptr;
     }
-    encoder_frame_samples_ = 0;
-    encoder_input_bytes_ = 0;
-    encoder_output_bytes_ = 0;
-    decoder_sample_rate_ = 0;
+    encoder_frame_samples_  = 0;
+    encoder_input_bytes_    = 0;
+    encoder_output_bytes_   = 0;
+    decoder_sample_rate_    = 0;
     decoder_frame_duration_ = 0;
-    decoder_frame_samples_ = 0;
+    decoder_frame_samples_  = 0;
+}
+
+void AudioService::ClearTaskHandle(TaskHandle_t current) {
+    std::lock_guard<std::mutex> task_lock(task_mutex_);
+    if (input_task_ == current)
+        input_task_ = nullptr;
+    if (output_task_ == current)
+        output_task_ = nullptr;
+    if (codec_task_ == current)
+        codec_task_ = nullptr;
 }
 
 void AudioService::SignalTaskStopped() {

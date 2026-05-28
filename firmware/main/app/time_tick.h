@@ -5,14 +5,18 @@
 
 #include <esp_timer.h>
 
+#include <atomic>
+
 class TimeTick {
    public:
+    ~TimeTick();
+
     void Start();
     void Stop();
 
    private:
     static void TickCb(void* arg);
 
-    esp_timer_handle_t timer_       = nullptr;
-    int                last_minute_ = -1;
+    esp_timer_handle_t timer_ = nullptr;
+    std::atomic<int>   last_minute_{-1};
 };

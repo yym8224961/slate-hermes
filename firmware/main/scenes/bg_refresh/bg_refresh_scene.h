@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -21,6 +22,9 @@ class BgRefreshScene : public Scene {
     lv_obj_t* Root() override {
         return root_;
     }
+    bool RequiresRoot() const override {
+        return false;
+    }
 
    private:
     enum class State {
@@ -35,8 +39,9 @@ class BgRefreshScene : public Scene {
     void StartWatcher(EpdSsd1683* epd);
     void Finish();
 
-    State state_                  = State::kWaiting;
-    bool  previous_screen_seeded_ = false;
+    State                              state_                  = State::kWaiting;
+    bool                               previous_screen_seeded_ = false;
+    std::shared_ptr<std::atomic<bool>> done_posted_            = std::make_shared<std::atomic<bool>>(false);
 
     lv_obj_t*                  root_ = nullptr;
     std::unique_ptr<StatusBar> status_bar_;

@@ -4,6 +4,7 @@
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_oneshot.h>
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 #include <atomic>
 #include <memory>
@@ -76,4 +77,5 @@ class Board {
     // charge_tick_task 退出协调
     std::atomic<bool> charge_tick_running_{false};
     TaskHandle_t      charge_tick_task_ = nullptr;
+    SemaphoreHandle_t charge_tick_exit_ = nullptr;
 };

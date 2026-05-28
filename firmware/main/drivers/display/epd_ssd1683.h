@@ -9,6 +9,9 @@
 
 #include <atomic>
 #include <functional>
+#include <vector>
+
+#include "epd_utils.h"
 
 // SSD1683 类驱动 4.2" 黑白 EPD（400×300，1bpp）+ LVGL 集成。
 // SPI 写帧 + 异步 refresh_task（300 ms 节流，防过频刷新损伤 EPD）+ LVGL flush_cb
@@ -52,9 +55,12 @@ class EpdSsd1683 {
     spi_device_handle_t spi_        = nullptr;
     bool                spi_inited_ = false;
 
-    uint8_t* buffer_      = nullptr;  // 实时 framebuffer（LVGL flush 写入）
-    uint8_t* prev_buffer_ = nullptr;  // 上次刷到 EPD 的快照
-    uint8_t* tx_buf_      = nullptr;  // refresh_task 用的临时快照
+    uint8_t*             buffer_          = nullptr;  // 实时 framebuffer（LVGL flush 写入）
+    uint8_t*             prev_buffer_     = nullptr;  // 上次刷到 EPD 的快照
+    uint8_t*             tx_buf_          = nullptr;  // refresh_task 用的临时快照
+    uint8_t*             prev_tx_buf_     = nullptr;  // refresh_task 使用的 previous 快照
+    uint8_t*             lvgl_render_buf_ = nullptr;
+    std::vector<uint8_t> epd_line_;
 
     // 200 而非 128：LVGL anti-alias 字体边缘的灰度像素被划入「黑」，
     // 字体看起来粗实清晰。128 中性二值化会让灰边判白丢失,字体发虚。
@@ -63,15 +69,14 @@ class EpdSsd1683 {
     lv_display_t* lvgl_display_ = nullptr;
     static void   LvglFlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t* color_p);
 
-    SemaphoreHandle_t dirty_mutex_  = nullptr;
-    TaskHandle_t      refresh_task_ = nullptr;
-    struct Rect {
-        int x = 0, y = 0, w = 0, h = 0;
-    };
-    Rect                 dirty_;
+    SemaphoreHandle_t    dirty_mutex_  = nullptr;
+    TaskHandle_t         refresh_task_ = nullptr;
+    SemaphoreHandle_t    refresh_exit_ = nullptr;
+    epd::Rect            dirty_;
     bool                 pending_                  = false;
     bool                 urgent_refresh_           = false;
     bool                 force_full_refresh_       = false;
+    bool                 refresh_task_stop_        = false;
     bool                 prev_buffer_synced_       = false;
     bool                 refresh_in_progress_      = false;
     TickType_t           last_sample_tick_         = 0;
@@ -98,7 +103,7 @@ class EpdSsd1683 {
     uint8_t cached_booster_    = 0;
     void    EpdSendCommand(uint8_t c);
     void    EpdSendData(uint8_t d);
-    uint8_t EpdRecvData();  // 切到 RX 模式读 1 字节,读完切回 TX
+    uint8_t EpdRecvData();  // refresh_task only:切到 RX 模式读 1 字节,读完切回 TX
     void    WriteBytes(const uint8_t* buf, int len);
     void    ReadBusy();
     void    EpdPowerOn();  // 主动管 EPD_PWR_PIN(含 hold_dis/set/hold_en)

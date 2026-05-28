@@ -4,8 +4,11 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include <cstring>
 #include <array>
+#include <atomic>
+#include <cstring>
+#include <memory>
+#include <new>
 #include <vector>
 
 #include "cache.h"
@@ -26,24 +29,33 @@ void PostBgRefreshDone() {
     evt::Post(e);
 }
 
+void PostBgRefreshDoneOnce(const std::shared_ptr<std::atomic<bool>>& done_posted) {
+    if (done_posted && done_posted->exchange(true, std::memory_order_acq_rel))
+        return;
+    PostBgRefreshDone();
+}
+
+struct WatcherContext {
+    EpdSsd1683*                        epd = nullptr;
+    std::shared_ptr<std::atomic<bool>> done_posted;
+};
+
 void WatcherEntry(void* arg) {
-    auto* epd = static_cast<EpdSsd1683*>(arg);
-    constexpr int kTimeoutMs = 8000;
-    int           waited     = 0;
+    std::unique_ptr<WatcherContext> ctx(static_cast<WatcherContext*>(arg));
+    auto*                           epd        = ctx ? ctx->epd : nullptr;
+    constexpr int                   kTimeoutMs = 8000;
+    int                             waited     = 0;
     while (epd && epd->IsRefreshPending() && waited < kTimeoutMs) {
         vTaskDelay(pdMS_TO_TICKS(50));
         waited += 50;
     }
-    PostBgRefreshDone();
+    auto done_posted = ctx ? ctx->done_posted : std::shared_ptr<std::atomic<bool>>();
+    PostBgRefreshDoneOnce(done_posted);
     vTaskDelete(nullptr);
 }
 
 void UpdateFrameSchedule(int seq, const cache::FrameMeta& meta) {
-    power_state::CurrentFrameSchedule schedule;
-    schedule.dynamic         = meta.has_ttl;
-    schedule.server_sync_sec = meta.ttl_sec;
-    power_state::SetCurrentFrameSchedule(schedule);
-    power_state::SetCurrentFrameSeq(seq);
+    power_state::SetCurrentFrameFromMeta(seq, meta);
 }
 
 }  // namespace
@@ -51,19 +63,13 @@ void UpdateFrameSchedule(int seq, const cache::FrameMeta& meta) {
 BgRefreshScene::~BgRefreshScene() = default;
 
 void BgRefreshScene::OnEnter(SceneContext& ctx) {
+    done_posted_->store(false, std::memory_order_release);
     previous_screen_seeded_ = SeedPreviousFrame(ctx);
     state_                  = State::kWaiting;
 }
 
 void BgRefreshScene::OnExit(SceneContext& ctx) {
-    if (!ctx.epd || !ctx.epd->Lock(500))
-        return;
-    status_bar_.reset();
-    if (root_) {
-        lv_obj_del(root_);
-        root_ = nullptr;
-    }
-    ctx.epd->Unlock();
+    DestroyRoot(ctx, root_, [this] { status_bar_.reset(); });
 }
 
 void BgRefreshScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
@@ -125,9 +131,7 @@ bool BgRefreshScene::SeedPreviousFrame(SceneContext& ctx) {
 
     const int y = theme::kStatusBarHeight;
     const int h = FrameView::kHeight - y;
-    ctx.epd->SeedPreviousRaw1bpp(0, 0,
-                                 power_state::kStatusBarSnapshotWidth,
-                                 power_state::kStatusBarSnapshotHeight,
+    ctx.epd->SeedPreviousRaw1bpp(0, 0, power_state::kStatusBarSnapshotWidth, power_state::kStatusBarSnapshotHeight,
                                  status_bar.data(), status_bar.size());
     ctx.epd->SeedPreviousRaw1bpp(0, y, FrameView::kWidth, h, raw.data() + y * kBpr, h * kBpr);
     return true;
@@ -186,22 +190,10 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
     lv_obj_set_style_border_width(root_, 0, 0);
     lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
 
-    status_bar_  = std::make_unique<StatusBar>(root_);
+    status_bar_ = std::make_unique<StatusBar>(root_);
     status_bar_->SetCaption(meta.status_bar_text);
-    if (ctx.wifi_connected && ctx.wifi_rssi) {
-        status_bar_->SetWifi(ctx.wifi_connected(), ctx.wifi_rssi());
-    }
-    if (ctx.read_charge) {
-        const auto snap = ctx.read_charge();
-        int        pct  = -1;
-        if (!snap.no_battery && ctx.read_battery) {
-            int mv = 0;
-            ctx.read_battery(&mv, &pct);
-        }
-        status_bar_->SetBattery(pct, snap.charging, snap.full);
-    }
+    RefreshStatusBarFromSensors(ctx, *status_bar_);
     lv_refr_now(NULL);
-    ctx.epd->Unlock();
 
     // Background refresh uses LVGL only for the status bar. The frame body is
     // written as raw 1bpp data so it exactly matches the cached screen format.
@@ -209,14 +201,22 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
     const int h = FrameView::kHeight - y;
     ctx.epd->WriteRaw1bpp(0, y, FrameView::kWidth, h, raw.data() + y * kBpr, h * kBpr);
     ctx.epd->RequestUrgentPartialRefresh();
+    ctx.epd->Unlock();
 
     StartWatcher(ctx.epd);
     return true;
 }
 
 void BgRefreshScene::StartWatcher(EpdSsd1683* epd) {
-    BaseType_t ok = xTaskCreatePinnedToCore(&WatcherEntry, "bg_refresh_watch", 2048, epd, 2, nullptr, 0);
+    auto* ctx = new (std::nothrow) WatcherContext{epd, done_posted_};
+    if (!ctx) {
+        ESP_LOGW(kTag, "Watcher alloc failed; finish immediately");
+        Finish();
+        return;
+    }
+    BaseType_t ok = xTaskCreatePinnedToCore(&WatcherEntry, "bg_refresh_watch", 2048, ctx, 2, nullptr, 0);
     if (ok != pdPASS) {
+        delete ctx;
         ESP_LOGW(kTag, "Watcher create failed; finish immediately");
         Finish();
     }
@@ -226,5 +226,5 @@ void BgRefreshScene::Finish() {
     if (state_ == State::kDone)
         return;
     state_ = State::kDone;
-    PostBgRefreshDone();
+    PostBgRefreshDoneOnce(done_posted_);
 }
