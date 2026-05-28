@@ -49,10 +49,7 @@ export class AudioService {
     return this.ffmpegAvailable;
   }
 
-  async transcodeAudio(
-    inputBuffer: Buffer,
-    opts: { signal?: AbortSignal } = {}
-  ): Promise<Buffer> {
+  async transcodeAudio(inputBuffer: Buffer, opts: { signal?: AbortSignal } = {}): Promise<Buffer> {
     if (!(await this.checkFfmpegAvailable())) {
       throw new AudioTranscodeError('音频处理服务不可用', 'FFMPEG_NOT_FOUND');
     }
@@ -191,8 +188,6 @@ export class AudioService {
 
 function isMissingFfmpegError(err: unknown): boolean {
   return (
-    typeof err === 'object' &&
-    err !== null &&
-    (err as NodeJS.ErrnoException).code === 'ENOENT'
+    typeof err === 'object' && err !== null && (err as NodeJS.ErrnoException).code === 'ENOENT'
   );
 }

@@ -1,8 +1,5 @@
 import { ICON_FONT_TEST_SAMPLE, type FontTestFontIdT } from 'shared';
-import {
-  DEVICE_FONT_IDS,
-  type DeviceFontCatalogEntry,
-} from './font-catalog';
+import { DEVICE_FONT_IDS, type DeviceFontCatalogEntry } from './font-catalog';
 import { hasGlyph, type BitmapFont } from './bitmap-font';
 
 export interface FontSpecimen {
@@ -123,10 +120,7 @@ export function fontReadingLines(
   ];
 }
 
-export function fontTestSampleText(
-  specimenKind: string,
-  specimen: FontSpecimen
-): string {
+export function fontTestSampleText(specimenKind: string, specimen: FontSpecimen): string {
   return specimenKind === 'icon'
     ? ICON_FONT_TEST_SAMPLE
     : specimenKind === 'display'

@@ -8,10 +8,18 @@ import type {
   IngestResponseT,
   ReorderContentsRequestT,
 } from 'shared';
-import { API_V1, api } from '@/lib/api';
+import { API_V1, api } from '@/lib/http';
 import { queryKeys } from '@/lib/query-keys';
 
 const contentKeys = queryKeys.contents;
+const AUDIO_GENERATING_REFETCH_INTERVAL_MS = 2500;
+
+function audioGenerationRefetchInterval(query: { state: { data?: ContentDetailT[] } }) {
+  const rows = query.state.data;
+  return rows?.some((row) => row.audio_status === 'pending' || row.audio_status === 'generating')
+    ? AUDIO_GENERATING_REFETCH_INTERVAL_MS
+    : false;
+}
 
 function invalidateGroupContent(
   qc: ReturnType<typeof useQueryClient>,
@@ -35,14 +43,7 @@ export function useGroupContents(gid: string | undefined) {
       return data;
     },
     enabled: !!gid,
-    refetchInterval: (query) => {
-      const rows = query.state.data;
-      return rows?.some(
-        (row) => row.audio_status === 'pending' || row.audio_status === 'generating'
-      )
-        ? 2500
-        : false;
-    },
+    refetchInterval: audioGenerationRefetchInterval,
   });
 }
 

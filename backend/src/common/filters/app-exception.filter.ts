@@ -38,6 +38,8 @@ export class AppExceptionFilter implements ExceptionFilter {
     if (appErr.httpStatus >= 500) {
       this.logger.error({ err: exception, requestId: envelope.requestId }, appErr.message);
     } else if (appErr.detail !== undefined) {
+      // Client-safe AppError details are part of the API contract for 4xx responses.
+      // 5xx details are intentionally withheld above to avoid leaking internals.
       envelope.detail = appErr.detail;
     }
 

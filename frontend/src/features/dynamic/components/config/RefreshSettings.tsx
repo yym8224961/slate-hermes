@@ -1,5 +1,5 @@
 import { Select, SelectItem } from '@/components/ui/Select';
-import type { DynamicConfigChange, RefreshableDynamicConfig } from './types';
+import type { DynamicConfigChange, RefreshableDynamicConfig } from '@/features/dynamic/types';
 
 const DEFAULT_REFRESH_INTERVAL_SEC = 600;
 

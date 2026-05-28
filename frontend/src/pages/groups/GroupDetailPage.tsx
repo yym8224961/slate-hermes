@@ -5,18 +5,16 @@
 import { useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Layers, Pencil, Check } from 'lucide-react';
-import { DndContext, closestCenter } from '@dnd-kit/core';
-import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { useGroup, useUpdateGroup } from '@/features/groups/queries';
 import { useGroupContents, useReorderContents } from '@/features/contents/queries';
 import type { ContentDetailT, GroupSummaryT } from 'shared';
 import { Spinner } from '@/components/ui/Spinner';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { IconBlock } from '@/components/ui/IconBlock';
+import { SortableGrid } from '@/components/ui/SortableGrid';
 import { ImageContentCard } from '@/features/contents/components/cards/ImageContentCard';
 import { DynamicContentCard } from '@/features/contents/components/cards/DynamicContentCard';
-import { DoubleRule } from '@/components/ui/DoubleRule';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { useToast } from '@/components/feedback/Toast';
 import { inputCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
@@ -103,43 +101,33 @@ export function GroupDetailPage() {
 
   return (
     <div>
-      <nav>
-        <Link
-          to="/"
-          className="inline-flex items-center gap-1.5 text-[11px] font-mono text-stone hover:text-ink tracking-[0.08em]"
-        >
-          <ArrowLeft size={14} /> 总览
-        </Link>
-      </nav>
-
-      <GroupHeader group={group} KindIcon={KindIcon} onAdd={openCreate} />
-
-      {/* 双线分隔 */}
-      <DoubleRule className="mt-3" />
+      <GroupHeader
+        group={group}
+        KindIcon={KindIcon}
+        onBack={() => navigate('/')}
+        onAdd={openCreate}
+      />
       <div className="mt-6 fade-up fade-up-1">
         {contents.isPending ? (
           <Spinner label="加载中" />
         ) : contents.isError ? (
           <EmptyState title="加载失败" hint="请刷新重试。" />
         ) : contents.data && contents.data.length > 0 ? (
-          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-            <SortableContext items={currentOrder} strategy={rectSortingStrategy}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                {orderedItems.map((f) =>
-                  f.kind === 'dynamic' ? (
-                    <DynamicContentCard
-                      key={f.id}
-                      gid={gid}
-                      content={f}
-                      onEdit={() => openEdit(f)}
-                    />
-                  ) : (
-                    <ImageContentCard key={f.id} gid={gid} content={f} onEdit={() => openEdit(f)} />
-                  )
-                )}
-              </div>
-            </SortableContext>
-          </DndContext>
+          <SortableGrid
+            sensors={sensors}
+            order={currentOrder}
+            items={orderedItems}
+            onDragEnd={onDragEnd}
+            getKey={(content) => content.id}
+            className="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
+            renderItem={(content) =>
+              content.kind === 'dynamic' ? (
+                <DynamicContentCard gid={gid} content={content} onEdit={() => openEdit(content)} />
+              ) : (
+                <ImageContentCard gid={gid} content={content} onEdit={() => openEdit(content)} />
+              )
+            }
+          />
         ) : (
           <EmptyState
             title="尚无内容"
@@ -160,10 +148,12 @@ export function GroupDetailPage() {
 function GroupHeader({
   group,
   KindIcon,
+  onBack,
   onAdd,
 }: {
   group: GroupSummaryT;
   KindIcon: typeof Layers;
+  onBack: () => void;
   onAdd: () => void;
 }) {
   const update = useUpdateGroup(group.id);
@@ -172,33 +162,23 @@ function GroupHeader({
   const { editing, draft, setDraft, startEditing, commit, handleKeyDown } = useInlineRename(
     group.name,
     async (name) => {
-      await new Promise<void>((resolve, reject) => {
-        update.mutate(
-          { name },
-          {
-            onSuccess: () => {
-              toast.success('已改名');
-              resolve();
-            },
-            onError: () => {
-              toast.error('改名失败');
-              reject();
-            },
-          }
-        );
-      });
+      try {
+        await update.mutateAsync({ name });
+        toast.success('已改名');
+      } catch (err) {
+        toast.error('改名失败');
+        throw err;
+      }
     }
   );
 
-  const kindLabel = '内容';
-
   return (
-    <header className="mt-5 fade-up flex items-center gap-4">
-      <IconBlock size="lg" tone="soft" title={kindLabel} aria-label={kindLabel}>
-        <KindIcon size={24} />
-      </IconBlock>
-      <div className="flex-1 min-w-0">
-        {/* 标题行：h1 + 改名 */}
+    <PageHeader
+      backLabel="总览"
+      onBack={onBack}
+      icon={<KindIcon size={24} />}
+      title={group.name}
+      titleContent={
         <div className="flex items-center gap-2 min-w-0">
           {editing ? (
             <input
@@ -228,14 +208,13 @@ function GroupHeader({
             {editing ? <Check size={18} /> : <Pencil size={16} />}
           </button>
         </div>
-        {/* meta 在标题下方 */}
-        <p className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
-          {group.content_count} 项 · {formatBytes(group.total_bytes)}
-        </p>
-      </div>
-      <Button iconLeft={<Plus size={16} />} size="sm" onClick={onAdd}>
-        新建帧
-      </Button>
-    </header>
+      }
+      subtitle={`${group.content_count} 项 · ${formatBytes(group.total_bytes)}`}
+      action={
+        <Button iconLeft={<Plus size={16} />} size="sm" onClick={onAdd}>
+          新建帧
+        </Button>
+      }
+    />
   );
 }

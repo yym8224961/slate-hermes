@@ -17,7 +17,4 @@ export type AudioDynamicConfig = Extract<
 
 export type RefreshableDynamicConfig =
   | AudioDynamicConfig
-  | Extract<
-      DynamicConfigT,
-      { type: 'hot_list' | 'weather_alert' | 'earthquake_report' | 'dashboard' }
-    >;
+  | Extract<DynamicConfigT, { type: 'hot_list' | 'dashboard' }>;

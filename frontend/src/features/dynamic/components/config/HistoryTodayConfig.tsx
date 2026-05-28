@@ -1,6 +1,6 @@
 import { HistoryTodayConfig, type DynamicConfigT } from 'shared';
 import { Select, SelectItem } from '@/components/ui/Select';
-import type { DynamicConfigChange } from './types';
+import type { DynamicConfigChange } from '@/features/dynamic/types';
 
 type HistoryTodaySource = Extract<
   Extract<DynamicConfigT, { type: 'history_today' }>['source'],

@@ -74,10 +74,13 @@ export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDes
   private schedule(delayMs: number): void {
     if (this.stopped) return;
     if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(() => {
-      this.timer = null;
-      void this.tick();
-    }, Math.max(delayMs, 0));
+    this.timer = setTimeout(
+      () => {
+        this.timer = null;
+        void this.tick();
+      },
+      Math.max(delayMs, 0)
+    );
     this.timer.unref?.();
   }
 

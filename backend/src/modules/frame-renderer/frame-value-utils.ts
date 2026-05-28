@@ -37,6 +37,7 @@ export function clamp(value: number, min: number, max: number): number {
 }
 
 export function pad2(n: number): string {
+  if (!Number.isFinite(n)) return '00';
   return String(n).padStart(2, '0');
 }
 

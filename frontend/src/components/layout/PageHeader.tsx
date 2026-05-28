@@ -8,10 +8,20 @@ interface PageHeaderProps {
   onBack: () => void;
   icon: ReactNode;
   title: ReactNode;
+  titleContent?: ReactNode;
   subtitle: ReactNode;
+  action?: ReactNode;
 }
 
-export function PageHeader({ backLabel = '返回', onBack, icon, title, subtitle }: PageHeaderProps) {
+export function PageHeader({
+  backLabel = '返回',
+  onBack,
+  icon,
+  title,
+  titleContent,
+  subtitle,
+  action,
+}: PageHeaderProps) {
   return (
     <>
       <nav>
@@ -29,11 +39,14 @@ export function PageHeader({ backLabel = '返回', onBack, icon, title, subtitle
           {icon}
         </IconBlock>
         <div className="flex-1 min-w-0">
-          <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-[1.2] truncate tracking-tight">
-            {title}
-          </h1>
+          {titleContent ?? (
+            <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-[1.2] truncate tracking-tight">
+              {title}
+            </h1>
+          )}
           <p className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">{subtitle}</p>
         </div>
+        {action && <div className="flex-shrink-0">{action}</div>}
       </header>
 
       <DoubleRule className="mt-3" />

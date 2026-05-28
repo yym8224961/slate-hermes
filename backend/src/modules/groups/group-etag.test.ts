@@ -26,6 +26,53 @@ describe('computeGroupEtags', () => {
     expect(after.contentEtags[0]!.etag).not.toBe(before.contentEtags[0]!.etag);
     expect(after.manifestEtag).not.toBe(before.manifestEtag);
   });
+
+  it('changes dynamic content etags when config or pushed data changes', () => {
+    const group = {
+      ...groupInput('previous-etag'),
+      contents: [
+        {
+          ...groupInput('previous-etag').contents[0]!,
+          kind: 'dynamic' as const,
+          dynamicType: 'dashboard',
+          frameName: '外部数据',
+          dynamicConfig: {
+            type: 'dashboard',
+            refresh_interval_sec: 600,
+            template: { kind: 'system', id: 'ai_usage_stats' },
+          },
+          dynamicData: { total_requests: 1, balance: 10 },
+        },
+      ],
+    };
+
+    const before = computeGroupEtags(group);
+    const afterConfig = computeGroupEtags({
+      ...group,
+      contents: [
+        {
+          ...group.contents[0]!,
+          dynamicConfig: {
+            type: 'dashboard',
+            refresh_interval_sec: 1200,
+            template: { kind: 'system', id: 'ai_usage_stats' },
+          },
+        },
+      ],
+    });
+    const afterData = computeGroupEtags({
+      ...group,
+      contents: [
+        {
+          ...group.contents[0]!,
+          dynamicData: { total_requests: 2, balance: 10 },
+        },
+      ],
+    });
+
+    expect(afterConfig.contentEtags[0]!.etag).not.toBe(before.contentEtags[0]!.etag);
+    expect(afterData.contentEtags[0]!.etag).not.toBe(before.contentEtags[0]!.etag);
+  });
 });
 
 function groupInput(contentEtag: string): GroupEtagInput {

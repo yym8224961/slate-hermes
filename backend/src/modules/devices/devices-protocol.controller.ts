@@ -47,25 +47,20 @@ export class DevicesProtocolController {
   async poll(@CurrentDevice() dev: DeviceContext, @Body() body: PollDto): Promise<DeviceStateT> {
     const device = await this.devices.recordTelemetry(dev.deviceId, body.telemetry);
     const telemetry = body.telemetry;
-    const timerCurrentFrame = await this.contents.resolveCurrentContentRequest(
-      device,
-      telemetry
-    );
-    let resolvedTimerCurrentFrame = timerCurrentFrame;
-    if (telemetry?.wake_reason === 'timer') {
-      resolvedTimerCurrentFrame =
-        await this.contents.refreshCurrentContentForDeviceIfDue(timerCurrentFrame);
+    const currentFrame = await this.contents.resolveCurrentContentRequest(device, telemetry);
+    let resolvedCurrentFrame = currentFrame;
+    const shouldRefreshCurrentFrame = telemetry?.wake_reason === 'timer';
+    if (shouldRefreshCurrentFrame) {
+      resolvedCurrentFrame = await this.contents.refreshCurrentContentForDeviceIfDue(currentFrame);
     }
     const state = await this.devices.buildState(dev.deviceId, { device });
     if (
-      telemetry?.wake_reason === 'timer' &&
       state.group &&
-      resolvedTimerCurrentFrame &&
-      state.group.id === resolvedTimerCurrentFrame.groupId &&
-      state.group.manifest_etag === resolvedTimerCurrentFrame.manifestEtag
+      resolvedCurrentFrame &&
+      state.group.id === resolvedCurrentFrame.groupId &&
+      state.group.manifest_etag === resolvedCurrentFrame.manifestEtag
     ) {
-      state.current_content =
-        await this.contents.currentContentForDevice(resolvedTimerCurrentFrame);
+      state.current_content = await this.contents.currentContentForDevice(resolvedCurrentFrame);
     }
     return state;
   }

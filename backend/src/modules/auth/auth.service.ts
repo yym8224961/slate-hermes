@@ -5,6 +5,8 @@ import { AuthError } from '../../common/errors';
 import { UsersService } from '../users/users.service';
 import { JwtTokenService } from './jwt-token.service';
 
+const DUMMY_PASSWORD_HASH = '$2b$10$tx7P.bQxwBewVb262ZeE9.tgvaB9iCmuujKGtH1gkt8.xkUgcqixu';
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -14,9 +16,8 @@ export class AuthService {
 
   async login(input: LoginRequestT): Promise<LoginResponseT> {
     const user = await this.users.findByIdentifier(input.identifier);
-    if (!user) throw new AuthError('账号或密码错误');
-    const ok = await bcrypt.compare(input.password, user.password);
-    if (!ok) throw new AuthError('账号或密码错误');
+    const ok = await bcrypt.compare(input.password, user?.password ?? DUMMY_PASSWORD_HASH);
+    if (!user || !ok) throw new AuthError('账号或密码错误');
 
     const token = this.tokens.sign({
       sub: user.id,

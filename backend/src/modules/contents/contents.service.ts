@@ -19,6 +19,7 @@ import { computeETag } from '../../common/etag/etag.util';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/errors';
 import { lockGroupRow } from '../../common/db/row-locks';
 import { bulkSetContentSortOrder } from '../../common/db/bulk-sort-order';
+import type { PrismaClientLike } from '../../common/db/prisma-client-like';
 import { formatError } from '../../common/utils';
 import { AudioService } from '../audio/audio.service';
 import { audioBlobContentId } from '../audio/audio-blob-id';
@@ -370,7 +371,12 @@ export class ContentsService {
     body: { config: unknown; frame_name?: string | null; data?: unknown }
   ): Promise<Buffer> {
     if (body.data === undefined) {
-      return this.dynamicRenderer.renderPreview(contentId, ownerUserId, body.config, body.frame_name);
+      return this.dynamicRenderer.renderPreview(
+        contentId,
+        ownerUserId,
+        body.config,
+        body.frame_name
+      );
     }
 
     const content = await this.prisma.content.findUnique({
@@ -473,6 +479,12 @@ export class ContentsService {
       );
     } catch (err) {
       if (created.didCreate) {
+        const stale = await this.prisma.content
+          .findUnique({
+            where: { id: contentId },
+            select: { audioEtag: true },
+          })
+          .catch(() => null);
         await this.prisma
           .$transaction(async (tx) => {
             await lockGroupRow(tx, gid);
@@ -485,6 +497,16 @@ export class ContentsService {
               `创建动态内容失败后的 DB 回滚失败 content=${contentId}: ${formatError(rollbackErr)}`
             );
           });
+        const cleaned = await Promise.allSettled([
+          this.blob.delete(gid, contentId, 'image'),
+          this.audioBlobs.delete(gid, contentId, stale?.audioEtag ?? null),
+        ]);
+        const failed = cleaned.filter((result) => result.status === 'rejected').length;
+        if (failed > 0) {
+          this.logger.warn(
+            `创建动态内容失败后的 blob 清理失败 content=${contentId}: ${failed} failure(s)`
+          );
+        }
       }
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002')
         throw new ConflictError('内容序号已存在');
@@ -581,8 +603,8 @@ export class ContentsService {
     if (frameName === undefined) {
       throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
     }
-    await this.prisma.content.update({ where: { id: contentId }, data: { frameName } });
     if (content.kind === 'dynamic') {
+      await this.prisma.content.update({ where: { id: contentId }, data: { frameName } });
       const rendered = await this.renderDynamicAndReadEtag(contentId);
       return this.toMutationResponse(
         contentId,
@@ -593,8 +615,13 @@ export class ContentsService {
         rendered.contentEtag
       );
     }
-    const groupEtag = await this.groups.recomputeManifestEtag(content.groupId);
-    const contentEtag = await this.readContentEtag(contentId);
+    const { groupEtag, contentEtag } = await this.prisma.$transaction(async (tx) => {
+      await lockGroupRow(tx, content.groupId);
+      await tx.content.update({ where: { id: contentId }, data: { frameName } });
+      const groupEtag = await this.groups.recomputeManifestEtag(content.groupId, tx);
+      const contentEtag = await this.readContentEtag(contentId, tx);
+      return { groupEtag, contentEtag };
+    });
     return this.toMutationResponse(
       contentId,
       content.sortOrder,
@@ -911,6 +938,7 @@ export class ContentsService {
         data.audioAttempts = 0;
       }
       const { updated, groupEtag } = await this.prisma.$transaction(async (tx) => {
+        await lockGroupRow(tx, gid);
         const updated = await tx.content.update({
           where: { id: contentId },
           data,
@@ -1056,7 +1084,7 @@ export class ContentsService {
 
   private async readContentEtag(
     contentId: string,
-    client: Prisma.TransactionClient | PrismaService = this.prisma
+    client: PrismaClientLike = this.prisma
   ): Promise<string> {
     const row = await client.content.findUnique({
       where: { id: contentId },

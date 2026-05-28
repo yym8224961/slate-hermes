@@ -10,9 +10,7 @@ export interface FixedWindowRateLimiterOptions {
   staleBucketMs?: number;
 }
 
-export type RateLimitHitResult =
-  | { allowed: true }
-  | { allowed: false; retryAfterSec: number };
+export type RateLimitHitResult = { allowed: true } | { allowed: false; retryAfterSec: number };
 
 export class FixedWindowRateLimiter {
   private readonly buckets = new Map<string, Bucket>();

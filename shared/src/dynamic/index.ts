@@ -453,10 +453,43 @@ export const DASHBOARD_CUSTOM_STARTER_TEMPLATE = DashboardTemplate.parse({
   version: 1,
   name: '自定义模板',
   blocks: [
-    { type: 'metric', x: 20, y: 34, w: 170, h: 62, label: '{primary_label}', value: '{primary_value}', sparkline: '{primary_trend}' },
-    { type: 'metric', x: 210, y: 34, w: 170, h: 62, label: '{secondary_label}', value: '{secondary_value}' },
-    { type: 'metric', x: 20, y: 106, w: 170, h: 62, label: '{third_label}', value: '{third_value}' },
-    { type: 'metric', x: 210, y: 106, w: 170, h: 62, label: '{fourth_label}', value: '{fourth_value}' },
+    {
+      type: 'metric',
+      x: 20,
+      y: 34,
+      w: 170,
+      h: 62,
+      label: '{primary_label}',
+      value: '{primary_value}',
+      sparkline: '{primary_trend}',
+    },
+    {
+      type: 'metric',
+      x: 210,
+      y: 34,
+      w: 170,
+      h: 62,
+      label: '{secondary_label}',
+      value: '{secondary_value}',
+    },
+    {
+      type: 'metric',
+      x: 20,
+      y: 106,
+      w: 170,
+      h: 62,
+      label: '{third_label}',
+      value: '{third_value}',
+    },
+    {
+      type: 'metric',
+      x: 210,
+      y: 106,
+      w: 170,
+      h: 62,
+      label: '{fourth_label}',
+      value: '{fourth_value}',
+    },
     { type: 'line', x1: 20, y1: 184, x2: 380, y2: 184, style: 'dashed' },
     {
       type: 'progress',
@@ -479,7 +512,16 @@ export const DASHBOARD_CUSTOM_STARTER_TEMPLATE = DashboardTemplate.parse({
       value_text: '{secondary_progress_text}',
     },
     { type: 'text', x: 20, y: 270, w: 170, h: 14, value: '{footer_left}', font_size: 12 },
-    { type: 'text', x: 210, y: 270, w: 170, h: 14, value: '{footer_right}', font_size: 12, align: 'right' },
+    {
+      type: 'text',
+      x: 210,
+      y: 270,
+      w: 170,
+      h: 14,
+      value: '{footer_right}',
+      font_size: 12,
+      align: 'right',
+    },
   ],
 });
 
@@ -546,9 +588,42 @@ export const DASHBOARD_AI_USAGE_STATS_TEST_DATA = {
     },
   ],
   models: [
-    { model: 'gpt-5.5', requests: 10075, input_tokens: 82000000, output_tokens: 5200000, cache_creation_tokens: 0, cache_read_tokens: 1008300000, total_tokens: 1090500000, cost: 1022.593, actual_cost: 1022.593, account_cost: 0 },
-    { model: 'claude-sonnet-4-6', requests: 1500, input_tokens: 7600000, output_tokens: 640000, cache_creation_tokens: 0, cache_read_tokens: 91860000, total_tokens: 100100000, cost: 57.8415, actual_cost: 57.8415, account_cost: 0 },
-    { model: 'gpt-5.4-mini', requests: 2, input_tokens: 11000, output_tokens: 7400, cache_creation_tokens: 0, cache_read_tokens: 0, total_tokens: 18400, cost: 0.0063, actual_cost: 0.0063, account_cost: 0 },
+    {
+      model: 'gpt-5.5',
+      requests: 10075,
+      input_tokens: 82000000,
+      output_tokens: 5200000,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 1008300000,
+      total_tokens: 1090500000,
+      cost: 1022.593,
+      actual_cost: 1022.593,
+      account_cost: 0,
+    },
+    {
+      model: 'claude-sonnet-4-6',
+      requests: 1500,
+      input_tokens: 7600000,
+      output_tokens: 640000,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 91860000,
+      total_tokens: 100100000,
+      cost: 57.8415,
+      actual_cost: 57.8415,
+      account_cost: 0,
+    },
+    {
+      model: 'gpt-5.4-mini',
+      requests: 2,
+      input_tokens: 11000,
+      output_tokens: 7400,
+      cache_creation_tokens: 0,
+      cache_read_tokens: 0,
+      total_tokens: 18400,
+      cost: 0.0063,
+      actual_cost: 0.0063,
+      account_cost: 0,
+    },
   ],
   updated_label: '05-26 16:30',
 } as const;
@@ -581,8 +656,24 @@ export const DASHBOARD_AI_QUOTA_MONITOR_TEMPLATE = DashboardTemplate.parse({
       value_text: '{secondary_used_percent|int}%',
     },
     { type: 'line', x1: 20, y1: 210, x2: 380, y2: 210, style: 'dashed' },
-    { type: 'metric', x: 20, y: 228, w: 110, h: 52, label: '5h重置', value: '{primary_reset_at_label}' },
-    { type: 'metric', x: 145, y: 228, w: 110, h: 52, label: '周重置', value: '{secondary_reset_at_label}' },
+    {
+      type: 'metric',
+      x: 20,
+      y: 228,
+      w: 110,
+      h: 52,
+      label: '5h重置',
+      value: '{primary_reset_at_label}',
+    },
+    {
+      type: 'metric',
+      x: 145,
+      y: 228,
+      w: 110,
+      h: 52,
+      label: '周重置',
+      value: '{secondary_reset_at_label}',
+    },
     { type: 'metric', x: 270, y: 228, w: 110, h: 52, label: '更新', value: '{updated_label}' },
   ],
 });
@@ -611,7 +702,8 @@ export const DASHBOARD_SYSTEM_TEMPLATES = {
   ai_quota_monitor: {
     id: 'ai_quota_monitor',
     label: 'AI 限额监控',
-    description: '展示 Claude Code 或 Codex/OpenAI 单服务限额快照；只放使用率、状态、绝对重置时间和更新时间。',
+    description:
+      '展示 Claude Code 或 Codex/OpenAI 单服务限额快照；只放使用率、状态、绝对重置时间和更新时间。',
     template: DASHBOARD_AI_QUOTA_MONITOR_TEMPLATE,
     test_data: DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA,
   },
@@ -638,16 +730,15 @@ export const DashboardTemplateRef = z.discriminatedUnion('kind', [
 ]);
 export type DashboardTemplateRefT = z.infer<typeof DashboardTemplateRef>;
 
-export const DashboardConfig = z
-  .object({
-    type: z.literal('dashboard'),
-    template: DashboardTemplateRef.default({
-      kind: 'custom',
-      template: DASHBOARD_CUSTOM_STARTER_TEMPLATE,
-    }),
-    test_data: z.record(z.string().max(64), z.unknown()).default(DASHBOARD_CUSTOM_STARTER_TEST_DATA),
-    refresh_interval_sec: z.coerce.number().int().min(60).max(86400).default(600),
-  });
+export const DashboardConfig = z.object({
+  type: z.literal('dashboard'),
+  template: DashboardTemplateRef.default({
+    kind: 'custom',
+    template: DASHBOARD_CUSTOM_STARTER_TEMPLATE,
+  }),
+  test_data: z.record(z.string().max(64), z.unknown()).default(DASHBOARD_CUSTOM_STARTER_TEST_DATA),
+  refresh_interval_sec: z.coerce.number().int().min(60).max(86400).default(600),
+});
 export type DashboardConfigT = z.infer<typeof DashboardConfig>;
 
 export const ICON_FONT_TEST_SAMPLE =
@@ -996,9 +1087,7 @@ export const DynamicConfig = z.discriminatedUnion('type', [
 ]);
 export type DynamicConfigT = z.infer<typeof DynamicConfig>;
 
-export function isAudioDynamicConfig(
-  config: DynamicConfigT
-): config is Extract<
+export function isAudioDynamicConfig(config: DynamicConfigT): config is Extract<
   DynamicConfigT,
   {
     type:

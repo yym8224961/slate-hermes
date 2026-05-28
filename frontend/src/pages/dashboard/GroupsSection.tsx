@@ -1,6 +1,4 @@
 import { memo, useCallback, useState } from 'react';
-import { DndContext, closestCenter } from '@dnd-kit/core';
-import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { FolderHeart, Plus } from 'lucide-react';
 import type { GroupSummaryT } from 'shared';
 import { useCreateGroup, useDeleteGroup, useReorderGroups } from '@/features/groups/queries';
@@ -12,6 +10,7 @@ import { Section } from '@/components/layout/Section';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Spinner } from '@/components/ui/Spinner';
+import { SortableGrid } from '@/components/ui/SortableGrid';
 import { useDndOrder } from '@/lib/dnd';
 
 interface GroupsSectionProps {
@@ -63,34 +62,34 @@ export const GroupsSection = memo(function GroupsSection({
           <Spinner label="加载中" />
         </div>
       ) : groups && groups.length > 0 ? (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-          <SortableContext items={currentOrder} strategy={rectSortingStrategy}>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fade-up fade-up-2">
-              {/* dnd-kit 的 item 顺序以 currentOrder 为准，渲染数据跟随同一顺序。 */}
-              {orderedItems.map((group) => (
-                <GroupCardSortable
-                  key={group.id}
-                  group={group}
-                  deleteDisabled={del.isPending}
-                  onDelete={async () => {
-                    if (del.isPending) return;
-                    const ok = await confirm({
-                      title: `删除「${group.name}」？`,
-                      description: `这一组连同 ${group.content_count} 项内容的图片与音频会全部删除，不可逆。`,
-                      destructive: true,
-                      confirmText: '删除整组',
-                    });
-                    if (!ok) return;
-                    del.mutate(group.id, {
-                      onSuccess: () => toast.success('已删除'),
-                      onError: () => toast.error('删除失败'),
-                    });
-                  }}
-                />
-              ))}
-            </div>
-          </SortableContext>
-        </DndContext>
+        <SortableGrid
+          sensors={sensors}
+          order={currentOrder}
+          items={orderedItems}
+          onDragEnd={onDragEnd}
+          getKey={(group) => group.id}
+          className="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fade-up fade-up-2"
+          renderItem={(group) => (
+            <GroupCardSortable
+              group={group}
+              deleteDisabled={del.isPending}
+              onDelete={async () => {
+                if (del.isPending) return;
+                const ok = await confirm({
+                  title: `删除「${group.name}」？`,
+                  description: `这一组连同 ${group.content_count} 项内容的图片与音频会全部删除，不可逆。`,
+                  destructive: true,
+                  confirmText: '删除整组',
+                });
+                if (!ok) return;
+                del.mutate(group.id, {
+                  onSuccess: () => toast.success('已删除'),
+                  onError: () => toast.error('删除失败'),
+                });
+              }}
+            />
+          )}
+        />
       ) : (
         <EmptyState
           icon={<FolderHeart size={26} />}

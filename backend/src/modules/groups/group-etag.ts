@@ -47,6 +47,8 @@ export function computeGroupEtags(group: GroupEtagInput): ComputedGroupEtags {
     audioSource: content.audioSource ?? '',
     audioVoice: content.audioVoice ?? '',
     frameName: content.frameName ?? '',
+    dynamicConfig: stableJson(content.dynamicConfig ?? null),
+    dynamicData: stableJson(content.dynamicData ?? null),
     statusBarText: deviceStatusBarText({ ...content, renderedAt: content.dynamicLastRunAt }),
     previousEtag: content.contentEtag,
   }));
@@ -67,6 +69,8 @@ export function computeGroupEtags(group: GroupEtagInput): ComputedGroupEtags {
       content.audioSource,
       content.audioVoice,
       content.frameName,
+      content.dynamicConfig,
+      content.dynamicData,
       content.statusBarText,
     ]),
   }));
@@ -89,4 +93,20 @@ export function computeGroupEtags(group: GroupEtagInput): ComputedGroupEtags {
 
 function hashParts(parts: Array<string | number>): string {
   return createHash('sha256').update(parts.join('|')).digest('hex').slice(0, 32);
+}
+
+function stableJson(value: Prisma.JsonValue | null): string {
+  return JSON.stringify(sortJson(value));
+}
+
+function sortJson(value: Prisma.JsonValue | null): Prisma.JsonValue | null {
+  if (Array.isArray(value)) return value.map((item) => sortJson(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, item]) => [key, sortJson(item as Prisma.JsonValue)])
+    ) as Prisma.JsonObject;
+  }
+  return value;
 }

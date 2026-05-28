@@ -8,8 +8,8 @@ import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { useAuth } from '@/features/auth/auth';
-import { getApiErrorMessage } from '@/lib/api';
-import { redirectFromLocationState } from './redirect';
+import { redirectFromLocationState } from '@/features/auth/redirect';
+import { useAuthForm } from '@/features/auth/useAuthForm';
 
 export function RegisterPage() {
   const { token, register } = useAuth();
@@ -22,14 +22,13 @@ export function RegisterPage() {
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const authForm = useAuthForm();
 
   if (token) return <Navigate to={redirectTo} replace />;
 
   async function onSubmit(e: { preventDefault(): void }) {
     e.preventDefault();
-    setError(null);
+    authForm.setError(null);
     setUsernameError(null);
     setPasswordError(null);
     setConfirmError(null);
@@ -45,14 +44,10 @@ export function RegisterPage() {
       setConfirmError('两次输入的密码不一致');
       return;
     }
-    setLoading(true);
-    try {
-      await register({ email, username, password }, redirectTo);
-    } catch (err) {
-      setError(getApiErrorMessage(err, '注册失败，请稍后再试'));
-    } finally {
-      setLoading(false);
-    }
+    await authForm.run(
+      () => register({ email, username, password }, redirectTo),
+      '注册失败，请稍后再试'
+    );
   }
 
   return (
@@ -106,15 +101,17 @@ export function RegisterPage() {
         </div>
 
         <div className="mt-10">
-          {error && <p className="mb-4 font-sans text-[13px] text-clay">{error}</p>}
+          {authForm.error && (
+            <p className="mb-4 font-sans text-[13px] text-clay">{authForm.error}</p>
+          )}
           <Button
             type="submit"
             fullWidth
             size="lg"
-            disabled={loading}
-            iconRight={loading ? undefined : <ArrowRight size={16} />}
+            disabled={authForm.loading}
+            iconRight={authForm.loading ? undefined : <ArrowRight size={16} />}
           >
-            {loading ? <Spinner /> : '创建账号'}
+            {authForm.loading ? <Spinner /> : '创建账号'}
           </Button>
         </div>
 

@@ -8,8 +8,8 @@ import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { useAuth } from '@/features/auth/auth';
-import { getApiErrorMessage } from '@/lib/api';
-import { redirectFromLocationState } from './redirect';
+import { redirectFromLocationState } from '@/features/auth/redirect';
+import { useAuthForm } from '@/features/auth/useAuthForm';
 
 export function LoginPage() {
   const { token, login } = useAuth();
@@ -17,22 +17,16 @@ export function LoginPage() {
   const redirectTo = redirectFromLocationState(location.state);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const authForm = useAuthForm();
 
   if (token) return <Navigate to={redirectTo} replace />;
 
   async function onSubmit(e: { preventDefault(): void }) {
     e.preventDefault();
-    setError(null);
-    setLoading(true);
-    try {
-      await login({ identifier, password }, redirectTo);
-    } catch (err) {
-      setError(getApiErrorMessage(err, '登录失败，请检查账号和密码'));
-    } finally {
-      setLoading(false);
-    }
+    await authForm.run(
+      () => login({ identifier, password }, redirectTo),
+      '登录失败，请检查账号和密码'
+    );
   }
 
   return (
@@ -63,15 +57,17 @@ export function LoginPage() {
         </div>
 
         <div className="mt-10">
-          {error && <p className="mb-4 font-sans text-[13px] text-clay">{error}</p>}
+          {authForm.error && (
+            <p className="mb-4 font-sans text-[13px] text-clay">{authForm.error}</p>
+          )}
           <Button
             type="submit"
             fullWidth
             size="lg"
-            disabled={loading}
-            iconRight={loading ? undefined : <ArrowRight size={16} />}
+            disabled={authForm.loading}
+            iconRight={authForm.loading ? undefined : <ArrowRight size={16} />}
           >
-            {loading ? <Spinner /> : '进入'}
+            {authForm.loading ? <Spinner /> : '进入'}
           </Button>
         </div>
 

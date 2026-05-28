@@ -146,5 +146,8 @@ function formatUsd(value: number, digits: number): string {
 }
 
 function trimFixed(value: number, digits: number): string {
-  return value.toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
+  return value
+    .toFixed(digits)
+    .replace(/\.0+$/, '')
+    .replace(/(\.\d*?)0+$/, '$1');
 }

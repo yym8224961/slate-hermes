@@ -16,8 +16,8 @@ import {
 import { useToast } from '@/components/feedback/Toast';
 import { FormActions } from '@/components/ui/FormActions';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { TYPE_META } from '@/features/contents/create/type-meta';
-import { getApiErrorMessage } from '@/lib/api';
+import { TYPE_META } from '@/features/contents/model/type-meta';
+import { getApiErrorMessage } from '@/lib/api-errors';
 import { useImageContentForm } from './useImageContentForm';
 import { ImageFormBody } from './ImageFormBody';
 
@@ -50,8 +50,9 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
             body: { text: form.trimmedTtsText, voice: form.ttsVoice },
           });
         } catch (err) {
-          const title = form.hasImagePatch ? '内容已保存，TTS 生成失败' : 'TTS 生成失败';
+          const title = form.hasImagePatch ? '图片/名称已保存，TTS 生成失败' : 'TTS 生成失败';
           toast.error(title, getApiErrorMessage(err));
+          if (form.hasImagePatch) onDone();
           return;
         }
       }

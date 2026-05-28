@@ -5,14 +5,10 @@ import { AppConfig } from '../config/app.config';
 
 function makeAdapter(databaseUrl: string, allowPublicKeyRetrieval: boolean): PrismaMariaDb {
   const url = new URL(databaseUrl);
-  return new PrismaMariaDb({
-    host: url.hostname,
-    port: url.port ? Number(url.port) : 3306,
-    user: decodeURIComponent(url.username),
-    password: decodeURIComponent(url.password),
-    database: decodeURIComponent(url.pathname.slice(1)),
-    allowPublicKeyRetrieval,
-  });
+  if (allowPublicKeyRetrieval && !url.searchParams.has('allowPublicKeyRetrieval')) {
+    url.searchParams.set('allowPublicKeyRetrieval', 'true');
+  }
+  return new PrismaMariaDb(url.toString());
 }
 
 @Injectable()

@@ -9,8 +9,6 @@
 import { useCallback, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MonitorSmartphone, Cpu } from 'lucide-react';
-import { DndContext, closestCenter } from '@dnd-kit/core';
-import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { useDevices, useReorderDevices } from '@/features/devices/queries';
 import { useAuth } from '@/features/auth/auth';
 import { useGroups } from '@/features/groups/queries';
@@ -18,6 +16,7 @@ import { Section } from '@/components/layout/Section';
 import { Spinner } from '@/components/ui/Spinner';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
+import { SortableGrid } from '@/components/ui/SortableGrid';
 import { DeviceModal } from '@/features/devices/components/DeviceModal';
 import { AddDeviceDialog } from '@/features/devices/components/AddDeviceDialog';
 import { DeviceCard } from '@/features/devices/components/DeviceCard';
@@ -87,25 +86,21 @@ export function DashboardPage() {
             <Spinner label="加载中" />
           </div>
         ) : devices.data && devices.data.length > 0 ? (
-          <DndContext
+          <SortableGrid
             sensors={dnd.sensors}
-            collisionDetection={closestCenter}
+            order={dnd.currentOrder}
+            items={dnd.orderedItems}
             onDragEnd={dnd.onDragEnd}
-          >
-            <SortableContext items={dnd.currentOrder} strategy={rectSortingStrategy}>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fade-up fade-up-1">
-                {/* dnd-kit 的 item 顺序以 currentOrder 为准，渲染数据跟随同一顺序。 */}
-                {dnd.orderedItems.map((device) => (
-                  <DeviceCard
-                    key={device.id}
-                    device={device}
-                    groups={groups.data ?? []}
-                    onOpen={() => navigate(`/devices/${device.id}`)}
-                  />
-                ))}
-              </div>
-            </SortableContext>
-          </DndContext>
+            getKey={(device) => device.id}
+            className="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fade-up fade-up-1"
+            renderItem={(device) => (
+              <DeviceCard
+                device={device}
+                groups={groups.data ?? []}
+                onOpen={() => navigate(`/devices/${device.id}`)}
+              />
+            )}
+          />
         ) : (
           <EmptyState
             icon={<MonitorSmartphone size={26} />}

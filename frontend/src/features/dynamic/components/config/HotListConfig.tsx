@@ -1,12 +1,13 @@
 import {
   HOT_LIST_SOURCES_BY_NAME,
+  CurrentHotListSourceId,
   hotListSourceDisplayLabel,
   type CurrentHotListSourceIdT,
   type DynamicConfigT,
 } from 'shared';
 import { Select, SelectItem } from '@/components/ui/Select';
 import { DynamicRefreshSettings } from './RefreshSettings';
-import type { DynamicConfigChange } from './types';
+import type { DynamicConfigChange } from '@/features/dynamic/types';
 
 export function HotListConfigPanel({
   config,
@@ -21,9 +22,10 @@ export function HotListConfigPanel({
         <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">频道</p>
         <Select
           value={config.source}
-          onValueChange={(value) =>
-            onChange({ ...config, source: value as CurrentHotListSourceIdT })
-          }
+          onValueChange={(value) => {
+            if (!isCurrentHotListSource(value)) return;
+            onChange({ ...config, source: value });
+          }}
         >
           {HOT_LIST_SOURCES_BY_NAME.map((source) => (
             <SelectItem key={source.id} value={source.id} hint={hotListKindLabel(source.kind)}>
@@ -50,4 +52,8 @@ function hotListKindLabel(kind: (typeof HOT_LIST_SOURCES_BY_NAME)[number]['kind'
     case 'commerce':
       return '消费';
   }
+}
+
+function isCurrentHotListSource(value: string): value is CurrentHotListSourceIdT {
+  return CurrentHotListSourceId.safeParse(value).success;
 }

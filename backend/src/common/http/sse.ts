@@ -1,6 +1,4 @@
-export async function* parseSseJson<T>(
-  stream: ReadableStream<Uint8Array>
-): AsyncGenerator<T> {
+export async function* parseSseJson<T>(stream: ReadableStream<Uint8Array>): AsyncGenerator<T> {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
   let buf = '';
@@ -27,6 +25,16 @@ export async function* parseSseJson<T>(
   }
 }
 
+export class SseJsonParseError extends Error {
+  constructor(
+    readonly payload: string,
+    readonly cause: unknown
+  ) {
+    super(`SSE JSON parse failed: ${cause instanceof Error ? cause.message : String(cause)}`);
+    this.name = 'SseJsonParseError';
+  }
+}
+
 export function* parseSsePayloads(text: string): Generator<string> {
   for (const block of text.split(/\r?\n\r?\n/)) {
     const lines = block
@@ -45,7 +53,7 @@ function parseSseBlock<T>(block: string): T | null {
   if (!payload) return null;
   try {
     return JSON.parse(payload) as T;
-  } catch {
-    return null;
+  } catch (err) {
+    throw new SseJsonParseError(payload.slice(0, 512), err);
   }
 }

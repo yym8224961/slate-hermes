@@ -463,7 +463,10 @@ function hasTextPixels(
   return false;
 }
 
-function renderTextMask(font: BitmapFont, text: string): { width: number; height: number; pixels: Uint8Array } {
+function renderTextMask(
+  font: BitmapFont,
+  text: string
+): { width: number; height: number; pixels: Uint8Array } {
   const width = textWidth(font, text);
   const height = font.lineHeight;
   const pixels = new Uint8Array(width * height);

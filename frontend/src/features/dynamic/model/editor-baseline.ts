@@ -1,6 +1,6 @@
 import type { DynamicConfigT, DynamicTypeT } from 'shared';
-import { defaultFrameName } from '@/features/contents/create/frame-name';
-import { stableJson } from '@/lib/json';
+import { defaultFrameName } from '@/features/contents/model/frame-name';
+import { canonicalJsonKey } from '@/lib/json';
 
 export interface DynamicEditorBaseline {
   contentId: string;
@@ -19,7 +19,7 @@ export function createDynamicEditorBaseline(
     contentId,
     type,
     frameName: frameName ?? defaultFrameName(type, config),
-    configKey: stableJson(config),
+    configKey: canonicalJsonKey(config),
   };
 }
 

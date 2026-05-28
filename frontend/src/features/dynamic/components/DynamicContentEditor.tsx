@@ -1,6 +1,6 @@
 // 动态内容编辑器 —— 编辑动态内容配置。
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 import {
   DynamicConfig,
@@ -19,20 +19,18 @@ import { Input } from '@/components/ui/Input';
 import { FormActions } from '@/components/ui/FormActions';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { FormSection } from '@/components/ui/FormSection';
-import { getApiErrorMessage } from '@/lib/api';
-import {
-  DynamicConfigForm,
-  DynamicAudioSection,
-} from '@/features/dynamic/components/DynamicConfigForm';
+import { getApiErrorMessage } from '@/lib/api-errors';
+import { DynamicConfigForm } from '@/features/dynamic/components/DynamicConfigForm';
+import { DynamicAudioSection } from '@/features/dynamic/components/config/DynamicAudioSection';
 import {
   defaultFrameName,
   effectiveFrameName,
   effectiveStatusBarText,
-} from '@/features/contents/create/frame-name';
-import { TYPE_META, shouldRenderParams } from '@/features/contents/create/type-meta';
-import { useDynamicCreatePreview } from '@/features/contents/create/useDynamicCreatePreview';
-import { DynamicFramePreview } from '@/features/contents/create/DynamicPreview';
-import { stableJson } from '@/lib/json';
+} from '@/features/contents/model/frame-name';
+import { TYPE_META, shouldRenderParams } from '@/features/contents/model/type-meta';
+import { useDynamicPreview } from '@/features/dynamic/hooks/useDynamicPreview';
+import { DynamicFramePreview } from '@/features/dynamic/components/preview/DynamicPreview';
+import { canonicalJsonKey } from '@/lib/json';
 import { frameNameForSyncedDynamicConfigChange } from '@/features/dynamic/model/frame-name-sync';
 import {
   createDynamicEditorBaseline,
@@ -63,54 +61,69 @@ export function DynamicContentEditor({
     () => content.frame_name ?? defaultFrameName(initialType, initialConfig)
   );
   const [config, setConfig] = useState<DynamicConfigT>(initialConfig);
-  const configKey = useMemo(() => stableJson(config), [config]);
+  const configKey = useMemo(() => canonicalJsonKey(config), [config]);
+  const lastSyncedServerKeyRef = useRef('');
   const [baseline, setBaseline] = useState(() =>
     createDynamicEditorBaseline(content.id, initialType, content.frame_name, initialConfig)
   );
+  const serverBaseline = useMemo(
+    () => createDynamicEditorBaseline(content.id, initialType, content.frame_name, initialConfig),
+    [content.frame_name, content.id, initialConfig, initialType]
+  );
+  const editorStateRef = useRef({ baseline, type, frameName, configKey });
   const dirty =
     type !== baseline.type || frameName !== baseline.frameName || configKey !== baseline.configKey;
 
   useEffect(() => {
-    const nextConfig = initialConfig;
-    const nextType = initialType;
-    const nextFrameName = content.frame_name ?? defaultFrameName(nextType, nextConfig);
-    const hasLocalEdits =
-      baseline.contentId === content.id &&
-      (type !== baseline.type ||
-        frameName !== baseline.frameName ||
-        configKey !== baseline.configKey);
+    editorStateRef.current = { baseline, type, frameName, configKey };
+  }, [baseline, configKey, frameName, type]);
 
-    if (hasLocalEdits) {
+  useEffect(() => {
+    const serverKey = [
+      serverBaseline.contentId,
+      serverBaseline.type,
+      serverBaseline.frameName,
+      serverBaseline.configKey,
+    ].join('\0');
+    if (lastSyncedServerKeyRef.current === serverKey) return;
+
+    const {
+      baseline: currentBaseline,
+      type: currentType,
+      frameName: currentFrameName,
+      configKey: currentConfigKey,
+    } = editorStateRef.current;
+    const hasLocalEdits =
+      currentBaseline.contentId === serverBaseline.contentId &&
+      (currentType !== currentBaseline.type ||
+        currentFrameName !== currentBaseline.frameName ||
+        currentConfigKey !== currentBaseline.configKey);
+    const localMatchesServer =
+      currentType === serverBaseline.type &&
+      currentFrameName === serverBaseline.frameName &&
+      currentConfigKey === serverBaseline.configKey;
+
+    if (hasLocalEdits && !localMatchesServer) {
+      if (!isSameDynamicEditorBaseline(currentBaseline, serverBaseline)) {
+        setBaseline(serverBaseline);
+      }
+      lastSyncedServerKeyRef.current = serverKey;
       return;
     }
 
-    const nextBaseline = createDynamicEditorBaseline(
-      content.id,
-      nextType,
-      content.frame_name,
-      nextConfig
-    );
-    if (!isSameDynamicEditorBaseline(baseline, nextBaseline)) setBaseline(nextBaseline);
-    if (type !== nextType) setType(nextType);
-    if (frameName !== nextFrameName) setFrameName(nextFrameName);
-    if (configKey !== nextBaseline.configKey) setConfig(nextConfig);
-  }, [
-    baseline,
-    configKey,
-    content.frame_name,
-    content.id,
-    frameName,
-    initialConfig,
-    initialType,
-    type,
-  ]);
+    if (!isSameDynamicEditorBaseline(currentBaseline, serverBaseline)) setBaseline(serverBaseline);
+    if (currentType !== serverBaseline.type) setType(serverBaseline.type);
+    if (currentFrameName !== serverBaseline.frameName) setFrameName(serverBaseline.frameName);
+    if (currentConfigKey !== serverBaseline.configKey) setConfig(initialConfig);
+    lastSyncedServerKeyRef.current = serverKey;
+  }, [initialConfig, serverBaseline]);
 
   const savedPreviewEnabled = !!content.image_etag;
   const savedPreview = useContentImage(content.id, content.image_etag ?? null);
 
   // 实时预览
   const preview = usePreviewDynamicContent(content.id);
-  const { livePreviewData } = useDynamicCreatePreview({ type, config, frameName, preview });
+  const { livePreviewData } = useDynamicPreview({ type, config, frameName, preview });
   const showParams = shouldRenderParams(type);
 
   const onSubmit = useCallback(async () => {
@@ -158,7 +171,7 @@ export function DynamicContentEditor({
             <p className="font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] ml-0.5 mb-2">
               设备预览
             </p>
-            <DynamicPreview
+            <SavedOrLivePreview
               savedData={savedPreview.data}
               savedCacheKey={savedPreviewEnabled ? content.image_etag : null}
               savedPending={savedPreviewEnabled && savedPreview.isPending}
@@ -229,7 +242,7 @@ export function DynamicContentEditor({
   );
 }
 
-function DynamicPreview({
+function SavedOrLivePreview({
   savedData,
   savedCacheKey,
   savedPending,

@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef } from 'react';
 import { clearCanvas, decodeBppImage, isValidBppLength } from '@/lib/image';
 
-// 400x300 RGBA ImageData 约 480KB；保留 16 张约 7.5MB，换取列表滚动/返回时少解码。
-const MAX_CACHE_SIZE = 16;
+// 400x300 RGBA ImageData 约 480KB；默认保留约 8MB，换取列表滚动/返回时少解码。
+const MAX_CACHE_BYTES = 8 * 1024 * 1024;
 
 /** LRU cache: Map 按插入顺序迭代，get 时将条目移到末尾以更新访问顺序 */
 const imageDataCache = new Map<string, ImageData>();
+let imageDataCacheBytes = 0;
 
 export function clearContentBitmapCache(): void {
   imageDataCache.clear();
+  imageDataCacheBytes = 0;
 }
 
 function getCachedImageData(etag: string): ImageData | undefined {
@@ -22,14 +24,25 @@ function getCachedImageData(etag: string): ImageData | undefined {
 
 function rememberImageData(etag: string, data: ImageData): void {
   // 若 etag 已存在，先删除再插入以更新顺序
-  if (imageDataCache.has(etag)) imageDataCache.delete(etag);
+  const existing = imageDataCache.get(etag);
+  if (existing) {
+    imageDataCache.delete(etag);
+    imageDataCacheBytes -= imageDataByteLength(existing);
+  }
   imageDataCache.set(etag, data);
-  // 超出容量时批量驱逐最旧的条目，保留 MAX_CACHE_SIZE 个
-  while (imageDataCache.size > MAX_CACHE_SIZE) {
+  imageDataCacheBytes += imageDataByteLength(data);
+  // 超出字节上限时批量驱逐最旧的条目；单张大图至少保留最新一张。
+  while (imageDataCacheBytes > MAX_CACHE_BYTES && imageDataCache.size > 1) {
     const lruKey = imageDataCache.keys().next().value;
     if (lruKey === undefined) break;
+    const lru = imageDataCache.get(lruKey);
     imageDataCache.delete(lruKey);
+    if (lru) imageDataCacheBytes -= imageDataByteLength(lru);
   }
+}
+
+function imageDataByteLength(data: ImageData): number {
+  return data.data.byteLength;
 }
 
 export function useContentBitmap(

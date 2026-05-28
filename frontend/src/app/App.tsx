@@ -1,15 +1,35 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Layout } from '@/components/layout/Layout';
 import { RequireAuth } from '@/components/layout/RequireAuth';
 import { ErrorBoundary } from '@/components/feedback/ErrorBoundary';
-import { LoginPage } from '@/pages/auth/LoginPage';
-import { RegisterPage } from '@/pages/auth/RegisterPage';
-import { DashboardPage } from '@/pages/dashboard/DashboardPage';
-import { GroupDetailPage } from '@/pages/groups/GroupDetailPage';
-import { ImageContentEditorPage } from '@/pages/contents/ImageContentEditorPage';
-import { DynamicContentEditorPage } from '@/pages/contents/DynamicContentEditorPage';
-import { ContentNewPage } from '@/pages/contents/ContentNewPage';
+import { Spinner } from '@/components/ui/Spinner';
+
+const LoginPage = lazy(() =>
+  import('@/pages/auth/LoginPage').then((module) => ({ default: module.LoginPage }))
+);
+const RegisterPage = lazy(() =>
+  import('@/pages/auth/RegisterPage').then((module) => ({ default: module.RegisterPage }))
+);
+const DashboardPage = lazy(() =>
+  import('@/pages/dashboard/DashboardPage').then((module) => ({ default: module.DashboardPage }))
+);
+const GroupDetailPage = lazy(() =>
+  import('@/pages/groups/GroupDetailPage').then((module) => ({ default: module.GroupDetailPage }))
+);
+const ContentNewPage = lazy(() =>
+  import('@/pages/contents/ContentNewPage').then((module) => ({ default: module.ContentNewPage }))
+);
+const ImageContentEditorPage = lazy(() =>
+  import('@/pages/contents/ImageContentEditorPage').then((module) => ({
+    default: module.ImageContentEditorPage,
+  }))
+);
+const DynamicContentEditorPage = lazy(() =>
+  import('@/pages/contents/DynamicContentEditorPage').then((module) => ({
+    default: module.DynamicContentEditorPage,
+  }))
+);
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -24,33 +44,43 @@ export function App() {
   return (
     <ErrorBoundary>
       <ScrollToTop />
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/register" element={<RegisterPage />} />
+      <Suspense fallback={<RouteFallback />}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
 
-        <Route
-          element={
-            <RequireAuth>
-              <Layout />
-            </RequireAuth>
-          }
-        >
-          <Route index element={<DashboardPage />} />
-          <Route path="/devices/:did" element={<DashboardPage />} />
-          <Route path="/groups/:gid" element={<GroupDetailPage />} />
-          <Route path="/groups/:gid/contents/new" element={<ContentNewPage />} />
           <Route
-            path="/groups/:gid/contents/image/:contentId/edit"
-            element={<ImageContentEditorPage />}
-          />
-          <Route
-            path="/groups/:gid/contents/dynamic/:contentId/edit"
-            element={<DynamicContentEditorPage />}
-          />
-        </Route>
+            element={
+              <RequireAuth>
+                <Layout />
+              </RequireAuth>
+            }
+          >
+            <Route index element={<DashboardPage />} />
+            <Route path="/devices/:did" element={<DashboardPage />} />
+            <Route path="/groups/:gid" element={<GroupDetailPage />} />
+            <Route path="/groups/:gid/contents/new" element={<ContentNewPage />} />
+            <Route
+              path="/groups/:gid/contents/image/:contentId/edit"
+              element={<ImageContentEditorPage />}
+            />
+            <Route
+              path="/groups/:gid/contents/dynamic/:contentId/edit"
+              element={<DynamicContentEditorPage />}
+            />
+          </Route>
 
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </Suspense>
     </ErrorBoundary>
+  );
+}
+
+function RouteFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center">
+      <Spinner label="加载中" />
+    </div>
   );
 }

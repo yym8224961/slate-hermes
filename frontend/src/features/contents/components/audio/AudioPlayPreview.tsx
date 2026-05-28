@@ -19,7 +19,8 @@ interface AudioPlayPreviewProps {
 const SAMPLE_RATE = 16000;
 let sharedAudioContext: AudioContext | null = null;
 
-function getSharedAudioContext(): AudioContext {
+function getSharedAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined' || typeof AudioContext === 'undefined') return null;
   if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
     sharedAudioContext = new AudioContext({ sampleRate: SAMPLE_RATE });
   }
@@ -53,6 +54,7 @@ export function AudioPlayPreview({ contentId, etag, className, label }: AudioPla
 
   const ensureContext = useCallback(() => {
     const ctx = getSharedAudioContext();
+    if (!ctx) return null;
     if (ctx.state === 'suspended') void ctx.resume().catch(() => {});
     return ctx;
   }, []);
@@ -82,6 +84,10 @@ export function AudioPlayPreview({ contentId, etag, className, label }: AudioPla
       // 解析 16-bit signed LE PCM -> Float32 [-1,1] AudioBuffer
       const pcm = new Int16Array(data);
       const ctx = ensureContext();
+      if (!ctx) {
+        toast.error('音频播放失败', '当前环境不支持 WebAudio。');
+        return;
+      }
       const buf = ctx.createBuffer(1, pcm.length, SAMPLE_RATE);
       const ch = buf.getChannelData(0);
       const int16ToFloat = 1 / 32768;

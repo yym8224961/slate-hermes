@@ -94,11 +94,7 @@ export function textWidthFallback(
   return w;
 }
 
-export function textVisualHeight(
-  font: BitmapFont,
-  text: string,
-  fallback?: BitmapFont
-): number {
+export function textVisualHeight(font: BitmapFont, text: string, fallback?: BitmapFont): number {
   const bounds = textVisualBounds(font, text, fallback);
   return bounds ? bounds.bottom - bounds.top : 0;
 }

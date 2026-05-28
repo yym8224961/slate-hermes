@@ -624,10 +624,17 @@ export class DynamicFrameRendererService implements OnModuleInit {
         align: 'center',
         maxWidth: CONTENT_WIDTH,
       });
-      this.drawText(c, fonts.sans12, 'POST /api/v1/contents/:id/data', FRAME_WIDTH / 2, centerY + 12, {
-        align: 'center',
-        maxWidth: CONTENT_WIDTH,
-      });
+      this.drawText(
+        c,
+        fonts.sans12,
+        'POST /api/v1/contents/:id/data',
+        FRAME_WIDTH / 2,
+        centerY + 12,
+        {
+          align: 'center',
+          maxWidth: CONTENT_WIDTH,
+        }
+      );
       return;
     }
 

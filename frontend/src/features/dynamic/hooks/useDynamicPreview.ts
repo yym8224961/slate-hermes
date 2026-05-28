@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DynamicConfig, type DynamicConfigT } from 'shared';
 import type { UseMutationResult } from '@tanstack/react-query';
-import type { AllContentType } from './type-meta';
-import { effectiveFrameName } from './frame-name';
+import type { AllContentType } from '@/features/contents/model/type-meta';
+import { effectiveFrameName } from '@/features/contents/model/frame-name';
 
 type PreviewMutation = UseMutationResult<
   ArrayBuffer,
@@ -10,7 +10,7 @@ type PreviewMutation = UseMutationResult<
   { config: DynamicConfigT; frameName?: string | null; data?: unknown }
 >;
 
-export function useDynamicCreatePreview({
+export function useDynamicPreview({
   type,
   config,
   frameName,
@@ -25,7 +25,11 @@ export function useDynamicCreatePreview({
 }) {
   const [livePreviewData, setLivePreviewData] = useState<ArrayBuffer | null>(null);
   const previewSeq = useRef(0);
-  const { mutate } = preview;
+  const mutateRef = useRef(preview.mutate);
+
+  useEffect(() => {
+    mutateRef.current = preview.mutate;
+  }, [preview.mutate]);
 
   const invalidatePreview = useCallback(() => {
     previewSeq.current++;
@@ -45,7 +49,7 @@ export function useDynamicCreatePreview({
     const seq = ++previewSeq.current;
     setLivePreviewData(null);
     const timer = setTimeout(() => {
-      mutate(
+      mutateRef.current(
         {
           config: parsed.data,
           frameName: effectiveFrameName(type, parsed.data, frameName),
@@ -65,7 +69,7 @@ export function useDynamicCreatePreview({
       );
     }, debounceMs);
     return () => clearTimeout(timer);
-  }, [config, debounceMs, frameName, invalidatePreview, mutate, type]);
+  }, [config, debounceMs, frameName, invalidatePreview, type]);
 
   return { livePreviewData, invalidatePreview };
 }

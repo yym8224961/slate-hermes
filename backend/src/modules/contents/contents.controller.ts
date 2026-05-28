@@ -14,11 +14,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import {
-  type ContentDetailT,
-  type ContentMutationResponseT,
-  type ManifestResponseT,
-} from 'shared';
+import { type ContentDetailT, type ContentMutationResponseT, type ManifestResponseT } from 'shared';
 import { CurrentUser, type WebUserContext } from '../../common/decorators/current-user.decorator';
 import {
   CurrentDevice,

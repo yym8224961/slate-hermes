@@ -1,5 +1,5 @@
 import type { DynamicConfigT } from 'shared';
-import { defaultFrameName } from '@/features/contents/create/frame-name';
+import { defaultFrameName } from '@/features/contents/model/frame-name';
 
 export function frameNameForSyncedDynamicConfigChange(
   previous: DynamicConfigT,

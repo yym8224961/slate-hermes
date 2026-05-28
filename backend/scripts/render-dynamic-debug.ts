@@ -283,7 +283,8 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function debugFileName(ctx: DynamicRenderContext): string {
   if (ctx.type === 'dashboard' && isCustomDashboardConfig(ctx.config)) return 'dashboard-custom';
-  if (ctx.type === 'dashboard') return `dashboard-${dashboardSystemTemplateId(ctx.config) ?? 'system'}`;
+  if (ctx.type === 'dashboard')
+    return `dashboard-${dashboardSystemTemplateId(ctx.config) ?? 'system'}`;
   if (ctx.type !== 'font_test') return ctx.type;
   return `font-test-${String(ctx.config.font_id ?? 'unknown').replace(/[^a-z0-9_-]+/gi, '-')}`;
 }

@@ -124,6 +124,28 @@ describe('ImageRendererService', () => {
     expect(first.data.toString()).toBe(second.data.toString());
   });
 
+  it('compute 失败后清理 in-flight entry，后续请求可重新计算', async () => {
+    const localCache = new ImageRenderCacheService({ blobDir: tmp } as never);
+    const key = `retry-after-failure-${Date.now()}`;
+    let calls = 0;
+
+    await expect(
+      localCache.getOrCompute(key, async () => {
+        calls += 1;
+        throw new Error('render failed');
+      })
+    ).rejects.toThrow('render failed');
+
+    const result = await localCache.getOrCompute(key, async () => {
+      calls += 1;
+      return Buffer.from('recovered');
+    });
+
+    expect(calls).toBe(2);
+    expect(result.fromCache).toBe(false);
+    expect(result.data.toString()).toBe('recovered');
+  });
+
   it('cache path resolves relative blobDir to an absolute root', () => {
     const localCache = new ImageRenderCacheService({ blobDir: './relative-blobs' } as never);
     const path = localCache.path('abcdef');

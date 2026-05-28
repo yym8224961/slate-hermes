@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef } from 'react';
 import { ArrowLeft } from 'lucide-react';
-import { TYPE_ITEMS, type AllContentType } from './type-meta';
+import { TYPE_ITEMS, type AllContentType } from '@/features/contents/model/type-meta';
 import { cn } from '@/lib/cn';
 
 export function ContentTypeCardGrid({ onChange }: { onChange: (t: AllContentType) => void }) {

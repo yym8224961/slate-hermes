@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useLayoutEffect, useRef } from 'react';
 import { useConfirm, type ConfirmOptions } from './Confirm';
 import { useToast } from './Toast';
 
@@ -33,10 +33,14 @@ export function useConfirmAction<T>({
 }: ConfirmActionOptions<T>) {
   const confirm = useConfirm();
   const toast = useToast();
+  const isPendingRef = useRef(isPending);
+  useLayoutEffect(() => {
+    isPendingRef.current = isPending;
+  }, [isPending]);
 
   return useCallback(
     async (value: T) => {
-      if (isPending) return;
+      if (isPendingRef.current) return;
       const ok = await confirm(getConfirmOptions(value));
       if (!ok) return;
       run(value, {
@@ -47,7 +51,7 @@ export function useConfirmAction<T>({
         onError: () => showToast(toast.error, errorToast, value),
       });
     },
-    [confirm, errorToast, getConfirmOptions, isPending, onSuccess, run, successToast, toast]
+    [confirm, errorToast, getConfirmOptions, onSuccess, run, successToast, toast]
   );
 }
 

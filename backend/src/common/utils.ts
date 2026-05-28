@@ -1,5 +1,22 @@
+import type { Prisma } from '@prisma/client';
+
 export function formatError(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+export function prismaUniqueTargetIncludes(
+  err: Prisma.PrismaClientKnownRequestError,
+  ...fields: string[]
+): boolean {
+  if (err.code !== 'P2002') return false;
+  const target = err.meta?.target;
+  if (Array.isArray(target)) {
+    return fields.every((field) => target.includes(field));
+  }
+  if (typeof target === 'string') {
+    return fields.every((field) => target.includes(field));
+  }
+  return false;
 }
 
 export function recordValue(value: unknown, key: string): unknown {
@@ -14,7 +31,10 @@ export function valueText(value: unknown): string | null {
   return text ? text : null;
 }
 
-export function shortRegionName(value: string, opts: { stripWeatherOffice?: boolean } = {}): string {
+export function shortRegionName(
+  value: string,
+  opts: { stripWeatherOffice?: boolean } = {}
+): string {
   const text = value.replace(/\s+/g, '');
   if (!text) return '';
   if (text.includes('中央气象台')) return '中央气象台';

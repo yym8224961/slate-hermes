@@ -22,7 +22,7 @@ export function JsonEditor({
       <textarea
         className={cn(
           fieldBaseCls,
-          'block w-full resize-y font-mono text-[11px] leading-relaxed px-2 py-2 border border-ink bg-cream/30'
+          'block w-full resize-y font-mono text-[11px] leading-relaxed px-2 py-2 !border !border-ink bg-cream/30'
         )}
         rows={minRows}
         value={value}

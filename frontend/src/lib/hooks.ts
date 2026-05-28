@@ -56,9 +56,11 @@ export function useInlineRename(initialName: string, onSave: (name: string) => P
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === 'Enter') {
-        commit();
+        e.preventDefault();
+        void commit().catch(() => {});
       }
       if (e.key === 'Escape') {
+        e.preventDefault();
         cancelEditing();
       }
     },

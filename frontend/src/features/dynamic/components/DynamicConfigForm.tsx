@@ -6,9 +6,7 @@ import { HotListConfigPanel } from './config/HotListConfig';
 import { DashboardConfigPanel } from './config/DashboardConfig';
 import { FontTestConfigPanel } from './config/FontTestConfig';
 import { DynamicRefreshSettings } from './config/RefreshSettings';
-
-export { DynamicAudioSection } from './config/DynamicAudioSection';
-export type { AudioDynamicConfig as DynamicAudioConfig } from './config/types';
+import { DynamicConfigBoundary } from './DynamicConfigBoundary';
 
 // 按动态类型渲染不同的配置字段集合。
 export function DynamicConfigForm({
@@ -19,6 +17,22 @@ export function DynamicConfigForm({
   config: DynamicConfigT;
   onChange: (config: DynamicConfigT) => void;
   /** dashboard 用：展示 ingest URL（contentId 本身即 capability URL） */
+  contentId?: string;
+}) {
+  return (
+    <DynamicConfigBoundary resetKey={`${config.type}:${contentId ?? ''}`}>
+      <DynamicConfigFields config={config} onChange={onChange} contentId={contentId} />
+    </DynamicConfigBoundary>
+  );
+}
+
+function DynamicConfigFields({
+  config,
+  onChange,
+  contentId,
+}: {
+  config: DynamicConfigT;
+  onChange: (config: DynamicConfigT) => void;
   contentId?: string;
 }) {
   switch (config.type) {

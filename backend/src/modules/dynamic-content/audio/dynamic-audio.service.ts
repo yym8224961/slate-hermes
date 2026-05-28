@@ -127,7 +127,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
       },
     });
     if (updated.count !== 1) return false;
-    await deleteAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag, this.logger);
+    await deleteAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag);
     return true;
   }
 
@@ -283,7 +283,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
       select: { audioEtag: true },
     });
     if (row?.audioEtag === etag) return;
-    await deleteAudioBlob(this.blob, groupId, contentId, etag, this.logger);
+    await deleteAudioBlob(this.blob, groupId, contentId, etag);
   }
 
   private async markFailedOrRetry(
@@ -360,7 +360,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
         audioAttempts: 0,
       },
     });
-    await deleteAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag, this.logger);
+    await deleteAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag);
     return true;
   }
 

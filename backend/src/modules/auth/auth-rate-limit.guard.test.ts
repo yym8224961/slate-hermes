@@ -42,9 +42,9 @@ describe('AuthRateLimitGuard', () => {
     for (let i = 0; i < 5; i++) {
       expect(guard.canActivate(context('/api/v1/users', '127.0.0.2', '/api/v1/users'))).toBe(true);
     }
-    expect(() =>
-      guard.canActivate(context('/api/v1/users', '127.0.0.2', '/api/v1/users'))
-    ).toThrow(RateLimitedError);
+    expect(() => guard.canActivate(context('/api/v1/users', '127.0.0.2', '/api/v1/users'))).toThrow(
+      RateLimitedError
+    );
 
     const nested = new AuthRateLimitGuard();
     for (let i = 0; i < 6; i++) {

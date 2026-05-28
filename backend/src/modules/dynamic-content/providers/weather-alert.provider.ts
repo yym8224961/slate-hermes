@@ -73,7 +73,7 @@ export class WeatherAlertProvider implements DataProvider<
     if (cached && now - cached.fetchedAt < ttlMs) return cached.data;
     if (cached) this.cache.delete(key);
 
-    const p = this.fetchFresh({ ...config, province }, ctx)
+    const p = this.fetchFresh(province, ctx)
       .then((data) => {
         this.cache.set(key, { data, fetchedAt: now });
         return data;
@@ -84,10 +84,9 @@ export class WeatherAlertProvider implements DataProvider<
   }
 
   private async fetchFresh(
-    config: WeatherAlertConfigT,
+    province: string,
     ctx: DynamicContentFetchCtx
   ): Promise<WeatherAlertProviderData> {
-    const province = normalizeWeatherAlertProvince(config.province);
     const url =
       `${NMC_ALARM_API}?pageNo=1&pageSize=20&signaltype=&signallevel=&province=` +
       encodeURIComponent(province);

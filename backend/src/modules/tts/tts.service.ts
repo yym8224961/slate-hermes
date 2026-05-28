@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { DEFAULT_TTS_VOICE, TTS_VOICES, isTtsVoice, type TtsVoiceT } from 'shared';
-import { ValidationError } from '../../common/errors';
+import { NotImplementedError, ValidationError } from '../../common/errors';
 import { fetchWithTimeout } from '../../common/http/fetch';
 import { parseSseJson } from '../../common/http/sse';
 import { AppConfig } from '../../infra/config/app.config';
@@ -54,14 +54,20 @@ export class TtsService {
         max_chars: 500,
       });
     }
-    if (!this.config.ttsApiKey || !this.config.ttsBaseUrl) {
-      throw new Error('TTS_API_KEY 或 TTS_BASE_URL 未配置');
+    const apiKey = this.config.ttsApiKey;
+    const baseUrl = this.config.ttsBaseUrl;
+    if (!apiKey || !baseUrl) {
+      throw new NotImplementedError('TTS_API_KEY 或 TTS_BASE_URL 未配置', {
+        code: 'tts_not_configured',
+      });
     }
 
     const rawPcm = await this.requestPcm16({
       text,
       voice: input.voice,
       style: input.style ?? '',
+      apiKey,
+      baseUrl,
     });
     return this.audio.resamplePcm16(rawPcm, SOURCE_SAMPLE_RATE);
   }
@@ -70,16 +76,15 @@ export class TtsService {
     text: string;
     voice: TtsVoiceT;
     style: string;
+    apiKey: string;
+    baseUrl: string;
   }): Promise<Buffer> {
-    if (!this.config.ttsApiKey || !this.config.ttsBaseUrl) {
-      throw new Error('TTS_API_KEY 或 TTS_BASE_URL 未配置');
-    }
-    const url = `${this.config.ttsBaseUrl.replace(/\/+$/, '')}/chat/completions`;
+    const url = `${input.baseUrl.replace(/\/+$/, '')}/chat/completions`;
     const resp = await fetchWithTimeout(url, {
       method: 'POST',
       timeoutMs: REQUEST_TIMEOUT_MS,
       headers: {
-        Authorization: `Bearer ${this.config.ttsApiKey}`,
+        Authorization: `Bearer ${input.apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({

@@ -1,10 +1,10 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
-import { createHash } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AuthError } from '../errors';
 import { CURRENT_DEVICE_KEY, type DeviceContext } from '../decorators/current-device.decorator';
 import { extractBearerToken } from '../auth/http-token';
+import { authenticateDeviceSecret } from '../auth/device-secret-auth-cache';
 
 @Injectable()
 export class DeviceAuthGuard implements CanActivate {
@@ -18,15 +18,11 @@ export class DeviceAuthGuard implements CanActivate {
     if (!secret) {
       throw new AuthError('missing Authorization: Bearer <device_secret>');
     }
-    const hash = createHash('sha256').update(secret).digest('hex');
-    const device = await this.prisma.device.findUnique({
-      where: { secretHash: hash },
-      select: { id: true, mac: true },
-    });
+    const device = await authenticateDeviceSecret(this.prisma, secret);
     if (!device) {
       throw new AuthError('device secret invalid; clear NVS and POST /api/v1/devices');
     }
-    req[CURRENT_DEVICE_KEY] = { deviceId: device.id, mac: device.mac };
+    req[CURRENT_DEVICE_KEY] = device;
     return true;
   }
 }

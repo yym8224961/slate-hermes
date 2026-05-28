@@ -132,6 +132,7 @@ describe('ContentsService current content refresh', () => {
         },
         $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
           fn({
+            $queryRaw: async () => [{ id: 'group-1' }],
             content: {
               update: async () => ({
                 imageEtag: 'new-image',
@@ -200,6 +201,7 @@ describe('ContentsService current content refresh', () => {
         },
         $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
           fn({
+            $queryRaw: async () => [{ id: 'group-1' }],
             content: {
               update: async () => ({
                 imageEtag: 'image-etag',
@@ -243,5 +245,65 @@ describe('ContentsService current content refresh', () => {
 
     expect(response.audio_etag).toBe(audioEtag);
     expect(audioDeletes).toEqual([]);
+  });
+
+  it('updates image frame names and recomputes etags inside the same transaction', async () => {
+    const calls: string[] = [];
+    const service = new ContentsService(
+      {
+        content: {
+          findUnique: async () => ({
+            id: 'content-1',
+            groupId: 'group-1',
+            sortOrder: 0,
+            kind: 'image',
+            imageEtag: 'image-etag',
+            audioEtag: null,
+            audioSource: null,
+          }),
+        },
+        $transaction: async (fn: (tx: unknown) => Promise<unknown>) =>
+          fn({
+            $queryRaw: async () => {
+              calls.push('lock');
+              return [{ id: 'group-1' }];
+            },
+            content: {
+              update: async ({ data }: { data: { frameName: string } }) => {
+                calls.push(`update:${data.frameName}`);
+                return {};
+              },
+              findUnique: async () => {
+                calls.push('read-content-etag');
+                return { contentEtag: 'content-etag' };
+              },
+            },
+          }),
+      } as never,
+      {} as never,
+      {
+        assertOwned: async () => undefined,
+        recomputeManifestEtag: async (_gid: string, tx?: unknown) => {
+          expect(tx).toBeDefined();
+          calls.push('recompute');
+          return 'group-etag';
+        },
+      } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never
+    );
+
+    const response = await service.patchFrameName('content-1', 'user-1', '新标题');
+
+    expect(response).toMatchObject({
+      content_etag: 'content-etag',
+      image_etag: 'image-etag',
+      manifest_etag: 'group-etag',
+    });
+    expect(calls).toEqual(['lock', 'update:新标题', 'recompute', 'read-content-etag']);
   });
 });

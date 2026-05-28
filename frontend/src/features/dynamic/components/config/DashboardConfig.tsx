@@ -10,8 +10,8 @@ import { Select, SelectItem } from '@/components/ui/Select';
 import { JsonEditor } from './JsonEditor';
 import { DynamicRefreshSettings } from './RefreshSettings';
 import { DashboardPushPanel } from './DashboardPushPanel';
-import { parseDashboardTemplate, parseJsonRecord, stableJson } from '@/lib/json';
-import type { DynamicConfigChange } from './types';
+import { canonicalJsonKey, parseDashboardTemplate, parseJsonRecord } from '@/lib/json';
+import type { DynamicConfigChange } from '@/features/dynamic/types';
 
 const CUSTOM_DASHBOARD_TEMPLATE_VALUE = 'custom';
 const DASHBOARD_SYSTEM_TEMPLATE_OPTIONS = Object.values(DASHBOARD_SYSTEM_TEMPLATES);
@@ -28,9 +28,9 @@ export function DashboardConfigPanel({
   const templateSelection =
     config.template.kind === 'system' ? config.template.id : CUSTOM_DASHBOARD_TEMPLATE_VALUE;
   const customTemplate = config.template.kind === 'custom' ? config.template.template : null;
-  const testDataKey = useMemo(() => stableJson(config.test_data), [config.test_data]);
+  const testDataKey = useMemo(() => canonicalJsonKey(config.test_data), [config.test_data]);
   const customTemplateKey = useMemo(
-    () => (customTemplate ? stableJson(customTemplate) : null),
+    () => (customTemplate ? canonicalJsonKey(customTemplate) : null),
     [customTemplate]
   );
   const activeDescription =
@@ -64,7 +64,7 @@ export function DashboardConfigPanel({
 
   useEffect(() => {
     const local = parseJsonRecord(testDataTextRef.current);
-    if (local.ok && stableJson(local.data) === testDataKey) {
+    if (local.ok && canonicalJsonKey(local.data) === testDataKey) {
       setDataError(null);
       return;
     }
@@ -75,7 +75,7 @@ export function DashboardConfigPanel({
   useEffect(() => {
     if (!customTemplate || !customTemplateKey) return;
     const local = parseDashboardTemplate(customTemplateTextRef.current);
-    if (local.ok && stableJson(local.template) === customTemplateKey) {
+    if (local.ok && canonicalJsonKey(local.template) === customTemplateKey) {
       setTemplateError(null);
       return;
     }

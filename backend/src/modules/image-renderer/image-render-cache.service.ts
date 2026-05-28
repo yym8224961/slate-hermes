@@ -101,7 +101,7 @@ export class ImageRenderCacheService implements OnModuleInit, OnModuleDestroy {
     return { data, fromCache: false };
   }
 
-  /** 按 atime 清掉 maxAgeDays 之前的条目（cron-friendly，不在请求路径上调）。 */
+  /** 按 mtime 清掉 maxAgeDays 之前的条目（cron-friendly，不依赖 noatime 挂载行为）。 */
   async gc(maxAgeDays: number): Promise<{ removed: number }> {
     const root = this.cacheRoot;
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
@@ -118,7 +118,7 @@ export class ImageRenderCacheService implements OnModuleInit, OnModuleDestroy {
         const fp = join(dir, file);
         try {
           const s = await stat(fp);
-          if (s.atimeMs < cutoff) {
+          if (s.mtimeMs < cutoff) {
             await unlink(fp);
             removed++;
           }
@@ -135,7 +135,9 @@ export class ImageRenderCacheService implements OnModuleInit, OnModuleDestroy {
     this.gcTimer = setTimeout(() => {
       void this.gc(GC_MAX_AGE_DAYS)
         .catch((err: unknown) => {
-          this.logger.warn(`image-render-cache gc failed: ${err instanceof Error ? err.message : String(err)}`);
+          this.logger.warn(
+            `image-render-cache gc failed: ${err instanceof Error ? err.message : String(err)}`
+          );
         })
         .finally(() => this.scheduleGc(GC_INTERVAL_MS));
     }, delayMs);

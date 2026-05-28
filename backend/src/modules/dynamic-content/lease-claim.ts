@@ -3,11 +3,14 @@ export async function claimLeaseJobs<Row, Job>(
   buildJob: (row: Row) => Job | null,
   tryClaim: (row: Row, job: Job) => Promise<boolean>
 ): Promise<Job[]> {
-  const jobs: Job[] = [];
+  const candidates: Array<{ row: Row; job: Job }> = [];
   for (const row of rows) {
     const job = buildJob(row);
     if (!job) continue;
-    if (await tryClaim(row, job)) jobs.push(job);
+    candidates.push({ row, job });
   }
-  return jobs;
+  const claimed = await Promise.all(
+    candidates.map(async ({ row, job }) => ((await tryClaim(row, job)) ? job : null))
+  );
+  return claimed.flatMap((job) => (job === null ? [] : [job]));
 }

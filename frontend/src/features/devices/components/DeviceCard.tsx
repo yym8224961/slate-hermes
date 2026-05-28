@@ -25,7 +25,6 @@ export function DeviceCard({
   const groupName = currentGroup?.name;
   const battery = device.battery_pct;
   const lowBattery = battery != null && battery < 20;
-  const lastSeenAgo = useTimeAgo(device.last_seen_at);
 
   const { unbindWithConfirm, isPending: unbindPending } = useUnbindDeviceWithConfirm(device);
 
@@ -106,7 +105,7 @@ export function DeviceCard({
                   <span className="text-stone-light text-[11px] ml-auto">刚刚</span>
                 </>
               ) : (
-                <span className="text-stone-light text-[11px]">上次心跳 {lastSeenAgo}</span>
+                <LastSeenLabel lastSeenAt={device.last_seen_at} />
               )}
             </div>
           </div>
@@ -131,4 +130,9 @@ export function DeviceCard({
       </div>
     </div>
   );
+}
+
+function LastSeenLabel({ lastSeenAt }: { lastSeenAt: string | null }) {
+  const lastSeenAgo = useTimeAgo(lastSeenAt);
+  return <span className="text-stone-light text-[11px]">上次心跳 {lastSeenAgo}</span>;
 }

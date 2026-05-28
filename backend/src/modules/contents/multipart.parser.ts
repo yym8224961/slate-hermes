@@ -69,7 +69,11 @@ export class MultipartParser {
   }
 }
 
-async function readLimitedFile(part: MultipartFile, maxBytes: number, message: string): Promise<Buffer> {
+async function readLimitedFile(
+  part: MultipartFile,
+  maxBytes: number,
+  message: string
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let total = 0;
   try {

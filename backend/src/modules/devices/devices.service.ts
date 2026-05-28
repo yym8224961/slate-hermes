@@ -1,11 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import type { DeviceStateT, DeviceSummaryT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
 import { lockUserRow } from '../../common/db/row-locks';
 import { bulkSetDeviceSortOrder } from '../../common/db/bulk-sort-order';
+import type { PrismaClientLike } from '../../common/db/prisma-client-like';
+import { prismaUniqueTargetIncludes } from '../../common/utils';
+import {
+  hashDeviceSecret,
+  invalidateDeviceSecretHash,
+} from '../../common/auth/device-secret-auth-cache';
 import {
   GroupsService,
   type CycleResult,
@@ -77,6 +83,7 @@ interface RegisterResetOutcome {
   deviceId: string;
   reclaimed: boolean;
   previousOwnerUserId: string | null;
+  previousSecretHash: string | null;
   isFirstRegister: boolean;
 }
 
@@ -114,12 +121,12 @@ export class DevicesService {
     const now = new Date();
 
     // 预检：节流命中时直接拒绝，避免白白消耗熵 + 一次 pair_code 唯一性查询。
-    // 事务内还会复检一次（行锁后），所以这里允许漏检（preExisting 视图陈旧）。
+    // 事务内持 device 行锁后还会复检一次，保证并发 reset 不会绕过节流。
     const preExisting = await this.prisma.device.findUnique({
       where: { mac },
-      select: { ownerUserId: true, lastRegisteredAt: true },
+      select: { lastRegisteredAt: true },
     });
-    if (preExisting?.ownerUserId !== null && preExisting?.lastRegisteredAt) {
+    if (preExisting?.lastRegisteredAt) {
       const elapsedMs = now.getTime() - preExisting.lastRegisteredAt.getTime();
       if (elapsedMs < REGISTER_RESET_THROTTLE_MS) {
         throw throttleError(elapsedMs);
@@ -127,68 +134,69 @@ export class DevicesService {
     }
 
     const outcome = await this.prisma
-      .$transaction(async (tx): Promise<RegisterResetOutcome & { secret: string; pairCode: string }> => {
-        const current = await tx.device.findUnique({
-          where: { mac },
-          select: { id: true, ownerUserId: true, lastRegisteredAt: true },
-        });
-        if (!current) {
-          const secret = generateSecret();
-          const secretHash = hashSecret(secret);
-          const pairCode = await this.generateUniquePairCode(tx);
-          const created = await tx.device.create({
-            data: { mac, secretHash, pairCode, lastRegisteredAt: now },
-            select: { id: true },
+      .$transaction(
+        async (tx): Promise<RegisterResetOutcome & { secret: string; pairCode: string }> => {
+          await lockDeviceMacRow(tx, mac);
+          const current = await tx.device.findUnique({
+            where: { mac },
+            select: { id: true, ownerUserId: true, lastRegisteredAt: true, secretHash: true },
           });
-          return {
-            deviceId: created.id,
-            reclaimed: false,
-            previousOwnerUserId: null,
-            isFirstRegister: true,
-            secret,
-            pairCode,
-          };
-        }
+          if (!current) {
+            const secret = generateSecret();
+            const secretHash = hashDeviceSecret(secret);
+            const pairCode = await this.generateUniquePairCode(tx);
+            const created = await tx.device.create({
+              data: { mac, secretHash, pairCode, lastRegisteredAt: now },
+              select: { id: true },
+            });
+            return {
+              deviceId: created.id,
+              reclaimed: false,
+              previousOwnerUserId: null,
+              previousSecretHash: null,
+              isFirstRegister: true,
+              secret,
+              pairCode,
+            };
+          }
 
-        if (current.ownerUserId !== null) {
-          await lockUserRow(tx, current.ownerUserId);
           const elapsedMs = current.lastRegisteredAt
             ? now.getTime() - current.lastRegisteredAt.getTime()
             : Number.POSITIVE_INFINITY;
           if (elapsedMs < REGISTER_RESET_THROTTLE_MS) {
             throw throttleError(elapsedMs);
           }
-        }
-
-        const secret = generateSecret();
-        const secretHash = hashSecret(secret);
-        const pairCode = await this.generateUniquePairCode(tx);
-        await tx.device.update({
-          where: { mac },
-          data: {
-            secretHash,
+          const secret = generateSecret();
+          const secretHash = hashDeviceSecret(secret);
+          const pairCode = await this.generateUniquePairCode(tx);
+          await tx.device.update({
+            where: { mac },
+            data: {
+              secretHash,
+              pairCode,
+              ownerUserId: null,
+              selectedGroupId: null,
+              lastRegisteredAt: now,
+            },
+          });
+          return {
+            deviceId: current.id,
+            reclaimed: current.ownerUserId !== null,
+            previousOwnerUserId: current.ownerUserId,
+            previousSecretHash: current.secretHash,
+            isFirstRegister: false,
+            secret,
             pairCode,
-            ownerUserId: null,
-            selectedGroupId: null,
-            lastRegisteredAt: now,
-          },
-        });
-        return {
-          deviceId: current.id,
-          reclaimed: current.ownerUserId !== null,
-          previousOwnerUserId: current.ownerUserId,
-          isFirstRegister: false,
-          secret,
-          pairCode,
-        };
-      })
+          };
+        }
+      )
       .catch((err: unknown) => {
         // 并发场景：两个同 mac 的 register 都看到 current=null，第一个 create 后第二个撞 mac
         // 唯一约束 P2002。让客户端短延迟重试，避免在 reset 路径上暴露 5xx。
         if (
           err instanceof Prisma.PrismaClientKnownRequestError &&
           err.code === 'P2002' &&
-          isUniqueTarget(err, 'mac')
+          prismaUniqueTargetIncludes(err, 'mac')
         ) {
           throw new ConflictError('设备并发注册中，请重试', {
             code: 'register_race',
@@ -207,6 +215,7 @@ export class DevicesService {
     } else {
       this.logger.log(`device re-registered (was unowned): mac=${mac} id=${outcome.deviceId}`);
     }
+    invalidateDeviceSecretHash(outcome.previousSecretHash);
 
     return {
       deviceId: outcome.deviceId,
@@ -215,16 +224,6 @@ export class DevicesService {
       reclaimed: outcome.reclaimed,
       serverTime: now.toISOString(),
     };
-  }
-
-  // DeviceAuthGuard 用：Bearer secret → 找对应 device（sha256 比对）。
-  async findDeviceIdBySecret(secret: string): Promise<string | null> {
-    const hash = hashSecret(secret);
-    const row = await this.prisma.device.findUnique({
-      where: { secretHash: hash },
-      select: { id: true },
-    });
-    return row?.id ?? null;
   }
 
   async recordTelemetry(
@@ -391,12 +390,12 @@ export class DevicesService {
         if (err instanceof Prisma.PrismaClientKnownRequestError) {
           // P2025: CAS 落空 —— 另一个事务已抢占。
           // P2002: 极小概率两并发事务生成同一新 pairCode。
-          if (err.code === 'P2025' || isUniqueTarget(err, 'pair_code')) {
+          if (err.code === 'P2025' || prismaUniqueTargetIncludes(err, 'pair_code')) {
             throw new ConflictError('配对码已被使用，请查看设备屏幕上的最新配对码', {
               code: 'pair_code_already_claimed',
             });
           }
-          if (isUniqueTarget(err, 'owner_user_id', 'sort_order')) {
+          if (prismaUniqueTargetIncludes(err, 'owner_user_id', 'sort_order')) {
             throw new ConflictError('设备排序冲突，请重试', {
               code: 'device_sort_order_conflict',
             });
@@ -477,7 +476,7 @@ export class DevicesService {
 
   private async nextDeviceSortOrder(
     ownerUserId: string,
-    client: Prisma.TransactionClient | PrismaService = this.prisma
+    client: PrismaClientLike = this.prisma
   ): Promise<number> {
     const last = await client.device.findFirst({
       where: { ownerUserId },
@@ -500,9 +499,7 @@ export class DevicesService {
 
   // 6 位字母表：A-Z 去 I/L/O + 2-9。PAIR_CODE_ALPHABET.length^6 ≈ 8.8 亿，撞概率极低，
   // 但仍按 unique 约束最多重试 8 次以兜底。
-  private async generateUniquePairCode(
-    client: Prisma.TransactionClient | PrismaService = this.prisma
-  ): Promise<string> {
+  private async generateUniquePairCode(client: PrismaClientLike = this.prisma): Promise<string> {
     for (let attempt = 0; attempt < 8; attempt++) {
       const code = generatePairCode();
       const exists = await client.device.findUnique({
@@ -547,10 +544,6 @@ function generatePairCode(): string {
   return code;
 }
 
-function hashSecret(secret: string): string {
-  return createHash('sha256').update(secret).digest('hex');
-}
-
 function throttleError(elapsedMs: number): ConflictError {
   const retryAfterSec = Math.max(Math.ceil((REGISTER_RESET_THROTTLE_MS - elapsedMs) / 1000), 1);
   return new ConflictError('设备刚刚注册过，请稍后再重置', {
@@ -559,16 +552,10 @@ function throttleError(elapsedMs: number): ConflictError {
   });
 }
 
-function isUniqueTarget(err: Prisma.PrismaClientKnownRequestError, ...fields: string[]): boolean {
-  if (err.code !== 'P2002') return false;
-  const target = err.meta?.target;
-  if (Array.isArray(target)) {
-    return fields.every((field) => target.includes(field));
-  }
-  if (typeof target === 'string') {
-    return fields.every((field) => target.includes(field));
-  }
-  return false;
+async function lockDeviceMacRow(tx: Prisma.TransactionClient, mac: string): Promise<void> {
+  await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM \`devices\` WHERE mac = ${mac} FOR UPDATE
+  `;
 }
 
 // 日志里保留 id 末四位，便于排查；不泄露完整 id。

@@ -94,7 +94,7 @@ export class HistoryTodayProvider implements DataProvider<
     });
     const rawItems = json[month]?.[`${month}${day}`] ?? [];
     const data = parseHistoryTodayData({
-      dateLabel: `${parts.month} 月 ${parts.day} 日`,
+      dateLabel: `${parts.month}月${parts.day}日`,
       items: rawItems
         .map((item) => ({
           year: normalizeHistoryYear(textOrEmpty(item.year)),

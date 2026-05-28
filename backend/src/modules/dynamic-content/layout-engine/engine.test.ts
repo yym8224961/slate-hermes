@@ -104,17 +104,28 @@ describe('renderLayout', () => {
   test('恶意输入 XML 字符被转义', () => {
     const layout: DynamicContentLayout = {
       size: [400, 300],
-      body: [{ block: 'centered_text', field: 'evil', size: 24 }],
+      body: [
+        { block: 'centered_text', field: 'evil', size: 24 },
+        { block: 'text', field: 'evil', size: 16, wrap: true },
+        { block: 'big_number', field: 'evil', suffix: '&suffix', size: 32 },
+        {
+          block: 'key_value',
+          items: [{ label: '<label&>', field: 'evil' }],
+        },
+      ],
     };
     const ctx2: LayoutCtx = {
       config: {},
       data: {},
       meta: {},
       // @ts-expect-error 测试用故意覆盖
-      evil: '<script>alert(1)</script>',
+      evil: '<script>alert("x")</script>&',
     };
     const svg = renderLayout(layout, ctx2);
     expect(svg).not.toContain('<script>');
+    expect(svg).not.toContain('<label&>');
+    expect(svg).toContain('&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;&amp;');
+    expect(svg).toContain('&lt;label&amp;&gt;');
   });
 
   test('vertical_stack 嵌套累加高度', () => {

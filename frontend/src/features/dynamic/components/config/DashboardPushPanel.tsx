@@ -13,12 +13,13 @@ export function DashboardPushPanel({
 }) {
   const [copied, setCopied] = useState(false);
   const url = useMemo(() => {
-    const origin = typeof window === 'undefined' ? '' : window.location.origin;
-    return `${origin}/api/v1/contents/${contentId}/data`;
+    const path = `/api/v1/contents/${contentId}/data`;
+    if (typeof window === 'undefined') return path;
+    return `${window.location.origin}${path}`;
   }, [contentId]);
   const examplePayload = useMemo(() => {
     return { version: 1, data: config.test_data };
-  }, [config]);
+  }, [config.test_data]);
   const exampleCurl = useMemo(
     () =>
       `curl -X POST -H 'Content-Type: application/json' --data-binary @- \\\n  ${url} <<'JSON'\n${JSON.stringify(examplePayload, null, 2)}\nJSON`,

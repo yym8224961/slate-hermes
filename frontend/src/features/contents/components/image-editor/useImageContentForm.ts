@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   BW_THRESHOLD_DEFAULT,
   DEFAULT_DITHER_MODE,
@@ -25,18 +25,6 @@ export function useImageContentForm(content?: ContentDetailT) {
   const [frameName, setFrameName] = useState(content?.frame_name ?? '');
   const [scale, setScale] = useState(1);
   const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const formDataStateRef = useRef({
-    imageFile,
-    audioFile,
-    frameName,
-    threshold,
-    mode,
-  });
-
-  useLayoutEffect(() => {
-    formDataStateRef.current = { imageFile, audioFile, frameName, threshold, mode };
-  }, [audioFile, frameName, imageFile, mode, threshold]);
-
   const frameNameChanged = isEdit && frameName !== (content.frame_name ?? '');
   const trimmedTtsText = ttsText.trim();
   const existingTtsText = content?.audio_text?.trim() ?? '';
@@ -78,7 +66,6 @@ export function useImageContentForm(content?: ContentDetailT) {
   }, [resetCrop]);
 
   const buildFormData = useCallback(async (): Promise<FormData> => {
-    const { imageFile, audioFile, frameName, threshold, mode } = formDataStateRef.current;
     const fd = new FormData();
     if (imageFile) {
       const canvas = previewRef.current;
@@ -93,7 +80,7 @@ export function useImageContentForm(content?: ContentDetailT) {
     if (audioFile) fd.append('audio', audioFile);
     fd.append('frame_name', frameName.trim());
     return fd;
-  }, []);
+  }, [audioFile, frameName, imageFile, mode, threshold]);
 
   return {
     previewRef,

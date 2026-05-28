@@ -3,6 +3,8 @@ import { Prisma } from '@prisma/client';
 import type { ContentAudioSource, ContentAudioStatus } from '@prisma/client';
 import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { lockGroupRow } from '../../common/db/row-locks';
+import { formatError } from '../../common/utils';
 import { GroupsService } from '../groups/groups.service';
 import { deleteAudioBlob, readAudioBlob } from '../audio/audio-blob-store';
 
@@ -17,7 +19,12 @@ export class ContentAudioBlobService {
   ) {}
 
   async delete(groupId: string, contentId: string, audioEtag: string | null): Promise<void> {
-    await deleteAudioBlob(this.blob, groupId, contentId, audioEtag, this.logger);
+    try {
+      await deleteAudioBlob(this.blob, groupId, contentId, audioEtag);
+    } catch (err) {
+      this.logger.warn(`delete audio blob failed content=${contentId}: ${formatError(err)}`);
+      throw err;
+    }
   }
 
   async read(groupId: string, contentId: string, audioEtag: string | null): Promise<Buffer | null> {
@@ -55,8 +62,11 @@ export class ContentAudioBlobService {
       data.audioLastError = null;
     }
 
-    await this.prisma.content.update({ where: { id: content.id }, data });
-    await this.groups.recomputeManifestEtag(content.groupId);
+    await this.prisma.$transaction(async (tx) => {
+      await lockGroupRow(tx, content.groupId);
+      await tx.content.update({ where: { id: content.id }, data });
+      await this.groups.recomputeManifestEtag(content.groupId, tx);
+    });
     this.logger.warn(`missing audio blob repaired content=${content.id}`);
   }
 }

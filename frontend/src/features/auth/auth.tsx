@@ -5,9 +5,11 @@
 import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { api, setUnauthorizedHandler, tokenStorage } from '@/lib/api';
+import { setUnauthorizedHandler, tokenStorage } from '@/lib/auth-storage';
+import { api } from '@/lib/http';
 import { meQueryKey, useMe, type CurrentUser } from '@/features/auth/queries';
 import { clearContentBitmapCache } from '@/features/contents/components/preview/useContentBitmap';
+import { safeRedirectPath } from '@/features/auth/redirect';
 import type { LoginRequestT, LoginResponseT, RegisterRequestT, RegisterResponseT } from 'shared';
 
 interface AuthState {
@@ -86,10 +88,4 @@ export function useAuth() {
   const ctx = useContext(AuthCtx);
   if (!ctx) throw new Error('useAuth outside AuthProvider');
   return ctx;
-}
-
-function safeRedirectPath(value: string): string {
-  if (!value.startsWith('/') || value.startsWith('//')) return '/';
-  if (value === '/login' || value === '/register') return '/';
-  return value;
 }

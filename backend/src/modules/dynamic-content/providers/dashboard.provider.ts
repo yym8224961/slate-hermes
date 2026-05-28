@@ -9,7 +9,10 @@ import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.ty
  * 复用上一份数据，设备刷新时只重新渲染。
  */
 @Injectable()
-export class DashboardProvider implements DataProvider<DashboardConfigT, Record<string, unknown> | null> {
+export class DashboardProvider implements DataProvider<
+  DashboardConfigT,
+  Record<string, unknown> | null
+> {
   readonly type = 'dashboard';
 
   validateConfig(raw: unknown): DashboardConfigT {
@@ -20,6 +23,8 @@ export class DashboardProvider implements DataProvider<DashboardConfigT, Record<
     config: DashboardConfigT,
     ctx: DynamicContentFetchCtx
   ): Promise<Record<string, unknown> | null> {
-    return Promise.resolve((ctx.lastData as Record<string, unknown> | undefined) ?? config.test_data);
+    return Promise.resolve(
+      (ctx.lastData as Record<string, unknown> | undefined) ?? config.test_data
+    );
   }
 }

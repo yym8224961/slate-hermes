@@ -30,4 +30,18 @@ describe('DynamicContentSchedulerService', () => {
 
     expect(calls).toEqual(['findMany', 'findFirst']);
   });
+
+  it('clears its scheduled timer on module destroy', () => {
+    const service = new DynamicContentSchedulerService(
+      { backgroundWorkers: true } as AppConfig,
+      {} as PrismaService,
+      {} as DynamicContentRendererService
+    );
+
+    service.onModuleInit();
+    expect((service as unknown as { timer: unknown }).timer).not.toBeNull();
+
+    service.onModuleDestroy();
+    expect((service as unknown as { timer: unknown }).timer).toBeNull();
+  });
 });

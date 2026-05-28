@@ -5,7 +5,7 @@ import type {
   ReorderGroupsRequestT,
   UpdateGroupRequestT,
 } from 'shared';
-import { API_V1, api } from '@/lib/api';
+import { API_V1, api } from '@/lib/http';
 import { queryKeys } from '@/lib/query-keys';
 
 export function useGroups() {

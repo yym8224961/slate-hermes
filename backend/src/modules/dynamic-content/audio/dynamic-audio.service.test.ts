@@ -1,6 +1,29 @@
 import { describe, expect, it } from 'bun:test';
 import { DEFAULT_TTS_VOICE } from 'shared';
-import { buildDynamicAudioTextForContent } from './dynamic-audio.service';
+import type { AppConfig } from '../../../infra/config/app.config';
+import type { BlobService } from '../../../infra/blob/blob.service';
+import type { PrismaService } from '../../../infra/prisma/prisma.service';
+import type { GroupsService } from '../../groups/groups.service';
+import type { TtsService } from '../../tts/tts.service';
+import { buildDynamicAudioTextForContent, DynamicAudioService } from './dynamic-audio.service';
+
+describe('DynamicAudioService', () => {
+  it('clears its scheduled timer on module destroy', () => {
+    const service = new DynamicAudioService(
+      {} as PrismaService,
+      {} as BlobService,
+      { backgroundWorkers: true } as AppConfig,
+      {} as GroupsService,
+      {} as TtsService
+    );
+
+    service.onModuleInit();
+    expect((service as unknown as { timer: unknown }).timer).not.toBeNull();
+
+    service.onModuleDestroy();
+    expect((service as unknown as { timer: unknown }).timer).toBeNull();
+  });
+});
 
 describe('buildDynamicAudioTextForContent', () => {
   it('daily_calendar omits yi/ji and skips festival when absent', () => {

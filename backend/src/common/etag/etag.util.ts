@@ -11,8 +11,19 @@ export function computeETag(buf: Uint8Array | Buffer | string): string {
  */
 export function etagMatches(ifNoneMatch: string | undefined, etag: string): boolean {
   if (!ifNoneMatch) return false;
-  const list = ifNoneMatch.split(',').map((s) => s.trim().replace(/^W?\/?"?(.*?)"?$/, '$1'));
+  const list = ifNoneMatch.split(',').flatMap((s) => {
+    const parsed = parseIfNoneMatchTag(s.trim());
+    return parsed === null ? [] : [parsed];
+  });
   return list.includes(etag) || list.includes('*');
+}
+
+function parseIfNoneMatchTag(value: string): string | null {
+  if (value === '*') return '*';
+  const quoted = value.match(/^(?:W\/)?"([^"\\]*)"$/);
+  if (quoted) return quoted[1]!;
+  if (/^[A-Za-z0-9._:-]+$/.test(value)) return value;
+  return null;
 }
 
 /**

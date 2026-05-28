@@ -53,6 +53,7 @@ function createService(record?: DeviceRecord): {
           id: current.id,
           ownerUserId: current.ownerUserId,
           lastRegisteredAt: current.lastRegisteredAt,
+          secretHash: current.secretHash,
         };
       }
       if (args.where.pairCode !== undefined) return null;
@@ -132,7 +133,7 @@ describe('DevicesService.registerOrReset', () => {
     expect(getRecord()?.selectedGroupId).toBe('group-1');
   });
 
-  it('allows an unowned device reset inside the throttle window', async () => {
+  it('rejects an unowned device reset inside the throttle window', async () => {
     const { service, updates, getRecord } = createService(
       device({
         ownerUserId: null,
@@ -141,10 +142,9 @@ describe('DevicesService.registerOrReset', () => {
       })
     );
 
-    const result = await service.registerOrReset('AA:BB:CC:DD:EE:FF');
+    await expect(service.registerOrReset('AA:BB:CC:DD:EE:FF')).rejects.toThrow(ConflictError);
 
-    expect(result.reclaimed).toBe(false);
-    expect(updates).toHaveLength(1);
+    expect(updates).toHaveLength(0);
     expect(getRecord()?.ownerUserId).toBeNull();
   });
 

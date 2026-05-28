@@ -11,7 +11,7 @@ import { ArrowRight, KeyRound } from 'lucide-react';
 import { useClaimByPairCode } from '@/features/devices/queries';
 import { useToast } from '@/components/feedback/Toast';
 import { isValidPairCode, normalizePairCode } from '@/lib/format';
-import { getApiErrorMessage, getApiErrorStatus } from '@/lib/api';
+import { getApiErrorMessage, getApiErrorStatus } from '@/lib/api-errors';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';

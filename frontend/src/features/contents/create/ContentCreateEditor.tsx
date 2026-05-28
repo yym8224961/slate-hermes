@@ -15,30 +15,25 @@ import { Input } from '@/components/ui/Input';
 import { FormActions } from '@/components/ui/FormActions';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { FormSection } from '@/components/ui/FormSection';
-import { useImageContentForm } from './image-editor/useImageContentForm';
-import { ImageFormBody } from './image-editor/ImageFormBody';
+import { useImageContentForm } from '@/features/contents/components/image-editor/useImageContentForm';
+import { ImageFormBody } from '@/features/contents/components/image-editor/ImageFormBody';
 import { defaultConfig } from '@/features/dynamic/model/default-config';
-import {
-  DynamicConfigForm,
-  DynamicAudioSection,
-} from '@/features/dynamic/components/DynamicConfigForm';
-import { getApiErrorMessage } from '@/lib/api';
-import {
-  ContentTypeCardGrid,
-  ContentTypePicker,
-} from '@/features/contents/create/ContentTypePicker';
-import { DynamicCreatePreview } from '@/features/contents/create/DynamicPreview';
+import { DynamicConfigForm } from '@/features/dynamic/components/DynamicConfigForm';
+import { DynamicAudioSection } from '@/features/dynamic/components/config/DynamicAudioSection';
+import { getApiErrorMessage } from '@/lib/api-errors';
+import { ContentTypeCardGrid, ContentTypePicker } from './ContentTypePicker';
+import { DynamicCreatePreview } from '@/features/dynamic/components/preview/DynamicPreview';
 import {
   defaultFrameName,
   effectiveFrameName,
   effectiveStatusBarText,
-} from '@/features/contents/create/frame-name';
+} from '@/features/contents/model/frame-name';
 import {
   TYPE_META,
   shouldRenderParams,
   type AllContentType,
-} from '@/features/contents/create/type-meta';
-import { useDynamicCreatePreview } from '@/features/contents/create/useDynamicCreatePreview';
+} from '@/features/contents/model/type-meta';
+import { useDynamicPreview } from '@/features/dynamic/hooks/useDynamicPreview';
 import { frameNameForSyncedDynamicConfigChange } from '@/features/dynamic/model/frame-name-sync';
 
 // ─── 主编辑器 ──────────────────────────────────────────────────────────────────
@@ -64,7 +59,7 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
   const [config, setConfig] = useState<DynamicConfigT | null>(null);
   const activeFrameName = type === 'image' ? imageForm.frameName : dynamicFrameName;
   const preview = usePreviewDynamicContent(undefined);
-  const { livePreviewData, invalidatePreview } = useDynamicCreatePreview({
+  const { livePreviewData, invalidatePreview } = useDynamicPreview({
     type,
     config,
     frameName: activeFrameName,
@@ -142,14 +137,7 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
     }
   }
 
-  const frameNamePlaceholder =
-    type === 'image'
-      ? '如：挖掘机'
-      : type === 'dashboard'
-        ? '如：AI 使用统计'
-        : type === 'weather'
-          ? '如：北京天气'
-          : '';
+  const frameNamePlaceholder = type === 'dashboard' ? '如：AI 使用统计' : '';
 
   return (
     <div>

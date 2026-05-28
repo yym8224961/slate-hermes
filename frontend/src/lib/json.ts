@@ -33,32 +33,32 @@ export function parseJson(
   }
 }
 
-export function stableJson(value: unknown): string {
-  return JSON.stringify(sortJsonValue(value));
+export function canonicalJsonKey(value: unknown): string {
+  return formatJsonKey(value);
 }
 
-function sortJsonValue(value: unknown): unknown {
-  if (value === null) return ['null'];
-  if (value === undefined) return ['undefined'];
-  if (typeof value === 'string') return ['string', value];
+function formatJsonKey(value: unknown): string {
+  if (value === null) return 'n';
+  if (value === undefined) return 'u';
+  if (typeof value === 'string') return `s:${JSON.stringify(value)}`;
   if (typeof value === 'number') {
-    return Number.isFinite(value) ? ['number', value] : ['number', String(value)];
+    return `d:${JSON.stringify(Number.isFinite(value) ? value : String(value))}`;
   }
-  if (typeof value === 'boolean') return ['boolean', value];
-  if (typeof value === 'bigint') return ['bigint', value.toString()];
-  if (typeof value === 'function') return ['function', String(value)];
-  if (typeof value === 'symbol') return ['symbol', value.description ?? null];
+  if (typeof value === 'boolean') return `b:${value ? '1' : '0'}`;
+  if (typeof value === 'bigint') return `i:${value.toString()}`;
+  if (typeof value === 'function') return `f:${JSON.stringify(String(value))}`;
+  if (typeof value === 'symbol') return `y:${JSON.stringify(value.description ?? null)}`;
   if (Array.isArray(value)) {
-    return ['array', value.map(sortJsonValue)];
+    return `a:[${value.map(formatJsonKey).join(',')}]`;
   }
   if (value instanceof Date) {
     const time = value.getTime();
-    return ['date', Number.isNaN(time) ? 'Invalid Date' : value.toISOString()];
+    return `t:${JSON.stringify(Number.isNaN(time) ? 'Invalid Date' : value.toISOString())}`;
   }
-  const entries: Array<[string, unknown]> = [];
-  for (const key of Object.keys(value).sort()) {
-    const next = (value as Record<string, unknown>)[key];
-    entries.push([key, sortJsonValue(next)]);
-  }
-  return ['object', entries];
+  return `o:{${Object.keys(value)
+    .sort()
+    .map(
+      (key) => `${JSON.stringify(key)}:${formatJsonKey((value as Record<string, unknown>)[key])}`
+    )
+    .join(',')}}`;
 }

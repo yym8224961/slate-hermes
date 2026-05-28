@@ -6,6 +6,7 @@ import { BlobService } from '../../infra/blob/blob.service';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
 import { lockUserRow } from '../../common/db/row-locks';
 import { bulkSetGroupSortOrder } from '../../common/db/bulk-sort-order';
+import type { PrismaClientLike } from '../../common/db/prisma-client-like';
 import { audioBlobContentId } from '../audio/audio-blob-id';
 import { computeGroupEtags } from './group-etag';
 
@@ -50,18 +51,12 @@ export class GroupsService {
   // ── etag ──────────────────────────────────────────────────
 
   /** content_etag 覆盖单帧摘要；structure_etag 只覆盖顺序/增删；manifest_etag 覆盖完整 manifest。 */
-  async recomputeManifestEtag(
-    groupId: string,
-    client?: Prisma.TransactionClient | PrismaService
-  ): Promise<string> {
+  async recomputeManifestEtag(groupId: string, client?: PrismaClientLike): Promise<string> {
     const etags = await this.recomputeGroupEtags(groupId, client);
     return etags.manifestEtag;
   }
 
-  async recomputeGroupEtags(
-    groupId: string,
-    client?: Prisma.TransactionClient | PrismaService
-  ): Promise<GroupEtags> {
+  async recomputeGroupEtags(groupId: string, client?: PrismaClientLike): Promise<GroupEtags> {
     if (!client) {
       return this.prisma.$transaction((tx) => this.recomputeGroupEtags(groupId, tx));
     }
@@ -111,20 +106,9 @@ export class GroupsService {
 
   async listOwnerGroups(
     ownerUserId: string,
-    client: Prisma.TransactionClient | PrismaService = this.prisma
+    client: PrismaClientLike = this.prisma
   ): Promise<GroupListEntry[]> {
-    return client.group.findMany({
-      where: { ownerUserId },
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-      select: {
-        id: true,
-        name: true,
-        structureEtag: true,
-        manifestEtag: true,
-        sortOrder: true,
-        _count: { select: { contents: true } },
-      },
-    });
+    return this.queryOwnerGroups(ownerUserId, client);
   }
 
   async setDeviceGroup(deviceId: string, gid: string): Promise<void> {
@@ -243,18 +227,7 @@ export class GroupsService {
   // ── Web CRUD ──────────────────────────────────────────────
 
   async listForOwner(ownerUserId: string): Promise<GroupSummaryT[]> {
-    const groups = await this.prisma.group.findMany({
-      where: { ownerUserId },
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
-      select: {
-        id: true,
-        name: true,
-        structureEtag: true,
-        manifestEtag: true,
-        sortOrder: true,
-        _count: { select: { contents: true } },
-      },
-    });
+    const groups = await this.queryOwnerGroups(ownerUserId);
     const sizeMap = await this.aggregateBytes(groups.map((g) => g.id));
     return groups.map((g) => toSummary(g, sizeMap.get(g.id) ?? 0));
   }
@@ -364,7 +337,7 @@ export class GroupsService {
 
   async nextGroupSortOrder(
     ownerUserId: string,
-    client: Prisma.TransactionClient | PrismaService = this.prisma
+    client: PrismaClientLike = this.prisma
   ): Promise<number> {
     const top = await client.group.findFirst({
       where: { ownerUserId },
@@ -428,6 +401,24 @@ export class GroupsService {
       throw new NotFoundError('相册不存在');
     }
   }
+
+  private queryOwnerGroups(
+    ownerUserId: string,
+    client: PrismaClientLike = this.prisma
+  ): Promise<GroupListEntry[]> {
+    return client.group.findMany({
+      where: { ownerUserId },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: {
+        id: true,
+        name: true,
+        structureEtag: true,
+        manifestEtag: true,
+        sortOrder: true,
+        _count: { select: { contents: true } },
+      },
+    });
+  }
 }
 
 function emptyCycle(): CycleResult {
@@ -465,7 +456,7 @@ function toSummary(
 }
 
 async function bulkSetContentEtags(
-  client: Prisma.TransactionClient | PrismaService,
+  client: PrismaClientLike,
   updates: Array<{ id: string; etag: string }>
 ): Promise<void> {
   if (updates.length === 0) return;

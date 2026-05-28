@@ -49,21 +49,13 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
     commit,
     handleKeyDown,
   } = useInlineRename(device.name ?? '', async (name) => {
-    await new Promise<void>((resolve, reject) => {
-      patch.mutate(
-        { name },
-        {
-          onSuccess: () => {
-            toast.success('已改名');
-            resolve();
-          },
-          onError: () => {
-            toast.error('改名失败');
-            reject();
-          },
-        }
-      );
-    });
+    try {
+      await patch.mutateAsync({ name });
+      toast.success('已改名');
+    } catch (err) {
+      toast.error('改名失败');
+      throw err;
+    }
   });
 
   const online = isOnline(device);
@@ -71,6 +63,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
   const lastSeenAgo = useTimeAgo(device.last_seen_at);
 
   function changeGroup(value: string) {
+    if (patch.isPending) return;
     const next = value === '__none__' ? null : value;
     if (next === device.selected_group_id) return;
     patch.mutate(

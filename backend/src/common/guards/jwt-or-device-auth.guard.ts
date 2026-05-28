@@ -1,5 +1,4 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
-import { createHash } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AuthError } from '../errors';
@@ -8,6 +7,7 @@ import { CURRENT_DEVICE_KEY, type DeviceContext } from '../decorators/current-de
 import { readDeviceSecret } from './device-auth.guard';
 import { JwtTokenService } from '../../modules/auth/jwt-token.service';
 import { extractWebToken } from '../auth/http-token';
+import { authenticateDeviceSecret } from '../auth/device-secret-auth-cache';
 
 @Injectable()
 export class JwtOrDeviceAuthGuard implements CanActivate {
@@ -41,13 +41,9 @@ export class JwtOrDeviceAuthGuard implements CanActivate {
   ): Promise<boolean> {
     const secret = readDeviceSecret(req);
     if (!secret) return false;
-    const hash = createHash('sha256').update(secret).digest('hex');
-    const d = await this.prisma.device.findUnique({
-      where: { secretHash: hash },
-      select: { id: true, mac: true },
-    });
+    const d = await authenticateDeviceSecret(this.prisma, secret);
     if (!d) return false;
-    req[CURRENT_DEVICE_KEY] = { deviceId: d.id, mac: d.mac };
+    req[CURRENT_DEVICE_KEY] = d;
     return true;
   }
 }
