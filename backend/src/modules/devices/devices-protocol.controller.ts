@@ -12,6 +12,7 @@ import { ContentsService } from '../contents/contents.service';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 import { PollDto } from './dto/poll.dto';
 import { SelectGroupByDeviceDto } from './dto/select-group.dto';
+import { DeviceRegisterRateLimitGuard } from './device-register-rate-limit.guard';
 
 @Controller()
 export class DevicesProtocolController {
@@ -25,6 +26,7 @@ export class DevicesProtocolController {
   // 同 mac 二次进来一律走 reset 路径（清 owner、清相册、轮换 secret + pair_code），
   // 实现「物理重置即转移」语义。固件那侧只在 NVS 没 device_secret 时调用此端点。
   @Public()
+  @UseGuards(DeviceRegisterRateLimitGuard)
   @Post('devices')
   async register(@Body() body: RegisterDeviceDto): Promise<RegisterDeviceResponseT> {
     const r = await this.devices.registerOrReset(body.mac);
@@ -43,10 +45,10 @@ export class DevicesProtocolController {
   @UseGuards(DeviceAuthGuard)
   @Post('devices/current/poll')
   async poll(@CurrentDevice() dev: DeviceContext, @Body() body: PollDto): Promise<DeviceStateT> {
-    await this.devices.recordTelemetry(dev.deviceId, body.telemetry);
+    const device = await this.devices.recordTelemetry(dev.deviceId, body.telemetry);
     const telemetry = body.telemetry;
     const timerCurrentFrame = await this.contents.resolveCurrentContentRequest(
-      dev.deviceId,
+      device,
       telemetry
     );
     let resolvedTimerCurrentFrame = timerCurrentFrame;
@@ -54,7 +56,7 @@ export class DevicesProtocolController {
       resolvedTimerCurrentFrame =
         await this.contents.refreshCurrentContentForDeviceIfDue(timerCurrentFrame);
     }
-    const state = await this.devices.buildState(dev.deviceId);
+    const state = await this.devices.buildState(dev.deviceId, { device });
     if (
       telemetry?.wake_reason === 'timer' &&
       state.group &&

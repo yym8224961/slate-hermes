@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import jwt, { type SignOptions } from 'jsonwebtoken';
 import { AppConfig } from '../../infra/config/app.config';
-import { AuthError } from '../../common/errors';
 import type { WebUserContext } from '../../common/decorators/current-user.decorator';
 
 export interface JwtPayload {
@@ -21,14 +20,6 @@ export class JwtTokenService {
       expiresIn: this.config.jwtExpiration as SignOptions['expiresIn'],
     };
     return jwt.sign(payload, this.config.jwtSecret, opts);
-  }
-
-  verify(token: string): JwtPayload {
-    try {
-      return jwt.verify(token, this.config.jwtSecret) as JwtPayload;
-    } catch {
-      throw new AuthError('令牌无效或已过期');
-    }
   }
 
   tryVerifyUser(token: string | null | undefined): WebUserContext | null {

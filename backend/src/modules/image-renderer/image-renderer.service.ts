@@ -22,6 +22,7 @@ export interface RenderOptions {
   mode?: DitherMode;
   autoInvert?: boolean;
   letterbox?: boolean;
+  sourceEtag?: string;
 }
 
 export interface RenderResult {
@@ -62,7 +63,7 @@ export class ImageRendererService {
       throw new ValidationError(`图片尺寸非法：${W}x${H}`);
     }
 
-    const sourceEtag = computeETag(input);
+    const sourceEtag = options.sourceEtag ?? computeETag(input);
     const key = this.cache.key({
       sourceEtag,
       width: W,

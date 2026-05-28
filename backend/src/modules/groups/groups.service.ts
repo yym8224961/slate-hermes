@@ -28,6 +28,11 @@ export interface CycleResult {
   position: { current: number; total: number } | null;
 }
 
+export interface DeviceGroupSnapshot {
+  ownerUserId: string | null;
+  selectedGroupId: string | null;
+}
+
 export interface GroupEtags {
   structureEtag: string;
   manifestEtag: string;
@@ -123,69 +128,75 @@ export class GroupsService {
   }
 
   async setDeviceGroup(deviceId: string, gid: string): Promise<void> {
-    const device = await this.prisma.device.findUnique({
-      where: { id: deviceId },
-      select: { ownerUserId: true },
-    });
-    if (!device) throw new NotFoundError(`设备 ${deviceId} 不存在`);
-    if (!device.ownerUserId) {
-      throw new ForbiddenError('未绑定设备无法分配相册', {
-        code: 'device_not_owned',
+    await this.prisma.$transaction(async (tx) => {
+      const device = await tx.device.findUnique({
+        where: { id: deviceId },
+        select: { ownerUserId: true },
       });
-    }
+      if (!device) throw new NotFoundError(`设备 ${deviceId} 不存在`);
+      if (!device.ownerUserId) {
+        throw new ForbiddenError('未绑定设备无法分配相册', {
+          code: 'device_not_owned',
+        });
+      }
+      await lockUserRow(tx, device.ownerUserId);
 
-    const group = await this.prisma.group.findUnique({
-      where: { id: gid },
-      select: { ownerUserId: true },
-    });
-    if (!group || group.ownerUserId !== device.ownerUserId) {
-      throw new ForbiddenError('所选相册不属于该设备的拥有者', {
-        code: 'group_not_in_scope',
+      const group = await tx.group.findUnique({
+        where: { id: gid },
+        select: { ownerUserId: true },
       });
-    }
+      if (!group || group.ownerUserId !== device.ownerUserId) {
+        throw new ForbiddenError('所选相册不属于该设备的拥有者', {
+          code: 'group_not_in_scope',
+        });
+      }
 
-    await this.prisma.device.update({
-      where: { id: deviceId },
-      data: { selectedGroupId: gid },
+      await tx.device.update({
+        where: { id: deviceId },
+        data: { selectedGroupId: gid },
+      });
     });
   }
 
   async cycleDeviceGroup(deviceId: string, direction: 'next' | 'prev'): Promise<CycleResult> {
-    const device = await this.prisma.device.findUnique({
-      where: { id: deviceId },
-      select: { ownerUserId: true, selectedGroupId: true },
+    return this.prisma.$transaction(async (tx) => {
+      const device = await tx.device.findUnique({
+        where: { id: deviceId },
+        select: { ownerUserId: true, selectedGroupId: true },
+      });
+      if (!device) throw new NotFoundError(`设备 ${deviceId} 不存在`);
+      if (!device.ownerUserId) return emptyCycle();
+      await lockUserRow(tx, device.ownerUserId);
+
+      const groups = await this.listOwnerGroups(device.ownerUserId, tx);
+      if (groups.length === 0) return emptyCycle();
+
+      const curIdx = device.selectedGroupId
+        ? groups.findIndex((g) => g.id === device.selectedGroupId)
+        : -1;
+      const nextIdx =
+        curIdx < 0
+          ? direction === 'next'
+            ? 0
+            : groups.length - 1
+          : (curIdx + (direction === 'next' ? 1 : -1) + groups.length) % groups.length;
+      const target = groups[nextIdx]!;
+
+      await tx.device.update({
+        where: { id: deviceId },
+        data: { selectedGroupId: target.id },
+      });
+
+      return {
+        groupId: target.id,
+        name: target.name,
+        structureEtag: target.structureEtag,
+        manifestEtag: target.manifestEtag,
+        sortOrder: target.sortOrder,
+        contentCount: target._count.contents,
+        position: { current: nextIdx + 1, total: groups.length },
+      };
     });
-    if (!device) throw new NotFoundError(`设备 ${deviceId} 不存在`);
-    if (!device.ownerUserId) return emptyCycle();
-
-    const groups = await this.listOwnerGroups(device.ownerUserId);
-    if (groups.length === 0) return emptyCycle();
-
-    const curIdx = device.selectedGroupId
-      ? groups.findIndex((g) => g.id === device.selectedGroupId)
-      : -1;
-    const nextIdx =
-      curIdx < 0
-        ? direction === 'next'
-          ? 0
-          : groups.length - 1
-        : (curIdx + (direction === 'next' ? 1 : -1) + groups.length) % groups.length;
-    const target = groups[nextIdx]!;
-
-    await this.prisma.device.update({
-      where: { id: deviceId },
-      data: { selectedGroupId: target.id },
-    });
-
-    return {
-      groupId: target.id,
-      name: target.name,
-      structureEtag: target.structureEtag,
-      manifestEtag: target.manifestEtag,
-      sortOrder: target.sortOrder,
-      contentCount: target._count.contents,
-      position: { current: nextIdx + 1, total: groups.length },
-    };
   }
 
   async describeDeviceGroup(deviceId: string): Promise<CycleResult> {
@@ -194,12 +205,30 @@ export class GroupsService {
       select: { ownerUserId: true, selectedGroupId: true },
     });
     if (!device) throw new NotFoundError(`设备 ${deviceId} 不存在`);
-    if (!device.ownerUserId || !device.selectedGroupId) return emptyCycle();
+    return this.describeDeviceGroupSnapshot(device);
+  }
 
-    const groups = await this.listOwnerGroups(device.ownerUserId);
-    const idx = groups.findIndex((g) => g.id === device.selectedGroupId);
-    if (idx < 0) return emptyCycle();
-    const g = groups[idx]!;
+  async describeDeviceGroupSnapshot(device: DeviceGroupSnapshot): Promise<CycleResult> {
+    if (!device.ownerUserId || !device.selectedGroupId) return emptyCycle();
+    const g = await this.prisma.group.findFirst({
+      where: { id: device.selectedGroupId, ownerUserId: device.ownerUserId },
+      select: {
+        id: true,
+        name: true,
+        structureEtag: true,
+        manifestEtag: true,
+        sortOrder: true,
+        _count: { select: { contents: true } },
+      },
+    });
+    if (!g) return emptyCycle();
+
+    const [beforeCount, totalCount] = await Promise.all([
+      this.prisma.group.count({
+        where: { ownerUserId: device.ownerUserId, sortOrder: { lt: g.sortOrder } },
+      }),
+      this.prisma.group.count({ where: { ownerUserId: device.ownerUserId } }),
+    ]);
     return {
       groupId: g.id,
       name: g.name,
@@ -207,7 +236,7 @@ export class GroupsService {
       manifestEtag: g.manifestEtag,
       sortOrder: g.sortOrder,
       contentCount: g._count.contents,
-      position: { current: idx + 1, total: groups.length },
+      position: { current: beforeCount + 1, total: totalCount },
     };
   }
 
@@ -287,19 +316,21 @@ export class GroupsService {
 
   async update(gid: string, ownerUserId: string, body: { name?: string }): Promise<GroupSummaryT> {
     // 校验 + 更新 + recomputeManifestEtag 收进同一事务；name 没变直接跳过 update。
-    await this.prisma.$transaction(async (tx) => {
+    const group = await this.prisma.$transaction(async (tx) => {
       const g = await tx.group.findUnique({
         where: { id: gid },
-        select: { ownerUserId: true, name: true },
+        include: { _count: { select: { contents: true } } },
       });
       if (!g || g.ownerUserId !== ownerUserId) {
         throw new NotFoundError('相册不存在');
       }
-      if (body.name === undefined || body.name === g.name) return;
+      if (body.name === undefined || body.name === g.name) return g;
       await tx.group.update({ where: { id: gid }, data: { name: body.name } });
-      await this.recomputeManifestEtag(gid, tx);
+      const etags = await this.recomputeGroupEtags(gid, tx);
+      return { ...g, name: body.name, ...etags };
     });
-    return this.getOwned(gid, ownerUserId);
+    const sizeMap = await this.aggregateBytes([gid]);
+    return toSummary(group, sizeMap.get(gid) ?? 0);
   }
 
   async delete(gid: string, ownerUserId: string): Promise<void> {

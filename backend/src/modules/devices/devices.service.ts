@@ -6,7 +6,11 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
 import { lockUserRow } from '../../common/db/row-locks';
 import { bulkSetDeviceSortOrder } from '../../common/db/bulk-sort-order';
-import { GroupsService, type CycleResult } from '../groups/groups.service';
+import {
+  GroupsService,
+  type CycleResult,
+  type DeviceGroupSnapshot,
+} from '../groups/groups.service';
 
 export interface TelemetryInput {
   battery_pct?: number;
@@ -35,8 +39,38 @@ interface DeviceRow {
   sortOrder: number;
 }
 
+export interface DevicePollSnapshot extends DeviceGroupSnapshot {
+  id: string;
+  mac: string;
+  name: string | null;
+  ownerUserId: string | null;
+  selectedGroupId: string | null;
+  pairCode: string;
+  selectedGroup: { manifestEtag: string } | null;
+}
+
+const DEVICE_SUMMARY_SELECT = {
+  id: true,
+  mac: true,
+  name: true,
+  selectedGroupId: true,
+  lastSeenAt: true,
+  batteryPct: true,
+  rssiDbm: true,
+  fwVersion: true,
+  ownerUserId: true,
+  sortOrder: true,
+} as const satisfies Prisma.DeviceSelect;
+
+const DEVICE_CLAIM_SELECT = {
+  ...DEVICE_SUMMARY_SELECT,
+  pairCode: true,
+} as const satisfies Prisma.DeviceSelect;
+
 // 配对码字母表去掉视觉易混的 0/O/1/I/L，降低用户对屏抄码出错率。
 const PAIR_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const PAIR_CODE_RANDOM_LIMIT =
+  Math.floor(256 / PAIR_CODE_ALPHABET.length) * PAIR_CODE_ALPHABET.length;
 const REGISTER_RESET_THROTTLE_MS = 60_000;
 
 interface RegisterResetOutcome {
@@ -92,18 +126,16 @@ export class DevicesService {
       }
     }
 
-    const secret = generateSecret();
-    const secretHash = hashSecret(secret);
-    const pairCode = await this.generateUniquePairCode();
-
     const outcome = await this.prisma
-      .$transaction(async (tx): Promise<RegisterResetOutcome> => {
+      .$transaction(async (tx): Promise<RegisterResetOutcome & { secret: string; pairCode: string }> => {
         const current = await tx.device.findUnique({
           where: { mac },
           select: { id: true, ownerUserId: true, lastRegisteredAt: true },
         });
-
         if (!current) {
+          const secret = generateSecret();
+          const secretHash = hashSecret(secret);
+          const pairCode = await this.generateUniquePairCode(tx);
           const created = await tx.device.create({
             data: { mac, secretHash, pairCode, lastRegisteredAt: now },
             select: { id: true },
@@ -113,6 +145,8 @@ export class DevicesService {
             reclaimed: false,
             previousOwnerUserId: null,
             isFirstRegister: true,
+            secret,
+            pairCode,
           };
         }
 
@@ -126,6 +160,9 @@ export class DevicesService {
           }
         }
 
+        const secret = generateSecret();
+        const secretHash = hashSecret(secret);
+        const pairCode = await this.generateUniquePairCode(tx);
         await tx.device.update({
           where: { mac },
           data: {
@@ -141,6 +178,8 @@ export class DevicesService {
           reclaimed: current.ownerUserId !== null,
           previousOwnerUserId: current.ownerUserId,
           isFirstRegister: false,
+          secret,
+          pairCode,
         };
       })
       .catch((err: unknown) => {
@@ -171,8 +210,8 @@ export class DevicesService {
 
     return {
       deviceId: outcome.deviceId,
-      deviceSecret: secret,
-      pairCode,
+      deviceSecret: outcome.secret,
+      pairCode: outcome.pairCode,
       reclaimed: outcome.reclaimed,
       serverTime: now.toISOString(),
     };
@@ -188,35 +227,70 @@ export class DevicesService {
     return row?.id ?? null;
   }
 
-  async recordTelemetry(deviceId: string, t: TelemetryInput | undefined): Promise<void> {
-    await this.prisma.device.update({
-      where: { id: deviceId },
-      data: {
-        lastSeenAt: new Date(),
-        ...(t?.battery_pct !== undefined ? { batteryPct: t.battery_pct } : {}),
-        ...(t?.rssi_dbm !== undefined ? { rssiDbm: t.rssi_dbm } : {}),
-        ...(t?.fw_version !== undefined ? { fwVersion: t.fw_version } : {}),
-      },
-    });
+  async recordTelemetry(
+    deviceId: string,
+    t: TelemetryInput | undefined
+  ): Promise<DevicePollSnapshot> {
+    try {
+      return await this.prisma.device.update({
+        where: { id: deviceId },
+        data: {
+          lastSeenAt: new Date(),
+          ...(t?.battery_pct !== undefined ? { batteryPct: t.battery_pct } : {}),
+          ...(t?.rssi_dbm !== undefined ? { rssiDbm: t.rssi_dbm } : {}),
+          ...(t?.fw_version !== undefined ? { fwVersion: t.fw_version } : {}),
+        },
+        select: {
+          id: true,
+          mac: true,
+          name: true,
+          ownerUserId: true,
+          selectedGroupId: true,
+          pairCode: true,
+          selectedGroup: { select: { manifestEtag: true } },
+        },
+      });
+    } catch (err) {
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+        throw new NotFoundError('设备不存在');
+      }
+      throw err;
+    }
   }
 
   // ── poll/cycle 共用：build 当前 DeviceState ────────────────
 
-  async buildState(deviceId: string, cached?: { group?: CycleResult }): Promise<DeviceStateT> {
+  async buildState(
+    deviceId: string,
+    cached?: { group?: CycleResult; device?: DevicePollSnapshot }
+  ): Promise<DeviceStateT> {
     const [device, resolvedGroup] = await Promise.all([
-      this.prisma.device.findUnique({
-        where: { id: deviceId },
-        select: { id: true, mac: true, name: true, ownerUserId: true, pairCode: true },
-      }),
+      cached?.device !== undefined
+        ? Promise.resolve(cached.device)
+        : this.prisma.device.findUnique({
+            where: { id: deviceId },
+            select: {
+              id: true,
+              mac: true,
+              name: true,
+              ownerUserId: true,
+              selectedGroupId: true,
+              pairCode: true,
+              selectedGroup: { select: { manifestEtag: true } },
+            },
+          }),
       cached?.group !== undefined
         ? Promise.resolve(cached.group)
-        : this.groups.describeDeviceGroup(deviceId),
+        : cached?.device !== undefined
+          ? this.groups.describeDeviceGroupSnapshot(cached.device)
+          : this.groups.describeDeviceGroup(deviceId),
     ]);
     if (!device) {
       throw new NotFoundError(`device ${deviceId} disappeared mid-request`);
     }
 
     const bound = device.ownerUserId !== null;
+    const group = normalizeCycleResult(resolvedGroup);
     return {
       device: {
         id: device.id,
@@ -227,15 +301,15 @@ export class DevicesService {
         pair_code: bound ? null : device.pairCode,
         server_time: new Date().toISOString(),
       },
-      group: resolvedGroup.groupId
+      group: group
         ? {
-            id: resolvedGroup.groupId,
-            structure_etag: resolvedGroup.structureEtag!,
-            manifest_etag: resolvedGroup.manifestEtag!,
-            name: resolvedGroup.name!,
-            content_count: resolvedGroup.contentCount,
-            sort_order: resolvedGroup.sortOrder!,
-            position: resolvedGroup.position!,
+            id: group.groupId,
+            structure_etag: group.structureEtag,
+            manifest_etag: group.manifestEtag,
+            name: group.name,
+            content_count: group.contentCount,
+            sort_order: group.sortOrder,
+            position: group.position,
           }
         : null,
     };
@@ -247,6 +321,7 @@ export class DevicesService {
     const rows = await this.prisma.device.findMany({
       where: { ownerUserId },
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+      select: DEVICE_SUMMARY_SELECT,
     });
     return rows.map(toSummary);
   }
@@ -282,7 +357,10 @@ export class DevicesService {
     // 查询和 CAS 更新放进同一事务；真正的并发保护由 update where ownerUserId:null 保证。
     const result = await this.prisma
       .$transaction(async (tx): Promise<{ device: DeviceRow; freshlyClaimed: boolean }> => {
-        const device = await tx.device.findUnique({ where: { pairCode: code } });
+        const device = await tx.device.findUnique({
+          where: { pairCode: code },
+          select: DEVICE_CLAIM_SELECT,
+        });
         if (!device) {
           throw new NotFoundError('配对码无效', { code: 'pair_code_invalid' });
         }
@@ -305,6 +383,7 @@ export class DevicesService {
         const updated = await tx.device.update({
           where: { id: device.id, ownerUserId: null },
           data: { ownerUserId, sortOrder, pairCode: newPairCode, selectedGroupId },
+          select: DEVICE_SUMMARY_SELECT,
         });
         return { device: updated, freshlyClaimed: true };
       })
@@ -376,13 +455,18 @@ export class DevicesService {
       });
       const ownedSet = new Set(owned.map((d) => d.id));
       const orderSet = new Set(order);
-      if (
-        order.length !== ownedSet.size ||
-        orderSet.size !== order.length ||
-        !order.every((id) => ownedSet.has(id))
-      ) {
-        throw new ValidationError('排序列表须包含所有设备且不重复', {
-          code: 'order_mismatch',
+      if (orderSet.size !== order.length) {
+        throw new ValidationError('排序列表不能包含重复设备', { code: 'order_duplicate' });
+      }
+      const unknownIds = order.filter((id) => !ownedSet.has(id));
+      if (unknownIds.length > 0) {
+        throw new ValidationError('排序列表包含不属于当前用户的设备', {
+          code: 'order_unknown_device',
+        });
+      }
+      if (order.length !== ownedSet.size) {
+        throw new ValidationError('排序列表须包含所有设备', {
+          code: 'order_missing_device',
         });
       }
       await bulkSetDeviceSortOrder(tx, ownerUserId, order);
@@ -404,11 +488,14 @@ export class DevicesService {
   }
 
   private async requireOwned(deviceId: string, ownerUserId: string): Promise<DeviceRow> {
-    const d = await this.prisma.device.findUnique({ where: { id: deviceId } });
+    const d = await this.prisma.device.findUnique({
+      where: { id: deviceId },
+      select: DEVICE_SUMMARY_SELECT,
+    });
     if (!d || d.ownerUserId !== ownerUserId) {
       throw new NotFoundError('设备不存在');
     }
-    return d as DeviceRow;
+    return d;
   }
 
   // 6 位字母表：A-Z 去 I/L/O + 2-9。PAIR_CODE_ALPHABET.length^6 ≈ 8.8 亿，撞概率极低，
@@ -417,18 +504,14 @@ export class DevicesService {
     client: Prisma.TransactionClient | PrismaService = this.prisma
   ): Promise<string> {
     for (let attempt = 0; attempt < 8; attempt++) {
-      const bytes = randomBytes(6);
-      let code = '';
-      for (let i = 0; i < 6; i++) {
-        code += PAIR_CODE_ALPHABET[bytes[i]! % PAIR_CODE_ALPHABET.length];
-      }
+      const code = generatePairCode();
       const exists = await client.device.findUnique({
         where: { pairCode: code },
         select: { id: true },
       });
       if (!exists) return code;
     }
-    throw new Error('failed to generate unique pair code after 8 attempts');
+    throw new ConflictError('配对码生成冲突，请重试', { code: 'pair_code_generation_failed' });
   }
 }
 
@@ -451,6 +534,19 @@ export function toSummary(d: DeviceRow): DeviceSummaryT {
 function generateSecret(): string {
   return randomBytes(32).toString('hex');
 }
+
+function generatePairCode(): string {
+  let code = '';
+  while (code.length < 6) {
+    for (const byte of randomBytes(8)) {
+      if (byte >= PAIR_CODE_RANDOM_LIMIT) continue;
+      code += PAIR_CODE_ALPHABET[byte % PAIR_CODE_ALPHABET.length];
+      if (code.length === 6) break;
+    }
+  }
+  return code;
+}
+
 function hashSecret(secret: string): string {
   return createHash('sha256').update(secret).digest('hex');
 }
@@ -479,4 +575,34 @@ function isUniqueTarget(err: Prisma.PrismaClientKnownRequestError, ...fields: st
 function maskId(id: string | null): string {
   if (!id) return 'null';
   return `***${id.slice(-4)}`;
+}
+
+function normalizeCycleResult(result: CycleResult): {
+  groupId: string;
+  name: string;
+  structureEtag: string;
+  manifestEtag: string;
+  sortOrder: number;
+  contentCount: number;
+  position: { current: number; total: number };
+} | null {
+  if (!result.groupId) return null;
+  if (
+    result.name === null ||
+    result.structureEtag === null ||
+    result.manifestEtag === null ||
+    result.sortOrder === null ||
+    result.position === null
+  ) {
+    throw new Error(`invalid cycle result for group ${result.groupId}`);
+  }
+  return {
+    groupId: result.groupId,
+    name: result.name,
+    structureEtag: result.structureEtag,
+    manifestEtag: result.manifestEtag,
+    sortOrder: result.sortOrder,
+    contentCount: result.contentCount,
+    position: result.position,
+  };
 }

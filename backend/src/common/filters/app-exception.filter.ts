@@ -32,12 +32,18 @@ export class AppExceptionFilter implements ExceptionFilter {
     const envelope: ErrorEnvelope = {
       error: appErr.code,
       message: appErr.message,
-      detail: appErr.detail,
       requestId: currentRequestId(),
     };
 
     if (appErr.httpStatus >= 500) {
       this.logger.error({ err: exception, requestId: envelope.requestId }, appErr.message);
+    } else if (appErr.detail !== undefined) {
+      envelope.detail = appErr.detail;
+    }
+
+    const retryAfterSec = retryAfterFromDetail(appErr.detail);
+    if (appErr instanceof RateLimitedError && retryAfterSec !== null) {
+      reply.header('Retry-After', String(retryAfterSec));
     }
 
     void reply.status(appErr.httpStatus).send(envelope);
@@ -104,4 +110,11 @@ class HttpAppError extends AppError {
     this.httpStatus = status;
     this.code = code;
   }
+}
+
+function retryAfterFromDetail(detail: unknown): number | null {
+  if (!detail || typeof detail !== 'object') return null;
+  const value = (detail as { retry_after_sec?: unknown }).retry_after_sec;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return Math.max(Math.ceil(value), 1);
 }

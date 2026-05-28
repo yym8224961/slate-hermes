@@ -8,6 +8,8 @@ import {
   parseHistoryTodayData,
   type HistoryTodayProviderData,
 } from '../history-today.data';
+import { datePartsInTz } from '../timezone';
+import { fetchJson } from '../../../common/http/fetch';
 
 const FETCH_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 86_400_000;
@@ -52,14 +54,7 @@ export class HistoryTodayProvider implements DataProvider<
       return await this.fetchBaiduBaike(config, ctx);
     }
     const tz = config.tz;
-    const fmt = new Intl.DateTimeFormat('en-US', {
-      timeZone: tz,
-      month: 'numeric',
-      day: 'numeric',
-    });
-    const parts = fmt.formatToParts(ctx.now);
-    const month = parseInt(parts.find((p) => p.type === 'month')!.value, 10);
-    const day = parseInt(parts.find((p) => p.type === 'day')!.value, 10);
+    const { month, day } = datePartsInTz(ctx.now, tz);
     const rawKey = `${mmdd(month, day)}:${RAW_LANG}`;
     const aiKey = `${rawKey}:${this.ai.modelKey()}:${this.ai.historyTodayPromptVersion()}`;
     const nowMs = ctx.now.getTime();
@@ -70,7 +65,7 @@ export class HistoryTodayProvider implements DataProvider<
     const existing = this.inflight.get(aiKey);
     if (existing) return existing;
 
-    const p = this.fetchOptimized(month, day, rawKey)
+    const p = this.fetchOptimized(month, day, rawKey, nowMs)
       .then((data) => {
         this.aiCache.set(aiKey, { data, fetchedAt: nowMs });
         return data;
@@ -84,7 +79,7 @@ export class HistoryTodayProvider implements DataProvider<
     config: HistoryTodayConfigT,
     ctx: DynamicContentFetchCtx
   ): Promise<HistoryTodayProviderData> {
-    const parts = dateParts(config.tz, ctx.now);
+    const parts = datePartsInTz(ctx.now, config.tz);
     const month = String(parts.month).padStart(2, '0');
     const day = String(parts.day).padStart(2, '0');
     const key = `baidu:${month}-${day}`;
@@ -94,46 +89,33 @@ export class HistoryTodayProvider implements DataProvider<
     if (cached) this.aiCache.delete(key);
 
     const url = `https://baike.baidu.com/cms/home/eventsOnHistory/${month}.json`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const resp = await fetch(`${url}?_=${nowMs}`, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-            '(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        },
-      });
-      if (!resp.ok) throw new Error(`baidu history HTTP ${resp.status}`);
-      const json = (await resp.json()) as BaiduHistoryResponse;
-      const rawItems = json[month]?.[`${month}${day}`] ?? [];
-      const data = parseHistoryTodayData({
-        dateLabel: `${parts.month} 月 ${parts.day} 日`,
-        items: rawItems
-          .map((item) => ({
-            year: normalizeHistoryYear(textOrEmpty(item.year)),
-            display: normalizeDisplay(stripHtml(textOrEmpty(item.title || item.desc))),
-          }))
-          .filter((item): item is { year: string; display: string } => {
-            return !!item.year && !!item.display;
-          }),
-      });
-      if (!data) throw new Error('baidu history empty');
-      this.aiCache.set(key, { data, fetchedAt: nowMs });
-      return data;
-    } finally {
-      clearTimeout(timer);
-    }
+    const json = await fetchJson<BaiduHistoryResponse>(`${url}?_=${nowMs}`, {
+      timeoutMs: FETCH_TIMEOUT_MS,
+    });
+    const rawItems = json[month]?.[`${month}${day}`] ?? [];
+    const data = parseHistoryTodayData({
+      dateLabel: `${parts.month} 月 ${parts.day} 日`,
+      items: rawItems
+        .map((item) => ({
+          year: normalizeHistoryYear(textOrEmpty(item.year)),
+          display: normalizeDisplay(stripHtml(textOrEmpty(item.title || item.desc))),
+        }))
+        .filter((item): item is { year: string; display: string } => {
+          return !!item.year && !!item.display;
+        }),
+    });
+    if (!data) throw new Error('baidu history empty');
+    this.aiCache.set(key, { data, fetchedAt: nowMs });
+    return data;
   }
 
   private async fetchOptimized(
     month: number,
     day: number,
-    rawKey: string
+    rawKey: string,
+    nowMs: number
   ): Promise<HistoryTodayProviderData> {
     const cachedRaw = this.rawCache.get(rawKey);
-    const nowMs = Date.now();
     const events =
       cachedRaw && nowMs - cachedRaw.fetchedAt < CACHE_TTL_MS
         ? cachedRaw.events
@@ -160,47 +142,39 @@ export class HistoryTodayProvider implements DataProvider<
 
   private async fetchRawEvents(month: number, day: number): Promise<HistoryTodayRawEvent[]> {
     const url = `https://zh.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}?variant=zh-cn`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-    try {
-      const resp = await fetch(url, { signal: controller.signal });
-      if (!resp.ok) throw new Error(`history HTTP ${resp.status}`);
-      const json = (await resp.json()) as {
-        events?: Array<{
-          year?: number;
-          text?: string;
+    const json = await fetchJson<{
+      events?: Array<{
+        year?: number;
+        text?: string;
+        pages?: Array<{ title?: string; description?: string; extract?: string }>;
+      }>;
+    }>(url, { timeoutMs: FETCH_TIMEOUT_MS, userAgent: null });
+    const evs = json.events ?? [];
+    return evs
+      .filter(
+        (
+          event
+        ): event is {
+          year: number;
+          text: string;
           pages?: Array<{ title?: string; description?: string; extract?: string }>;
-        }>;
-      };
-      const evs = json.events ?? [];
-      return evs
-        .filter(
-          (
-            event
-          ): event is {
-            year: number;
-            text: string;
-            pages?: Array<{ title?: string; description?: string; extract?: string }>;
-          } => {
-            return typeof event.year === 'number' && typeof event.text === 'string' && !!event.text;
-          }
-        )
-        .map((event) => ({
-          year: event.year,
-          text: event.text,
-          pages: Array.isArray(event.pages)
-            ? event.pages
-                .map((page) => ({
-                  title: textOrEmpty(page.title),
-                  description: textOrEmpty(page.description),
-                  extract: textOrEmpty(page.extract),
-                }))
-                .filter((page) => page.title || page.description || page.extract)
-            : [],
-        }));
-    } finally {
-      clearTimeout(timer);
-    }
+        } => {
+          return typeof event.year === 'number' && typeof event.text === 'string' && !!event.text;
+        }
+      )
+      .map((event) => ({
+        year: event.year,
+        text: event.text,
+        pages: Array.isArray(event.pages)
+          ? event.pages
+              .map((page) => ({
+                title: textOrEmpty(page.title),
+                description: textOrEmpty(page.description),
+                extract: textOrEmpty(page.extract),
+              }))
+              .filter((page) => page.title || page.description || page.extract)
+          : [],
+      }));
   }
 }
 
@@ -217,19 +191,6 @@ interface BaiduHistoryResponse {
       desc?: string;
       year?: string;
     }>;
-  };
-}
-
-function dateParts(tz: string, now: Date): { month: number; day: number } {
-  const fmt = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    month: 'numeric',
-    day: 'numeric',
-  });
-  const parts = fmt.formatToParts(now);
-  return {
-    month: parseInt(parts.find((p) => p.type === 'month')!.value, 10),
-    day: parseInt(parts.find((p) => p.type === 'day')!.value, 10),
   };
 }
 

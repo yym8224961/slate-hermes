@@ -10,6 +10,7 @@ const WORKER_BATCH_SIZE = 5;
 const LEASE_MS = 180_000;
 const RETRY_BASE_DELAY_MS = 15_000;
 const RETRY_MAX_DELAY_MS = 10 * 60_000;
+const MAX_IDLE_SLEEP_MS = 5 * 60_000;
 
 interface RefreshJob {
   id: string;
@@ -21,8 +22,9 @@ interface RefreshJob {
 @Injectable()
 export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DynamicContentSchedulerService.name);
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  private stopped = false;
 
   constructor(
     private readonly config: AppConfig,
@@ -33,12 +35,13 @@ export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDes
   onModuleInit(): void {
     if (!this.config.backgroundWorkers) return;
     if (this.timer) return;
-    this.timer = setInterval(() => void this.tick(), WORKER_INTERVAL_MS);
-    void this.tick();
+    this.stopped = false;
+    this.schedule(0);
   }
 
   onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer);
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
   }
 
@@ -55,9 +58,27 @@ export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDes
           await this.markRetry(job, err);
         });
       }
+      const delayMs =
+        jobs.length >= WORKER_BATCH_SIZE ? 0 : await this.nextDelayMs(jobs.length > 0);
+      this.schedule(delayMs);
+    } catch (err) {
+      this.logger.warn(
+        `dynamic refresh scheduler tick failed: ${err instanceof Error ? err.message : String(err)}`
+      );
+      this.schedule(WORKER_INTERVAL_MS);
     } finally {
       this.running = false;
     }
+  }
+
+  private schedule(delayMs: number): void {
+    if (this.stopped) return;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => {
+      this.timer = null;
+      void this.tick();
+    }, Math.max(delayMs, 0));
+    this.timer.unref?.();
   }
 
   private async claimDueJobs(limit: number): Promise<RefreshJob[]> {
@@ -108,6 +129,25 @@ export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDes
     this.logger.log(
       `refreshed dynamic content=${contentId} type=${dynamicType}` +
         (result.unchanged ? ' unchanged=1' : ' changed=1')
+    );
+  }
+
+  private async nextDelayMs(jobsWereRendered: boolean): Promise<number> {
+    if (jobsWereRendered) return WORKER_INTERVAL_MS;
+    const now = new Date();
+    const next = await this.prisma.content.findFirst({
+      where: {
+        kind: 'dynamic',
+        dynamicType: { not: null },
+        dynamicRefreshDueAt: { not: null, gt: now },
+      },
+      orderBy: { dynamicRefreshDueAt: 'asc' },
+      select: { dynamicRefreshDueAt: true },
+    });
+    if (!next?.dynamicRefreshDueAt) return MAX_IDLE_SLEEP_MS;
+    return Math.min(
+      Math.max(next.dynamicRefreshDueAt.getTime() - now.getTime(), WORKER_INTERVAL_MS),
+      MAX_IDLE_SLEEP_MS
     );
   }
 

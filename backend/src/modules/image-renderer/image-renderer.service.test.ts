@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, it, expect } from 'bun:test';
 import sharp from 'sharp';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { FRAME_BYTES, FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
 import { ImageRendererService } from './image-renderer.service';
 import { ImageRenderCacheService } from './image-render-cache.service';
@@ -100,6 +100,36 @@ describe('ImageRendererService', () => {
     const r2 = await renderer.renderTo1bpp(input, { mode: 'floyd' });
     expect(r2.fromCache).toBe(true);
     expect(Buffer.compare(r1.data, r2.data)).toBe(0);
+  });
+
+  it('同 key 并发未命中时只执行一次 compute', async () => {
+    const localCache = new ImageRenderCacheService({ blobDir: tmp } as never);
+    const key = `concurrent-${Date.now()}`;
+    let calls = 0;
+
+    const [first, second] = await Promise.all([
+      localCache.getOrCompute(key, async () => {
+        calls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return Buffer.from('cached');
+      }),
+      localCache.getOrCompute(key, async () => {
+        calls += 1;
+        return Buffer.from('duplicate');
+      }),
+    ]);
+
+    expect(calls).toBe(1);
+    expect([first.fromCache, second.fromCache].sort()).toEqual([false, true]);
+    expect(first.data.toString()).toBe(second.data.toString());
+  });
+
+  it('cache path resolves relative blobDir to an absolute root', () => {
+    const localCache = new ImageRenderCacheService({ blobDir: './relative-blobs' } as never);
+    const path = localCache.path('abcdef');
+
+    expect(isAbsolute(path)).toBe(true);
+    expect(path).toBe(resolve('./relative-blobs/image-render-cache/ab/abcdef.bin'));
   });
 
   it('opts 不同 → key 不同 → fromCache=false', async () => {

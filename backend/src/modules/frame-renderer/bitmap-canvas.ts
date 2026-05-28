@@ -36,8 +36,10 @@ export class BitmapCanvas {
     const y0 = Math.max(0, y);
     const x1 = Math.min(this.width, x + w);
     const y1 = Math.min(this.height, y + h);
+    if (x0 >= x1 || y0 >= y1) return;
+    const fillValue = color ? PIXEL_WHITE : PIXEL_BLACK;
     for (let yy = y0; yy < y1; yy++) {
-      for (let xx = x0; xx < x1; xx++) this.setPixel(xx, yy, color);
+      this.pixels.fill(fillValue, yy * this.width + x0, yy * this.width + x1);
     }
   }
 
@@ -138,7 +140,7 @@ export class BitmapCanvas {
   }
 
   toRaw1bpp(): Buffer {
-    const out = Buffer.alloc((this.width * this.height) / 8);
+    const out = Buffer.alloc(Math.ceil((this.width * this.height) / 8));
     for (let i = 0; i < this.pixels.length; i++) {
       if (this.pixels[i]) out[i >> 3] |= 0x80 >> (i & 7);
     }

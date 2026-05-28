@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { WeatherConfig, type WeatherConfigT } from 'shared';
 import { AppConfig } from '../../../infra/config/app.config';
+import { fetchJson as fetchJsonWithTimeout } from '../../../common/http/fetch';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { datePartsInTz } from '../timezone';
 
@@ -76,7 +77,7 @@ interface QWeatherCityLookupResponse {
   }>;
 }
 
-const DEFAULT_CACHE_TTL_MS = 600_000;
+const DEFAULT_CACHE_TTL_SEC = 600;
 const LOOKUP_CACHE_TTL_MS = 86_400_000;
 const FETCH_TIMEOUT_MS = 5000;
 const FC_LABELS = ['今日', '明日', '后天'];
@@ -105,14 +106,14 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
   ): Promise<WeatherProviderData> {
     const key = this.cacheKey(config);
     const now = ctx.now.getTime();
-    const ttlSec = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_MS / 1000, 300);
+    const ttlSec = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_SEC, 300);
     const ttlMs = ttlSec * 1000;
+    const existing = this.inflight.get(key);
+    if (existing) return existing;
+
     const cached = this.cache.get(key);
     if (cached && now - cached.fetchedAt < ttlMs) return cached.data;
     if (cached) this.cache.delete(key);
-
-    const existing = this.inflight.get(key);
-    if (existing) return existing;
 
     const p = this.fetchFromQWeather(config, ctx)
       .then((data) => {
@@ -263,18 +264,11 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
 }
 
 async function fetchJson<T>(url: string, apiKey: string): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const resp = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'X-QW-Api-Key': apiKey },
-    });
-    if (!resp.ok) throw new Error(`QWeather HTTP ${resp.status}`);
-    return (await resp.json()) as T;
-  } finally {
-    clearTimeout(timer);
-  }
+  return fetchJsonWithTimeout<T>(url, {
+    timeoutMs: FETCH_TIMEOUT_MS,
+    headers: { 'X-QW-Api-Key': apiKey },
+    userAgent: null,
+  });
 }
 
 function toDisplayNumber(value: unknown): number | string {

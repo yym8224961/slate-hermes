@@ -1,6 +1,7 @@
 import { resolve } from 'node:path';
 
-const BACKEND_ROOT = resolve(import.meta.dirname, '..', '..', '..');
+const MODULE_DIR = import.meta.dirname ?? import.meta.dir;
+const BACKEND_ROOT = resolve(MODULE_DIR, '..', '..', '..');
 
 export const ASSETS_DIR = resolve(BACKEND_ROOT, 'assets');
 export const VECTOR_FONT_DIR = resolve(ASSETS_DIR, 'fonts', 'vector');

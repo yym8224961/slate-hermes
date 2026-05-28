@@ -4,7 +4,7 @@ import type { ContentAudioSource, ContentAudioStatus } from '@prisma/client';
 import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { GroupsService } from '../groups/groups.service';
-import { audioBlobContentId } from '../audio/audio-blob-id';
+import { deleteAudioBlob, readAudioBlob } from '../audio/audio-blob-store';
 
 @Injectable()
 export class ContentAudioBlobService {
@@ -17,15 +17,11 @@ export class ContentAudioBlobService {
   ) {}
 
   async delete(groupId: string, contentId: string, audioEtag: string | null): Promise<void> {
-    if (!audioEtag) return;
-    await this.blob
-      .delete(groupId, audioBlobContentId(contentId, audioEtag), 'audio')
-      .catch(() => {});
+    await deleteAudioBlob(this.blob, groupId, contentId, audioEtag, this.logger);
   }
 
   async read(groupId: string, contentId: string, audioEtag: string | null): Promise<Buffer | null> {
-    if (!audioEtag) return null;
-    return this.blob.read(groupId, audioBlobContentId(contentId, audioEtag), 'audio');
+    return readAudioBlob(this.blob, groupId, contentId, audioEtag);
   }
 
   async handleMissing(content: {

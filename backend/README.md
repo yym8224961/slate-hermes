@@ -252,7 +252,7 @@ backend/scripts/generate-font-test-assets.sh
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
 | `PORT` | `3001` | |
 | `DATABASE_URL` | —— | 必填，`mysql://user:pwd@host:3306/db` |
-| `JWT_SECRET` | —— | 必填，≥ 16 字符，建议 `openssl rand -hex 64` |
+| `JWT_SECRET` | —— | 必填，≥ 32 字符，建议 `openssl rand -hex 64` |
 | `JWT_EXPIRATION` | `7d` | |
 | `BLOB_DIR` | `./blobs` | docker 镜像内固定 `/data/blobs` |
 | `QWEATHER_API_KEY` | —— | 可选，天气动态帧使用；从 QWeather 控制台创建 API KEY |

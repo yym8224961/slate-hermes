@@ -8,6 +8,8 @@ import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { AppConfig } from './infra/config/app.config';
 
+const MODULE_DIR = import.meta.dirname ?? import.meta.dir;
+
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
@@ -34,7 +36,7 @@ async function bootstrap(): Promise<void> {
 
   // 单镜像生产部署 serve frontend dist；dev 模式 dist 不存在则跳过（走 vite dev server）。
   // backend/src/main.ts → ../../frontend/dist，runtime 镜像里同位置（/app/backend/src）。
-  const distRoot = join(import.meta.dir, '..', '..', 'frontend', 'dist');
+  const distRoot = join(MODULE_DIR, '..', '..', 'frontend', 'dist');
   if (existsSync(distRoot)) {
     app.useStaticAssets({ root: distRoot, wildcard: false });
 

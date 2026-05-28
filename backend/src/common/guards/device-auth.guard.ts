@@ -4,6 +4,7 @@ import type { FastifyRequest } from 'fastify';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AuthError } from '../errors';
 import { CURRENT_DEVICE_KEY, type DeviceContext } from '../decorators/current-device.decorator';
+import { extractBearerToken } from '../auth/http-token';
 
 @Injectable()
 export class DeviceAuthGuard implements CanActivate {
@@ -35,9 +36,8 @@ export class DeviceAuthGuard implements CanActivate {
 // 也保证 JwtOrDeviceAuthGuard 里 jwt 和 device 两条路径不会互相误识别（jwt 是三段 base64，
 // 含点；hex 不含点）。
 export function readDeviceSecret(req: FastifyRequest): string | null {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.toLowerCase().startsWith('bearer ')) return null;
-  const token = auth.slice(7).trim();
+  const token = extractBearerToken(req);
+  if (!token) return null;
   if (!/^[0-9a-f]{64}$/.test(token)) return null;
   return token;
 }

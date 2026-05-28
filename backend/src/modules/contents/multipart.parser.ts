@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { MultipartFile } from '@fastify/multipart';
 import type { FastifyRequest } from 'fastify';
 import { DITHER_MODES, type DitherMode } from 'shared';
 import { ValidationError } from '../../common/errors';
@@ -15,6 +16,8 @@ export interface ParsedContentUpload {
 }
 
 const MODES = DITHER_MODES as readonly string[];
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_AUDIO_BYTES = 5 * 1024 * 1024;
 
 @Injectable()
 export class MultipartParser {
@@ -35,13 +38,16 @@ export class MultipartParser {
     const parts = req.parts();
     for await (const part of parts) {
       if (part.type === 'file') {
-        const buf = await part.toBuffer();
         if (part.fieldname === 'image') {
+          const buf = await readLimitedFile(part, MAX_IMAGE_BYTES, '图片文件不能超过 10MB');
           result.hasImage = buf.length > 0;
           if (result.hasImage) result.imageBuf = buf;
         } else if (part.fieldname === 'audio') {
+          const buf = await readLimitedFile(part, MAX_AUDIO_BYTES, '音频文件不能超过 5MB');
           result.hasAudio = buf.length > 0;
           if (result.hasAudio) result.audioBuf = buf;
+        } else {
+          part.file.resume();
         }
       } else {
         const val = typeof part.value === 'string' ? part.value : String(part.value ?? '');
@@ -61,4 +67,27 @@ export class MultipartParser {
     }
     return result;
   }
+}
+
+async function readLimitedFile(part: MultipartFile, maxBytes: number, message: string): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let total = 0;
+  try {
+    for await (const chunk of part.file) {
+      const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array);
+      total += buf.byteLength;
+      if (total > maxBytes) {
+        part.file.destroy();
+        throw new ValidationError(message, { code: 'file_too_large', max_bytes: maxBytes });
+      }
+      chunks.push(buf);
+    }
+  } catch (err) {
+    if (err instanceof ValidationError) throw err;
+    if ((err as { code?: unknown }).code === 'FST_REQ_FILE_TOO_LARGE') {
+      throw new ValidationError(message, { code: 'file_too_large', max_bytes: maxBytes });
+    }
+    throw err;
+  }
+  return Buffer.concat(chunks, total);
 }

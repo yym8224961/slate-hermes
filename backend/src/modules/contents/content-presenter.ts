@@ -5,7 +5,6 @@ import {
   TtsVoice,
   type ContentDetailT,
   type ContentSummaryT,
-  type DynamicConfigT,
   type DynamicTypeT,
 } from 'shared';
 import {
@@ -38,6 +37,7 @@ export interface ContentRow {
   kind: ContentKind;
   dynamicType: string | null;
   dynamicNextRunAt?: Date | null;
+  dynamicRefreshDueAt?: Date | null;
   dynamicConfig?: Prisma.JsonValue | null;
   dynamicData?: Prisma.JsonValue | null;
   dynamicLastRunAt?: Date | null;
@@ -77,9 +77,7 @@ export function contentToDetail(
   return {
     ...contentToSummary(row),
     group_id: row.groupId,
-    dynamic_config: config?.success
-      ? config.data
-      : ((row.dynamicConfig as DynamicConfigT | null) ?? null),
+    dynamic_config: config?.success ? config.data : null,
     dynamic_data: row.dynamicData ?? null,
     dynamic_last_rendered_at: row.dynamicLastRunAt?.toISOString() ?? null,
     dynamic_next_render_at: row.dynamicNextRunAt?.toISOString() ?? null,

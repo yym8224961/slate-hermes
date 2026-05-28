@@ -41,7 +41,8 @@ describe('WeatherAlertProvider', () => {
     expect(decodeURIComponent(requestedUrl)).toContain('province=湖南省');
     expect(data.title).toBe('湖南省气象预警');
     expect(data.province).toBe('湖南省');
-    expect(data.items[0]?.url).toBe('http://nmc.cn/publish/alarm/1.html');
+    expect(requestedUrl.startsWith('https://www.nmc.cn/rest/findAlarm')).toBe(true);
+    expect(data.items[0]?.url).toBe('https://www.nmc.cn/publish/alarm/1.html');
   });
 
   it('shares cache entries between aliases and official province names', async () => {

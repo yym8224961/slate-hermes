@@ -12,19 +12,29 @@ export class RequestIdInterceptor implements NestInterceptor {
     const reply = http.getResponse<FastifyReply>();
 
     const headerId = req.headers['x-request-id'];
-    const requestId =
-      (typeof headerId === 'string' && headerId) || (req.id as string | undefined) || randomUUID();
+    const requestId = safeRequestId(headerId) ?? safeRequestId(req.id) ?? randomUUID();
 
     void reply.header('x-request-id', requestId);
 
     return new Observable((subscriber) => {
       requestContext.run({ requestId }, () => {
-        next.handle().subscribe({
+        const sub = next.handle().subscribe({
           next: (v) => subscriber.next(v),
           error: (e) => subscriber.error(e),
           complete: () => subscriber.complete(),
         });
+        subscriber.add(sub);
       });
     });
   }
+}
+
+function safeRequestId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+    trimmed
+  )
+    ? trimmed
+    : null;
 }

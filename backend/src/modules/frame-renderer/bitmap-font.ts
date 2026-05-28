@@ -25,7 +25,20 @@ interface SerializedBitmapFont {
   bitmapBase64: string;
 }
 
+const fontCache = new Map<string, Promise<BitmapFont>>();
+
 export async function loadBitmapFont(path: string): Promise<BitmapFont> {
+  const cached = fontCache.get(path);
+  if (cached) return cached;
+  const task = readBitmapFont(path).catch((err: unknown) => {
+    fontCache.delete(path);
+    throw err;
+  });
+  fontCache.set(path, task);
+  return task;
+}
+
+async function readBitmapFont(path: string): Promise<BitmapFont> {
   const raw = JSON.parse(await readFile(path, 'utf8')) as SerializedBitmapFont;
   return {
     name: raw.name,

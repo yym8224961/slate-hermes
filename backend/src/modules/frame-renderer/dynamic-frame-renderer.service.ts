@@ -1,29 +1,77 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { existsSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import {
-  DASHBOARD_SYSTEM_TEMPLATES,
-  DashboardConfig,
   FRAME_BYTES,
   FRAME_HEIGHT,
   FRAME_WIDTH,
   ICON_FONT_TEST_SAMPLE,
   type DashboardTemplateT,
-  type FontTestFontIdT,
 } from 'shared';
 import { BITMAP_1BPP_FONT_DIR } from '../../infra/assets/asset-paths';
 import { traditionalFestivalShortName } from '../dynamic-content/traditional-festivals';
 import { timezoneFromConfig } from '../dynamic-content/timezone';
-import { parseHistoryTodayData } from '../dynamic-content/history-today.data';
 import { BitmapCanvas, PIXEL_BLACK, PIXEL_WHITE, type BitmapMask } from './bitmap-canvas';
 import {
   DEVICE_FONT_CATALOG,
-  DEVICE_FONT_IDS,
   getDeviceFontEntry,
   type DeviceFontCatalogEntry,
 } from './font-catalog';
-import { hasGlyph, loadBitmapFont, textWidth, type BitmapFont } from './bitmap-font';
+import { loadBitmapFont, textWidth, type BitmapFont } from './bitmap-font';
 import { loadWeatherIconMask } from './weather-icons';
+import { readHistoryItems, monthCellSubtitle } from './calendar-render-utils';
+import {
+  blockRect,
+  resolveDashboardRenderInput,
+  resolvePercentage,
+  resolveSeries,
+  resolveTemplate,
+} from './dashboard-template';
+import { earthquakeFields } from './earthquake-render-utils';
+import {
+  dateParts,
+  dayFromMonthDay,
+  daysInMonth,
+  formatShortTime,
+  monthFromMonthDay,
+  weekdayFor,
+} from './frame-date-utils';
+import {
+  drawTextLine,
+  filterDrawable,
+  glyphTopOffset,
+  textPixelBounds,
+  textVisualHeight,
+  textWidthFallback,
+  wrapText,
+} from './frame-text-layout';
+import {
+  getPath,
+  isRecord,
+  pad2,
+  pickText,
+  readAlign,
+  readInt,
+  readStringArray,
+} from './frame-value-utils';
+import {
+  fontReadingLines,
+  fontSpecimen,
+  fontTestLineGap,
+  fontTestSampleText,
+  missingGlyphs,
+  readFontId,
+  type FontSpecimen,
+} from './font-test-utils';
+import {
+  forecastRangeFromVal,
+  forecastTextFromVal,
+  formatTemperatureRange,
+  normalizeWeatherCode,
+  weatherAlertLine,
+  weatherAlertSourceLabel,
+  weatherAlertSummary,
+} from './weather-render-utils';
 
 export interface DynamicRenderContext {
   type: string;
@@ -50,13 +98,6 @@ interface TextOptions {
   ellipsis?: boolean;
   lineGap?: number;
   color?: number;
-}
-
-interface FontSpecimen {
-  hero: string;
-  body: string[];
-  metrics: string[];
-  glyphs: string[];
 }
 
 const STATUS_BAR_H = 24;
@@ -303,9 +344,11 @@ export class DynamicFrameRendererService implements OnModuleInit {
     const iconCx = leftAreaX + Math.round(halfW / 2);
     const iconCy = heroCenterY;
     const tempCenterX = leftAreaX + halfW + Math.round(halfW / 2) - 8;
-    const tempVisualH = textVisualHeight(fonts.displayLarge, temp) || 40;
+    const tempFallback = this.fallbackForFont(fonts.displayLarge);
+    const tempVisualH = textVisualHeight(fonts.displayLarge, temp, tempFallback) || 40;
     const tempY =
-      Math.round(heroCenterY - tempVisualH / 2) - glyphTopOffset(fonts.displayLarge, temp);
+      Math.round(heroCenterY - tempVisualH / 2) -
+      glyphTopOffset(fonts.displayLarge, temp, tempFallback);
     const forecast = fc.length > 0 ? fc : [null, null, null];
     const forecastRecords = forecast.slice(0, 3).map((item) => (isRecord(item) ? item : {}));
     const [heroIcon, ...forecastIcons] = await Promise.all([
@@ -658,12 +701,7 @@ export class DynamicFrameRendererService implements OnModuleInit {
     const specimenKind =
       entry.kind === 'latin' && sampleFont.lineHeight >= 28 ? 'display' : entry.kind;
     const specimen = fontSpecimen(specimenKind, entry.id);
-    const sampleForMissing =
-      specimenKind === 'icon'
-        ? ICON_FONT_TEST_SAMPLE
-        : specimenKind === 'display'
-          ? '23:59 86% +12 -04 OK RUN'
-          : [specimen.hero, ...specimen.body, ...specimen.metrics, ...specimen.glyphs].join(' ');
+    const sampleForMissing = fontTestSampleText(specimenKind, specimen);
     const missing = missingGlyphs(sampleFont, sampleForMissing);
 
     if (invert) {
@@ -1000,9 +1038,30 @@ export class DynamicFrameRendererService implements OnModuleInit {
     y: number,
     opts: TextOptions = {}
   ): number {
-    const used = this.drawText(c, font, text, x, y, opts);
-    this.drawText(c, font, text, x + 1, y, opts);
-    return used;
+    const lineGap = opts.lineGap ?? 3;
+    const fallback = this.fallbackForFont(font);
+    const lines = wrapText(
+      font,
+      fallback,
+      text,
+      opts.maxWidth ?? FRAME_WIDTH,
+      opts.maxLines ?? 1,
+      opts.ellipsis ?? false
+    );
+    let cursorY = y;
+    for (const line of lines) {
+      const width = textWidthFallback(font, fallback, line);
+      const drawX =
+        opts.align === 'center'
+          ? Math.round(x - width / 2)
+          : opts.align === 'right'
+            ? x - width
+            : x;
+      drawTextLine(c, font, fallback, line, drawX, cursorY, opts.color ?? PIXEL_BLACK);
+      drawTextLine(c, font, fallback, line, drawX + 1, cursorY, opts.color ?? PIXEL_BLACK);
+      cursorY += font.lineHeight + lineGap;
+    }
+    return lines.length * font.lineHeight + Math.max(0, lines.length - 1) * lineGap;
   }
 
   private drawMagnitudeValue(
@@ -1266,16 +1325,9 @@ export class DynamicFrameRendererService implements OnModuleInit {
 }
 
 function resolveFontPath(file: string): string {
-  const candidates = [
-    resolve(BITMAP_1BPP_FONT_DIR, file),
-    resolve(process.cwd(), 'assets', 'fonts', 'bitmap-1bpp', file),
-    resolve(process.cwd(), 'backend', 'assets', 'fonts', 'bitmap-1bpp', file),
-    resolve(process.cwd(), '..', 'backend', 'assets', 'fonts', 'bitmap-1bpp', file),
-    join(import.meta.dir, '..', '..', '..', 'assets', 'fonts', 'bitmap-1bpp', file),
-  ];
-  const found = candidates.find((p) => existsSync(p));
-  if (!found) throw new Error(`device font not found: ${file}`);
-  return found;
+  const path = resolve(BITMAP_1BPP_FONT_DIR, file);
+  if (!existsSync(path)) throw new Error(`device font not found: ${path}`);
+  return path;
 }
 
 async function loadDeviceFontCatalog(): Promise<Partial<Record<string, BitmapFont>>> {
@@ -1286,721 +1338,4 @@ async function loadDeviceFontCatalog(): Promise<Partial<Record<string, BitmapFon
     })
   );
   return out;
-}
-
-function pickText(value: unknown, fallback: string): string {
-  if (value === null || value === undefined) return fallback;
-  const s = String(value).trim();
-  return s.length > 0 ? s : fallback;
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return !!v && typeof v === 'object' && !Array.isArray(v);
-}
-
-function readStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((v) => (v === null || v === undefined ? '' : String(v).trim()))
-    .filter((v) => v.length > 0);
-}
-
-function readHistoryItems(data: Record<string, unknown>): Array<{ year: string; text: string }> {
-  // Render accepts only the current history_today contract; invalid data renders as fallback.
-  const parsed = parseHistoryTodayData(data);
-  if (!parsed) return [];
-  return parsed.items.map((item) => ({ year: item.year, text: item.display }));
-}
-
-function readNumberArray(value: unknown): number[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((v) => (typeof v === 'number' ? v : typeof v === 'string' ? Number(v) : NaN))
-    .filter((v) => Number.isFinite(v));
-}
-
-function readInt(value: unknown, fallback: number, min: number, max: number): number {
-  const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, Math.trunc(n)));
-}
-
-function readAlign(value: unknown): 'left' | 'center' | 'right' {
-  return value === 'center' || value === 'right' ? value : 'left';
-}
-
-function readFontId(value: unknown): FontTestFontIdT {
-  return typeof value === 'string' && DEVICE_FONT_IDS.has(value as FontTestFontIdT)
-    ? (value as FontTestFontIdT)
-    : 'fusion_pixel_12';
-}
-
-function missingGlyphs(font: BitmapFont, text: string): string[] {
-  const missing: string[] = [];
-  const seen = new Set<string>();
-  for (const ch of text) {
-    if (ch === ' ' || ch === '\n') continue;
-    if (hasGlyph(font, ch.codePointAt(0)!)) continue;
-    if (seen.has(ch)) continue;
-    seen.add(ch);
-    missing.push(ch);
-  }
-  return missing;
-}
-
-function fontSpecimen(kind: string, fontId: FontTestFontIdT): FontSpecimen {
-  if (kind === 'cjk') {
-    const compact = fontId === 'ark_pixel_16';
-    return {
-      hero: compact ? '中文 0123456789 ABC abc' : '墨水屏字体测试 中文点阵 0123456789',
-      body: compact
-        ? ['中文 ABC abc 123', '23:59 100% OK', 'A0 iIl1 O0 8B']
-        : ['今日天气 多云 23°C  风力 2 级', '简繁中文 标点，。！？', 'ABC abc 0123456789 +12.8%'],
-      metrics: ['0123456789 23:59'],
-      glyphs: ['一二三 口日目 黑墨屏'],
-    };
-  }
-
-  if (kind === 'display') {
-    return {
-      hero: '23:59',
-      body: ['86%', '+12.8', '-04'],
-      metrics: ['86% +12 -04'],
-      glyphs: ['OK RUN'],
-    };
-  }
-
-  return {
-    hero: 'Slate UI 0123456789 ABC abc',
-    body: ['The quick brown fox jumps.', 'A0 O0 I1 l1 []{} <> /\\', '23:59 100% +12.8 -04'],
-    metrics: ['0123456789 23:59'],
-    glyphs: ['A0 O0 I1 l1 mwMW'],
-  };
-}
-
-function fontTestLineGap(font: BitmapFont): number {
-  if (font.lineHeight <= 8) return 5;
-  if (font.lineHeight <= 12) return 6;
-  if (font.lineHeight <= 16) return 8;
-  if (font.lineHeight <= 24) return 10;
-  return 12;
-}
-
-function fontReadingLines(
-  entry: DeviceFontCatalogEntry,
-  specimen: FontSpecimen,
-  font: BitmapFont,
-  missingCount: number
-): string[] {
-  const footer = missingCount > 0 ? [`missing ${missingCount}`] : [];
-  if (entry.kind === 'cjk') {
-    if (entry.id === 'ark_pixel_16') {
-      return [
-        specimen.hero,
-        ...specimen.body,
-        ...specimen.metrics,
-        ...specimen.glyphs,
-        'ABCDEF abcdef 0123456789',
-        'A0 O0 I1 l1 []{}<>',
-        ...footer,
-      ];
-    }
-    return [
-      specimen.hero,
-      '中文测试 墨水屏 点阵字体',
-      '今天多云 23°C 风力 2级',
-      '黑白像素 横竖撇捺 点线面',
-      '简繁中文 标点，。！？；：',
-      '一二三四五六七八九十 口日目田回',
-      '0123456789 23:59 100% +12.8',
-      'ABC abc A0 O0 I1 l1 []{}<>',
-      ...footer,
-    ];
-  }
-
-  const dense = font.lineHeight <= 12;
-  return [
-    specimen.hero,
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZ',
-    'abcdefghijklmnopqrstuvwxyz',
-    '0123456789 23:59 100% +12.8 -04',
-    'A0 O0 I1 l1 mwMW []{} <> /\\',
-    dense ? 'The quick brown fox jumps over the lazy dog.' : 'The quick brown fox jumps.',
-    'Slate UI e-paper bitmap font',
-    '!@#$%^&*()_+-=;:,.?',
-    ...(dense
-      ? [
-          '0123456789 ABCDEF abcdef',
-          'render align width baseline',
-          'pixel density row spacing test',
-          'left center right edge sample',
-        ]
-      : []),
-    ...footer,
-  ];
-}
-
-function blockRect(
-  block: Record<string, unknown>
-): { x: number; y: number; w: number; h: number } | null {
-  const x = readInt(block.x, -1, 0, FRAME_WIDTH - 1);
-  const y = readInt(block.y, -1, STATUS_BAR_H, FRAME_HEIGHT - 1);
-  const w = readInt(block.w, -1, 1, FRAME_WIDTH);
-  const h = readInt(block.h, -1, 1, FRAME_HEIGHT - STATUS_BAR_H);
-  if (x < 0 || y < STATUS_BAR_H || w < 1 || h < 1) return null;
-  return {
-    x,
-    y,
-    w: Math.min(w, FRAME_WIDTH - x),
-    h: Math.min(h, FRAME_HEIGHT - y),
-  };
-}
-
-function resolveDashboardRenderInput(
-  ctx: DynamicRenderContext
-): { template: DashboardTemplateT; data: Record<string, unknown> } | null {
-  const config = DashboardConfig.safeParse(ctx.config);
-  if (!config.success) return null;
-  const data = ctx.data ?? config.data.test_data;
-  if (!isRecord(data)) return null;
-  if (config.data.template.kind === 'custom') {
-    return { template: config.data.template.template, data };
-  }
-  const system = DASHBOARD_SYSTEM_TEMPLATES[config.data.template.id];
-  return { template: system.template, data };
-}
-
-function resolveTemplate(template: string, data: Record<string, unknown>): string {
-  return template.replace(/\{([a-zA-Z0-9_.-]+)(?:\|([a-zA-Z0-9_]+))?\}/g, (_m, path: string, format?: string) => {
-    const value = resolvePath(data, path);
-    if (Array.isArray(value)) return value.join(' ');
-    if (value === null || value === undefined) return '';
-    return formatDashboardValue(value, format);
-  });
-}
-
-function resolvePath(data: Record<string, unknown>, path: string): unknown {
-  const parts = path.split('.');
-  let cur: unknown = data;
-  for (let i = 0; i < parts.length; i += 1) {
-    const part = parts[i]!;
-    if (!isRecord(cur) && !Array.isArray(cur)) return undefined;
-    if (Array.isArray(cur)) {
-      if (part === '*') {
-        const rest = parts.slice(i + 1).join('.');
-        return rest ? cur.map((item) => resolvePathFromUnknown(item, rest)) : cur;
-      }
-      const idx = Number(part);
-      cur = Number.isInteger(idx) ? cur[idx] : undefined;
-    } else {
-      cur = cur[part];
-    }
-  }
-  return cur;
-}
-
-function resolvePathFromUnknown(value: unknown, path: string): unknown {
-  if (!isRecord(value) && !Array.isArray(value)) return undefined;
-  return resolvePath(value as Record<string, unknown>, path);
-}
-
-function resolveSeries(value: unknown, data: Record<string, unknown>): number[] {
-  if (Array.isArray(value)) return readNumberArray(value);
-  if (typeof value !== 'string') return [];
-  const match = value.match(/^\{([a-zA-Z0-9_.*-]+)\}$/);
-  if (match) return readNumberArray(resolvePath(data, match[1]!));
-  return readNumberArray(
-    value
-      .split(',')
-      .map((v) => v.trim())
-      .filter(Boolean)
-  );
-}
-
-function resolvePercentage(
-  value: unknown,
-  rawUsed: unknown,
-  rawMax: unknown,
-  data: Record<string, unknown>
-): number {
-  const direct =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string'
-        ? Number(resolveTemplate(value, data).replace(/%$/, ''))
-        : NaN;
-  if (Number.isFinite(direct)) return clamp(direct, 0, 100);
-
-  const used = Number(resolveTemplate(pickText(rawUsed, ''), data));
-  const max = Number(resolveTemplate(pickText(rawMax, ''), data));
-  if (!Number.isFinite(used) || !Number.isFinite(max) || max <= 0) return 0;
-  return clamp((used / max) * 100, 0, 100);
-}
-
-function formatDashboardValue(value: unknown, format: string | undefined): string {
-  const n =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && value.trim() !== ''
-        ? Number(value)
-        : NaN;
-  if (!format || !Number.isFinite(n)) return String(value);
-  switch (format) {
-    case 'int':
-      return Math.trunc(n).toLocaleString('en-US');
-    case 'tokens':
-      return formatCompact(n);
-    case 'compact':
-      return formatCompact(n);
-    case 'usd':
-      return `$${formatUsd(n, 2)}`;
-    case 'usd2':
-      return `$${formatUsd(n, 2)}`;
-    case 'usd4':
-      return `$${formatUsd(n, 4)}`;
-    case 'duration':
-      return n >= 1000 ? `${trimFixed(n / 1000, 2)}s` : `${Math.round(n)}ms`;
-    default:
-      return String(value);
-  }
-}
-
-function formatCompact(value: number): string {
-  const abs = Math.abs(value);
-  if (abs >= 1_000_000_000) return `${trimFixed(value / 1_000_000_000, 1)}B`;
-  if (abs >= 1_000_000) return `${trimFixed(value / 1_000_000, 1)}M`;
-  if (abs >= 1_000) return `${trimFixed(value / 1_000, 1)}K`;
-  return String(Math.trunc(value));
-}
-
-function formatUsd(value: number, digits: number): string {
-  return value.toFixed(digits);
-}
-
-function trimFixed(value: number, digits: number): string {
-  return value.toFixed(digits).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1');
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, value));
-}
-
-function forecastTextFromVal(value: unknown): string {
-  const text = pickText(value, '');
-  if (!text) return '';
-  return text.replace(/\s+\S*~\S*°$/, '').trim();
-}
-
-function forecastRangeFromVal(value: unknown): string {
-  const text = pickText(value, '');
-  const m = text.match(/(-?\d+)°?[~～-](-?\d+)°?$/);
-  return m ? formatTemperatureRange(m[1], m[2]) : '';
-}
-
-function formatTemperatureRange(min: string, max: string): string {
-  const left = temperatureBound(min);
-  const right = temperatureBound(max);
-  if (left && right) return `${left}°~${right}°`;
-  if (left) return `${left}°`;
-  if (right) return `${right}°`;
-  return '';
-}
-
-function temperatureBound(value: string): string | null {
-  const text = value.trim().replace(/°+$/, '');
-  return text && text !== '--' ? text : null;
-}
-
-function monthFromMonthDay(value: unknown, fallback: Date, timeZone: string): string {
-  const text = pickText(value, formatDatePart(fallback, 'monthDay', timeZone));
-  return String(Number(text.split(/[/-]/)[0] ?? 1));
-}
-
-function dayFromMonthDay(value: unknown, fallback: Date, timeZone: string): string {
-  const text = pickText(value, formatDatePart(fallback, 'monthDay', timeZone));
-  return String(Number(text.split(/[/-]/)[1] ?? text));
-}
-
-function wrapText(
-  font: BitmapFont,
-  fallback: BitmapFont | undefined,
-  text: string,
-  maxWidth: number,
-  maxLines: number,
-  ellipsis: boolean
-): string[] {
-  const source = text
-    .replace(/\r\n?/g, '\n')
-    .replace(/[^\S\n]+/g, ' ')
-    .trim();
-  if (!source) return [];
-  const lines: string[] = [];
-  let cur = '';
-  for (const ch of source) {
-    if (ch === '\n') {
-      lines.push(cur);
-      cur = '';
-      continue;
-    }
-    const next = `${cur}${ch}`;
-    if (textWidthFallback(font, fallback, next) > maxWidth && cur.length > 0) {
-      lines.push(cur);
-      cur = ch;
-      if (lines.length >= maxLines) break;
-    } else {
-      cur = next;
-    }
-  }
-  if (lines.length < maxLines && cur) lines.push(cur);
-  const clipped = lines.slice(0, maxLines).map((line) => filterDrawable(font, fallback, line));
-  if (
-    ellipsis &&
-    clipped.length === maxLines &&
-    textWidthFallback(font, fallback, clipped[clipped.length - 1] ?? '') > maxWidth
-  ) {
-    clipped[clipped.length - 1] = ellipsize(font, fallback, clipped[clipped.length - 1]!, maxWidth);
-  } else if (ellipsis && source.length > clipped.join('').length && clipped.length > 0) {
-    clipped[clipped.length - 1] = ellipsize(font, fallback, clipped[clipped.length - 1]!, maxWidth);
-  }
-  return clipped;
-}
-
-function filterDrawable(font: BitmapFont, fallback: BitmapFont | undefined, text: string): string {
-  let out = '';
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    if (hasGlyph(font, cp) || (fallback && hasGlyph(fallback, cp))) out += ch;
-    else if (ch === ' ') out += ch;
-  }
-  return out;
-}
-
-function ellipsize(
-  font: BitmapFont,
-  fallback: BitmapFont | undefined,
-  text: string,
-  maxWidth: number
-): string {
-  const ell = hasGlyph(font, 0x2026) || (fallback && hasGlyph(fallback, 0x2026)) ? '…' : '.';
-  let s = text;
-  while (s.length > 0 && textWidthFallback(font, fallback, `${s}${ell}`) > maxWidth) {
-    s = s.slice(0, -1);
-  }
-  return `${s}${ell}`;
-}
-
-function textWidthFallback(
-  font: BitmapFont,
-  fallback: BitmapFont | undefined,
-  text: string
-): number {
-  let w = 0;
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    const glyph = font.glyphs.get(cp) ?? fallback?.glyphs.get(cp);
-    if (glyph) w += Math.round(glyph.adv_w / 16);
-  }
-  return w;
-}
-
-function textVisualHeight(font: BitmapFont, text: string): number {
-  const bounds = textVisualBounds(font, text);
-  return bounds ? bounds.bottom - bounds.top : 0;
-}
-
-function glyphTopOffset(font: BitmapFont, text: string): number {
-  return textVisualBounds(font, text)?.top ?? 0;
-}
-
-function textVisualBounds(font: BitmapFont, text: string): { top: number; bottom: number } | null {
-  let top = Number.POSITIVE_INFINITY;
-  let bottom = Number.NEGATIVE_INFINITY;
-  for (const ch of text) {
-    const glyph = font.glyphs.get(ch.codePointAt(0)!);
-    if (!glyph) continue;
-    const baselineY = font.lineHeight - font.baseLine;
-    const glyphTop = baselineY - glyph.ofs_y - glyph.box_h;
-    const glyphBottom = glyphTop + glyph.box_h;
-    top = Math.min(top, glyphTop);
-    bottom = Math.max(bottom, glyphBottom);
-  }
-  return Number.isFinite(top) && Number.isFinite(bottom) ? { top, bottom } : null;
-}
-
-function textPixelBounds(
-  font: BitmapFont,
-  fallback: BitmapFont | undefined,
-  text: string
-): { left: number; right: number; top: number; bottom: number } | null {
-  let penX = 0;
-  let left = Number.POSITIVE_INFINITY;
-  let right = Number.NEGATIVE_INFINITY;
-  let top = Number.POSITIVE_INFINITY;
-  let bottom = Number.NEGATIVE_INFINITY;
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    const drawFont = hasGlyph(font, cp)
-      ? font
-      : fallback && hasGlyph(fallback, cp)
-        ? fallback
-        : null;
-    if (!drawFont) continue;
-    const glyph = drawFont.glyphs.get(cp)!;
-    const baselineY = drawFont.lineHeight - drawFont.baseLine;
-    const glyphLeft = penX + glyph.ofs_x;
-    const glyphTop = baselineY - glyph.ofs_y - glyph.box_h;
-    left = Math.min(left, glyphLeft);
-    right = Math.max(right, glyphLeft + glyph.box_w);
-    top = Math.min(top, glyphTop);
-    bottom = Math.max(bottom, glyphTop + glyph.box_h);
-    penX += Math.round(glyph.adv_w / 16);
-  }
-  return Number.isFinite(left) &&
-    Number.isFinite(right) &&
-    Number.isFinite(top) &&
-    Number.isFinite(bottom)
-    ? { left, right, top, bottom }
-    : null;
-}
-
-function drawTextLine(
-  c: BitmapCanvas,
-  font: BitmapFont,
-  fallback: BitmapFont | undefined,
-  text: string,
-  x: number,
-  y: number,
-  color: number
-): number {
-  let penX = x;
-  for (const ch of text) {
-    const cp = ch.codePointAt(0)!;
-    const drawFont = hasGlyph(font, cp)
-      ? font
-      : fallback && hasGlyph(fallback, cp)
-        ? fallback
-        : null;
-    if (!drawFont) continue;
-    const baselineY = y + drawFont.lineHeight - drawFont.baseLine;
-    penX += c.drawGlyph(drawFont, cp, penX, baselineY, color);
-  }
-  return penX - x;
-}
-
-function formatDatePart(
-  date: Date,
-  mode: 'year' | 'monthDay' | 'cnMonthDay',
-  timeZone: string
-): string {
-  const parts = new Intl.DateTimeFormat('zh-CN', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  const year = parts.find((p) => p.type === 'year')?.value ?? '';
-  const month = parts.find((p) => p.type === 'month')?.value ?? '';
-  const day = parts.find((p) => p.type === 'day')?.value ?? '';
-  if (mode === 'year') return year;
-  if (mode === 'cnMonthDay') return `${Number(month)} 月 ${Number(day)} 日`;
-  return `${month}/${day}`;
-}
-
-function formatShortTime(value: unknown, fallback: Date, timeZone: string): string {
-  let date = fallback;
-  if (typeof value === 'string') {
-    date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      date = new Date(value.replace(/([+-]\d{2})(\d{2})$/, '$1:$2'));
-    }
-  }
-  if (Number.isNaN(date.getTime())) return '';
-  return new Intl.DateTimeFormat('zh-CN', {
-    timeZone,
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
-}
-
-function shortEarthquakeTime(value: string): string {
-  const match = value.match(/(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{2})/);
-  if (match) return `${Number(match[1])}/${Number(match[2])} ${match[3]}:${match[4]}`;
-  const fallback = value.match(/(\d{1,2}):(\d{2})/);
-  return fallback ? `${fallback[1]}:${fallback[2]}` : value;
-}
-
-function weatherAlertLevel(title: string): { label: string; filled: boolean } {
-  if (title.includes('红色')) return { label: '红', filled: true };
-  if (title.includes('橙色')) return { label: '橙', filled: true };
-  if (title.includes('黄色')) return { label: '黄', filled: false };
-  if (title.includes('蓝色')) return { label: '蓝', filled: false };
-  return { label: '警', filled: false };
-}
-
-function weatherAlertSummary(title: string): {
-  headline: string;
-  source: string;
-  sourceLabel: string;
-  kindLabel: string;
-  levelShort: string;
-  level: { label: string; filled: boolean };
-} {
-  const normalized = title.replace(/\s+/g, '');
-  const level = weatherAlertLevel(normalized);
-  const publishMatch = normalized.match(/^(.*?)发布(.+?)预警(?:信号)?$/);
-  const source = publishMatch?.[1] ?? '';
-  const rawSignal = publishMatch?.[2] ?? normalized.replace(/预警(?:信号)?$/, '');
-  const levelName = weatherAlertLevelName(rawSignal) || weatherAlertLevelName(normalized);
-  const signal = rawSignal.replace(/(红色|橙色|黄色|蓝色)$/, '') || rawSignal || '气象';
-  return {
-    headline: `${levelName}${signal}预警`,
-    source,
-    sourceLabel: weatherAlertSourceLabel(source),
-    kindLabel: weatherAlertKindLabel(signal),
-    levelShort: weatherAlertLevelShort(levelName),
-    level,
-  };
-}
-
-function weatherAlertLevelName(title: string): string {
-  const match = title.match(/(红色|橙色|黄色|蓝色)/);
-  return match?.[1] ?? '';
-}
-
-function weatherAlertKindLabel(signal: string): string {
-  const compact = signal.replace(/灾害|气象|预警|信号/g, '');
-  if (compact.includes('雷雨大风')) return '雷暴';
-  if (compact.includes('雷电')) return '雷电';
-  if (compact.includes('暴雨')) return '暴雨';
-  if (compact.includes('大风')) return '大风';
-  if (compact.includes('台风')) return '台风';
-  if (compact.includes('高温')) return '高温';
-  if (compact.includes('大雾') || compact.includes('雾')) return '大雾';
-  if (compact.includes('山洪')) return '山洪';
-  if (compact.includes('暴雪')) return '暴雪';
-  if (compact.includes('寒潮')) return '寒潮';
-  if (compact.includes('冰雹')) return '冰雹';
-  if (compact.length <= 2) return compact || '预警';
-  return compact.slice(0, 2);
-}
-
-function weatherAlertLevelShort(levelName: string): string {
-  if (levelName === '红色') return '红';
-  if (levelName === '橙色') return '橙';
-  if (levelName === '黄色') return '黄';
-  if (levelName === '蓝色') return '蓝';
-  return '警';
-}
-
-function weatherAlertSourceLabel(source: string): string {
-  const text = source.replace(/\s+/g, '').trim();
-  if (!text) return '';
-  if (text.includes('中央气象台')) return '中央气象台';
-  return text
-    .replace('广西壮族自治区', '广西')
-    .replace('宁夏回族自治区', '宁夏')
-    .replace('新疆维吾尔自治区', '新疆')
-    .replace('内蒙古自治区', '内蒙古')
-    .replace('西藏自治区', '西藏')
-    .replace(/特别行政区/g, '')
-    .replace(/气象台$/, '')
-    .replace(/气象局$/, '');
-}
-
-function weatherAlertLine(summary: {
-  headline: string;
-  source: string;
-  sourceLabel: string;
-  kindLabel: string;
-  levelShort: string;
-  level: { label: string; filled: boolean };
-}): string {
-  if (summary.levelShort && summary.sourceLabel) {
-    return `${summary.levelShort} · ${summary.sourceLabel}`;
-  }
-  return summary.sourceLabel || summary.levelShort || summary.headline;
-}
-
-function earthquakeFields(item: Record<string, unknown>): {
-  time: string;
-  depth: string;
-  coords: string;
-} {
-  const occurredAt = shortEarthquakeTime(pickText(item.occurredAt, ''));
-  const depth = pickText(item.depthKm, '');
-  const longitude = pickText(item.longitude, '');
-  const latitude = pickText(item.latitude, '');
-  const depthText = depth && depth !== '-' && depth !== '--' ? `${depth}千米` : '--';
-  const coords = [longitude ? `经${longitude}` : '', latitude ? `纬${latitude}` : '']
-    .filter(Boolean)
-    .join('  ');
-  return { time: occurredAt, depth: depthText, coords };
-}
-
-function normalizeWeatherCode(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const n = Number.parseInt(value, 10);
-    if (Number.isFinite(n)) return n;
-  }
-  return null;
-}
-
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
-function weekdayFor(year: number, month: number, day: number): number {
-  return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-}
-
-function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
-
-function dateParts(date: Date, timeZone: string): { year: number; month: number; day: number } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(date);
-  return {
-    year: Number(parts.find((p) => p.type === 'year')?.value ?? 1970),
-    month: Number(parts.find((p) => p.type === 'month')?.value ?? 1),
-    day: Number(parts.find((p) => p.type === 'day')?.value ?? 1),
-  };
-}
-
-function getPath(root: unknown, path: string): unknown {
-  let cur: unknown = root;
-  for (const part of path.split('.')) {
-    if (!isRecord(cur)) return undefined;
-    cur = cur[part];
-  }
-  return cur;
-}
-
-function monthCellSubtitle(dayData: unknown): string {
-  if (!isRecord(dayData)) return '';
-  const term = pickText(dayData.solar_term, '');
-  if (term) return limitChars(term, 3);
-  const festival = traditionalFestivalShortName(pickText(dayData.festival, ''));
-  if (festival) return festival;
-  return simplifyLunar(pickText(dayData.lunar_date, pickText(dayData.lunar, '')));
-}
-
-function simplifyLunar(value: string): string {
-  const cleaned = value
-    .replace(/^农历/, '')
-    .replace(/^[甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉戌亥]+年\s*/, '');
-  const m = cleaned.match(/^(闰?[正一二三四五六七八九十冬腊]+)月(.+)$/);
-  if (!m) return limitChars(cleaned, 3);
-  const month = m[1]!;
-  const day = m[2]!;
-  return day === '初一' ? `${month}月` : day;
-}
-
-function limitChars(value: string, max: number): string {
-  return Array.from(value).slice(0, max).join('');
 }

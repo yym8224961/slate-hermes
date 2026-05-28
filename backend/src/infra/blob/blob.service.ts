@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { AppConfig } from '../config/app.config';
 
 export type BlobKind = 'image' | 'audio';
@@ -12,6 +13,8 @@ export class BlobService {
   constructor(private readonly config: AppConfig) {}
 
   path(groupId: string, contentId: string, kind: BlobKind): string {
+    assertBlobSegment('groupId', groupId);
+    assertBlobSegment('contentId', contentId);
     const root = resolve(this.config.blobDir);
     const p = resolve(root, groupId, `${contentId}.${ext(kind)}`);
     const rel = relative(root, p);
@@ -29,7 +32,14 @@ export class BlobService {
   ): Promise<{ path: string; size: number }> {
     const p = this.path(groupId, contentId, kind);
     await mkdir(dirname(p), { recursive: true });
-    await writeFile(p, data);
+    const tmp = `${p}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      await writeFile(tmp, data);
+      await rename(tmp, p);
+    } catch (err) {
+      await unlink(tmp).catch(() => {});
+      throw err;
+    }
     return { path: p, size: data.byteLength };
   }
 
@@ -48,5 +58,11 @@ export class BlobService {
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
+  }
+}
+
+function assertBlobSegment(name: string, value: string): void {
+  if (!/^[A-Za-z0-9._-]+$/.test(value) || value === '.' || value === '..') {
+    throw new Error(`非法 blob ${name}`);
   }
 }

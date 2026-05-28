@@ -6,6 +6,7 @@ import {
 } from 'shared';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { stripHtml } from '../html-text';
+import { fetchJson } from '../../../common/http/fetch';
 
 export interface WeatherAlertItem {
   id: string;
@@ -39,10 +40,10 @@ interface CacheEntry {
   fetchedAt: number;
 }
 
-const DEFAULT_CACHE_TTL_MS = 600_000;
+const DEFAULT_CACHE_TTL_SEC = 600;
 const FETCH_TIMEOUT_MS = 5000;
-const NMC_ALARM_API = 'http://www.nmc.cn/rest/findAlarm';
-const NMC_BASE_URL = 'http://nmc.cn';
+const NMC_ALARM_API = 'https://www.nmc.cn/rest/findAlarm';
+const NMC_BASE_URL = 'https://www.nmc.cn';
 
 @Injectable()
 export class WeatherAlertProvider implements DataProvider<
@@ -64,13 +65,13 @@ export class WeatherAlertProvider implements DataProvider<
     const province = normalizeWeatherAlertProvince(config.province);
     const key = province || '全国';
     const now = ctx.now.getTime();
-    const ttlMs = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_MS / 1000, 300) * 1000;
+    const ttlMs = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_SEC, 300) * 1000;
+    const existing = this.inflight.get(key);
+    if (existing) return existing;
+
     const cached = this.cache.get(key);
     if (cached && now - cached.fetchedAt < ttlMs) return cached.data;
     if (cached) this.cache.delete(key);
-
-    const existing = this.inflight.get(key);
-    if (existing) return existing;
 
     const p = this.fetchFresh({ ...config, province }, ctx)
       .then((data) => {
@@ -90,7 +91,10 @@ export class WeatherAlertProvider implements DataProvider<
     const url =
       `${NMC_ALARM_API}?pageNo=1&pageSize=20&signaltype=&signallevel=&province=` +
       encodeURIComponent(province);
-    const json = await fetchJson<WeatherAlertResponse>(url);
+    const json = await fetchJson<WeatherAlertResponse>(url, {
+      timeoutMs: FETCH_TIMEOUT_MS,
+      headers: { Referer: 'https://www.nmc.cn/publish/alarm.html' },
+    });
     const rows = json.data?.page?.list ?? [];
     const items = rows
       .flatMap((row, index): WeatherAlertItem[] => {
@@ -113,25 +117,5 @@ export class WeatherAlertProvider implements DataProvider<
       updatedAt: ctx.now.toISOString(),
       items,
     };
-  }
-}
-
-async function fetchJson<T>(url: string): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const resp = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-          '(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-        Referer: 'http://www.nmc.cn/publish/alarm.html',
-      },
-    });
-    if (!resp.ok) throw new Error(`NMC alarm HTTP ${resp.status}`);
-    return (await resp.json()) as T;
-  } finally {
-    clearTimeout(timer);
   }
 }

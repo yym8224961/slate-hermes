@@ -27,6 +27,9 @@ export class AppConfig {
   get blobDir() {
     return this.cs.get('BLOB_DIR', { infer: true });
   }
+  get dbAllowPublicKeyRetrieval() {
+    return this.cs.get('DB_ALLOW_PUBLIC_KEY_RETRIEVAL', { infer: true });
+  }
   get qweatherApiKey() {
     return this.cs.get('QWEATHER_API_KEY', { infer: true });
   }

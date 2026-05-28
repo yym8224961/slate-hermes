@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -16,11 +15,6 @@ import {
 } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
-  CreateDynamicContentRequest,
-  GenerateContentTtsRequest,
-  PatchDynamicContentRequest,
-  PreviewDynamicContentRequest,
-  DynamicConfig,
   type ContentDetailT,
   type ContentMutationResponseT,
   type ManifestResponseT,
@@ -30,13 +24,18 @@ import {
   CurrentDevice,
   type DeviceContext,
 } from '../../common/decorators/current-device.decorator';
+import { JsonBody } from '../../common/decorators/json-body.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { JwtOrDeviceAuthGuard } from '../../common/guards/jwt-or-device-auth.guard';
 import { etagMatches, respondWithEtag } from '../../common/etag/etag.util';
 import { ContentsService } from './contents.service';
 import { MultipartParser } from './multipart.parser';
 import { ReorderContentsDto } from './dto/reorder-contents.dto';
-import { PatchContentDto } from './dto/patch-content.dto';
+import { CreateDynamicContentDto } from './dto/create-dynamic-content.dto';
+import { GenerateContentTtsDto } from './dto/generate-content-tts.dto';
+import { PreviewDynamicContentDto } from './dto/preview-dynamic-content.dto';
+import { ValidationError } from '../../common/errors';
+import { PatchContentUnionDto } from './dto/patch-content-union.dto';
 
 @Controller()
 export class ContentsController {
@@ -100,21 +99,19 @@ export class ContentsController {
     @Param('groupId') groupId: string,
     @CurrentUser() user: WebUserContext,
     @Headers('content-type') ct: string,
-    @Body() body: unknown,
-    @Req() req: FastifyRequest
+    @JsonBody(CreateDynamicContentDto) body: CreateDynamicContentDto | undefined,
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
   ): Promise<ContentMutationResponseT> {
     if (ct?.startsWith('multipart/form-data')) {
+      const signal = abortSignalForReply(reply);
       const parsed = await this.multipart.parseContentUpload(req);
-      return this.contents.appendImage(groupId, user.userId, parsed);
+      return this.contents.appendImage(groupId, user.userId, parsed, signal);
     }
-    if (!ct?.startsWith('application/json')) {
-      throw new BadRequestException('仅支持 multipart/form-data 或 application/json');
+    if (!body) {
+      throw new ValidationError('仅支持 multipart/form-data 或 application/json');
     }
-    const parsed = CreateDynamicContentRequest.safeParse(body);
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message ?? '配置非法');
-    }
-    return this.contents.appendDynamic(groupId, user.userId, parsed.data);
+    return this.contents.appendDynamic(groupId, user.userId, body);
   }
 
   @Put('groups/:groupId/contents/order')
@@ -179,32 +176,23 @@ export class ContentsController {
     @Param('contentId') contentId: string,
     @CurrentUser() user: WebUserContext,
     @Headers('content-type') ct: string,
+    @JsonBody(PatchContentUnionDto) body: PatchContentUnionDto | undefined,
     @Req() req: FastifyRequest
   ): Promise<ContentMutationResponseT> {
     if (ct?.startsWith('multipart/form-data')) {
       const parsed = await this.multipart.parseContentUpload(req);
       return this.contents.patchImage(contentId, user.userId, parsed);
     }
-    const body = (req.body ?? null) as unknown;
-    const objectBody =
-      body !== null && typeof body === 'object' && !Array.isArray(body)
-        ? (body as Record<string, unknown>)
-        : null;
-    if (objectBody?.config !== undefined) {
-      const dynamicParsed = PatchDynamicContentRequest.safeParse(body);
-      if (!dynamicParsed.success) {
-        throw new BadRequestException(dynamicParsed.error.issues[0]?.message ?? '配置非法');
-      }
+    if (!body) {
+      throw new ValidationError('仅支持 multipart/form-data 或 application/json');
+    }
+    if (body.config !== undefined) {
       return this.contents.patchDynamic(contentId, user.userId, {
-        config: dynamicParsed.data.config,
-        frame_name: dynamicParsed.data.frame_name,
+        config: body.config,
+        frame_name: body.frame_name,
       });
     }
-    const parsed = PatchContentDto.schema.safeParse(body);
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message ?? '参数非法');
-    }
-    return this.contents.patchFrameName(contentId, user.userId, parsed.data.frame_name);
+    return this.contents.patchFrameName(contentId, user.userId, body.frame_name);
   }
 
   @Delete('contents/:contentId')
@@ -228,22 +216,17 @@ export class ContentsController {
   generateTtsAudio(
     @Param('contentId') contentId: string,
     @CurrentUser() user: WebUserContext,
-    @Body() body: unknown
+    @Body() body: GenerateContentTtsDto
   ): Promise<ContentMutationResponseT> {
-    const parsed = GenerateContentTtsRequest.safeParse(body);
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message ?? '参数非法');
-    }
-    return this.contents.generateImageTts(contentId, user.userId, parsed.data);
+    return this.contents.generateImageTts(contentId, user.userId, body);
   }
 
   @Post('contents/preview')
-  async previewDynamicDirect(@Body() body: unknown, @Res() reply: FastifyReply): Promise<void> {
-    const parsed = PreviewDynamicContentRequest.safeParse(body);
-    if (!parsed.success) {
-      throw new BadRequestException(parsed.error.issues[0]?.message ?? '配置非法');
-    }
-    const data = await this.contents.previewDynamicDirect(parsed.data);
+  async previewDynamicDirect(
+    @Body() body: PreviewDynamicContentDto,
+    @Res() reply: FastifyReply
+  ): Promise<void> {
+    const data = await this.contents.previewDynamicDirect(body);
     void reply.header('Cache-Control', 'no-store').type('application/octet-stream').send(data);
   }
 
@@ -251,21 +234,22 @@ export class ContentsController {
   async previewDynamic(
     @Param('contentId') contentId: string,
     @CurrentUser() user: WebUserContext,
-    @Req() req: FastifyRequest,
+    @Body() body: PreviewDynamicContentDto,
     @Res() reply: FastifyReply
   ): Promise<void> {
-    const body = (req.body ?? {}) as { config?: unknown; frame_name?: unknown; data?: unknown };
-    const configParsed = DynamicConfig.safeParse(body.config);
-    if (!configParsed.success) {
-      throw new BadRequestException(configParsed.error.issues[0]?.message ?? '配置非法');
-    }
-    const frameName =
-      typeof body.frame_name === 'string' || body.frame_name === null ? body.frame_name : undefined;
     const data = await this.contents.previewDynamic(contentId, user.userId, {
-      config: configParsed.data,
-      frame_name: frameName,
+      config: body.config,
+      frame_name: body.frame_name,
       data: body.data,
     });
     void reply.header('Cache-Control', 'no-store').type('application/octet-stream').send(data);
   }
+}
+
+function abortSignalForReply(reply: FastifyReply): AbortSignal {
+  const controller = new AbortController();
+  reply.raw.once('close', () => {
+    if (!reply.raw.writableEnded) controller.abort();
+  });
+  return controller.signal;
 }

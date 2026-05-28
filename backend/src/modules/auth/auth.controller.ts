@@ -1,8 +1,9 @@
-import { Body, Controller, Delete, Get, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Post, UseGuards } from '@nestjs/common';
 import type { LoginResponseT, RegisterResponseT } from 'shared';
 import { Public } from '../../common/decorators/public.decorator';
 import { CurrentUser, type WebUserContext } from '../../common/decorators/current-user.decorator';
 import { AuthService } from './auth.service';
+import { AuthRateLimitGuard } from './auth-rate-limit.guard';
 import { LoginDto } from './dto/login.dto';
 import { RegisterDto } from './dto/register.dto';
 
@@ -11,6 +12,7 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Public()
+  @UseGuards(AuthRateLimitGuard)
   @Post('users')
   @HttpCode(201)
   async register(@Body() body: RegisterDto): Promise<RegisterResponseT> {
@@ -18,6 +20,7 @@ export class AuthController {
   }
 
   @Public()
+  @UseGuards(AuthRateLimitGuard)
   @Post('sessions')
   @HttpCode(201)
   async login(@Body() body: LoginDto): Promise<LoginResponseT> {

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { EarthquakeReportConfig, type EarthquakeReportConfigT } from 'shared';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { stripHtml } from '../html-text';
+import { fetchText } from '../../../common/http/fetch';
 
 export interface EarthquakeReportItem {
   id: string;
@@ -26,7 +27,7 @@ interface CacheEntry {
   fetchedAt: number;
 }
 
-const DEFAULT_CACHE_TTL_MS = 600_000;
+const DEFAULT_CACHE_TTL_SEC = 600;
 const FETCH_TIMEOUT_MS = 5000;
 const SOURCE_URL = 'https://data.earthquake.cn/datashare/report.shtml?PAGEID=earthquake_subao';
 
@@ -48,10 +49,11 @@ export class EarthquakeReportProvider implements DataProvider<
     ctx: DynamicContentFetchCtx
   ): Promise<EarthquakeReportProviderData> {
     const now = ctx.now.getTime();
-    const ttlMs = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_MS / 1000, 300) * 1000;
+    const ttlMs = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_SEC, 300) * 1000;
+    if (this.inflight) return this.inflight;
+
     if (this.cache && now - this.cache.fetchedAt < ttlMs) return this.cache.data;
     if (this.cache) this.cache = null;
-    if (this.inflight) return this.inflight;
 
     const p = this.fetchFresh(ctx)
       .then((data) => {
@@ -66,8 +68,11 @@ export class EarthquakeReportProvider implements DataProvider<
   }
 
   private async fetchFresh(ctx: DynamicContentFetchCtx): Promise<EarthquakeReportProviderData> {
-    const html = await fetchText(SOURCE_URL);
+    const html = await fetchText(SOURCE_URL, { timeoutMs: FETCH_TIMEOUT_MS });
     const items = parseEarthquakeSubaoRows(html).slice(0, 20);
+    if (items.length === 0 && !hasExpectedEarthquakeMarkup(html)) {
+      throw new Error('地震速报页面结构已变化，无法解析列表');
+    }
     return {
       title: '中国地震台网速报',
       updatedAt: ctx.now.toISOString(),
@@ -75,6 +80,14 @@ export class EarthquakeReportProvider implements DataProvider<
       items,
     };
   }
+}
+
+function hasExpectedEarthquakeMarkup(html: string): boolean {
+  return (
+    html.includes('earthquake_subao_guid_catalog') ||
+    html.includes('cls-data-content-list') ||
+    html.includes('earthquake_subao')
+  );
 }
 
 export function parseEarthquakeSubaoRows(html: string): EarthquakeReportItem[] {
@@ -100,23 +113,4 @@ export function parseEarthquakeSubaoRows(html: string): EarthquakeReportItem[] {
       };
     })
     .filter((item): item is EarthquakeReportItem => item !== null);
-}
-
-async function fetchText(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    const resp = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-          '(KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
-      },
-    });
-    if (!resp.ok) throw new Error(`earthquake report HTTP ${resp.status}`);
-    return await resp.text();
-  } finally {
-    clearTimeout(timer);
-  }
 }

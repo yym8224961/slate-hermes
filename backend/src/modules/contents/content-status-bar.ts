@@ -94,7 +94,7 @@ export function dashboardStatusBarText(config: unknown): string {
   const parsed = DashboardConfig.safeParse(config);
   if (!parsed.success) return '外部数据';
   if (parsed.data.template.kind === 'system') {
-    return DASHBOARD_SYSTEM_TEMPLATES[parsed.data.template.id].label;
+    return DASHBOARD_SYSTEM_TEMPLATES[parsed.data.template.id]?.label ?? '外部数据';
   }
   return parsed.data.template.template.name?.trim() || '自定义模板';
 }

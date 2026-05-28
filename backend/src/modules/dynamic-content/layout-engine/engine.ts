@@ -22,6 +22,8 @@ export function renderBlock(block: Block, ctx: LayoutCtx, containerWidth: number
       return renderSeparator(block, containerWidth);
     case 'vertical_stack':
       return renderVerticalStack(block, ctx, containerWidth);
+    default:
+      throw new Error(`Unknown layout block: ${(block as { block?: unknown }).block}`);
   }
 }
 

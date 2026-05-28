@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { HttpException, HttpStatus, type ExecutionContext } from '@nestjs/common';
+import { RateLimitedError } from '../../common/errors';
 import { IngestLimitGuard } from './ingest-limit.guard';
 
 function createContext(req: unknown): ExecutionContext {
@@ -23,8 +24,11 @@ describe('IngestLimitGuard', () => {
       guard.canActivate(createContext(req));
       throw new Error('expected throw');
     } catch (err) {
-      expect(err).toBeInstanceOf(HttpException);
-      expect((err as HttpException).getStatus()).toBe(HttpStatus.TOO_MANY_REQUESTS);
+      expect(err).toBeInstanceOf(RateLimitedError);
+      const detail = (err as RateLimitedError).detail as { retry_after_sec?: number };
+      expect(typeof detail.retry_after_sec).toBe('number');
+      expect(detail.retry_after_sec).toBeGreaterThan(0);
+      expect(detail.retry_after_sec).toBeLessThanOrEqual(60);
     }
   });
 
@@ -37,6 +41,18 @@ describe('IngestLimitGuard', () => {
 
     try {
       guard.canActivate(createContext(req));
+      throw new Error('expected throw');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HttpException);
+      expect((err as HttpException).getStatus()).toBe(HttpStatus.PAYLOAD_TOO_LARGE);
+    }
+  });
+
+  it('rejects oversized parsed chunked-style payloads', () => {
+    const body = { version: 1, data: { value: 'x'.repeat(64 * 1024 + 1) } };
+
+    try {
+      IngestLimitGuard.assertPayloadSize(body);
       throw new Error('expected throw');
     } catch (err) {
       expect(err).toBeInstanceOf(HttpException);

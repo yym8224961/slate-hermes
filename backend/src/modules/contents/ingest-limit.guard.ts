@@ -6,6 +6,8 @@ import {
   Injectable,
 } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
+import { RateLimitedError } from '../../common/errors';
+import { FixedWindowRateLimiter } from '../../common/rate-limit/fixed-window-rate-limiter';
 
 /**
  * Ingest 端点的简易限流 + body 大小检查。
@@ -16,7 +18,7 @@ import type { FastifyRequest } from 'fastify';
  *
  * 限制：
  *   - 30 req/min/contentId（固定窗口；每 60s 重置一次计数）
- *   - Content-Length > 64KB → 413
+ *   - Content-Length > 64KB → 413；chunked 请求在 controller 解析后再按实际 JSON 大小复检。
  */
 @Injectable()
 export class IngestLimitGuard implements CanActivate {
@@ -25,13 +27,13 @@ export class IngestLimitGuard implements CanActivate {
   private static readonly MAX_BODY_BYTES = 64 * 1024;
   /** 防止攻击者用随机 contentId 把 Map 打爆内存 */
   private static readonly MAX_BUCKETS = 10_000;
-  private static readonly STALE_BUCKET_MS = IngestLimitGuard.WINDOW_MS * 10;
+  private static readonly STALE_BUCKET_MS = IngestLimitGuard.WINDOW_MS * 2;
 
-  private buckets = new Map<
-    string,
-    { windowStartMs: number; currentCount: number; lastSeenMs: number }
-  >();
-  private lastCleanupMs = 0;
+  private readonly limiter = new FixedWindowRateLimiter({
+    windowMs: IngestLimitGuard.WINDOW_MS,
+    maxBuckets: IngestLimitGuard.MAX_BUCKETS,
+    staleBucketMs: IngestLimitGuard.STALE_BUCKET_MS,
+  });
 
   canActivate(ctx: ExecutionContext): boolean {
     const req = ctx.switchToHttp().getRequest<FastifyRequest>();
@@ -46,56 +48,32 @@ export class IngestLimitGuard implements CanActivate {
     if (typeof lenHeader === 'string') {
       const len = Number.parseInt(lenHeader, 10);
       if (Number.isFinite(len) && len > IngestLimitGuard.MAX_BODY_BYTES) {
-        throw new HttpException(
-          { error: 'payload_too_large', message: '请求体超过 64KB' },
-          HttpStatus.PAYLOAD_TOO_LARGE
-        );
+        throw tooLarge();
       }
     }
 
     // 2. 速率限制（按 contentId 维度，capability URL 模型下没有更细粒度的身份）
-    const now = Date.now();
-    this.cleanupStaleBuckets(now);
-    let bucket = this.buckets.get(contentId);
-    if (!bucket || now - bucket.windowStartMs >= IngestLimitGuard.WINDOW_MS) {
-      // 超出上限时淘汰最老一条（Map 按插入顺序迭代）
-      if (!bucket && this.buckets.size >= IngestLimitGuard.MAX_BUCKETS) {
-        const oldestKey = this.buckets.keys().next().value;
-        if (oldestKey) this.buckets.delete(oldestKey);
-      }
-      bucket = { windowStartMs: now, currentCount: 0, lastSeenMs: now };
-      this.buckets.set(contentId, bucket);
-    }
-    bucket.lastSeenMs = now;
-    bucket.currentCount += 1;
-    if (bucket.currentCount > IngestLimitGuard.MAX_PER_WINDOW) {
-      const retryAfterSec = Math.ceil(
-        (IngestLimitGuard.WINDOW_MS - (now - bucket.windowStartMs)) / 1000
-      );
-      const exception = new HttpException(
-        {
-          error: 'rate_limited',
-          message: `每分钟最多 ${IngestLimitGuard.MAX_PER_WINDOW} 次推送`,
-          retry_after_sec: retryAfterSec,
-        },
-        HttpStatus.TOO_MANY_REQUESTS
-      );
-      // 补全 RFC 6585 要求的 Retry-After 响应头
-      const res = ctx.switchToHttp().getResponse<{ header: (k: string, v: string) => void }>();
-      res.header('Retry-After', String(retryAfterSec));
-      throw exception;
+    const hit = this.limiter.hit(contentId, IngestLimitGuard.MAX_PER_WINDOW);
+    if (!hit.allowed) {
+      throw new RateLimitedError(`每分钟最多 ${IngestLimitGuard.MAX_PER_WINDOW} 次推送`, {
+        retry_after_sec: hit.retryAfterSec,
+      });
     }
 
     return true;
   }
 
-  private cleanupStaleBuckets(now: number): void {
-    if (now - this.lastCleanupMs < IngestLimitGuard.WINDOW_MS) return;
-    this.lastCleanupMs = now;
-    for (const [key, bucket] of this.buckets) {
-      if (now - bucket.lastSeenMs >= IngestLimitGuard.STALE_BUCKET_MS) {
-        this.buckets.delete(key);
-      }
+  static assertPayloadSize(body: unknown): void {
+    const bytes = Buffer.byteLength(JSON.stringify(body ?? null), 'utf8');
+    if (bytes > IngestLimitGuard.MAX_BODY_BYTES) {
+      throw tooLarge();
     }
   }
+}
+
+function tooLarge(): HttpException {
+  return new HttpException(
+    { error: 'payload_too_large', message: '请求体超过 64KB' },
+    HttpStatus.PAYLOAD_TOO_LARGE
+  );
 }

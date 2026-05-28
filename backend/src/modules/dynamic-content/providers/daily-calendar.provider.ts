@@ -3,6 +3,7 @@ import { Solar } from 'lunar-typescript';
 import { DailyCalendarConfig, type DailyCalendarConfigT } from 'shared';
 import { pickTraditionalFestival } from '../traditional-festivals';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
+import { findNextSolarTerm } from '../calendar-data.service';
 
 export interface DailyCalendarProviderData {
   /** 公历：2026 */
@@ -133,30 +134,4 @@ export class DailyCalendarProvider implements DataProvider<
       ji: lunar.getDayJi().slice(0, 5),
     };
   }
-}
-
-function findNextSolarTerm(
-  lunar: ReturnType<ReturnType<typeof Solar.fromYmd>['getLunar']>,
-  y: number,
-  m: number,
-  d: number
-): { name: string; days: number } | null {
-  const currentKey = y * 10000 + m * 100 + d;
-  const currentTime = Date.UTC(y, m - 1, d);
-  const items = Object.entries(lunar.getJieQiTable())
-    .map(([name, solar]) => ({
-      name,
-      key: solar.getYear() * 10000 + solar.getMonth() * 100 + solar.getDay(),
-      days: Math.max(
-        0,
-        Math.round(
-          (Date.UTC(solar.getYear(), solar.getMonth() - 1, solar.getDay()) - currentTime) /
-            86_400_000
-        )
-      ),
-    }))
-    .filter((item) => item.key >= currentKey)
-    .sort((a, b) => a.key - b.key);
-  const next = items[0];
-  return next ? { name: next.name, days: next.days } : null;
 }

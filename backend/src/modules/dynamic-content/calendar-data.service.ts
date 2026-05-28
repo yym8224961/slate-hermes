@@ -96,7 +96,7 @@ export class CalendarDataService {
   }
 }
 
-function findNextSolarTerm(
+export function findNextSolarTerm(
   lunar: ReturnType<ReturnType<typeof Solar.fromYmd>['getLunar']>,
   year: number,
   month: number,

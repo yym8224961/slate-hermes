@@ -130,4 +130,13 @@ describe('renderLayout', () => {
     // 第二个/第三个 block 应当被 translate 到 y > 0（流式累加）
     expect(svg).toMatch(/translate\(0,[1-9]\d*\)/);
   });
+
+  test('未知 block 类型显式报错', () => {
+    const layout = {
+      size: [400, 300],
+      body: [{ block: 'unknown' }],
+    } as unknown as DynamicContentLayout;
+
+    expect(() => renderLayout(layout, ctx)).toThrow(/Unknown layout block/);
+  });
 });

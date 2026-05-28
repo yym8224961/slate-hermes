@@ -1,5 +1,4 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type { Content } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 import { FRAME_BYTES } from 'shared';
 import { BlobService } from '../../infra/blob/blob.service';
@@ -15,6 +14,22 @@ import { nextLocalMidnight, timezoneFromConfig } from './timezone';
 const REFRESH_LEAD_MS = 90_000;
 const MIN_REFRESH_DUE_DELAY_MS = 10_000;
 const CALENDAR_WAKE_LAG_MS = 60_000;
+
+const DYNAMIC_RENDER_CONTENT_SELECT = {
+  id: true,
+  groupId: true,
+  frameName: true,
+  imageEtag: true,
+  imageSize: true,
+  kind: true,
+  dynamicType: true,
+  dynamicConfig: true,
+  dynamicData: true,
+} as const satisfies Prisma.ContentSelect;
+
+type DynamicRenderContentRow = Prisma.ContentGetPayload<{
+  select: typeof DYNAMIC_RENDER_CONTENT_SELECT;
+}>;
 
 export interface RenderDynamicContentOptions {
   force?: boolean;
@@ -153,7 +168,10 @@ export class DynamicContentRendererService {
     contentId: string,
     opts: RenderDynamicContentOptions
   ): Promise<RenderDynamicContentResult> {
-    const content = await this.prisma.content.findUnique({ where: { id: contentId } });
+    const content = await this.prisma.content.findUnique({
+      where: { id: contentId },
+      select: DYNAMIC_RENDER_CONTENT_SELECT,
+    });
     if (!content) throw new NotFoundError('内容不存在');
     if (content.kind !== 'dynamic' || !content.dynamicType) {
       throw new ValidationError('该内容不是动态类型');
@@ -210,7 +228,7 @@ export class DynamicContentRendererService {
       await this.prisma.content.update({
         where: { id: contentId },
         data: {
-          ...(data != null ? { dynamicData: data as Prisma.InputJsonValue } : {}),
+          dynamicData: data == null ? Prisma.JsonNull : (data as Prisma.InputJsonValue),
           dynamicLastRunAt: now,
           dynamicNextRunAt: nextRunAt,
           dynamicRefreshDueAt: refreshDueAt,
@@ -273,7 +291,11 @@ export class DynamicContentRendererService {
     return rendered;
   }
 
-  private async markError(content: Content, message: string, now: Date): Promise<void> {
+  private async markError(
+    content: Pick<DynamicRenderContentRow, 'id'>,
+    message: string,
+    now: Date
+  ): Promise<void> {
     try {
       await this.prisma.content.update({
         where: { id: content.id },

@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { AppConfig } from '../../infra/config/app.config';
+import { fetchWithTimeout } from '../../common/http/fetch';
+import { parseSsePayloads } from '../../common/http/sse';
 
 const REQUEST_TIMEOUT_MS = 45_000;
 const HISTORY_TODAY_PROMPT_VERSION = '2026-05-21.v5';
@@ -108,12 +110,10 @@ export class AiService {
 
   private async requestJson(input: { system: string; user: string }): Promise<string | null> {
     const url = `${this.config.aiBaseUrl!.replace(/\/+$/, '')}/chat/completions`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
-      const resp = await fetch(url, {
+      const resp = await fetchWithTimeout(url, {
         method: 'POST',
-        signal: controller.signal,
+        timeoutMs: REQUEST_TIMEOUT_MS,
         headers: {
           Authorization: `Bearer ${this.config.aiApiKey}`,
           'Content-Type': 'application/json',
@@ -141,8 +141,6 @@ export class AiService {
     } catch (err) {
       this.logger.warn(`AI request failed: ${err instanceof Error ? err.message : String(err)}`);
       return null;
-    } finally {
-      clearTimeout(timer);
     }
   }
 }
@@ -177,19 +175,6 @@ function parseChatCompletionJson(text: string): string | null {
     return delta && delta.trim() ? delta : null;
   } catch {
     return null;
-  }
-}
-
-function* parseSsePayloads(text: string): Generator<string> {
-  for (const block of text.split(/\r?\n\r?\n/)) {
-    const lines = block
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => line.startsWith('data:'));
-    if (lines.length === 0) continue;
-    const payload = lines.map((line) => line.slice(5).trim()).join('\n');
-    if (!payload || payload === '[DONE]') continue;
-    yield payload;
   }
 }
 

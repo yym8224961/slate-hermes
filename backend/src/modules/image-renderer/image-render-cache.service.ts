@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { AppConfig } from '../../infra/config/app.config';
 
 export interface CacheKeyParts {
@@ -14,12 +14,28 @@ export interface CacheKeyParts {
   letterbox: boolean;
 }
 
+const GC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const GC_MAX_AGE_DAYS = 7;
+
 @Injectable()
-export class ImageRenderCacheService {
+export class ImageRenderCacheService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(ImageRenderCacheService.name);
   private readonly inFlight = new Map<string, Promise<Buffer>>();
+  private readonly cacheRoot: string;
+  private gcTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(private readonly config: AppConfig) {
+    this.cacheRoot = resolve(this.config.blobDir, 'image-render-cache');
+  }
+
+  onModuleInit(): void {
+    this.scheduleGc(GC_INTERVAL_MS);
+  }
+
+  onModuleDestroy(): void {
+    if (this.gcTimer) clearTimeout(this.gcTimer);
+    this.gcTimer = null;
+  }
 
   key(parts: CacheKeyParts): string {
     const raw = [
@@ -36,7 +52,7 @@ export class ImageRenderCacheService {
 
   /** {BLOB_DIR}/image-render-cache/{key0..2}/{key}.bin —— 两层 hex 前缀避免单目录爆 inode。 */
   path(key: string): string {
-    return join(this.config.blobDir, 'image-render-cache', key.slice(0, 2), `${key}.bin`);
+    return resolve(this.cacheRoot, key.slice(0, 2), `${key}.bin`);
   }
 
   async tryRead(key: string): Promise<Buffer | null> {
@@ -87,7 +103,7 @@ export class ImageRenderCacheService {
 
   /** 按 atime 清掉 maxAgeDays 之前的条目（cron-friendly，不在请求路径上调）。 */
   async gc(maxAgeDays: number): Promise<{ removed: number }> {
-    const root = join(this.config.blobDir, 'image-render-cache');
+    const root = this.cacheRoot;
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
     let removed = 0;
     try {
@@ -113,5 +129,16 @@ export class ImageRenderCacheService {
     }
     this.logger.log(`image-render-cache gc removed ${removed} entries (older than ${maxAgeDays}d)`);
     return { removed };
+  }
+
+  private scheduleGc(delayMs: number): void {
+    this.gcTimer = setTimeout(() => {
+      void this.gc(GC_MAX_AGE_DAYS)
+        .catch((err: unknown) => {
+          this.logger.warn(`image-render-cache gc failed: ${err instanceof Error ? err.message : String(err)}`);
+        })
+        .finally(() => this.scheduleGc(GC_INTERVAL_MS));
+    }, delayMs);
+    this.gcTimer.unref?.();
   }
 }

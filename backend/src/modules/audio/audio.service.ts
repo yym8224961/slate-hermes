@@ -3,9 +3,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { unlink, writeFile, readFile } from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { AppError, RateLimitedError } from '../../common/errors';
+import { formatError } from '../../common/utils';
 
 const execFileAsync = promisify(execFile);
 
@@ -13,12 +13,13 @@ const SAMPLE_RATE = 16000;
 const MAX_DURATION_SEC = 60;
 const MAX_OUTPUT_BYTES = SAMPLE_RATE * 2 * MAX_DURATION_SEC;
 const MAX_FFMPEG_CONCURRENCY = 2;
+const FFMPEG_MISSING_RETRY_MS = 60_000;
 
 export class AudioTranscodeError extends AppError {
   readonly code: string;
   readonly httpStatus = 400;
-  constructor(message: string, code: string) {
-    super(message, { code });
+  constructor(message: string, code: string, detail?: unknown) {
+    super(message, detail === undefined ? { code } : { code, detail });
     this.code = code;
   }
 }
@@ -26,33 +27,40 @@ export class AudioTranscodeError extends AppError {
 @Injectable()
 export class AudioService {
   private ffmpegAvailable: boolean | null = null;
+  private ffmpegCheckedAt = 0;
   private activeFfmpeg = 0;
   private readonly ffmpegQueue: Array<() => void> = [];
 
   async checkFfmpegAvailable(): Promise<boolean> {
-    if (this.ffmpegAvailable !== null) return this.ffmpegAvailable;
+    if (
+      this.ffmpegAvailable === true ||
+      (this.ffmpegAvailable === false &&
+        Date.now() - this.ffmpegCheckedAt < FFMPEG_MISSING_RETRY_MS)
+    ) {
+      return this.ffmpegAvailable;
+    }
     try {
       await execFileAsync('ffmpeg', ['-version']);
       this.ffmpegAvailable = true;
     } catch {
       this.ffmpegAvailable = false;
     }
+    this.ffmpegCheckedAt = Date.now();
     return this.ffmpegAvailable;
   }
 
-  async transcodeAudio(inputBuffer: Buffer): Promise<Buffer> {
+  async transcodeAudio(
+    inputBuffer: Buffer,
+    opts: { signal?: AbortSignal } = {}
+  ): Promise<Buffer> {
     if (!(await this.checkFfmpegAvailable())) {
       throw new AudioTranscodeError('音频处理服务不可用', 'FFMPEG_NOT_FOUND');
     }
 
-    const tmpId = randomUUID();
-    const inputPath = join(tmpdir(), `audio_input_${tmpId}.bin`);
-    const outputPath = join(tmpdir(), `audio_output_${tmpId}.pcm`);
-
-    try {
-      await writeFile(inputPath, inputBuffer);
-
-      await this.runFfmpeg([
+    return this.runAudioPipeline(
+      inputBuffer,
+      'input.bin',
+      (inputPath, outputPath) => [
         '-i',
         inputPath,
         '-f',
@@ -67,23 +75,9 @@ export class AudioService {
         String(MAX_DURATION_SEC),
         '-y',
         outputPath,
-      ]);
-
-      const outputBuffer = await readFile(outputPath);
-      if (outputBuffer.length === 0) {
-        throw new AudioTranscodeError('音频转码失败：输出为空', 'EMPTY_OUTPUT');
-      }
-      if (outputBuffer.length > MAX_OUTPUT_BYTES) {
-        throw new AudioTranscodeError('音频时长超出限制', 'OUTPUT_TOO_LARGE');
-      }
-      return outputBuffer;
-    } catch (err) {
-      if (err instanceof AudioTranscodeError) throw err;
-      throw new AudioTranscodeError('音频转码失败', 'TRANSCODE_FAILED');
-    } finally {
-      await unlink(inputPath).catch(() => {});
-      await unlink(outputPath).catch(() => {});
-    }
+      ],
+      opts
+    );
   }
 
   async resamplePcm16(inputBuffer: Buffer, inputSampleRate: number): Promise<Buffer> {
@@ -97,37 +91,45 @@ export class AudioService {
       throw new AudioTranscodeError('音频处理服务不可用', 'FFMPEG_NOT_FOUND');
     }
 
-    const tmpId = randomUUID();
-    const inputPath = join(tmpdir(), `audio_pcm_input_${tmpId}.pcm`);
-    const outputPath = join(tmpdir(), `audio_pcm_output_${tmpId}.pcm`);
+    return this.runAudioPipeline(inputBuffer, 'input.pcm', (inputPath, outputPath) => [
+      '-f',
+      's16le',
+      '-acodec',
+      'pcm_s16le',
+      '-ac',
+      '1',
+      '-ar',
+      String(inputSampleRate),
+      '-i',
+      inputPath,
+      '-f',
+      's16le',
+      '-acodec',
+      'pcm_s16le',
+      '-ac',
+      '1',
+      '-ar',
+      String(SAMPLE_RATE),
+      '-t',
+      String(MAX_DURATION_SEC),
+      '-y',
+      outputPath,
+    ]);
+  }
+
+  private async runAudioPipeline(
+    inputBuffer: Buffer,
+    inputFileName: string,
+    argsForPaths: (inputPath: string, outputPath: string) => string[],
+    opts: { signal?: AbortSignal } = {}
+  ): Promise<Buffer> {
+    const tempDir = await mkdtemp(join(tmpdir(), 'slate-audio-'));
+    const inputPath = join(tempDir, inputFileName);
+    const outputPath = join(tempDir, 'output.pcm');
 
     try {
       await writeFile(inputPath, inputBuffer);
-
-      await this.runFfmpeg([
-        '-f',
-        's16le',
-        '-acodec',
-        'pcm_s16le',
-        '-ac',
-        '1',
-        '-ar',
-        String(inputSampleRate),
-        '-i',
-        inputPath,
-        '-f',
-        's16le',
-        '-acodec',
-        'pcm_s16le',
-        '-ac',
-        '1',
-        '-ar',
-        String(SAMPLE_RATE),
-        '-t',
-        String(MAX_DURATION_SEC),
-        '-y',
-        outputPath,
-      ]);
+      await this.runFfmpeg(argsForPaths(inputPath, outputPath), opts);
 
       const outputBuffer = await readFile(outputPath);
       if (outputBuffer.length === 0) {
@@ -139,17 +141,22 @@ export class AudioService {
       return outputBuffer;
     } catch (err) {
       if (err instanceof AudioTranscodeError) throw err;
-      throw new AudioTranscodeError('音频转码失败', 'TRANSCODE_FAILED');
+      throw new AudioTranscodeError('音频转码失败', 'TRANSCODE_FAILED', formatError(err));
     } finally {
-      await unlink(inputPath).catch(() => {});
-      await unlink(outputPath).catch(() => {});
+      await rm(tempDir, { recursive: true, force: true }).catch(() => {});
     }
   }
 
-  private async runFfmpeg(args: string[]): Promise<void> {
+  private async runFfmpeg(args: string[], opts: { signal?: AbortSignal } = {}): Promise<void> {
     const release = await this.acquireFfmpegSlot();
     try {
-      await execFileAsync('ffmpeg', args, { timeout: 30_000 });
+      await execFileAsync('ffmpeg', args, { timeout: 30_000, signal: opts.signal });
+    } catch (err) {
+      if (isMissingFfmpegError(err)) {
+        this.ffmpegAvailable = false;
+        this.ffmpegCheckedAt = Date.now();
+      }
+      throw err;
     } finally {
       release();
     }
@@ -180,4 +187,12 @@ export class AudioService {
     const next = this.ffmpegQueue.shift();
     if (next) next();
   }
+}
+
+function isMissingFfmpegError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as NodeJS.ErrnoException).code === 'ENOENT'
+  );
 }

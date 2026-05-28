@@ -10,8 +10,9 @@ import { BlobService } from '../../../infra/blob/blob.service';
 import { AppConfig } from '../../../infra/config/app.config';
 import { PrismaService } from '../../../infra/prisma/prisma.service';
 import { computeETag } from '../../../common/etag/etag.util';
-import { formatError, recordValue, valueText } from '../../../common/utils';
+import { formatError, recordValue, shortRegionName, valueText } from '../../../common/utils';
 import { audioBlobContentId } from '../../audio/audio-blob-id';
+import { deleteAudioBlob, readAudioBlob } from '../../audio/audio-blob-store';
 import { GroupsService } from '../../groups/groups.service';
 import { TtsService } from '../../tts/tts.service';
 import {
@@ -32,8 +33,9 @@ const MAX_AUDIO_ATTEMPTS = 3;
 @Injectable()
 export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DynamicAudioService.name);
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  private stopped = false;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -46,12 +48,13 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
   onModuleInit(): void {
     if (!this.config.backgroundWorkers) return;
     if (this.timer) return;
-    this.timer = setInterval(() => void this.tick(), WORKER_INTERVAL_MS);
-    void this.tick();
+    this.stopped = false;
+    this.scheduleTick(0);
   }
 
   onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer);
+    this.stopped = true;
+    if (this.timer) clearTimeout(this.timer);
     this.timer = null;
   }
 
@@ -90,19 +93,26 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
       return this.clearAudioIfPresent(content);
     }
 
+    const previousAudioEtag = content.audioEtag;
     if (
-      content.audioEtag &&
+      previousAudioEtag &&
       content.audioStatus === 'ready' &&
       content.audioVoice === voice &&
       content.audioText === text &&
-      (await this.readAudioBlob(content.groupId, content.id, content.audioEtag))
+      (await this.readAudioBlob(content.groupId, content.id, previousAudioEtag))
     ) {
       return false;
     }
 
-    const previousAudioEtag = content.audioEtag;
-    await this.prisma.content.update({
-      where: { id: content.id },
+    const updated = await this.prisma.content.updateMany({
+      where: {
+        id: content.id,
+        dynamicLastRunAt: content.dynamicLastRunAt,
+        audioEtag: previousAudioEtag,
+        audioStatus: content.audioStatus,
+        audioVoice: content.audioVoice,
+        audioText: content.audioText,
+      },
       data: {
         audioEtag: null,
         audioSize: null,
@@ -116,7 +126,8 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
         audioAttempts: 0,
       },
     });
-    await this.deleteAudioBlob(content.groupId, content.id, previousAudioEtag);
+    if (updated.count !== 1) return false;
+    await deleteAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag, this.logger);
     return true;
   }
 
@@ -272,7 +283,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
       select: { audioEtag: true },
     });
     if (row?.audioEtag === etag) return;
-    await this.deleteAudioBlob(groupId, contentId, etag);
+    await deleteAudioBlob(this.blob, groupId, contentId, etag, this.logger);
   }
 
   private async markFailedOrRetry(
@@ -349,19 +360,8 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
         audioAttempts: 0,
       },
     });
-    await this.deleteAudioBlob(content.groupId, content.id, previousAudioEtag);
+    await deleteAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag, this.logger);
     return true;
-  }
-
-  private async deleteAudioBlob(
-    groupId: string,
-    contentId: string,
-    audioEtag: string | null
-  ): Promise<void> {
-    if (!audioEtag) return;
-    await this.blob
-      .delete(groupId, audioBlobContentId(contentId, audioEtag), 'audio')
-      .catch(() => {});
   }
 
   private async readAudioBlob(
@@ -369,7 +369,19 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
     contentId: string,
     audioEtag: string
   ): Promise<Buffer | null> {
-    return this.blob.read(groupId, audioBlobContentId(contentId, audioEtag), 'audio');
+    return readAudioBlob(this.blob, groupId, contentId, audioEtag);
+  }
+
+  private scheduleTick(delayMs: number): void {
+    if (this.stopped) return;
+    this.timer = setTimeout(() => {
+      void this.tick()
+        .catch((err: unknown) => {
+          this.logger.warn(`TTS worker tick failed: ${formatError(err)}`);
+        })
+        .finally(() => this.scheduleTick(WORKER_INTERVAL_MS));
+    }, delayMs);
+    this.timer.unref?.();
   }
 }
 
@@ -550,18 +562,6 @@ function earthquakeBriefAudio(item: Record<string, unknown>): string {
 
 function cnCount(value: number): string {
   return ['零', '一', '二', '三', '四'][value] ?? String(value);
-}
-
-function shortRegionName(value: string): string {
-  if (value.includes('中央气象台')) return '中央气象台';
-  return value
-    .replace('广西壮族自治区', '广西')
-    .replace('宁夏回族自治区', '宁夏')
-    .replace('新疆维吾尔自治区', '新疆')
-    .replace('内蒙古自治区', '内蒙古')
-    .replace('西藏自治区', '西藏')
-    .replace(/省|市|气象台|特别行政区/g, '')
-    .slice(0, 12);
 }
 
 function shortSpokenTime(value: string): string {

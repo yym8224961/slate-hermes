@@ -1,4 +1,4 @@
-import { cleanText } from './text';
+import { stripHtml as stripHtmlText } from '../html-text';
 
 export interface RssItem {
   title?: string;
@@ -42,22 +42,11 @@ export function jsonFromScript<T>(html: string, pattern: RegExp): T | null {
 }
 
 export function decodeHtml(value: string): string {
-  return value
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([\da-f]+);/gi, (_, code: string) =>
-      String.fromCodePoint(Number.parseInt(code, 16))
-    )
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&apos;/g, "'");
+  return stripHtmlText(value);
 }
 
 export function stripHtml(value: unknown): string {
-  return cleanText(String(value ?? '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1'));
+  return stripHtmlText(String(value ?? '').replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1'));
 }
 
 export function parseRss(xml: string): RssItem[] {
