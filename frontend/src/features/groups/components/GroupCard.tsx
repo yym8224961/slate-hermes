@@ -1,8 +1,9 @@
 // 内容组卡片：可拖拽排序 + 内容数展示 + 底部操作行。
 
 import { Link } from 'react-router-dom';
-import { Layers, Trash2, GripVertical } from 'lucide-react';
+import { Layers, Trash2 } from 'lucide-react';
 import type { GroupSummaryT } from 'shared';
+import { DragHandle } from '@/components/ui/DragHandle';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -11,9 +12,11 @@ import { useSortableStyle } from '@/lib/dnd';
 export function GroupCardSortable({
   group,
   onDelete,
+  deleteDisabled,
 }: {
   group: GroupSummaryT;
   onDelete: () => void;
+  deleteDisabled?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, style, isDragging } = useSortableStyle(group.id);
 
@@ -54,21 +57,13 @@ export function GroupCardSortable({
       </Link>
 
       <div className="px-2 py-2 border-t border-line flex items-center min-h-[38px]">
-        <button
-          type="button"
-          {...attributes}
-          {...listeners}
-          aria-label="拖拽排序"
-          title="拖拽排序"
-          className="p-1.5 text-stone-light hover:text-ink hover:bg-cream transition-colors cursor-grab active:cursor-grabbing touch-none"
-        >
-          <GripVertical size={14} />
-        </button>
+        <DragHandle attributes={attributes} listeners={listeners} />
 
         <span className="flex-1" />
 
         <button
           type="button"
+          disabled={deleteDisabled}
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -76,7 +71,7 @@ export function GroupCardSortable({
           }}
           aria-label="删除"
           title="删除整组"
-          className="p-1.5 text-stone hover:text-clay hover:bg-cream transition-colors"
+          className="p-1.5 text-stone hover:text-clay hover:bg-cream transition-colors disabled:opacity-50"
         >
           <Trash2 size={14} />
         </button>

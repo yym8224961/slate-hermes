@@ -1,20 +1,9 @@
 // 统一新建编辑器 — 图片 + 所有动态类型在同一页面切换。
 // 仅用于新建；编辑流程仍使用各自的 ImageContentEditor / DynamicContentEditor。
 
-import { useRef, useState } from 'react';
-import { ArrowLeft, ArrowUp, Plus } from 'lucide-react';
-import {
-  FRAME_WIDTH,
-  FRAME_HEIGHT,
-  BW_THRESHOLD_DEFAULT,
-  DEFAULT_DITHER_MODE,
-  DynamicConfig,
-  DEFAULT_TTS_VOICE,
-  isAudioDynamicConfig,
-  type DynamicConfigT,
-  type DitherMode,
-  type TtsVoiceT,
-} from 'shared';
+import { useState } from 'react';
+import { Plus } from 'lucide-react';
+import { DynamicConfig, isAudioDynamicConfig, type DynamicConfigT } from 'shared';
 import {
   useCreateImageContent,
   useCreateDynamicContent,
@@ -23,64 +12,62 @@ import {
 } from '@/features/contents/queries';
 import { useToast } from '@/components/feedback/Toast';
 import { Input } from '@/components/ui/Input';
-import { Button } from '@/components/ui/Button';
-import { Spinner } from '@/components/ui/Spinner';
-import { IconBlock } from '@/components/ui/IconBlock';
-import { DoubleRule } from '@/components/ui/DoubleRule';
+import { FormActions } from '@/components/ui/FormActions';
+import { PageHeader } from '@/components/layout/PageHeader';
 import { FormSection } from '@/components/ui/FormSection';
-import { PreviewCanvas } from './image-editor/PreviewCanvas';
-import { ImageDropzone } from './image-editor/ImageDropzone';
-import { DitherControls } from './image-editor/DitherControls';
-import { ImageAudioBlock, type ImageAudioMode } from './image-editor/ImageAudioBlock';
-import { defaultConfig } from '@/features/dynamic-content/model/default-config';
+import { useImageContentForm } from './image-editor/useImageContentForm';
+import { ImageFormBody } from './image-editor/ImageFormBody';
+import { defaultConfig } from '@/features/dynamic/model/default-config';
 import {
   DynamicConfigForm,
   DynamicAudioSection,
-} from '@/features/dynamic-content/components/DynamicConfigForm';
-import { getApiErrorMessage } from '@/lib/api-error';
-import type { AllContentType } from './create/content-create-types';
-import { ContentTypeCardGrid, ContentTypePicker } from './create/ContentTypePicker';
-import { DynamicCreatePreview } from './create/DynamicCreatePreview';
-import { defaultFrameName, effectiveFrameName, effectiveStatusBarText } from './create/frame-name';
-import { TYPE_META, shouldRenderParams } from './create/type-meta';
-import { useDynamicCreatePreview } from './create/useDynamicCreatePreview';
+} from '@/features/dynamic/components/DynamicConfigForm';
+import { getApiErrorMessage } from '@/lib/api';
+import {
+  ContentTypeCardGrid,
+  ContentTypePicker,
+} from '@/features/contents/create/ContentTypePicker';
+import { DynamicCreatePreview } from '@/features/contents/create/DynamicPreview';
+import {
+  defaultFrameName,
+  effectiveFrameName,
+  effectiveStatusBarText,
+} from '@/features/contents/create/frame-name';
+import {
+  TYPE_META,
+  shouldRenderParams,
+  type AllContentType,
+} from '@/features/contents/create/type-meta';
+import { useDynamicCreatePreview } from '@/features/contents/create/useDynamicCreatePreview';
+import { frameNameForSyncedDynamicConfigChange } from '@/features/dynamic/model/frame-name-sync';
 
 // ─── 主编辑器 ──────────────────────────────────────────────────────────────────
 
 interface ContentCreateEditorProps {
   gid: string;
   onDone: () => void;
+  onEditCreatedImage?: (contentId: string) => void;
 }
 
-export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
+export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: ContentCreateEditorProps) {
   const createImage = useCreateImageContent(gid);
   const createDynamic = useCreateDynamicContent(gid);
   const generateTts = useGenerateContentTts(gid);
   const toast = useToast();
+  const imageForm = useImageContentForm();
 
   // 通用
   const [type, setType] = useState<AllContentType | null>(null);
-  const [frameName, setFrameName] = useState('');
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [imageAudioMode, setImageAudioMode] = useState<ImageAudioMode>('upload');
-  const [ttsText, setTtsText] = useState('');
-  const [ttsVoice, setTtsVoice] = useState<TtsVoiceT>(DEFAULT_TTS_VOICE);
-
-  // 图片专属
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [threshold, setThreshold] = useState(BW_THRESHOLD_DEFAULT);
-  const [mode, setMode] = useState<DitherMode>(DEFAULT_DITHER_MODE);
-  const [scale, setScale] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-  const previewRef = useRef<HTMLCanvasElement>(null);
+  const [dynamicFrameName, setDynamicFrameName] = useState('');
 
   // 动态类型专属
   const [config, setConfig] = useState<DynamicConfigT | null>(null);
+  const activeFrameName = type === 'image' ? imageForm.frameName : dynamicFrameName;
   const preview = usePreviewDynamicContent(undefined);
   const { livePreviewData, invalidatePreview } = useDynamicCreatePreview({
     type,
     config,
-    frameName,
+    frameName: activeFrameName,
     preview,
   });
 
@@ -89,15 +76,12 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
     invalidatePreview();
     setType(t);
     if (t === 'image') {
-      setFrameName('');
+      setDynamicFrameName('');
       setConfig(null);
     } else {
       const nextConfig = defaultConfig(t);
-      setFrameName(defaultFrameName(t, nextConfig));
-      setAudioFile(null);
-      setImageFile(null);
-      setScale(1);
-      setOffset({ x: 0, y: 0 });
+      setDynamicFrameName(defaultFrameName(t, nextConfig));
+      imageForm.reset();
       setConfig(nextConfig);
     }
   }
@@ -105,51 +89,31 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
   function resetTypeSelection() {
     invalidatePreview();
     setType(null);
-    setFrameName('');
-    setAudioFile(null);
-    setImageFile(null);
-    setScale(1);
-    setOffset({ x: 0, y: 0 });
+    setDynamicFrameName('');
+    imageForm.reset();
     setConfig(null);
   }
 
   const submitting = createImage.isPending || createDynamic.isPending || generateTts.isPending;
-  const canSubmit =
-    type === 'image'
-      ? !!imageFile && (imageAudioMode !== 'tts' || ttsText.trim().length > 0)
-      : !!(type && config);
+  const canSubmit = type === 'image' ? imageForm.canCreate : !!(type && config);
 
   async function onSubmit() {
     if (!type) return;
     try {
       if (type === 'image') {
-        if (!imageFile) return;
-        const trimmedTtsText = ttsText.trim();
-        const fd = new FormData();
-        const canvas = previewRef.current;
-        if (canvas) {
-          const blob = await new Promise<Blob>((resolve, reject) => {
-            canvas.toBlob(
-              (b) => (b ? resolve(b) : reject(new Error('canvas export failed'))),
-              'image/png'
-            );
-          });
-          fd.append('image', blob, 'cropped.png');
-        }
-        fd.append('threshold', String(threshold));
-        fd.append('mode', mode);
-        if (imageAudioMode === 'upload' && audioFile) fd.append('audio', audioFile);
-        fd.append('frame_name', frameName.trim());
+        if (!imageForm.imageFile) return;
+        const fd = await imageForm.buildFormData();
         const created = await createImage.mutateAsync(fd);
-        if (imageAudioMode === 'tts' && trimmedTtsText) {
+        if (imageForm.wantsTts) {
           try {
             await generateTts.mutateAsync({
               contentId: created.id,
-              body: { text: trimmedTtsText, voice: ttsVoice },
+              body: { text: imageForm.trimmedTtsText, voice: imageForm.ttsVoice },
             });
           } catch (err) {
             toast.error('内容已新建，TTS 生成失败', getApiErrorMessage(err));
-            onDone();
+            if (onEditCreatedImage) onEditCreatedImage(created.id);
+            else onDone();
             return;
           }
         }
@@ -168,7 +132,7 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
         await createDynamic.mutateAsync({
           kind: 'dynamic',
           config: parsed.data,
-          frame_name: effectiveFrameName(type, parsed.data, frameName),
+          frame_name: effectiveFrameName(type, parsed.data, dynamicFrameName),
         });
         toast.success('已创建');
       }
@@ -189,192 +153,136 @@ export function ContentCreateEditor({ gid, onDone }: ContentCreateEditorProps) {
 
   return (
     <div>
-      <nav>
-        <button
-          onClick={onDone}
-          className="inline-flex items-center gap-1.5 text-[11px] font-mono text-stone hover:text-ink tracking-[0.08em]"
-        >
-          <ArrowLeft size={14} /> 返回
-        </button>
-      </nav>
-
-      <header className="mt-5 fade-up flex items-center gap-4">
-        <IconBlock size="lg" tone="soft">
-          <Plus size={24} />
-        </IconBlock>
-        <div className="flex-1 min-w-0">
-          <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-[1.2] truncate tracking-tight">
-            新建帧
-          </h1>
-          <p className="font-sans text-[13px] text-stone mt-1.5 leading-relaxed">
-            选择类型后填写参数，创建后追加至列表末尾，可拖拽改序。
-          </p>
-        </div>
-      </header>
-
-      <DoubleRule className="mt-3" />
+      <PageHeader
+        onBack={onDone}
+        icon={<Plus size={24} />}
+        title="新建帧"
+        subtitle="选择类型后填写参数，创建后追加至列表末尾，可拖拽改序。"
+      />
 
       <div className="mt-6 fade-up fade-up-1">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
-          {/* 预览（desktop 左侧 / mobile 排在控件下方）*/}
-          <div className="order-2 min-w-0 lg:order-1">
-            <p className="font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] ml-0.5 mb-2">
-              {type === 'image' ? `预览 · 1bpp · ${FRAME_WIDTH}×${FRAME_HEIGHT}` : '设备预览'}
-            </p>
-            {type === 'image' ? (
-              <PreviewCanvas
-                canvasRef={previewRef}
-                imageFile={imageFile}
-                existingImage={undefined}
-                threshold={threshold}
-                mode={mode}
-                scale={scale}
-                offset={offset}
-                onOffsetChange={setOffset}
-                statusCaption={frameName.trim() || null}
-                showSafeArea={Boolean(imageFile)}
-              />
-            ) : (
-              <DynamicCreatePreview
-                liveData={livePreviewData}
-                livePending={preview.isPending}
-                hasConfig={!!config}
-                caption={effectiveStatusBarText(type, config, frameName)}
-              />
-            )}
-          </div>
-
-          {/* 表单 */}
-          <div className="order-1 min-w-0 lg:order-2 lg:mt-7 space-y-6">
-            {/* 类型块（chip + 描述 + 分隔线，内部 12px 等距）*/}
-            <div className="space-y-3">
-              {type ? (
+        {type === 'image' ? (
+          <ImageFormBody
+            gid={gid}
+            form={imageForm}
+            isEdit={false}
+            gridClassName="lg:grid-cols-2"
+            showSafeArea={Boolean(imageForm.imageFile)}
+            beforeFields={
+              <div className="space-y-3">
                 <ContentTypePicker
                   value={type}
                   onChange={handleTypeChange}
                   onBack={resetTypeSelection}
                 />
-              ) : (
-                <ContentTypeCardGrid onChange={handleTypeChange} />
-              )}
-              {type && (
                 <p className="font-sans text-[12px] text-stone leading-relaxed">
                   {TYPE_META[type].description}
                 </p>
-              )}
-              {type && <div className="border-t border-line" />}
+                <div className="border-t border-line" />
+              </div>
+            }
+            actions={
+              <FormActions
+                onCancel={onDone}
+                onSubmit={onSubmit}
+                submitLabel="创建"
+                disabled={!canSubmit}
+                submitting={submitting}
+              />
+            }
+          />
+        ) : (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+            {/* 预览（desktop 左侧 / mobile 排在控件下方）*/}
+            <div className="order-2 min-w-0 lg:order-1">
+              <p className="font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] ml-0.5 mb-2">
+                设备预览
+              </p>
+              <DynamicCreatePreview
+                liveData={livePreviewData}
+                livePending={preview.isPending}
+                hasConfig={!!config}
+                caption={effectiveStatusBarText(type, config, dynamicFrameName)}
+              />
             </div>
 
-            {type && (
-              <>
-                {/* 帧名称（仅 image / 外部数据）*/}
-                {(type === 'image' || type === 'dashboard') && (
-                  <FormSection label="帧名称（选填，最多 64 字）">
-                    <Input
-                      type="text"
-                      maxLength={64}
-                      value={frameName}
-                      onChange={(e) => setFrameName(e.target.value)}
-                      placeholder={frameNamePlaceholder}
-                    />
-                  </FormSection>
+            {/* 表单 */}
+            <div className="order-1 min-w-0 lg:order-2 lg:mt-7 space-y-6">
+              {/* 类型块（chip + 描述 + 分隔线，内部 12px 等距）*/}
+              <div className="space-y-3">
+                {type ? (
+                  <ContentTypePicker
+                    value={type}
+                    onChange={handleTypeChange}
+                    onBack={resetTypeSelection}
+                  />
+                ) : (
+                  <ContentTypeCardGrid onChange={handleTypeChange} />
                 )}
+                {type && (
+                  <p className="font-sans text-[12px] text-stone leading-relaxed">
+                    {TYPE_META[type].description}
+                  </p>
+                )}
+                {type && <div className="border-t border-line" />}
+              </div>
 
-                {/* 类型参数 */}
-                {shouldRenderParams(type) && (
-                  <FormSection label="类型参数">
-                    {type === 'image' ? (
-                      <div className="space-y-4">
-                        <ImageDropzone
-                          isEdit={false}
-                          imageFile={imageFile}
-                          onPick={(f) => {
-                            setImageFile(f);
-                            setScale(1);
-                            setOffset({ x: 0, y: 0 });
-                          }}
-                        />
-                        <DitherControls
-                          mode={mode}
-                          onModeChange={setMode}
-                          threshold={threshold}
-                          onThresholdChange={setThreshold}
-                          hasImage={!!imageFile}
-                          scale={scale}
-                          onScaleChange={setScale}
-                          onResetCrop={() => {
-                            setScale(1);
-                            setOffset({ x: 0, y: 0 });
-                          }}
-                        />
-                      </div>
-                    ) : (
-                      config && (
+              {type && (
+                <>
+                  {/* 帧名称（仅外部数据）*/}
+                  {type === 'dashboard' && (
+                    <FormSection label="帧名称（选填，最多 64 字）">
+                      <Input
+                        type="text"
+                        maxLength={64}
+                        value={activeFrameName}
+                        onChange={(e) => setDynamicFrameName(e.target.value)}
+                        placeholder={frameNamePlaceholder}
+                      />
+                    </FormSection>
+                  )}
+
+                  {/* 类型参数 */}
+                  {shouldRenderParams(type) && (
+                    <FormSection label="类型参数">
+                      {config && (
                         <DynamicConfigForm
                           config={config}
                           onChange={(next) => {
-                            if (
-                              (next.type === 'weather' &&
-                                config?.type === 'weather' &&
-                                next.location_label !== config.location_label) ||
-                              (next.type === 'weather_alert' &&
-                                config?.type === 'weather_alert' &&
-                                next.province !== config.province)
-                            ) {
-                              setFrameName(defaultFrameName(next.type, next));
-                            }
+                            const nextFrameName = frameNameForSyncedDynamicConfigChange(
+                              config,
+                              next
+                            );
+                            if (nextFrameName) setDynamicFrameName(nextFrameName);
                             setConfig(next);
                           }}
                         />
-                      )
-                    )}
-                  </FormSection>
-                )}
+                      )}
+                    </FormSection>
+                  )}
 
-                {/* 音频 */}
-                {TYPE_META[type].supportsAudio && (
-                  <FormSection label="音频">
-                    {type === 'image' ? (
-                      <ImageAudioBlock
-                        gid={gid}
-                        mode={imageAudioMode}
-                        onModeChange={setImageAudioMode}
-                        audioFile={audioFile}
-                        onAudioFileChange={setAudioFile}
-                        ttsText={ttsText}
-                        onTtsTextChange={setTtsText}
-                        ttsVoice={ttsVoice}
-                        onTtsVoiceChange={setTtsVoice}
-                        hasExistingAudio={false}
-                        editingContentId={null}
-                      />
-                    ) : (
-                      config &&
-                      isAudioDynamicConfig(config) && (
+                  {/* 音频 */}
+                  {TYPE_META[type].supportsAudio && (
+                    <FormSection label="音频">
+                      {config && isAudioDynamicConfig(config) && (
                         <DynamicAudioSection config={config} onChange={setConfig} />
-                      )
-                    )}
-                  </FormSection>
-                )}
+                      )}
+                    </FormSection>
+                  )}
 
-                {/* 操作按钮：粘在表单列底部 */}
-                <div className="flex gap-3 pt-6 border-t border-line sticky bottom-0 bg-paper pb-6">
-                  <Button variant="outline" onClick={onDone} className="flex-1">
-                    取消
-                  </Button>
-                  <Button
-                    onClick={onSubmit}
-                    disabled={!canSubmit || submitting}
-                    iconLeft={!submitting ? <ArrowUp size={16} /> : undefined}
-                    className="flex-1"
-                  >
-                    {submitting ? <Spinner /> : '创建'}
-                  </Button>
-                </div>
-              </>
-            )}
+                  {/* 操作按钮：粘在表单列底部 */}
+                  <FormActions
+                    onCancel={onDone}
+                    onSubmit={onSubmit}
+                    submitLabel="创建"
+                    disabled={!canSubmit}
+                    submitting={submitting}
+                  />
+                </>
+              )}
+            </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

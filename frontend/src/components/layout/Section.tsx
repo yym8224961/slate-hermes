@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 import { IconBlock } from '@/components/ui/IconBlock';
+import { DoubleRule } from '@/components/ui/DoubleRule';
 
 interface SectionProps {
   title: string;
@@ -34,11 +35,7 @@ export function Section({ title, subtitle, badge, action, className, children }:
         </div>
         {action && <div className="flex-shrink-0">{action}</div>}
       </header>
-      {/* 双线分隔：1px + 3px 间隔 + 2px */}
-      <div className="mt-3 flex flex-col gap-[3px]">
-        <div className="h-px bg-ink" />
-        <div className="h-0.5 bg-ink" />
-      </div>
+      <DoubleRule className="mt-3" />
       <div className="mt-6">{children}</div>
     </section>
   );

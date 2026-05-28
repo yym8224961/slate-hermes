@@ -1,20 +1,13 @@
 // 设备卡片：可拖拽排序 + 在线状态点 + 电量/信号 + 底部操作行。
 
-import {
-  Wifi,
-  Battery,
-  BatteryWarning,
-  BatteryCharging,
-  Frame,
-  Trash2,
-  GripVertical,
-} from 'lucide-react';
-import { useUnbindDevice } from '@/features/devices/queries';
+import { useCallback } from 'react';
+import { Wifi, Frame, Trash2 } from 'lucide-react';
 import type { DeviceSummaryT, GroupSummaryT } from 'shared';
+import { DragHandle } from '@/components/ui/DragHandle';
 import { IconBlock } from '@/components/ui/IconBlock';
-import { useToast } from '@/components/feedback/Toast';
-import { useConfirm } from '@/components/feedback/Confirm';
-import { isOnline, timeAgo, rssiLabel } from '@/lib/format';
+import { isOnline, rssiLabel, useTimeAgo } from '@/lib/format';
+import { BatteryLevelIcon } from './BatteryLevelIcon';
+import { useUnbindDeviceWithConfirm } from './useUnbindDeviceWithConfirm';
 import { cn } from '@/lib/cn';
 import { useSortableStyle } from '@/lib/dnd';
 
@@ -32,38 +25,22 @@ export function DeviceCard({
   const groupName = currentGroup?.name;
   const battery = device.battery_pct;
   const lowBattery = battery != null && battery < 20;
-  const BatteryIcon =
-    battery == null
-      ? Battery
-      : battery < 20
-        ? BatteryWarning
-        : battery < 80
-          ? Battery
-          : BatteryCharging;
+  const lastSeenAgo = useTimeAgo(device.last_seen_at);
 
-  const unbind = useUnbindDevice();
-  const toast = useToast();
-  const confirm = useConfirm();
+  const { unbindWithConfirm, isPending: unbindPending } = useUnbindDeviceWithConfirm(device);
 
   const { attributes, listeners, setNodeRef, style, isDragging } = useSortableStyle(device.id);
 
   const playingContents = currentGroup?.content_count;
 
-  async function onUnbind(e: React.MouseEvent) {
-    e.preventDefault();
-    e.stopPropagation();
-    const ok = await confirm({
-      title: '解绑这台设备？',
-      description: `${device.name ?? device.mac} 将从你的账号移除。素材保留，设备屏会切回配对码状态。`,
-      destructive: true,
-      confirmText: '解绑',
-    });
-    if (!ok) return;
-    unbind.mutate(device.id, {
-      onSuccess: () => toast.success('已解绑', '设备屏会显示新配对码。'),
-      onError: () => toast.error('解绑失败'),
-    });
-  }
+  const onUnbind = useCallback(
+    async (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      await unbindWithConfirm();
+    },
+    [unbindWithConfirm]
+  );
 
   return (
     <div
@@ -117,7 +94,7 @@ export function DeviceCard({
               {online ? (
                 <>
                   <span className={cn('flex items-center gap-1.5', lowBattery && 'text-clay')}>
-                    <BatteryIcon size={14} />
+                    <BatteryLevelIcon level={battery} size={14} />
                     <span className="font-mono tabular-nums">
                       {battery != null ? `${battery}%` : '—'}
                     </span>
@@ -129,9 +106,7 @@ export function DeviceCard({
                   <span className="text-stone-light text-[11px] ml-auto">刚刚</span>
                 </>
               ) : (
-                <span className="text-stone-light text-[11px]">
-                  上次心跳 {timeAgo(device.last_seen_at)}
-                </span>
+                <span className="text-stone-light text-[11px]">上次心跳 {lastSeenAgo}</span>
               )}
             </div>
           </div>
@@ -139,23 +114,14 @@ export function DeviceCard({
       </button>
 
       <div className="px-2 py-2 border-t border-line flex items-center min-h-[38px]">
-        <button
-          type="button"
-          {...attributes}
-          {...listeners}
-          aria-label="拖拽排序"
-          title="拖拽排序"
-          className="p-1.5 text-stone-light hover:text-ink hover:bg-cream transition-colors cursor-grab active:cursor-grabbing touch-none"
-        >
-          <GripVertical size={14} />
-        </button>
+        <DragHandle attributes={attributes} listeners={listeners} />
 
         <span className="flex-1" />
 
         <button
           type="button"
           onClick={onUnbind}
-          disabled={unbind.isPending}
+          disabled={unbindPending}
           aria-label="解绑"
           title="从账号解绑"
           className="p-1.5 text-stone hover:text-clay hover:bg-cream transition-colors disabled:opacity-50"

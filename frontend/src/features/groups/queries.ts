@@ -5,17 +5,29 @@ import type {
   ReorderGroupsRequestT,
   UpdateGroupRequestT,
 } from 'shared';
-import { api } from '@/lib/api';
-
-const V1 = '/api/v1';
+import { API_V1, api } from '@/lib/api';
+import { queryKeys } from '@/lib/query-keys';
 
 export function useGroups() {
   return useQuery({
-    queryKey: ['groups'],
+    queryKey: queryKeys.groups,
     queryFn: async () => {
-      const { data } = await api.get<GroupSummaryT[]>(`${V1}/groups`);
+      const { data } = await api.get<GroupSummaryT[]>(`${API_V1}/groups`);
       return data;
     },
+    staleTime: 10_000,
+  });
+}
+
+export function useGroup(gid: string | undefined) {
+  return useQuery({
+    queryKey: queryKeys.group(gid),
+    queryFn: async () => {
+      const { data } = await api.get<GroupSummaryT>(`${API_V1}/groups/${gid}`);
+      return data;
+    },
+    enabled: !!gid,
+    staleTime: 10_000,
   });
 }
 
@@ -23,10 +35,10 @@ export function useCreateGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (body: CreateGroupRequestT) => {
-      const { data } = await api.post<GroupSummaryT>(`${V1}/groups`, body);
+      const { data } = await api.post<GroupSummaryT>(`${API_V1}/groups`, body);
       return data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['groups'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.groups }),
   });
 }
 
@@ -34,11 +46,12 @@ export function useUpdateGroup(gid: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (body: UpdateGroupRequestT) => {
-      const { data } = await api.patch<GroupSummaryT>(`${V1}/groups/${gid}`, body);
+      const { data } = await api.patch<GroupSummaryT>(`${API_V1}/groups/${gid}`, body);
       return data;
     },
     onSuccess: (updated) => {
-      qc.setQueryData<GroupSummaryT[]>(['groups'], (groups) => {
+      qc.setQueryData(queryKeys.group(updated.id), updated);
+      qc.setQueryData<GroupSummaryT[]>(queryKeys.groups, (groups) => {
         if (!groups) return groups;
         return groups.map((group) => (group.id === updated.id ? updated : group));
       });
@@ -50,9 +63,9 @@ export function useReorderGroups() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (body: ReorderGroupsRequestT) => {
-      await api.put(`${V1}/groups/order`, body);
+      await api.put(`${API_V1}/groups/order`, body);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['groups'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.groups }),
   });
 }
 
@@ -60,8 +73,11 @@ export function useDeleteGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (gid: string) => {
-      await api.delete(`${V1}/groups/${gid}`);
+      await api.delete(`${API_V1}/groups/${gid}`);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['groups'] }),
+    onSuccess: (_data, gid) => {
+      qc.removeQueries({ queryKey: queryKeys.group(gid) });
+      qc.invalidateQueries({ queryKey: queryKeys.groups });
+    },
   });
 }

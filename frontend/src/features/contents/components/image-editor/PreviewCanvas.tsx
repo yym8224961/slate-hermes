@@ -16,9 +16,9 @@ import {
 } from 'shared';
 import type { DitherMode } from 'shared';
 import { cn } from '@/lib/cn';
-import { PAPER_HEX, PAPER_RGB, INK_RGB } from '@/lib/colors';
-import { decodeBppImage, isValidBppLength } from '@/lib/image';
-import { StatusBarOverlay } from '../StatusBarOverlay';
+import { PAPER_RGB, INK_RGB } from '@/lib/colors';
+import { clearCanvas, decodeBppImage, isValidBppLength } from '@/lib/image';
+import { StatusBarOverlay } from '../preview/StatusBarOverlay';
 
 interface PreviewCanvasProps {
   imageFile: File | null;
@@ -52,11 +52,90 @@ export function PreviewCanvas({
   showSafeArea = false,
 }: PreviewCanvasProps) {
   const [isDragging, setIsDragging] = useState(false);
+  const [loadedImage, setLoadedImage] = useState<{
+    file: File;
+    image: HTMLImageElement;
+  } | null>(null);
   const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(
     null
   );
+  const dragOffsetRef = useRef(offset);
+  const isDraggingRef = useRef(false);
+  const drawFrameRef = useRef<number | null>(null);
 
-  // 渲染逻辑:三个分支
+  const cancelScheduledDraw = useCallback(() => {
+    if (drawFrameRef.current == null) return;
+    cancelAnimationFrame(drawFrameRef.current);
+    drawFrameRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    if (!imageFile) {
+      setLoadedImage(null);
+      return;
+    }
+
+    const url = URL.createObjectURL(imageFile);
+    let cancelled = false;
+    let revoked = false;
+    const revoke = () => {
+      if (!revoked) {
+        URL.revokeObjectURL(url);
+        revoked = true;
+      }
+    };
+    const img = new Image();
+    img.onload = () => {
+      if (!cancelled) setLoadedImage({ file: imageFile, image: img });
+      revoke();
+    };
+    img.onerror = () => {
+      if (!cancelled) setLoadedImage(null);
+      revoke();
+    };
+    img.src = url;
+    return () => {
+      cancelled = true;
+      revoke();
+    };
+  }, [imageFile]);
+
+  useEffect(() => cancelScheduledDraw, [cancelScheduledDraw]);
+
+  const drawLoadedImage = useCallback(
+    (dither: boolean) => {
+      if (!imageFile || loadedImage?.file !== imageFile) return false;
+      const canvas = canvasRef.current;
+      if (!canvas) return false;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return false;
+      drawImagePreview(ctx, canvas, loadedImage.image, {
+        scale,
+        offset: dragOffsetRef.current,
+        threshold,
+        mode,
+        dither,
+      });
+      return true;
+    },
+    [canvasRef, imageFile, loadedImage, mode, scale, threshold]
+  );
+
+  const scheduleImageDraw = useCallback(
+    (dither: boolean) => {
+      cancelScheduledDraw();
+      drawFrameRef.current = requestAnimationFrame(() => {
+        drawFrameRef.current = null;
+        drawLoadedImage(dither);
+      });
+    },
+    [cancelScheduledDraw, drawLoadedImage]
+  );
+
+  // 渲染逻辑：三个分支。新图只在文件变化时加载；拖拽中只重画已加载图片，
+  // 指针松开后再跑灰度预处理 + dither，避免每帧重复解码和抖动。
+  // 拖拽期间 props.offset 不变（实时位置走 dragOffsetRef），所以这里依赖 offset
+  // 不会引起每帧 effect 重跑；只有拖拽结束 onOffsetChange 回传或外部 reset 时才触发。
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -64,49 +143,19 @@ export function PreviewCanvas({
     if (!ctx) return;
 
     if (imageFile) {
-      const url = URL.createObjectURL(imageFile);
-      let revoked = false;
-      const revoke = () => {
-        if (!revoked) {
-          URL.revokeObjectURL(url);
-          revoked = true;
-        }
-      };
-      const img = new Image();
-      img.onload = () => {
-        ctx.fillStyle = PAPER_HEX;
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-        const baseScale = Math.min(canvas.width / img.width, canvas.height / img.height);
-        const finalScale = baseScale * scale;
-        const drawW = img.width * finalScale;
-        const drawH = img.height * finalScale;
-        const drawX = (canvas.width - drawW) / 2 + offset.x;
-        const drawY = (canvas.height - drawH) / 2 + offset.y;
-        ctx.drawImage(img, drawX, drawY, drawW, drawH);
-
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        let gray = rgbaToGray(imageData.data, canvas.width, canvas.height, 4);
-        gray = autoInvert(gray, canvas.width, canvas.height);
-        gray = autoContrast(gray, 1);
-        const bin = ditherToBinary(gray, canvas.width, canvas.height, { mode, threshold });
-
-        for (let i = 0, j = 0; i < imageData.data.length; i += 4, j++) {
-          const isWhite = bin[j] === 255;
-          const c = isWhite ? PAPER_RGB : INK_RGB;
-          imageData.data[i] = c[0];
-          imageData.data[i + 1] = c[1];
-          imageData.data[i + 2] = c[2];
-          imageData.data[i + 3] = 255;
-        }
-        ctx.putImageData(imageData, 0, 0);
-        revoke();
-      };
-      img.onerror = revoke;
-      img.src = url;
-      return revoke;
+      if (loadedImage?.file !== imageFile) {
+        cancelScheduledDraw();
+        clearCanvas(ctx, canvas);
+        return;
+      }
+      if (!isDraggingRef.current) {
+        dragOffsetRef.current = offset;
+      }
+      scheduleImageDraw(!isDraggingRef.current);
+      return cancelScheduledDraw;
     }
 
+    cancelScheduledDraw();
     if (existingImage) {
       const bytes = new Uint8Array(existingImage);
       if (!isValidBppLength(bytes)) {
@@ -119,38 +168,53 @@ export function PreviewCanvas({
     }
 
     clearCanvas(ctx, canvas);
-  }, [imageFile, existingImage, threshold, mode, scale, offset, canvasRef]);
+  }, [
+    canvasRef,
+    cancelScheduledDraw,
+    imageFile,
+    existingImage,
+    loadedImage,
+    offset,
+    scheduleImageDraw,
+  ]);
 
   const onPointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (!imageFile) return;
+      if (!imageFile || loadedImage?.file !== imageFile) return;
+      isDraggingRef.current = true;
       setIsDragging(true);
+      dragOffsetRef.current = offset;
       dragStartRef.current = {
         x: e.clientX,
         y: e.clientY,
         offsetX: offset.x,
         offsetY: offset.y,
       };
-      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      e.currentTarget.setPointerCapture(e.pointerId);
     },
-    [imageFile, offset]
+    [imageFile, loadedImage, offset]
   );
 
   const onPointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (!isDragging || !dragStartRef.current) return;
-      onOffsetChange({
+      if (!isDraggingRef.current || !dragStartRef.current) return;
+      dragOffsetRef.current = {
         x: dragStartRef.current.offsetX + (e.clientX - dragStartRef.current.x),
         y: dragStartRef.current.offsetY + (e.clientY - dragStartRef.current.y),
-      });
+      };
+      scheduleImageDraw(false);
     },
-    [isDragging, onOffsetChange]
+    [scheduleImageDraw]
   );
 
   const onPointerUp = useCallback(() => {
+    if (!isDraggingRef.current) return;
+    isDraggingRef.current = false;
     setIsDragging(false);
     dragStartRef.current = null;
-  }, []);
+    onOffsetChange(dragOffsetRef.current);
+    scheduleImageDraw(true);
+  }, [onOffsetChange, scheduleImageDraw]);
 
   return (
     <div className="bg-paper border border-ink relative overflow-hidden aspect-[4/3]">
@@ -190,7 +254,51 @@ export function PreviewCanvas({
   );
 }
 
-function clearCanvas(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) {
-  ctx.fillStyle = PAPER_HEX;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+function drawImagePreview(
+  ctx: CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  img: HTMLImageElement,
+  {
+    scale,
+    offset,
+    threshold,
+    mode,
+    dither,
+  }: {
+    scale: number;
+    offset: { x: number; y: number };
+    threshold: number;
+    mode: DitherMode;
+    dither: boolean;
+  }
+) {
+  clearCanvas(ctx, canvas);
+
+  const sourceWidth = img.naturalWidth || img.width;
+  const sourceHeight = img.naturalHeight || img.height;
+  const baseScale = Math.min(canvas.width / sourceWidth, canvas.height / sourceHeight);
+  const finalScale = baseScale * scale;
+  const drawW = sourceWidth * finalScale;
+  const drawH = sourceHeight * finalScale;
+  const drawX = (canvas.width - drawW) / 2 + offset.x;
+  const drawY = (canvas.height - drawH) / 2 + offset.y;
+  ctx.drawImage(img, drawX, drawY, drawW, drawH);
+
+  if (!dither) return;
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  let gray = rgbaToGray(imageData.data, canvas.width, canvas.height, 4);
+  gray = autoInvert(gray, canvas.width, canvas.height);
+  gray = autoContrast(gray, 1);
+  const bin = ditherToBinary(gray, canvas.width, canvas.height, { mode, threshold });
+
+  for (let i = 0, j = 0; i < imageData.data.length; i += 4, j++) {
+    const isWhite = bin[j] === 255;
+    const c = isWhite ? PAPER_RGB : INK_RGB;
+    imageData.data[i] = c[0];
+    imageData.data[i + 1] = c[1];
+    imageData.data[i + 2] = c[2];
+    imageData.data[i + 3] = 255;
+  }
+  ctx.putImageData(imageData, 0, 0);
 }

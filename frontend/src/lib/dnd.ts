@@ -15,7 +15,15 @@
 // 也成功（serverOrder === pendingOrder）才接管。代价是别人的并发改动会延迟到
 // 本次结束之后才显现，换的是拖拽过程的视觉稳定。
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type SetStateAction,
+} from 'react';
 import { PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -32,9 +40,29 @@ export function useDndOrder<T>(
 ) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
 
-  const [currentOrder, setCurrentOrder] = useState<string[]>([]);
+  const [currentOrder, setCurrentOrderState] = useState<string[]>([]);
+  const currentOrderRef = useRef<string[]>([]);
   const latestPersistSeqRef = useRef(0);
   const pendingOrderRef = useRef<string[] | null>(null);
+  const getIdRef = useRef(getId);
+  const onPersistRef = useRef(onPersist);
+
+  const setCurrentOrder = useCallback((next: SetStateAction<string[]>) => {
+    const resolved =
+      typeof next === 'function'
+        ? (next as (current: string[]) => string[])(currentOrderRef.current)
+        : next;
+    currentOrderRef.current = resolved;
+    setCurrentOrderState(resolved);
+  }, []);
+
+  useEffect(() => {
+    getIdRef.current = getId;
+  }, [getId]);
+
+  useEffect(() => {
+    onPersistRef.current = onPersist;
+  }, [onPersist]);
 
   useEffect(() => {
     if (!items) {
@@ -42,7 +70,7 @@ export function useDndOrder<T>(
       setCurrentOrder([]);
       return;
     }
-    const serverOrder = items.map(getId);
+    const serverOrder = items.map((item) => getIdRef.current(item));
     const pendingOrder = pendingOrderRef.current;
     if (pendingOrder && sameOrder(serverOrder, pendingOrder)) {
       pendingOrderRef.current = null;
@@ -55,7 +83,7 @@ export function useDndOrder<T>(
     }
     pendingOrderRef.current = null;
     setCurrentOrder(serverOrder);
-  }, [getId, items]);
+  }, [items, setCurrentOrder]);
 
   const orderedItems = useMemo(() => {
     const itemMap = new Map((items ?? []).map((item) => [getId(item), item]));
@@ -69,30 +97,34 @@ export function useDndOrder<T>(
     return ordered;
   }, [currentOrder, getId, items]);
 
-  function onDragEnd(e: DragEndEvent) {
-    const { active, over } = e;
-    if (!over || active.id === over.id) return;
-    const oldPos = currentOrder.indexOf(active.id as string);
-    const newPos = currentOrder.indexOf(over.id as string);
-    if (oldPos < 0 || newPos < 0) return;
-    const persistSeq = ++latestPersistSeqRef.current;
-    const previousOrder = [...currentOrder];
-    const newOrder = arrayMove(currentOrder, oldPos, newPos);
-    pendingOrderRef.current = newOrder;
-    setCurrentOrder(newOrder);
-    const finishIfCurrent = (fn: () => void) => {
-      if (persistSeq !== latestPersistSeqRef.current) return;
-      pendingOrderRef.current = null;
-      fn();
-    };
-    onPersist(newOrder, {
-      commit: () => finishIfCurrent(() => setCurrentOrder(newOrder)),
-      rollback: () =>
-        finishIfCurrent(() =>
-          setCurrentOrder((current) => (sameOrder(current, newOrder) ? previousOrder : current))
-        ),
-    });
-  }
+  const onDragEnd = useCallback(
+    (e: DragEndEvent) => {
+      const order = currentOrderRef.current;
+      const { active, over } = e;
+      if (!over || active.id === over.id) return;
+      const oldPos = order.indexOf(active.id as string);
+      const newPos = order.indexOf(over.id as string);
+      if (oldPos < 0 || newPos < 0) return;
+      const persistSeq = ++latestPersistSeqRef.current;
+      const previousOrder = [...order];
+      const newOrder = arrayMove(order, oldPos, newPos);
+      pendingOrderRef.current = newOrder;
+      setCurrentOrder(newOrder);
+      const finishIfCurrent = (fn: () => void) => {
+        if (persistSeq !== latestPersistSeqRef.current) return;
+        pendingOrderRef.current = null;
+        fn();
+      };
+      onPersistRef.current(newOrder, {
+        commit: () => finishIfCurrent(() => setCurrentOrder(newOrder)),
+        rollback: () =>
+          finishIfCurrent(() =>
+            setCurrentOrder((current) => (sameOrder(current, newOrder) ? previousOrder : current))
+          ),
+      });
+    },
+    [setCurrentOrder]
+  );
 
   return { sensors, currentOrder, orderedItems, setCurrentOrder, onDragEnd };
 }

@@ -17,7 +17,7 @@ import { cn } from '@/lib/cn';
 type Tone = 'success' | 'error' | 'info';
 
 interface ToastItem {
-  id: number;
+  id: string;
   tone: Tone;
   message: string;
   hint?: string;
@@ -35,7 +35,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
 
   const push = useCallback((tone: Tone, message: string, hint?: string) => {
-    setItems((p) => [...p, { id: Date.now() + Math.random(), tone, message, hint }]);
+    setItems((p) => [...p, { id: createToastId(), tone, message, hint }]);
   }, []);
 
   const api = useMemo<ToastApi>(
@@ -104,4 +104,10 @@ export function useToast(): ToastApi {
   const ctx = useContext(ToastCtx);
   if (!ctx) throw new Error('useToast outside ToastProvider');
   return ctx;
+}
+
+function createToastId(): string {
+  return (
+    globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  );
 }

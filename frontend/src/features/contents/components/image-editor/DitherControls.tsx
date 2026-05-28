@@ -9,6 +9,7 @@ interface DitherControlsProps {
   onModeChange: (m: DitherMode) => void;
   threshold: number;
   onThresholdChange: (n: number) => void;
+  disabled?: boolean;
   /** 只有选了图才显示 scale 滑块 */
   hasImage: boolean;
   scale: number;
@@ -21,6 +22,7 @@ export function DitherControls({
   onModeChange,
   threshold,
   onThresholdChange,
+  disabled = false,
   hasImage,
   scale,
   onScaleChange,
@@ -68,10 +70,12 @@ export function DitherControls({
               key={m}
               type="button"
               aria-pressed={mode === m}
+              disabled={disabled}
               onClick={() => onModeChange(m)}
               className={cn(
                 'flex items-center justify-between px-3 py-2.5 font-serif text-[13px] border border-ink -ml-px -mt-px transition-colors',
-                mode === m ? 'bg-cream-deep text-ink' : 'text-stone hover:bg-cream'
+                mode === m ? 'bg-cream-deep text-ink' : 'text-stone hover:bg-cream',
+                disabled && 'cursor-not-allowed opacity-50 hover:bg-transparent'
               )}
             >
               <span>{DITHER_INFO[m].label}</span>
@@ -98,10 +102,11 @@ export function DitherControls({
             min="0"
             max="255"
             value={threshold}
+            disabled={disabled}
             onChange={(e) => onThresholdChange(Number(e.target.value))}
           />
           <p className="font-serif italic text-[11px] text-stone-light mt-1.5">
-            简笔画 128;带细灰边的图试 180+。
+            {disabled ? '换图后可调整抖动参数。' : '简笔画 128;带细灰边的图试 180+。'}
           </p>
         </div>
       )}

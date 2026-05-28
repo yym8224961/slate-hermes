@@ -2,20 +2,20 @@
 //
 // dnd-kit reorder 通过 useDndOrder 复用；本地顺序会在保存失败时回滚。
 
-import { useCallback, useMemo } from 'react';
+import { useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Layers, Pencil, Check } from 'lucide-react';
 import { DndContext, closestCenter } from '@dnd-kit/core';
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
-import { useGroups, useUpdateGroup } from '@/features/groups/queries';
+import { useGroup, useUpdateGroup } from '@/features/groups/queries';
 import { useGroupContents, useReorderContents } from '@/features/contents/queries';
 import type { ContentDetailT, GroupSummaryT } from 'shared';
 import { Spinner } from '@/components/ui/Spinner';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { IconBlock } from '@/components/ui/IconBlock';
-import { ImageContentCard } from '@/features/contents/components/ImageContentCard';
-import { DynamicContentCard } from '@/features/contents/components/DynamicContentCard';
+import { ImageContentCard } from '@/features/contents/components/cards/ImageContentCard';
+import { DynamicContentCard } from '@/features/contents/components/cards/DynamicContentCard';
 import { DoubleRule } from '@/components/ui/DoubleRule';
 import { useToast } from '@/components/feedback/Toast';
 import { inputCls } from '@/lib/styles';
@@ -24,15 +24,15 @@ import { useInlineRename } from '@/lib/hooks';
 import { formatBytes } from '@/lib/format';
 import { useDndOrder } from '@/lib/dnd';
 
-export function GroupDetail() {
+export function GroupDetailPage() {
   const { gid } = useParams();
   const navigate = useNavigate();
-  const groups = useGroups();
+  const groupQuery = useGroup(gid);
   const contents = useGroupContents(gid);
-  const reorder = useReorderContents(gid ?? '');
+  const reorder = useReorderContents(gid);
   const toast = useToast();
 
-  const group = useMemo(() => groups.data?.find((g) => g.id === gid), [groups.data, gid]);
+  const group = groupQuery.data;
   const { sensors, currentOrder, orderedItems, onDragEnd } = useDndOrder(
     contents.data,
     useCallback((f) => f.id, []),
@@ -65,14 +65,14 @@ export function GroupDetail() {
       />
     );
   }
-  if (groups.isPending) {
+  if (groupQuery.isPending) {
     return (
       <div className="pt-16 text-center">
         <Spinner label="加载中" />
       </div>
     );
   }
-  if (!group) {
+  if (groupQuery.isError || !group) {
     return (
       <EmptyState
         title="内容不存在或已被删除"

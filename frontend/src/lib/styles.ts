@@ -55,23 +55,22 @@ export const selectItemCls = [
   'data-[state=checked]:text-ink data-[state=checked]:font-medium data-[state=checked]:bg-cream-deep',
 ].join(' ');
 
-// Dialog 弹层内容
-export const dialogContentCls = [
+const dialogContentFrameCls = [
   'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
-  'w-[calc(100vw-2rem)] max-w-md',
+  'w-[calc(100vw-2rem)]',
   'bg-paper border-2 border-ink',
-  'z-50 p-7',
   'shadow-dialog',
 ].join(' ');
 
+// Dialog 弹层内容
+export const dialogContentCls = [dialogContentFrameCls, 'max-w-md z-50 p-7'].join(' ');
+
 // Dialog 弹层内容（宽版）。
 export const dialogContentWideCls = [
-  'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
-  'w-[calc(100vw-2rem)] max-w-xl max-h-[calc(100vh-3rem)]',
+  dialogContentFrameCls,
+  'max-w-xl max-h-[calc(100vh-3rem)]',
   'flex flex-col',
-  'bg-paper border-2 border-ink',
   'z-50',
-  'shadow-dialog',
 ].join(' ');
 
 // Dialog 遮罩
@@ -81,10 +80,4 @@ export const dialogOverlayCls = 'fixed inset-0 bg-ink/20 z-40';
 export const dialogOverlayConfirmCls = 'fixed inset-0 bg-ink/20 z-50';
 
 // Dialog 弹层内容(confirm 用,比普通 dialog 高一档 z-index)
-export const dialogContentConfirmCls = [
-  'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
-  'w-[calc(100vw-2rem)] max-w-md',
-  'bg-paper border-2 border-ink',
-  'z-[60] p-6',
-  'shadow-dialog',
-].join(' ');
+export const dialogContentConfirmCls = [dialogContentFrameCls, 'max-w-md', 'z-[60] p-6'].join(' ');

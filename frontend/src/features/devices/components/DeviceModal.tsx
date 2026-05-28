@@ -8,27 +8,19 @@
 //
 // /devices/:did URL 仍可用 — 由 Dashboard 监听 useParams 自动打开 modal。
 
+import { useCallback } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import {
-  X,
-  Pencil,
-  Check,
-  Wifi,
-  Battery,
-  BatteryWarning,
-  BatteryCharging,
-  Unlink,
-  Radio,
-} from 'lucide-react';
+import { X, Pencil, Check, Wifi, Unlink, Radio } from 'lucide-react';
 import type { DeviceSummaryT, GroupSummaryT } from 'shared';
-import { usePatchDevice, useUnbindDevice } from '@/features/devices/queries';
+import { usePatchDevice } from '@/features/devices/queries';
 import { useGroups } from '@/features/groups/queries';
 import { useToast } from '@/components/feedback/Toast';
-import { useConfirm } from '@/components/feedback/Confirm';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { Select, SelectItem, SelectSeparator } from '@/components/ui/Select';
-import { isOnline, timeAgo, rssiLabel } from '@/lib/format';
+import { isOnline, rssiLabel, useTimeAgo } from '@/lib/format';
+import { BatteryLevelIcon } from './BatteryLevelIcon';
+import { useUnbindDeviceWithConfirm } from './useUnbindDeviceWithConfirm';
 import { inputCls, dialogContentWideCls, dialogOverlayCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
 import { useInlineRename } from '@/lib/hooks';
@@ -42,9 +34,12 @@ interface DeviceModalProps {
 export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
   const groups = useGroups();
   const patch = usePatchDevice(device.id);
-  const unbind = useUnbindDevice();
   const toast = useToast();
-  const confirm = useConfirm();
+  const onUnbindSuccess = useCallback(() => onOpenChange(false), [onOpenChange]);
+  const { unbindWithConfirm, isPending: unbindPending } = useUnbindDeviceWithConfirm(
+    device,
+    onUnbindSuccess
+  );
 
   const {
     editing: editingName,
@@ -73,14 +68,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
 
   const online = isOnline(device);
   const battery = device.battery_pct;
-  const BatteryIcon =
-    battery == null
-      ? Battery
-      : battery < 20
-        ? BatteryWarning
-        : battery < 80
-          ? Battery
-          : BatteryCharging;
+  const lastSeenAgo = useTimeAgo(device.last_seen_at);
 
   function changeGroup(value: string) {
     const next = value === '__none__' ? null : value;
@@ -92,23 +80,6 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
         onError: () => toast.error('切换失败'),
       }
     );
-  }
-
-  async function onUnbind() {
-    const ok = await confirm({
-      title: '解绑这台设备？',
-      description: `${device.name ?? device.mac} 将从你的账号移除。素材保留，设备屏会切回配对码状态，可让新主人或自己重新输码绑回。`,
-      destructive: true,
-      confirmText: '解绑',
-    });
-    if (!ok) return;
-    unbind.mutate(device.id, {
-      onSuccess: () => {
-        toast.success('已解绑', '设备屏会显示新配对码。');
-        onOpenChange(false);
-      },
-      onError: () => toast.error('解绑失败'),
-    });
   }
 
   return (
@@ -194,7 +165,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
               </h3>
               <div className="grid grid-cols-2 gap-3">
                 <MetaCard
-                  icon={<BatteryIcon size={16} />}
+                  icon={<BatteryLevelIcon level={battery} size={16} />}
                   label="电量"
                   value={online && battery != null ? `${battery}%` : '—'}
                   warn={online && battery != null && battery < 20}
@@ -208,7 +179,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
                   stale={!online}
                 />
                 <MetaCard label="固件" value={device.fw_version ?? '—'} mono />
-                <MetaCard label="心跳" value={online ? '刚刚' : timeAgo(device.last_seen_at)} />
+                <MetaCard label="心跳" value={lastSeenAgo} />
               </div>
             </section>
 
@@ -218,10 +189,10 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
                 variant="danger"
                 size="sm"
                 iconLeft={<Unlink size={14} />}
-                onClick={onUnbind}
-                disabled={unbind.isPending}
+                onClick={unbindWithConfirm}
+                disabled={unbindPending}
               >
-                {unbind.isPending ? <Spinner /> : '从账号解绑'}
+                {unbindPending ? <Spinner /> : '从账号解绑'}
               </Button>
               <p className="font-serif text-[11px] italic text-stone-light mt-2">
                 解绑后设备脱离你的账号，素材保留；重新添加可恢复。

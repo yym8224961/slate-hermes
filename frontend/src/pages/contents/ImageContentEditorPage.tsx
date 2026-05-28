@@ -1,5 +1,6 @@
-// 图片内容编辑页面 — 将路由参数解析后传入编辑器，create / edit 两种模式共用。
+// 图片内容编辑页面 — 将路由参数解析后传入编辑器。
 
+import { useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useGroupContents } from '@/features/contents/queries';
 import { ImageContentEditor } from '@/features/contents/components/image-editor/ImageContentEditor';
@@ -10,17 +11,21 @@ export function ImageContentEditorPage() {
   const { gid, contentId } = useParams();
   const navigate = useNavigate();
   const contents = useGroupContents(gid);
-  const isEdit = contentId !== undefined;
+
+  const onDone = useCallback(() => {
+    if (!gid) return;
+    navigate(`/groups/${gid}`);
+  }, [gid, navigate]);
 
   if (!gid) {
     return <EmptyState title="页面不存在" hint="请从总览页进入具体内容组。" />;
   }
 
-  function onDone() {
-    navigate(`/groups/${gid}`);
+  if (!contentId) {
+    return <EmptyState title="页面不存在" hint="请从内容列表进入图片内容编辑页。" />;
   }
 
-  if (isEdit && contents.isPending) {
+  if (contents.isPending) {
     return (
       <div className="pt-16 text-center">
         <Spinner label="加载中" />
@@ -28,15 +33,20 @@ export function ImageContentEditorPage() {
     );
   }
 
-  if (isEdit && contents.isError) {
+  if (contents.isError) {
     return <EmptyState title="加载失败" hint="请刷新重试。" />;
   }
 
-  const content = isEdit
-    ? contents.data?.find((f) => f.id === contentId && f.kind === 'image')
-    : undefined;
+  const content = contents.data?.find((f) => f.id === contentId && f.kind === 'image');
 
-  if (isEdit && !content) {
+  if (!content) {
+    if (contents.isFetching) {
+      return (
+        <div className="pt-16 text-center">
+          <Spinner label="加载中" />
+        </div>
+      );
+    }
     return <EmptyState title="内容不存在或已删除" />;
   }
 

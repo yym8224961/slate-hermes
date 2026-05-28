@@ -1,9 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { API_V1, api } from '@/lib/api';
+import { queryKeys } from '@/lib/query-keys';
 
-const V1 = '/api/v1';
-
-export const meQueryKey = ['me'] as const;
+export const meQueryKey = queryKeys.me;
 
 export interface CurrentUser {
   id: string;
@@ -12,7 +11,7 @@ export interface CurrentUser {
 }
 
 export async function fetchMe(): Promise<CurrentUser> {
-  const { data } = await api.get<CurrentUser>(`${V1}/users/current`);
+  const { data } = await api.get<CurrentUser>(`${API_V1}/users/current`);
   return data;
 }
 

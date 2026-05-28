@@ -9,14 +9,22 @@
 //
 // 在 App 根挂 <ConfirmProvider /> 一次。
 
-import { createContext, useCallback, useContext, useState, useRef, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  useRef,
+  type ReactNode,
+} from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { dialogContentConfirmCls, dialogOverlayConfirmCls } from '@/lib/styles';
 
-interface ConfirmOptions {
+export interface ConfirmOptions {
   title: string;
   description?: string;
   confirmText?: string;
@@ -63,6 +71,15 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     },
     [show]
   );
+
+  useEffect(() => {
+    return () => {
+      activeRef.current?.resolve(false);
+      activeRef.current = null;
+      for (const request of queueRef.current) request.resolve(false);
+      queueRef.current = [];
+    };
+  }, []);
 
   return (
     <ConfirmCtx.Provider value={confirm}>

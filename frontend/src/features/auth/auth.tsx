@@ -7,13 +7,14 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { api, setUnauthorizedHandler, tokenStorage } from '@/lib/api';
 import { meQueryKey, useMe, type CurrentUser } from '@/features/auth/queries';
+import { clearContentBitmapCache } from '@/features/contents/components/preview/useContentBitmap';
 import type { LoginRequestT, LoginResponseT, RegisterRequestT, RegisterResponseT } from 'shared';
 
 interface AuthState {
   token: string | null;
   user: CurrentUser | null;
-  login: (creds: LoginRequestT) => Promise<void>;
-  register: (creds: RegisterRequestT) => Promise<void>;
+  login: (creds: LoginRequestT, redirectTo?: string) => Promise<void>;
+  register: (creds: RegisterRequestT, redirectTo?: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -31,28 +32,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       tokenStorage.clear();
       setToken(null);
       qc.clear();
+      clearContentBitmapCache();
       if (window.location.pathname !== '/login') navigate('/login', { replace: true });
     });
   }, [navigate, qc]);
 
   const login = useCallback(
-    async (creds: LoginRequestT) => {
+    async (creds: LoginRequestT, redirectTo = '/') => {
       const { data } = await api.post<LoginResponseT>('/api/v1/sessions', creds);
       tokenStorage.set(data.token);
       setToken(data.token);
       qc.setQueryData(meQueryKey, data.user);
-      navigate('/', { replace: true });
+      navigate(safeRedirectPath(redirectTo), { replace: true });
     },
     [navigate, qc]
   );
 
   const register = useCallback(
-    async (creds: RegisterRequestT) => {
+    async (creds: RegisterRequestT, redirectTo = '/') => {
       const { data } = await api.post<RegisterResponseT>('/api/v1/users', creds);
       tokenStorage.set(data.token);
       setToken(data.token);
       qc.setQueryData(meQueryKey, data.user);
-      navigate('/', { replace: true });
+      navigate(safeRedirectPath(redirectTo), { replace: true });
     },
     [navigate, qc]
   );
@@ -64,6 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokenStorage.clear();
     setToken(null);
     qc.clear();
+    clearContentBitmapCache();
     navigate('/login', { replace: true });
     if (existingToken) {
       api
@@ -83,4 +86,10 @@ export function useAuth() {
   const ctx = useContext(AuthCtx);
   if (!ctx) throw new Error('useAuth outside AuthProvider');
   return ctx;
+}
+
+function safeRedirectPath(value: string): string {
+  if (!value.startsWith('/') || value.startsWith('//')) return '/';
+  if (value === '/login' || value === '/register') return '/';
+  return value;
 }

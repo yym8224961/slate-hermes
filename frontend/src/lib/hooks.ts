@@ -1,6 +1,6 @@
 // 通用自定义 hooks。
 
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useState, useCallback, useEffect, useLayoutEffect, useRef } from 'react';
 
 /**
  * Inline 改名 hook。
@@ -14,9 +14,9 @@ export function useInlineRename(initialName: string, onSave: (name: string) => P
   const [draft, setDraft] = useState(initialName);
   const onSaveRef = useRef(onSave);
   const committingRef = useRef(false);
-  useEffect(() => {
+  useLayoutEffect(() => {
     onSaveRef.current = onSave;
-  });
+  }, [onSave]);
 
   // 当 initialName 变化时重置状态
   useEffect(() => {

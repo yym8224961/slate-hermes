@@ -1,17 +1,20 @@
 // 注册：与 Login 同构，左侧 editorial 大字，右侧下划线表单。
 
 import { useState } from 'react';
-import { Navigate, Link } from 'react-router-dom';
+import { Navigate, Link, useLocation } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { useAuth } from '@/features/auth/auth';
-import { getApiErrorMessage } from '@/lib/api-error';
+import { getApiErrorMessage } from '@/lib/api';
+import { redirectFromLocationState } from './redirect';
 
-export function Register() {
+export function RegisterPage() {
   const { token, register } = useAuth();
+  const location = useLocation();
+  const redirectTo = redirectFromLocationState(location.state);
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -22,7 +25,7 @@ export function Register() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  if (token) return <Navigate to="/" replace />;
+  if (token) return <Navigate to={redirectTo} replace />;
 
   async function onSubmit(e: { preventDefault(): void }) {
     e.preventDefault();
@@ -44,7 +47,7 @@ export function Register() {
     }
     setLoading(true);
     try {
-      await register({ email, username, password });
+      await register({ email, username, password }, redirectTo);
     } catch (err) {
       setError(getApiErrorMessage(err, '注册失败，请稍后再试'));
     } finally {

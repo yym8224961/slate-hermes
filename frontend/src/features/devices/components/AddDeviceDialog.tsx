@@ -11,7 +11,7 @@ import { ArrowRight, KeyRound } from 'lucide-react';
 import { useClaimByPairCode } from '@/features/devices/queries';
 import { useToast } from '@/components/feedback/Toast';
 import { isValidPairCode, normalizePairCode } from '@/lib/format';
-import { getApiErrorMessage, getApiErrorStatus } from '@/lib/api-error';
+import { getApiErrorMessage, getApiErrorStatus } from '@/lib/api';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
@@ -86,8 +86,8 @@ export function AddDeviceDialog({ open, onOpenChange }: AddDeviceDialogProps) {
               autoFocus
               autoComplete="off"
               spellCheck={false}
-              maxLength={9}
-              hint={code && !codeValid ? undefined : '6 位字母+数字，大小写均可'}
+              maxLength={8}
+              hint={code && !codeValid ? undefined : '6 位字母+数字，可带短横线'}
               error={code && !codeValid ? '配对码格式不正确' : undefined}
               className="font-mono uppercase tracking-[0.2em] text-center"
             />

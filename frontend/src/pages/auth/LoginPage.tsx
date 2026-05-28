@@ -1,30 +1,33 @@
 // 登录：左侧 editorial 大字，右侧下划线表单。响应式：移动端单列居中。
 
 import { useState } from 'react';
-import { Navigate, Link } from 'react-router-dom';
+import { Navigate, Link, useLocation } from 'react-router-dom';
 import { ArrowRight } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { AuthLayout } from '@/components/layout/AuthLayout';
 import { useAuth } from '@/features/auth/auth';
-import { getApiErrorMessage } from '@/lib/api-error';
+import { getApiErrorMessage } from '@/lib/api';
+import { redirectFromLocationState } from './redirect';
 
-export function Login() {
+export function LoginPage() {
   const { token, login } = useAuth();
+  const location = useLocation();
+  const redirectTo = redirectFromLocationState(location.state);
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  if (token) return <Navigate to="/" replace />;
+  if (token) return <Navigate to={redirectTo} replace />;
 
   async function onSubmit(e: { preventDefault(): void }) {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
-      await login({ identifier, password });
+      await login({ identifier, password }, redirectTo);
     } catch (err) {
       setError(getApiErrorMessage(err, '登录失败，请检查账号和密码'));
     } finally {
@@ -56,11 +59,11 @@ export function Login() {
             required
             autoComplete="current-password"
             placeholder="请输入密码"
-            error={error ?? undefined}
           />
         </div>
 
         <div className="mt-10">
+          {error && <p className="mb-4 font-sans text-[13px] text-clay">{error}</p>}
           <Button
             type="submit"
             fullWidth
