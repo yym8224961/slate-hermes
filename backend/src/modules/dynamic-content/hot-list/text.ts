@@ -1,5 +1,6 @@
 import type { HotListItem } from './hot-list.types';
 import { stripHtml } from '../html-text';
+import { isPublicHttpUrl } from '../../../common/http/fetch';
 
 export function cleanText(value: unknown): string {
   return stripHtml(value);
@@ -41,7 +42,7 @@ export function withRanks(items: Array<Omit<HotListItem, 'rank'> | HotListItem>)
       hot: item.hot ? cleanText(item.hot) : undefined,
       desc: item.desc ? cleanText(item.desc) : undefined,
       author: item.author ? cleanText(item.author) : undefined,
-      url: item.url ? String(item.url) : undefined,
+      url: safeExternalUrl(item.url),
       timestamp: item.timestamp ? String(item.timestamp) : undefined,
     }))
     .filter((item) => item.title.length > 0);
@@ -50,7 +51,17 @@ export function withRanks(items: Array<Omit<HotListItem, 'rank'> | HotListItem>)
 export function absoluteUrl(base: string, href: unknown): string | undefined {
   if (typeof href !== 'string' || !href.trim()) return undefined;
   try {
-    return new URL(href, base).toString();
+    return safeExternalUrl(new URL(href, base).toString());
+  } catch {
+    return undefined;
+  }
+}
+
+export function safeExternalUrl(value: unknown): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  try {
+    const url = new URL(value);
+    return isPublicHttpUrl(url.toString()) ? url.toString() : undefined;
   } catch {
     return undefined;
   }

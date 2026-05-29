@@ -14,12 +14,13 @@ import { PAPER_HEX, PAPER_RGB, INK_RGB } from './colors';
  * @returns ImageData 对象
  */
 export function decodeBppImage(
-  bytes: Uint8Array,
+  bytes: Uint8Array | ArrayBuffer,
   width: number = FRAME_WIDTH,
   height: number = FRAME_HEIGHT,
   paperColor: readonly [number, number, number] = PAPER_RGB,
   inkColor: readonly [number, number, number] = INK_RGB
 ): ImageData {
+  const byteView = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes;
   const data = new ImageData(width, height);
   const bpr = width >> 3;
   const pixels = new Uint32Array(data.data.buffer);
@@ -30,7 +31,7 @@ export function decodeBppImage(
   for (let y = 0; y < height; y++) {
     const rowStart = y * bpr;
     for (let byteOffset = 0; byteOffset < bpr; byteOffset++) {
-      const byte = bytes[rowStart + byteOffset]!;
+      const byte = byteView[rowStart + byteOffset]!;
       pixels[dst++] = byte & 0b1000_0000 ? paperPixel : inkPixel;
       pixels[dst++] = byte & 0b0100_0000 ? paperPixel : inkPixel;
       pixels[dst++] = byte & 0b0010_0000 ? paperPixel : inkPixel;

@@ -5,11 +5,11 @@ import { Wifi, Frame, Trash2 } from 'lucide-react';
 import type { DeviceSummaryT, GroupSummaryT } from 'shared';
 import { DragHandle } from '@/components/ui/DragHandle';
 import { IconBlock } from '@/components/ui/IconBlock';
-import { isOnline, rssiLabel, useTimeAgo } from '@/lib/format';
+import { DEVICE_ONLINE_TICK_MS, isOnlineAt, rssiLabel, useNow, useTimeAgo } from '@/lib/format';
 import { BatteryLevelIcon } from './BatteryLevelIcon';
 import { useUnbindDeviceWithConfirm } from './useUnbindDeviceWithConfirm';
 import { cn } from '@/lib/cn';
-import { useSortableStyle } from '@/lib/dnd';
+import { useSortableStyle } from '@/hooks/dnd';
 
 export function DeviceCard({
   device,
@@ -20,7 +20,8 @@ export function DeviceCard({
   groups: GroupSummaryT[];
   onOpen: () => void;
 }) {
-  const online = isOnline(device);
+  const now = useNow(DEVICE_ONLINE_TICK_MS);
+  const online = isOnlineAt(device, now);
   const currentGroup = groups.find((g) => g.id === device.selected_group_id);
   const groupName = currentGroup?.name;
   const battery = device.battery_pct;

@@ -18,8 +18,9 @@ export const v2exSource: HotListSource = {
     const list = await fetchJson<V2exItem[]>('https://www.v2ex.com/api/topics/hot.json', {
       signal: ctx.signal,
     });
+    const items = Array.isArray(list) ? list : [];
     return withRanks(
-      list.map((item) => ({
+      items.map((item) => ({
         title: item.title ?? '',
         desc: item.content,
         author: item.member?.username,

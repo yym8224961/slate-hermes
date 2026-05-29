@@ -10,20 +10,22 @@
 
 import { useCallback } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { X, Pencil, Check, Wifi, Unlink, Radio } from 'lucide-react';
+import { X, Wifi, Unlink, Radio } from 'lucide-react';
 import type { DeviceSummaryT, GroupSummaryT } from 'shared';
 import { usePatchDevice } from '@/features/devices/queries';
 import { useGroups } from '@/features/groups/queries';
 import { useToast } from '@/components/feedback/Toast';
 import { Button } from '@/components/ui/Button';
+import { InlineRename } from '@/components/ui/InlineRename';
 import { Spinner } from '@/components/ui/Spinner';
 import { Select, SelectItem, SelectSeparator } from '@/components/ui/Select';
-import { isOnline, rssiLabel, useTimeAgo } from '@/lib/format';
+import { DEVICE_ONLINE_TICK_MS, isOnlineAt, rssiLabel, useNow, useTimeAgo } from '@/lib/format';
 import { BatteryLevelIcon } from './BatteryLevelIcon';
 import { useUnbindDeviceWithConfirm } from './useUnbindDeviceWithConfirm';
-import { inputCls, dialogContentWideCls, dialogOverlayCls } from '@/lib/styles';
+import { dialogContentWideCls, dialogOverlayCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
-import { useInlineRename } from '@/lib/hooks';
+import { getApiErrorMessage } from '@/lib/api-errors';
+import { useInlineRename } from '@/hooks/useInlineRename';
 
 interface DeviceModalProps {
   open: boolean;
@@ -53,12 +55,13 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
       await patch.mutateAsync({ name });
       toast.success('已改名');
     } catch (err) {
-      toast.error('改名失败');
+      toast.error('改名失败', getApiErrorMessage(err));
       throw err;
     }
   });
 
-  const online = isOnline(device);
+  const now = useNow(DEVICE_ONLINE_TICK_MS);
+  const online = isOnlineAt(device, now);
   const battery = device.battery_pct;
   const lastSeenAgo = useTimeAgo(device.last_seen_at);
 
@@ -70,7 +73,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
       { selected_group_id: next },
       {
         onSuccess: () => toast.success(next ? '已切换在播' : '已清空在播'),
-        onError: () => toast.error('切换失败'),
+        onError: (err) => toast.error('切换失败', getApiErrorMessage(err)),
       }
     );
   }
@@ -89,37 +92,26 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
                 <span className="font-mono text-[11px] text-stone-light">{device.mac}</span>
               </p>
               {/* 名称 + inline 改名 */}
-              <div className="mt-1.5 flex items-center gap-2 min-w-0">
-                {editingName ? (
-                  <input
-                    autoFocus
-                    value={draftName}
-                    onChange={(e) => setDraftName(e.target.value)}
-                    onBlur={commit}
-                    onKeyDown={handleKeyDown}
-                    maxLength={64}
-                    placeholder="未命名"
-                    className={cn(
-                      inputCls,
-                      'flex-1 min-w-0 !text-[24px] sm:!text-[26px] !font-serif !font-bold leading-tight'
-                    )}
-                  />
-                ) : (
-                  <Dialog.Title className="font-serif text-[24px] sm:text-[26px] font-bold leading-tight truncate">
-                    {device.name ?? '未命名'}
-                  </Dialog.Title>
-                )}
-                <button
-                  onClick={() => {
-                    if (editingName) commit();
-                    else startEditing();
-                  }}
-                  disabled={patch.isPending}
-                  aria-label={editingName ? '保存名称' : '改名'}
-                  className="text-stone hover:text-ink disabled:opacity-50 transition-colors p-1.5 -m-1 hover:bg-cream"
-                >
-                  {editingName ? <Check size={16} /> : <Pencil size={14} />}
-                </button>
+              <div className="mt-1.5">
+                <InlineRename
+                  editing={editingName}
+                  value={device.name ?? '未命名'}
+                  draft={draftName}
+                  onDraftChange={setDraftName}
+                  onStart={startEditing}
+                  onCommit={commit}
+                  onKeyDown={handleKeyDown}
+                  pending={patch.isPending}
+                  placeholder="未命名"
+                  titleClassName="font-serif text-[24px] sm:text-[26px] font-bold leading-tight truncate"
+                  inputClassName="!text-[24px] sm:!text-[26px] !font-serif !font-bold leading-tight"
+                  buttonClassName="p-1.5 -m-1 text-stone"
+                  editIconSize={14}
+                  saveIconSize={16}
+                  renderTitle={(value, className) => (
+                    <Dialog.Title className={className}>{value}</Dialog.Title>
+                  )}
+                />
               </div>
             </div>
             <Dialog.Close asChild>

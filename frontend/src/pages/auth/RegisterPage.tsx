@@ -19,6 +19,7 @@ export function RegisterPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
+  const [emailError, setEmailError] = useState<string | null>(null);
   const [usernameError, setUsernameError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [confirmError, setConfirmError] = useState<string | null>(null);
@@ -29,11 +30,17 @@ export function RegisterPage() {
   async function onSubmit(e: { preventDefault(): void }) {
     e.preventDefault();
     authForm.setError(null);
+    setEmailError(null);
     setUsernameError(null);
     setPasswordError(null);
     setConfirmError(null);
+    const trimmedEmail = email.trim();
     if (!/^[a-zA-Z0-9_]{3,32}$/.test(username)) {
       setUsernameError('用户名只能包含字母、数字、下划线，3-32 位');
+      return;
+    }
+    if (!isValidEmail(trimmedEmail)) {
+      setEmailError('请输入有效的邮箱地址');
       return;
     }
     if (password.length < 8) {
@@ -45,7 +52,7 @@ export function RegisterPage() {
       return;
     }
     await authForm.run(
-      () => register({ email, username, password }, redirectTo),
+      () => register({ email: trimmedEmail, username, password }, redirectTo),
       '注册失败，请稍后再试'
     );
   }
@@ -75,6 +82,7 @@ export function RegisterPage() {
             required
             autoComplete="email"
             placeholder="you@example.com"
+            error={emailError ?? undefined}
           />
           <Input
             label="密码"
@@ -124,4 +132,8 @@ export function RegisterPage() {
       </form>
     </AuthLayout>
   );
+}
+
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }

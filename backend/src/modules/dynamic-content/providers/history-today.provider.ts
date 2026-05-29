@@ -10,10 +10,14 @@ import {
 } from '../history-today.data';
 import { datePartsInTz } from '../timezone';
 import { fetchJson } from '../../../common/http/fetch';
+import { setBoundedCache } from '../../../common/utils';
 
 const FETCH_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 86_400_000;
 const RAW_LANG = 'zh-cn';
+const MAX_RAW_CACHE_ENTRIES = 64;
+const MAX_AI_CACHE_ENTRIES = 256;
+const MAX_INFLIGHT_ENTRIES = 256;
 
 /**
  * 历史上的今天。
@@ -67,11 +71,13 @@ export class HistoryTodayProvider implements DataProvider<
 
     const p = this.fetchOptimized(month, day, rawKey, nowMs)
       .then((data) => {
-        this.aiCache.set(aiKey, { data, fetchedAt: nowMs });
+        setBoundedCache(this.aiCache, aiKey, { data, fetchedAt: nowMs }, MAX_AI_CACHE_ENTRIES);
         return data;
       })
-      .finally(() => this.inflight.delete(aiKey));
-    this.inflight.set(aiKey, p);
+      .finally(() => {
+        if (this.inflight.get(aiKey) === p) this.inflight.delete(aiKey);
+      });
+    this.setInflight(aiKey, p);
     return p;
   }
 
@@ -88,25 +94,35 @@ export class HistoryTodayProvider implements DataProvider<
     if (cached && nowMs - cached.fetchedAt < CACHE_TTL_MS) return cached.data;
     if (cached) this.aiCache.delete(key);
 
+    const existing = this.inflight.get(key);
+    if (existing) return existing;
+
     const url = `https://baike.baidu.com/cms/home/eventsOnHistory/${month}.json`;
-    const json = await fetchJson<BaiduHistoryResponse>(`${url}?_=${nowMs}`, {
+    const task = fetchJson<BaiduHistoryResponse>(`${url}?_=${nowMs}`, {
       timeoutMs: FETCH_TIMEOUT_MS,
-    });
-    const rawItems = json[month]?.[`${month}${day}`] ?? [];
-    const data = parseHistoryTodayData({
-      dateLabel: `${parts.month}月${parts.day}日`,
-      items: rawItems
-        .map((item) => ({
-          year: normalizeHistoryYear(textOrEmpty(item.year)),
-          display: normalizeDisplay(stripHtml(textOrEmpty(item.title || item.desc))),
-        }))
-        .filter((item): item is { year: string; display: string } => {
-          return !!item.year && !!item.display;
-        }),
-    });
-    if (!data) throw new Error('baidu history empty');
-    this.aiCache.set(key, { data, fetchedAt: nowMs });
-    return data;
+    })
+      .then((json) => {
+        const rawItems = json[month]?.[`${month}${day}`] ?? [];
+        const data = parseHistoryTodayData({
+          dateLabel: `${parts.month}月${parts.day}日`,
+          items: rawItems
+            .map((item) => ({
+              year: normalizeHistoryYear(textOrEmpty(item.year)),
+              display: normalizeDisplay(stripHtml(textOrEmpty(item.title || item.desc))),
+            }))
+            .filter((item): item is { year: string; display: string } => {
+              return !!item.year && !!item.display;
+            }),
+        });
+        if (!data) throw new Error('baidu history empty');
+        setBoundedCache(this.aiCache, key, { data, fetchedAt: nowMs }, MAX_AI_CACHE_ENTRIES);
+        return data;
+      })
+      .finally(() => {
+        if (this.inflight.get(key) === task) this.inflight.delete(key);
+      });
+    this.setInflight(key, task);
+    return task;
   }
 
   private async fetchOptimized(
@@ -121,7 +137,7 @@ export class HistoryTodayProvider implements DataProvider<
         ? cachedRaw.events
         : await this.fetchRawEvents(month, day);
     if (!cachedRaw || nowMs - cachedRaw.fetchedAt >= CACHE_TTL_MS) {
-      this.rawCache.set(rawKey, { events, fetchedAt: nowMs });
+      setBoundedCache(this.rawCache, rawKey, { events, fetchedAt: nowMs }, MAX_RAW_CACHE_ENTRIES);
     }
     const dateLabel = `${month}月${day}日`;
     const aiData = await this.ai.optimizeHistoryToday({
@@ -138,6 +154,10 @@ export class HistoryTodayProvider implements DataProvider<
       throw new Error('history_today AI 优化失败');
     }
     return normalized;
+  }
+
+  private setInflight(key: string, task: Promise<HistoryTodayProviderData>): void {
+    setBoundedCache(this.inflight, key, task, MAX_INFLIGHT_ENTRIES);
   }
 
   private async fetchRawEvents(month: number, day: number): Promise<HistoryTodayRawEvent[]> {

@@ -15,6 +15,7 @@ const ICON_SIZE_PX: Record<WeatherIconSize, number> = {
 
 const logger = new Logger('WeatherIcons');
 const cache = new Map<string, Promise<BitmapMask | null>>();
+const MAX_ICON_CACHE_ENTRIES = 256;
 
 export function loadWeatherIconMask(
   code: number | null,
@@ -23,13 +24,18 @@ export function loadWeatherIconMask(
   const normalized = normalizeIconCode(code);
   const key = `${normalized}:${size}`;
   const cached = cache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    cache.delete(key);
+    cache.set(key, cached);
+    return cached;
+  }
   const task = renderWeatherIconMask(normalized, size).catch((err: unknown) => {
     cache.delete(key);
     logger.error(`Failed to load weather icon ${normalized} (${size}): ${formatError(err)}`);
     return null;
   });
   cache.set(key, task);
+  trimCache(cache, MAX_ICON_CACHE_ENTRIES);
   return task;
 }
 
@@ -73,4 +79,12 @@ function resolveIconPath(code: number): string | null {
 function normalizeIconCode(code: number | null): number {
   if (code !== null && Number.isFinite(code)) return Math.trunc(code);
   return 999;
+}
+
+function trimCache<K, V>(target: Map<K, V>, maxEntries: number): void {
+  while (target.size > maxEntries) {
+    const oldest = target.keys().next().value as K | undefined;
+    if (oldest === undefined) break;
+    target.delete(oldest);
+  }
 }

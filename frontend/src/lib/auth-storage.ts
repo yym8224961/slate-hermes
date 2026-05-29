@@ -1,23 +1,41 @@
 const TOKEN_KEY = 'slate_jwt';
 
 let unauthorizedHandler: (() => void) | null = null;
+let unauthorizedNotified = false;
+let fallbackRedirectStarted = false;
 
-export function getAuthToken(): string | null {
+interface ClearAuthTokenOptions {
+  resetUnauthorized?: boolean;
+}
+
+function getAuthToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
-export function clearAuthToken(): void {
+function clearAuthToken(): void {
   localStorage.removeItem(TOKEN_KEY);
+}
+
+function resetUnauthorizedState(): void {
+  unauthorizedNotified = false;
+  fallbackRedirectStarted = false;
 }
 
 export function handleUnauthorizedFallback(): void {
   clearAuthToken();
-  if (typeof window !== 'undefined' && window.location.pathname !== '/login') {
+  if (
+    typeof window !== 'undefined' &&
+    !fallbackRedirectStarted &&
+    window.location.pathname !== '/login'
+  ) {
+    fallbackRedirectStarted = true;
     window.location.href = '/login';
   }
 }
 
 export function notifyUnauthorized(): void {
+  if (unauthorizedNotified) return;
+  unauthorizedNotified = true;
   if (unauthorizedHandler) {
     unauthorizedHandler();
     return;
@@ -36,8 +54,21 @@ export function setUnauthorizedHandler(handler: () => void): () => void {
   };
 }
 
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    unauthorizedHandler = null;
+    resetUnauthorizedState();
+  });
+}
+
 export const tokenStorage = {
   get: getAuthToken,
-  set: (v: string) => localStorage.setItem(TOKEN_KEY, v),
-  clear: clearAuthToken,
+  set: (v: string) => {
+    resetUnauthorizedState();
+    localStorage.setItem(TOKEN_KEY, v);
+  },
+  clear: (options?: ClearAuthTokenOptions) => {
+    if (options?.resetUnauthorized !== false) resetUnauthorizedState();
+    clearAuthToken();
+  },
 };

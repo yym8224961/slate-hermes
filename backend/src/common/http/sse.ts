@@ -18,8 +18,9 @@ export async function* parseSseJson<T>(stream: ReadableStream<Uint8Array>): Asyn
       }
     }
     buf += decoder.decode();
-    const data = parseSseBlock<T>(buf);
-    if (data !== null) yield data;
+    for (const data of parseSseBlocks<T>(buf)) {
+      yield data;
+    }
   } finally {
     reader.releaseLock();
   }
@@ -45,6 +46,13 @@ export function* parseSsePayloads(text: string): Generator<string> {
     const payload = lines.map((line) => line.slice(5).trim()).join('\n');
     if (!payload || payload === '[DONE]') continue;
     yield payload;
+  }
+}
+
+function* parseSseBlocks<T>(text: string): Generator<T> {
+  for (const block of text.split(/\r?\n\r?\n/)) {
+    const data = parseSseBlock<T>(block);
+    if (data !== null) yield data;
   }
 }
 

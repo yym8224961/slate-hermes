@@ -72,6 +72,34 @@ describe('HotListProvider', () => {
     expect(data.items).toEqual([]);
   });
 
+  it('drops unsafe upstream item URLs before returning hot-list data', async () => {
+    const source: HotListSource = {
+      id: 'v2ex',
+      label: 'V2EX',
+      fetch: async (): Promise<HotListItem[]> => [
+        { rank: 1, title: 'safe', url: 'https://www.v2ex.com/t/1' },
+        { rank: 2, title: 'script', url: 'javascript:alert(1)' },
+        { rank: 3, title: 'file', url: 'file:///etc/passwd' },
+        { rank: 4, title: 'local', url: 'http://127.0.0.1/admin' },
+      ],
+    };
+    const provider = new HotListProvider([source]);
+    const config = provider.validateConfig({
+      type: 'hot_list',
+      source: 'v2ex',
+      refresh_interval_sec: 600,
+    });
+
+    const data = await provider.fetchData(config, { now: new Date('2026-05-17T04:00:00.000Z') });
+
+    expect(data.items.map((item) => item.url)).toEqual([
+      'https://www.v2ex.com/t/1',
+      undefined,
+      undefined,
+      undefined,
+    ]);
+  });
+
   it('applies per-content last-data fallback when concurrent fetches share one failed request', async () => {
     let releaseFetch!: () => void;
     const blocked = new Promise<void>((resolve) => {
@@ -99,7 +127,7 @@ describe('HotListProvider', () => {
       lastData: {
         source: 'zhihu',
         sourceLabel: '知乎',
-        updatedAt: '2026-05-17T03:00:00.000Z',
+        updatedAt: '2026-05-17T03:45:00.000Z',
         items: [{ rank: 1, title: '第一份旧数据' }],
       },
     });
@@ -108,7 +136,7 @@ describe('HotListProvider', () => {
       lastData: {
         source: 'zhihu',
         sourceLabel: '知乎',
-        updatedAt: '2026-05-17T03:00:00.000Z',
+        updatedAt: '2026-05-17T03:45:00.000Z',
         items: [{ rank: 1, title: '第二份旧数据' }],
       },
     });
@@ -119,5 +147,33 @@ describe('HotListProvider', () => {
     expect(calls).toBe(1);
     expect(firstData.items[0]?.title).toBe('第一份旧数据');
     expect(secondData.items[0]?.title).toBe('第二份旧数据');
+  });
+
+  it('does not reuse stale last-data fallback after source fetch failure', async () => {
+    const source: HotListSource = {
+      id: 'zhihu',
+      label: '知乎',
+      fetch: async (): Promise<HotListItem[]> => {
+        throw new Error('source down');
+      },
+    };
+    const provider = new HotListProvider([source]);
+    const config = provider.validateConfig({
+      type: 'hot_list',
+      source: 'zhihu',
+      refresh_interval_sec: 600,
+    });
+
+    const data = await provider.fetchData(config, {
+      now: new Date('2026-05-17T06:00:00.000Z'),
+      lastData: {
+        source: 'zhihu',
+        sourceLabel: '知乎',
+        updatedAt: '2026-05-17T03:00:00.000Z',
+        items: [{ rank: 1, title: '过期旧数据' }],
+      },
+    });
+
+    expect(data.items).toEqual([]);
   });
 });

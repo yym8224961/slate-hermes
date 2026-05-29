@@ -1,6 +1,8 @@
 import { useCallback, useSyncExternalStore } from 'react';
 
 const DEFAULT_TIME_AGO_INTERVAL_MS = 30_000;
+const MIN_TICK_INTERVAL_MS = 1_000;
+const TICK_BUCKET_MS = 5_000;
 interface TimeAgoStore {
   now: number;
   timer: number | null;
@@ -9,20 +11,34 @@ interface TimeAgoStore {
 
 const stores = new Map<number, TimeAgoStore>();
 
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    stores.forEach((store) => {
+      if (store.timer !== null) window.clearInterval(store.timer);
+      store.listeners.clear();
+      store.timer = null;
+    });
+    stores.clear();
+  });
+}
+
 export function timeAgo(iso: string | null): string {
   return relativeTimeFrom(Date.now(), iso);
 }
 
-export function useTimeAgo(iso: string | null, intervalMs = 30_000): string {
+export function useTimeAgo(iso: string | null, intervalMs = DEFAULT_TIME_AGO_INTERVAL_MS): string {
+  const now = useNow(intervalMs);
+  return relativeTimeFrom(now, iso);
+}
+
+export function useNow(intervalMs = DEFAULT_TIME_AGO_INTERVAL_MS): number {
   const normalizedInterval = normalizeInterval(intervalMs);
   const subscribe = useCallback(
     (listener: () => void) => subscribeTicker(listener, normalizedInterval),
     [normalizedInterval]
   );
   const getSnapshot = useCallback(() => getNowSnapshot(normalizedInterval), [normalizedInterval]);
-  const now = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-
-  return relativeTimeFrom(now, iso);
+  return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
 function subscribeTicker(listener: () => void, intervalMs: number) {
@@ -35,9 +51,12 @@ function subscribeTicker(listener: () => void, intervalMs: number) {
   }
   return () => {
     store.listeners.delete(listener);
-    if (store.listeners.size === 0 && store.timer !== null) {
-      window.clearInterval(store.timer);
-      store.timer = null;
+    if (store.listeners.size === 0) {
+      if (store.timer !== null) {
+        window.clearInterval(store.timer);
+        store.timer = null;
+      }
+      stores.delete(safeIntervalMs);
     }
   };
 }
@@ -47,8 +66,9 @@ function getNowSnapshot(intervalMs: number) {
 }
 
 function normalizeInterval(intervalMs: number) {
-  const safeIntervalMs = Math.max(1, Math.trunc(intervalMs));
-  return Number.isFinite(safeIntervalMs) ? safeIntervalMs : DEFAULT_TIME_AGO_INTERVAL_MS;
+  if (!Number.isFinite(intervalMs)) return DEFAULT_TIME_AGO_INTERVAL_MS;
+  const safeIntervalMs = Math.max(MIN_TICK_INTERVAL_MS, Math.trunc(intervalMs));
+  return Math.round(safeIntervalMs / TICK_BUCKET_MS) * TICK_BUCKET_MS || MIN_TICK_INTERVAL_MS;
 }
 
 function getStore(safeIntervalMs: number): TimeAgoStore {
@@ -77,14 +97,4 @@ function relativeTimeFrom(now: number, iso: string | null): string {
   const h = Math.floor(m / 60);
   if (h < 48) return `${h} 小时前`;
   return `${Math.floor(h / 24)} 天前`;
-}
-
-export function greeting(): string {
-  const h = new Date().getHours();
-  if (h < 6) return '夜深了';
-  if (h < 11) return '早上好';
-  if (h < 14) return '中午好';
-  if (h < 18) return '下午好';
-  if (h < 22) return '晚上好';
-  return '夜深了';
 }

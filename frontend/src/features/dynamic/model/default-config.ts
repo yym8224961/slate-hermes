@@ -1,10 +1,10 @@
 import {
   DASHBOARD_CUSTOM_STARTER_TEMPLATE,
-  DASHBOARD_CUSTOM_STARTER_TEST_DATA,
   DEFAULT_TTS_VOICE,
   type DynamicConfigT,
   type DynamicTypeT,
 } from 'shared';
+import { DASHBOARD_CUSTOM_STARTER_TEST_DATA } from 'shared/dynamic/test-fixtures';
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 

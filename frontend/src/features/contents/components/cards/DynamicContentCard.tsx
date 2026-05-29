@@ -9,7 +9,8 @@ import { ContentCardActions } from './ContentCardActions';
 import { ContentCardShell } from './ContentCardShell';
 import { useDeleteContentWithConfirm } from './useDeleteContentWithConfirm';
 import { FrameBitmapPreview } from '@/features/contents/components/preview/FrameBitmapPreview';
-import { useSortableStyle } from '@/lib/dnd';
+import { getApiErrorMessage } from '@/lib/api-errors';
+import { useSortableStyle } from '@/hooks/dnd';
 
 interface DynamicContentCardProps {
   gid: string;
@@ -33,7 +34,7 @@ export function DynamicContentCard({ gid, content, onEdit }: DynamicContentCardP
   function onRefresh() {
     refresh.mutate(content.id, {
       onSuccess: () => toast.success('已刷新'),
-      onError: () => toast.error('刷新失败'),
+      onError: (err) => toast.error('刷新失败', getApiErrorMessage(err)),
     });
   }
 

@@ -24,11 +24,22 @@ export class BitmapCanvas {
   }
 
   drawHLine(x: number, y: number, w: number, color = PIXEL_BLACK): void {
-    for (let i = 0; i < w; i++) this.setPixel(x + i, y, color);
+    if (y < 0 || y >= this.height || w <= 0) return;
+    const x0 = Math.max(0, x);
+    const x1 = Math.min(this.width, x + w);
+    if (x0 >= x1) return;
+    this.pixels.fill(color ? PIXEL_WHITE : PIXEL_BLACK, y * this.width + x0, y * this.width + x1);
   }
 
   drawVLine(x: number, y: number, h: number, color = PIXEL_BLACK): void {
-    for (let i = 0; i < h; i++) this.setPixel(x, y + i, color);
+    if (x < 0 || x >= this.width || h <= 0) return;
+    const y0 = Math.max(0, y);
+    const y1 = Math.min(this.height, y + h);
+    if (y0 >= y1) return;
+    const fillValue = color ? PIXEL_WHITE : PIXEL_BLACK;
+    for (let yy = y0; yy < y1; yy++) {
+      this.pixels[yy * this.width + x] = fillValue;
+    }
   }
 
   fillRect(x: number, y: number, w: number, h: number, color = PIXEL_BLACK): void {

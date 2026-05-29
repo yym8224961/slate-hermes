@@ -3,6 +3,26 @@ import type { ContentSummaryT } from 'shared';
 import { DevicesProtocolController } from './devices-protocol.controller';
 
 describe('DevicesProtocolController', () => {
+  it('returns the service-normalized MAC address in register responses', async () => {
+    const controller = new DevicesProtocolController(
+      {
+        registerOrReset: async () => ({
+          deviceId: 'device-1',
+          deviceSecret: 'a'.repeat(64),
+          pairCode: 'ABC123',
+          reclaimed: false,
+          serverTime: '2026-05-28T00:00:00.000Z',
+        }),
+      } as never,
+      {} as never,
+      {} as never
+    );
+
+    await expect(controller.register({ mac: 'aa-bb-cc-dd-ee-ff' })).resolves.toMatchObject({
+      mac: 'AA:BB:CC:DD:EE:FF',
+    });
+  });
+
   it('returns current_content for non-timer polls when the reported manifest still matches', async () => {
     let refreshCalls = 0;
     const currentRequest = {
@@ -82,5 +102,58 @@ describe('DevicesProtocolController', () => {
 
     expect(refreshCalls).toBe(0);
     expect(state.current_content).toEqual(currentContent);
+  });
+
+  it('returns current_content as null when the reported frame cannot be resolved', async () => {
+    const controller = new DevicesProtocolController(
+      {
+        recordTelemetry: async () => ({
+          id: 'device-1',
+          mac: 'AA:BB:CC:DD:EE:FF',
+          name: null,
+          ownerUserId: 'user-1',
+          selectedGroupId: 'group-1',
+          pairCode: 'ABC123',
+          selectedGroup: { manifestEtag: 'manifest-1' },
+        }),
+        buildState: async () => ({
+          device: {
+            id: 'device-1',
+            mac: 'AA:BB:CC:DD:EE:FF',
+            name: null,
+            bound: true,
+            pair_code: null,
+            server_time: '2026-05-28T00:00:00.000Z',
+          },
+          group: {
+            id: 'group-1',
+            structure_etag: 'structure-1',
+            manifest_etag: 'manifest-1',
+            name: 'Group',
+            content_count: 3,
+            sort_order: 0,
+            position: { current: 1, total: 1 },
+          },
+        }),
+      } as never,
+      {} as never,
+      {
+        resolveCurrentContentRequest: async () => null,
+        refreshCurrentContentForDeviceIfDue: async () => {
+          throw new Error('refresh should be skipped');
+        },
+        currentContentForDevice: async () => {
+          throw new Error('current content should be skipped');
+        },
+      } as never
+    );
+
+    const state = await controller.poll({ deviceId: 'device-1', mac: 'AA:BB:CC:DD:EE:FF' }, {
+      telemetry: {
+        wake_reason: 'button',
+      },
+    } as never);
+
+    expect(state.current_content).toBeNull();
   });
 });

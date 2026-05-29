@@ -31,6 +31,21 @@ export function valueText(value: unknown): string | null {
   return text ? text : null;
 }
 
+export function setBoundedCache<K, V>(
+  cache: Map<K, V>,
+  key: K,
+  value: V,
+  maxEntries: number
+): void {
+  cache.delete(key);
+  cache.set(key, value);
+  while (cache.size > maxEntries) {
+    const oldest = cache.keys().next().value as K | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+}
+
 export function shortRegionName(
   value: string,
   opts: { stripWeatherOffice?: boolean } = {}

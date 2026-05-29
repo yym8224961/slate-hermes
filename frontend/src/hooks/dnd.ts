@@ -22,6 +22,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MutableRefObject,
   type SetStateAction,
 } from 'react';
 import { PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
@@ -33,6 +34,12 @@ interface PersistControls {
   rollback: () => void;
 }
 
+interface DndRuntimeState {
+  latestItemsOrder: string[];
+  persistSeq: number;
+  pendingOrder: string[] | null;
+}
+
 export function useDndOrder<T>(
   items: T[] | undefined,
   getId: (item: T) => string,
@@ -42,8 +49,11 @@ export function useDndOrder<T>(
 
   const [currentOrder, setCurrentOrderState] = useState<string[]>([]);
   const currentOrderRef = useRef<string[]>([]);
-  const latestPersistSeqRef = useRef(0);
-  const pendingOrderRef = useRef<string[] | null>(null);
+  const runtimeRef = useRef<DndRuntimeState>({
+    latestItemsOrder: [],
+    persistSeq: 0,
+    pendingOrder: null,
+  });
   const getIdRef = useRef(getId);
   const onPersistRef = useRef(onPersist);
 
@@ -66,14 +76,16 @@ export function useDndOrder<T>(
 
   useEffect(() => {
     if (!items) {
-      pendingOrderRef.current = null;
+      runtimeRef.current.latestItemsOrder = [];
+      runtimeRef.current.pendingOrder = null;
       setCurrentOrder([]);
       return;
     }
     const serverOrder = items.map((item) => getIdRef.current(item));
-    const pendingOrder = pendingOrderRef.current;
+    runtimeRef.current.latestItemsOrder = serverOrder;
+    const pendingOrder = runtimeRef.current.pendingOrder;
     if (pendingOrder && sameOrder(serverOrder, pendingOrder)) {
-      pendingOrderRef.current = null;
+      runtimeRef.current.pendingOrder = null;
       setCurrentOrder(serverOrder);
       return;
     }
@@ -81,7 +93,7 @@ export function useDndOrder<T>(
       setCurrentOrder(pendingOrder);
       return;
     }
-    pendingOrderRef.current = null;
+    runtimeRef.current.pendingOrder = null;
     setCurrentOrder(serverOrder);
   }, [items, setCurrentOrder]);
 
@@ -105,23 +117,22 @@ export function useDndOrder<T>(
       const oldPos = order.indexOf(active.id as string);
       const newPos = order.indexOf(over.id as string);
       if (oldPos < 0 || newPos < 0) return;
-      const persistSeq = ++latestPersistSeqRef.current;
       const previousOrder = [...order];
       const newOrder = arrayMove(order, oldPos, newPos);
-      pendingOrderRef.current = newOrder;
+      const persistSeq = ++runtimeRef.current.persistSeq;
+      runtimeRef.current.pendingOrder = newOrder;
       setCurrentOrder(newOrder);
-      const finishIfCurrent = (fn: () => void) => {
-        if (persistSeq !== latestPersistSeqRef.current) return;
-        pendingOrderRef.current = null;
-        fn();
-      };
-      onPersistRef.current(newOrder, {
-        commit: () => finishIfCurrent(() => setCurrentOrder(newOrder)),
-        rollback: () =>
-          finishIfCurrent(() =>
-            setCurrentOrder((current) => (sameOrder(current, newOrder) ? previousOrder : current))
-          ),
-      });
+      onPersistRef.current(
+        newOrder,
+        createPersistControls({
+          runtimeRef,
+          persistSeq,
+          previousOrder,
+          newOrder,
+          currentOrderRef,
+          setCurrentOrder,
+        })
+      );
     },
     [setCurrentOrder]
   );
@@ -154,4 +165,45 @@ function sameOrderMembers(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
   const members = new Set(a);
   return b.every((id) => members.has(id));
+}
+
+function createPersistControls({
+  runtimeRef,
+  persistSeq,
+  previousOrder,
+  newOrder,
+  currentOrderRef,
+  setCurrentOrder,
+}: {
+  runtimeRef: MutableRefObject<DndRuntimeState>;
+  persistSeq: number;
+  previousOrder: string[];
+  newOrder: string[];
+  currentOrderRef: MutableRefObject<string[]>;
+  setCurrentOrder: (next: SetStateAction<string[]>) => void;
+}): PersistControls {
+  const finishIfCurrent = (fn: (latestItemsOrder: string[]) => void) => {
+    const runtime = runtimeRef.current;
+    if (persistSeq !== runtime.persistSeq) return;
+    runtime.pendingOrder = null;
+    fn(runtime.latestItemsOrder);
+  };
+
+  return {
+    commit: () =>
+      finishIfCurrent((latestItemsOrder) => {
+        if (!sameOrderMembers(latestItemsOrder, newOrder)) {
+          setCurrentOrder(latestItemsOrder);
+        } else if (!sameOrder(currentOrderRef.current, newOrder)) {
+          setCurrentOrder(newOrder);
+        }
+      }),
+    rollback: () =>
+      finishIfCurrent((latestItemsOrder) => {
+        setCurrentOrder((current) => {
+          if (!sameOrderMembers(current, previousOrder)) return latestItemsOrder;
+          return sameOrder(current, newOrder) ? previousOrder : current;
+        });
+      }),
+  };
 }

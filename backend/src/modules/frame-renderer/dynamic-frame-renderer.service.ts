@@ -38,6 +38,7 @@ import {
 } from './frame-date-utils';
 import {
   drawTextLine,
+  ellipsize,
   filterDrawable,
   glyphTopOffset,
   textPixelBounds,
@@ -112,6 +113,7 @@ const HOT_LIST_RENDER_COUNT = 8;
 @Injectable()
 export class DynamicFrameRendererService implements OnModuleInit {
   private fonts: FontSet | null = null;
+  private fontsPromise: Promise<FontSet> | null = null;
 
   async onModuleInit(): Promise<void> {
     await this.getFonts();
@@ -165,6 +167,14 @@ export class DynamicFrameRendererService implements OnModuleInit {
 
   private async getFonts(): Promise<FontSet> {
     if (this.fonts) return this.fonts;
+    this.fontsPromise ??= this.loadFonts().catch((err: unknown) => {
+      this.fontsPromise = null;
+      throw err;
+    });
+    return this.fontsPromise;
+  }
+
+  private async loadFonts(): Promise<FontSet> {
     const fusionPixel10 = await loadBitmapFont(resolveFontPath('fusion-pixel-10.json'));
     this.fonts = {
       sans16: await loadBitmapFont(resolveFontPath('source-han-sans-16-slim.json')),
@@ -365,7 +375,9 @@ export class DynamicFrameRendererService implements OnModuleInit {
       maxWidth: 92,
       ellipsis: true,
     });
-    this.drawText(c, fonts.sans16, '°', tempX + Math.min(92, tempWidth + 4), tempY + 18, {
+    const visibleTemp = ellipsize(fonts.displayLarge, tempFallback, temp, 92);
+    const visibleTempWidth = textWidthFallback(fonts.displayLarge, tempFallback, visibleTemp);
+    this.drawText(c, fonts.sans16, '°', tempX + visibleTempWidth + 4, tempY + 18, {
       maxWidth: 20,
     });
     const metrics = [
@@ -1227,8 +1239,12 @@ export class DynamicFrameRendererService implements OnModuleInit {
     values: number[]
   ): void {
     if (values.length < 2 || w <= 1 || h <= 1) return;
-    const min = Math.min(...values);
-    const max = Math.max(...values);
+    let min = Number.POSITIVE_INFINITY;
+    let max = Number.NEGATIVE_INFINITY;
+    for (const value of values) {
+      if (value < min) min = value;
+      if (value > max) max = value;
+    }
     const range = max - min || 1;
     let lastX = x;
     let lastY = y + h - Math.round(((values[0]! - min) / range) * h);

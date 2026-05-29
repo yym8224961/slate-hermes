@@ -99,7 +99,7 @@ export class DailyCalendarProvider implements DataProvider<
     const lunarStr = `${ganzhiYear} ${lunarDate.replace(/^农历/, '')}`;
     // 节气：getJieQi() 返回最近节气，需要校验是否就是今日
     const jieQi = lunar.getJieQi(); // 如 "立夏"
-    const jieQiDate = lunar.getJieQiTable()[jieQi];
+    const jieQiDate = jieQi ? lunar.getJieQiTable()[jieQi] : undefined;
     const isToday =
       jieQi &&
       jieQiDate &&

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Params } from 'nestjs-pino';
 import { AppConfig } from '../config/app.config';
+import { safeRequestId } from '../../common/request-id';
 
 export function buildLoggerParams(config: AppConfig): Params {
   const prettyTransport = config.isProd
@@ -18,13 +19,28 @@ export function buildLoggerParams(config: AppConfig): Params {
   return {
     pinoHttp: {
       level: config.logLevel,
-      genReqId: (req) => (req.headers['x-request-id'] as string | undefined) ?? randomUUID(),
+      genReqId: (req) => safeRequestId(req.headers['x-request-id']) ?? randomUUID(),
       customProps: (req) => ({ method: req.method, url: req.url }),
       serializers: {
         req: (req) => ({ id: req.id, method: req.method, url: req.url }),
         res: (res) => ({ statusCode: res.statusCode }),
       },
-      redact: ['req.headers.authorization', 'req.headers.cookie'],
+      redact: [
+        'req.headers.authorization',
+        'req.headers.cookie',
+        'req.headers["x-api-key"]',
+        'req.headers["x-qw-api-key"]',
+        'req.headers["x-qweather-api-key"]',
+        'req.headers["x-tts-api-key"]',
+        'req.headers["x-ai-api-key"]',
+        'req.headers["x-app-token"]',
+        'req.body.password',
+        'req.body.token',
+        'req.body.secret',
+        'req.query.token',
+        'req.query.api_key',
+        'req.query.apiKey',
+      ],
       transport: prettyTransport,
     },
   };

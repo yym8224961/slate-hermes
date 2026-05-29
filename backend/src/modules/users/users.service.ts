@@ -1,16 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import { ConflictError } from '../../common/errors';
+import { ConflictError, ValidationError } from '../../common/errors';
 import { prismaUniqueTargetIncludes } from '../../common/utils';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const PASSWORD_HASH_COST = 12;
 
 export interface UserRecord {
   id: string;
   email: string;
   username: string | null;
+}
+
+export interface UserRecordWithPassword extends UserRecord {
   password: string;
 }
 
@@ -18,7 +21,7 @@ export interface UserRecord {
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findByEmail(email: string): Promise<UserRecord | null> {
+  async findByEmail(email: string): Promise<UserRecordWithPassword | null> {
     return this.prisma.user.findUnique({
       where: { email },
       select: { id: true, email: true, username: true, password: true },
@@ -26,12 +29,16 @@ export class UsersService {
   }
 
   /** 支持邮箱或用户名登录 */
-  async findByIdentifier(identifier: string): Promise<UserRecord | null> {
-    if (EMAIL_RE.test(identifier)) {
-      return this.findByEmail(identifier);
+  async findByIdentifier(identifier: string): Promise<UserRecordWithPassword | null> {
+    const normalized = identifier.trim();
+    if (!normalized) {
+      throw new ValidationError('账号不能为空', { code: 'identifier_empty' });
+    }
+    if (normalized.includes('@')) {
+      return this.findByEmail(normalized);
     }
     return this.prisma.user.findUnique({
-      where: { username: identifier },
+      where: { username: normalized },
       select: { id: true, email: true, username: true, password: true },
     });
   }
@@ -50,7 +57,7 @@ export class UsersService {
     username: string,
     password: string
   ): Promise<{ id: string; email: string; username: string | null }> {
-    const hash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, PASSWORD_HASH_COST);
     try {
       return await this.prisma.user.create({
         data: { email, username, password: hash },

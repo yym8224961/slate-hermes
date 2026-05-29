@@ -6,6 +6,8 @@ import { useDeleteContentAudio } from '@/features/contents/queries';
 import { useConfirm } from '@/components/feedback/Confirm';
 import { useToast } from '@/components/feedback/Toast';
 import { cn } from '@/lib/cn';
+import { getApiErrorMessage } from '@/lib/api-errors';
+import { formatBytes } from '@/lib/format';
 
 interface AudioDropzoneProps {
   gid: string;
@@ -55,7 +57,7 @@ export function AudioDropzone({
           if (!ok) return;
           delAudio.mutate(editingContentId, {
             onSuccess: () => toast.success('音频已删除'),
-            onError: () => toast.error('删除失败'),
+            onError: (err) => toast.error('删除失败', getApiErrorMessage(err)),
           });
         }}
       />
@@ -89,9 +91,7 @@ export function AudioDropzone({
           {audioFile ? (
             <>
               <p className="font-mono text-[12px] text-ink truncate">{audioFile.name}</p>
-              <p className="font-sans text-[11px] text-stone">
-                {(audioFile.size / 1024).toFixed(1)} KB
-              </p>
+              <p className="font-sans text-[11px] text-stone">{formatBytes(audioFile.size)}</p>
             </>
           ) : hasExistingAudio ? (
             <p className="font-sans text-[13px] text-stone">拖新文件可替换</p>

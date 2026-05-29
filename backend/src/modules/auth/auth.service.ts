@@ -5,7 +5,7 @@ import { AuthError } from '../../common/errors';
 import { UsersService } from '../users/users.service';
 import { JwtTokenService } from './jwt-token.service';
 
-const DUMMY_PASSWORD_HASH = '$2b$10$tx7P.bQxwBewVb262ZeE9.tgvaB9iCmuujKGtH1gkt8.xkUgcqixu';
+const DUMMY_PASSWORD_HASH = '$2b$12$CuSHZRvMs3E1H4thc835jOrgn1306YQVah/7ePhzdlkVSZcniq/Am';
 
 @Injectable()
 export class AuthService {

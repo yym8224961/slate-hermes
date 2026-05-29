@@ -22,8 +22,11 @@ import { AddDeviceDialog } from '@/features/devices/components/AddDeviceDialog';
 import { DeviceCard } from '@/features/devices/components/DeviceCard';
 import { GroupsSection } from './GroupsSection';
 import { useToast } from '@/components/feedback/Toast';
-import { useDndOrder } from '@/lib/dnd';
-import { greeting } from '@/lib/format';
+import { getApiErrorMessage } from '@/lib/api-errors';
+import { useDndOrder } from '@/hooks/dnd';
+import type { GroupSummaryT } from 'shared';
+
+const EMPTY_GROUPS: GroupSummaryT[] = [];
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -41,8 +44,6 @@ export function DashboardPage() {
   // 添加设备弹窗
   const [addOpen, setAddOpen] = useState(false);
 
-  const greetName = user?.username ?? '';
-
   // 设备拖拽排序
   const reorderDevices = useReorderDevices();
   const toast = useToast();
@@ -54,9 +55,9 @@ export function DashboardPage() {
         { order: newOrder },
         {
           onSuccess: commit,
-          onError: () => {
+          onError: (err) => {
             rollback();
-            toast.error('排序保存失败');
+            toast.error('排序保存失败', getApiErrorMessage(err));
           },
         }
       )
@@ -66,7 +67,7 @@ export function DashboardPage() {
     <div>
       <header className="pb-2 fade-up">
         <h1 className="font-serif text-[36px] sm:text-[48px] font-bold leading-[1.1] tracking-tight text-ink">
-          {greeting()}，<em className="not-italic">{greetName || '你好'}</em>
+          {greeting()}，<em className="not-italic">{user?.username || '你好'}</em>
         </h1>
       </header>
 
@@ -96,7 +97,7 @@ export function DashboardPage() {
             renderItem={(device) => (
               <DeviceCard
                 device={device}
-                groups={groups.data ?? []}
+                groups={groups.data ?? EMPTY_GROUPS}
                 onOpen={() => navigate(`/devices/${device.id}`)}
               />
             )}
@@ -131,4 +132,14 @@ export function DashboardPage() {
       <AddDeviceDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
   );
+}
+
+function greeting(): string {
+  const h = new Date().getHours();
+  if (h < 6) return '夜深了';
+  if (h < 11) return '早上好';
+  if (h < 14) return '中午好';
+  if (h < 18) return '下午好';
+  if (h < 22) return '晚上好';
+  return '夜深了';
 }

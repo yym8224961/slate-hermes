@@ -1,10 +1,22 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Put,
+  UseGuards,
+} from '@nestjs/common';
 import type { DeviceSummaryT } from 'shared';
 import { CurrentUser, type WebUserContext } from '../../common/decorators/current-user.decorator';
 import { DevicesService } from './devices.service';
 import { PatchDeviceDto } from './dto/patch-device.dto';
 import { ClaimDeviceDto } from './dto/claim-device.dto';
 import { ReorderDevicesDto } from './dto/reorder-devices.dto';
+import { DeviceClaimRateLimitGuard } from './device-claim-rate-limit.guard';
 
 @Controller('devices')
 export class DevicesAdminController {
@@ -26,6 +38,7 @@ export class DevicesAdminController {
   }
 
   @Post('claims')
+  @UseGuards(DeviceClaimRateLimitGuard)
   async claimByPairCode(
     @CurrentUser() user: WebUserContext,
     @Body() body: ClaimDeviceDto

@@ -1,10 +1,11 @@
 #!/usr/bin/env bun
 import {
-  HOT_LIST_SOURCES,
   HOT_LIST_SOURCES_BY_NAME,
   HotListConfig,
+  MAINSTREAM_HOT_LIST_SOURCES,
   hotListSourceDisplayLabel,
   type ContentDetailT,
+  type HotListSourceCatalogEntry,
   type HotListSourceIdT,
 } from 'shared';
 import type { ContentsService } from '../src/modules/contents/contents.service';
@@ -22,10 +23,13 @@ interface Args extends UserSelectorArgs {
   groupName: string;
   replace: boolean;
   refreshIntervalSec: number;
+  allSources: boolean;
 }
 
 const args = parseArgs(process.argv.slice(2));
-const hotListConfigs = buildHotListConfigs(args.refreshIntervalSec);
+const selectedSources = args.allSources ? HOT_LIST_SOURCES_BY_NAME : MAINSTREAM_HOT_LIST_SOURCES;
+const selectedSourceSet = new Set<HotListSourceIdT>(selectedSources.map((source) => source.id));
+const hotListConfigs = buildHotListConfigs(args.refreshIntervalSec, selectedSources);
 const services = await createGroupScriptServices();
 
 try {
@@ -36,7 +40,7 @@ try {
   if (args.replace) {
     await deleteAllContents(contents, group.id, user.id);
   } else {
-    await deleteDuplicateHotLists(contents, group.id, user.id);
+    await deleteDuplicateHotLists(contents, group.id, user.id, selectedSourceSet);
   }
 
   const generated = await upsertHotListFrames(contents, group.id, user.id, hotListConfigs);
@@ -49,6 +53,7 @@ try {
       `Hot list group ready: ${args.groupName}`,
       `  user: ${userDisplay(user)}`,
       `  group_id: ${group.id}`,
+      `  sources: ${args.allSources ? 'all' : 'mainstream'}`,
       `  frames: ${generated.length}`,
       `  manifest_etag: ${manifest_etag}`,
     ].join('\n') + '\n'
@@ -63,11 +68,14 @@ function parseArgs(argv: string[]): Args {
     groupName: '热榜',
     replace: false,
     refreshIntervalSec: 600,
+    allSources: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
     if (arg === '--replace') {
       args.replace = true;
+    } else if (arg === '--all-sources') {
+      args.allSources = true;
     } else if (arg === '--user-id') {
       args.userId = readArgValue(argv, ++i, arg);
     } else if (arg === '--email') {
@@ -99,6 +107,7 @@ function printHelpAndExit(): never {
 
 Options:
   --group-name <name>             Group name to create or update. Default: 热榜
+  --all-sources                   Create every hot-list source. Default: mainstream sources only.
   --replace                       Delete all existing contents in the target group before creating frames.
   --refresh-interval-sec <sec>    Hot-list refresh interval. Default: 600
 `);
@@ -108,16 +117,16 @@ Options:
 async function deleteDuplicateHotLists(
   contents: ContentsService,
   groupId: string,
-  userId: string
+  userId: string,
+  selectedSourceSet: ReadonlySet<HotListSourceIdT>
 ): Promise<void> {
   const rows = await contents.list(groupId, { userId });
   const seen = new Set<HotListSourceIdT>();
-  const valid = new Set<HotListSourceIdT>(HOT_LIST_SOURCES.map((source) => source.id));
 
   for (const row of rows) {
     if (row.dynamic_type !== 'hot_list') continue;
     const sourceId = sourceIdFromContent(row);
-    if (!sourceId || !valid.has(sourceId) || seen.has(sourceId)) {
+    if (!sourceId || !selectedSourceSet.has(sourceId) || seen.has(sourceId)) {
       await contents.delete(row.id, userId);
       continue;
     }
@@ -140,7 +149,7 @@ async function upsertHotListFrames(
   }
 
   const generated: Array<{ sourceId: HotListSourceIdT; contentId: string }> = [];
-  for (const source of HOT_LIST_SOURCES_BY_NAME) {
+  for (const source of selectedSources) {
     const config = configs.get(source.id);
     if (!config) throw new Error(`Missing hot-list config for source: ${source.id}`);
     const frameName = hotListSourceDisplayLabel(source);
@@ -165,10 +174,11 @@ async function upsertHotListFrames(
 }
 
 function buildHotListConfigs(
-  refreshIntervalSec: number
+  refreshIntervalSec: number,
+  sources: readonly HotListSourceCatalogEntry[]
 ): Map<HotListSourceIdT, ReturnType<typeof HotListConfig.parse>> {
   return new Map(
-    HOT_LIST_SOURCES.map((source) => [
+    sources.map((source) => [
       source.id,
       HotListConfig.parse({
         type: 'hot_list',
@@ -181,13 +191,21 @@ function buildHotListConfigs(
 
 function orderedContentIds(rows: ContentDetailT[]): string[] {
   const rank = new Map<HotListSourceIdT, number>(
-    HOT_LIST_SOURCES_BY_NAME.map((source, index) => [source.id, index])
+    selectedSources.map((source, index) => [source.id, index])
   );
   const hotRows = rows
-    .filter((row) => row.dynamic_type === 'hot_list' && sourceIdFromContent(row))
+    .filter((row) => {
+      if (row.dynamic_type !== 'hot_list') return false;
+      const sourceId = sourceIdFromContent(row);
+      return !!sourceId && rank.has(sourceId);
+    })
     .sort((a, b) => rank.get(sourceIdFromContent(a)!)! - rank.get(sourceIdFromContent(b)!)!);
   const otherRows = rows
-    .filter((row) => !(row.dynamic_type === 'hot_list' && sourceIdFromContent(row)))
+    .filter((row) => {
+      if (row.dynamic_type !== 'hot_list') return true;
+      const sourceId = sourceIdFromContent(row);
+      return !sourceId || !rank.has(sourceId);
+    })
     .sort((a, b) => a.seq - b.seq);
   return [...hotRows, ...otherRows].map((row) => row.id);
 }

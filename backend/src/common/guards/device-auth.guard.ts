@@ -16,11 +16,11 @@ export class DeviceAuthGuard implements CanActivate {
       .getRequest<FastifyRequest & { [CURRENT_DEVICE_KEY]?: DeviceContext }>();
     const secret = readDeviceSecret(req);
     if (!secret) {
-      throw new AuthError('missing Authorization: Bearer <device_secret>');
+      throw new AuthError('设备认证失败');
     }
     const device = await authenticateDeviceSecret(this.prisma, secret);
     if (!device) {
-      throw new AuthError('device secret invalid; clear NVS and POST /api/v1/devices');
+      throw new AuthError('设备认证失败');
     }
     req[CURRENT_DEVICE_KEY] = device;
     return true;

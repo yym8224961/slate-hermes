@@ -8,17 +8,18 @@ interface ErrorBoundaryProps {
 
 interface ErrorBoundaryState {
   hasError: boolean;
+  error: Error | null;
 }
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
-  state: ErrorBoundaryState = { hasError: false };
+  state: ErrorBoundaryState = { hasError: false, error: null };
 
   resetErrorBoundary = () => {
-    this.setState({ hasError: false });
+    this.setState({ hasError: false, error: null });
   };
 
-  static getDerivedStateFromError(): ErrorBoundaryState {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
@@ -37,6 +38,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
             <p className="mt-3 font-sans text-[13px] leading-relaxed text-stone">
               当前页面遇到异常，可以先重试渲染；如果仍失败，再刷新应用状态。
             </p>
+            {this.state.error?.message && (
+              <p className="mt-3 font-mono text-[11px] leading-relaxed text-stone-light break-words">
+                {this.state.error.message}
+              </p>
+            )}
             <div className="mt-6 flex gap-3">
               <Button onClick={this.resetErrorBoundary}>重试</Button>
               <Button variant="outline" onClick={() => window.location.reload()}>

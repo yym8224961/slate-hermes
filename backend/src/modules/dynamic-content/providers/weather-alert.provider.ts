@@ -7,6 +7,7 @@ import {
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { stripHtml } from '../html-text';
 import { fetchJson } from '../../../common/http/fetch';
+import { setBoundedCache } from '../../../common/utils';
 
 export interface WeatherAlertItem {
   id: string;
@@ -44,6 +45,7 @@ const DEFAULT_CACHE_TTL_SEC = 600;
 const FETCH_TIMEOUT_MS = 5000;
 const NMC_ALARM_API = 'https://www.nmc.cn/rest/findAlarm';
 const NMC_BASE_URL = 'https://www.nmc.cn';
+const MAX_CACHE_ENTRIES = 128;
 
 @Injectable()
 export class WeatherAlertProvider implements DataProvider<
@@ -75,7 +77,7 @@ export class WeatherAlertProvider implements DataProvider<
 
     const p = this.fetchFresh(province, ctx)
       .then((data) => {
-        this.cache.set(key, { data, fetchedAt: now });
+        setBoundedCache(this.cache, key, { data, fetchedAt: now }, MAX_CACHE_ENTRIES);
         return data;
       })
       .finally(() => this.inflight.delete(key));
@@ -105,7 +107,10 @@ export class WeatherAlertProvider implements DataProvider<
           title,
           issuedAt: stripHtml(row.issuetime) || ctx.now.toISOString(),
         };
-        if (href) item.url = new URL(href, NMC_BASE_URL).toString();
+        if (href) {
+          const url = safeNmcUrl(href);
+          if (url) item.url = url;
+        }
         return [item];
       })
       .slice(0, 20);
@@ -116,5 +121,16 @@ export class WeatherAlertProvider implements DataProvider<
       updatedAt: ctx.now.toISOString(),
       items,
     };
+  }
+}
+
+function safeNmcUrl(href: string): string | undefined {
+  try {
+    const url = new URL(href, NMC_BASE_URL);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined;
+    if (url.hostname !== 'www.nmc.cn') return undefined;
+    return url.toString();
+  } catch {
+    return undefined;
   }
 }

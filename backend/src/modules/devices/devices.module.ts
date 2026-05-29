@@ -5,11 +5,12 @@ import { DevicesService } from './devices.service';
 import { DevicesProtocolController } from './devices-protocol.controller';
 import { DevicesAdminController } from './devices-admin.controller';
 import { DeviceRegisterRateLimitGuard } from './device-register-rate-limit.guard';
+import { DeviceClaimRateLimitGuard } from './device-claim-rate-limit.guard';
 
 @Module({
   imports: [GroupsModule, ContentsModule],
   controllers: [DevicesProtocolController, DevicesAdminController],
-  providers: [DevicesService, DeviceRegisterRateLimitGuard],
+  providers: [DevicesService, DeviceRegisterRateLimitGuard, DeviceClaimRateLimitGuard],
   exports: [DevicesService],
 })
 export class DevicesModule {}

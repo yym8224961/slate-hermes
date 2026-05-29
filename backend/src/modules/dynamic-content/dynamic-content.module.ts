@@ -19,16 +19,20 @@ import { CalendarDataService } from './calendar-data.service';
 import { DynamicContentRendererService } from './dynamic-content-renderer.service';
 import { DynamicContentSchedulerService } from './dynamic-content-scheduler.service';
 import { DynamicAudioService } from './audio/dynamic-audio.service';
+import { DynamicContentController } from './dynamic-content.controller';
+import { WeatherCitySearchRateLimitGuard } from './weather-city-search-rate-limit.guard';
 
 /**
  * 动态内容模板与渲染业务模块。
  *
- * 不挂 controller —— 创建/修改/删除走 contents module；data push / refresh 也挂在 contents controller。
+ * 创建/修改/删除走 contents module；data push / refresh 也挂在 contents controller。
+ * 这里只挂动态内容配置相关的辅助接口。
  *
  * 暴露 DynamicContentRegistry 与 DynamicContentRendererService 给 contents module 使用。
  */
 @Module({
   imports: [BlobModule, ImageRendererModule, GroupsModule, AiModule, TtsModule],
+  controllers: [DynamicContentController],
   providers: [
     DynamicContentRegistry,
     CalendarDataService,
@@ -45,6 +49,7 @@ import { DynamicAudioService } from './audio/dynamic-audio.service';
     HotListProvider,
     DynamicAudioService,
     DynamicContentSchedulerService,
+    WeatherCitySearchRateLimitGuard,
   ],
   exports: [DynamicContentRegistry, DynamicContentRendererService, CalendarDataService],
 })

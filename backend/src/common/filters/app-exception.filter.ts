@@ -31,7 +31,7 @@ export class AppExceptionFilter implements ExceptionFilter {
     const appErr = this.normalize(exception);
     const envelope: ErrorEnvelope = {
       error: appErr.code,
-      message: appErr.message,
+      message: appErr.httpStatus >= 500 ? '服务器内部错误' : appErr.message,
       requestId: currentRequestId(),
     };
 
@@ -71,7 +71,7 @@ export class AppExceptionFilter implements ExceptionFilter {
         typeof res === 'string'
           ? res
           : ((res as { message?: string }).message ?? exception.message);
-      const detail = typeof res === 'object' ? res : undefined;
+      const detail = httpExceptionDetail(res);
       const code =
         typeof res === 'object' && res && typeof (res as { error?: unknown }).error === 'string'
           ? (res as { error: string }).error
@@ -112,6 +112,17 @@ class HttpAppError extends AppError {
     this.httpStatus = status;
     this.code = code;
   }
+}
+
+function httpExceptionDetail(response: unknown): Record<string, unknown> | undefined {
+  if (!response || typeof response !== 'object') return undefined;
+  const source = response as Record<string, unknown>;
+  const detail: Record<string, unknown> = {};
+  if (typeof source.error === 'string') detail.error = source.error;
+  if (typeof source.message === 'string' || Array.isArray(source.message)) {
+    detail.message = source.message;
+  }
+  return Object.keys(detail).length > 0 ? detail : undefined;
 }
 
 function retryAfterFromDetail(detail: unknown): number | null {

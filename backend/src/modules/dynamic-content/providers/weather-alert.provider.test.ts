@@ -75,6 +75,84 @@ describe('WeatherAlertProvider', () => {
 
     expect(calls).toBe(1);
   });
+
+  it('drops only the malformed alert URL instead of the whole list', async () => {
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        data: {
+          page: {
+            list: [
+              {
+                alertid: '1',
+                issuetime: '2026/05/25 08:00',
+                title: '广东省气象台发布雷雨大风蓝色预警信号',
+                url: 'http://[',
+              },
+              {
+                alertid: '2',
+                issuetime: '2026/05/25 09:00',
+                title: '湖南省气象台发布暴雨黄色预警信号',
+                url: '/publish/alarm/2.html',
+              },
+            ],
+          },
+        },
+      })) as unknown as typeof fetch;
+
+    const provider = new WeatherAlertProvider();
+    const config = provider.validateConfig({
+      type: 'weather_alert',
+      province: '',
+      refresh_interval_sec: 600,
+    });
+
+    const data = await provider.fetchData(config, {
+      now: new Date('2026-05-25T00:00:00.000Z'),
+    });
+
+    expect(data.items).toHaveLength(2);
+    expect(data.items[0]?.url).toBeUndefined();
+    expect(data.items[1]?.url).toBe('https://www.nmc.cn/publish/alarm/2.html');
+  });
+
+  it('drops non-NMC alert URLs returned by the upstream API', async () => {
+    globalThis.fetch = (async () =>
+      jsonResponse({
+        data: {
+          page: {
+            list: [
+              {
+                alertid: '1',
+                issuetime: '2026/05/25 08:00',
+                title: '广东省气象台发布雷雨大风蓝色预警信号',
+                url: 'javascript:alert(1)',
+              },
+              {
+                alertid: '2',
+                issuetime: '2026/05/25 09:00',
+                title: '湖南省气象台发布暴雨黄色预警信号',
+                url: 'https://evil.example/alarm/2.html',
+              },
+            ],
+          },
+        },
+      })) as unknown as typeof fetch;
+
+    const provider = new WeatherAlertProvider();
+    const config = provider.validateConfig({
+      type: 'weather_alert',
+      province: '',
+      refresh_interval_sec: 600,
+    });
+
+    const data = await provider.fetchData(config, {
+      now: new Date('2026-05-25T00:00:00.000Z'),
+    });
+
+    expect(data.items).toHaveLength(2);
+    expect(data.items[0]?.url).toBeUndefined();
+    expect(data.items[1]?.url).toBeUndefined();
+  });
 });
 
 function jsonResponse(body: unknown): Response {

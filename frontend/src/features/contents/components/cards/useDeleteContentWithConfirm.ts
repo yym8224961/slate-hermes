@@ -29,7 +29,6 @@ export function useDeleteContentWithConfirm({
     successToast: '已删除',
     errorToast: '删除失败',
   });
-
   const deleteWithConfirm = useCallback(() => {
     void confirmDelete(content.id);
   }, [confirmDelete, content.id]);

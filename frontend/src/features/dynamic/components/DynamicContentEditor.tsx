@@ -1,6 +1,6 @@
 // 动态内容编辑器 —— 编辑动态内容配置。
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useState, type FormEvent } from 'react';
 import { Sparkles } from 'lucide-react';
 import {
   DynamicConfig,
@@ -29,13 +29,10 @@ import {
 } from '@/features/contents/model/frame-name';
 import { TYPE_META, shouldRenderParams } from '@/features/contents/model/type-meta';
 import { useDynamicPreview } from '@/features/dynamic/hooks/useDynamicPreview';
+import { useDynamicEditorBaselineSync } from '@/features/dynamic/hooks/useDynamicEditorBaselineSync';
 import { DynamicFramePreview } from '@/features/dynamic/components/preview/DynamicPreview';
 import { canonicalJsonKey } from '@/lib/json';
 import { frameNameForSyncedDynamicConfigChange } from '@/features/dynamic/model/frame-name-sync';
-import {
-  createDynamicEditorBaseline,
-  isSameDynamicEditorBaseline,
-} from '@/features/dynamic/model/editor-baseline';
 
 interface DynamicContentEditorProps {
   gid: string;
@@ -62,61 +59,25 @@ export function DynamicContentEditor({
   );
   const [config, setConfig] = useState<DynamicConfigT>(initialConfig);
   const configKey = useMemo(() => canonicalJsonKey(config), [config]);
-  const lastSyncedServerKeyRef = useRef('');
-  const [baseline, setBaseline] = useState(() =>
-    createDynamicEditorBaseline(content.id, initialType, content.frame_name, initialConfig)
+  const { baseline, setBaseline } = useDynamicEditorBaselineSync({
+    contentId: content.id,
+    serverType: initialType,
+    serverFrameName: content.frame_name,
+    serverConfig: initialConfig,
+    type,
+    frameName,
+    configKey,
+    setType,
+    setFrameName,
+    setConfig,
+  });
+  const dirty = useMemo(
+    () =>
+      type !== baseline.type ||
+      frameName !== baseline.frameName ||
+      configKey !== baseline.configKey,
+    [baseline.configKey, baseline.frameName, baseline.type, configKey, frameName, type]
   );
-  const serverBaseline = useMemo(
-    () => createDynamicEditorBaseline(content.id, initialType, content.frame_name, initialConfig),
-    [content.frame_name, content.id, initialConfig, initialType]
-  );
-  const editorStateRef = useRef({ baseline, type, frameName, configKey });
-  const dirty =
-    type !== baseline.type || frameName !== baseline.frameName || configKey !== baseline.configKey;
-
-  useEffect(() => {
-    editorStateRef.current = { baseline, type, frameName, configKey };
-  }, [baseline, configKey, frameName, type]);
-
-  useEffect(() => {
-    const serverKey = [
-      serverBaseline.contentId,
-      serverBaseline.type,
-      serverBaseline.frameName,
-      serverBaseline.configKey,
-    ].join('\0');
-    if (lastSyncedServerKeyRef.current === serverKey) return;
-
-    const {
-      baseline: currentBaseline,
-      type: currentType,
-      frameName: currentFrameName,
-      configKey: currentConfigKey,
-    } = editorStateRef.current;
-    const hasLocalEdits =
-      currentBaseline.contentId === serverBaseline.contentId &&
-      (currentType !== currentBaseline.type ||
-        currentFrameName !== currentBaseline.frameName ||
-        currentConfigKey !== currentBaseline.configKey);
-    const localMatchesServer =
-      currentType === serverBaseline.type &&
-      currentFrameName === serverBaseline.frameName &&
-      currentConfigKey === serverBaseline.configKey;
-
-    if (hasLocalEdits && !localMatchesServer) {
-      if (!isSameDynamicEditorBaseline(currentBaseline, serverBaseline)) {
-        setBaseline(serverBaseline);
-      }
-      lastSyncedServerKeyRef.current = serverKey;
-      return;
-    }
-
-    if (!isSameDynamicEditorBaseline(currentBaseline, serverBaseline)) setBaseline(serverBaseline);
-    if (currentType !== serverBaseline.type) setType(serverBaseline.type);
-    if (currentFrameName !== serverBaseline.frameName) setFrameName(serverBaseline.frameName);
-    if (currentConfigKey !== serverBaseline.configKey) setConfig(initialConfig);
-    lastSyncedServerKeyRef.current = serverKey;
-  }, [initialConfig, serverBaseline]);
 
   const savedPreviewEnabled = !!content.image_etag;
   const savedPreview = useContentImage(content.id, content.image_etag ?? null);
@@ -153,7 +114,15 @@ export function DynamicContentEditor({
     } catch (err) {
       toast.error('保存失败', getApiErrorMessage(err));
     }
-  }, [config, configKey, content.id, frameName, onDone, toast, type, update]);
+  }, [config, configKey, content.id, frameName, onDone, setBaseline, toast, type, update]);
+
+  const handleSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      void onSubmit();
+    },
+    [onSubmit]
+  );
 
   return (
     <div>
@@ -165,7 +134,10 @@ export function DynamicContentEditor({
       />
 
       <div className="mt-6 fade-up fade-up-1">
-        <div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr] gap-6 lg:gap-8">
+        <form
+          onSubmit={handleSubmit}
+          className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr] gap-6 lg:gap-8"
+        >
           {/* 预览 */}
           <div className="order-2 lg:order-1">
             <p className="font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] ml-0.5 mb-2">
@@ -230,13 +202,12 @@ export function DynamicContentEditor({
             {/* 操作按钮 */}
             <FormActions
               onCancel={onDone}
-              onSubmit={onSubmit}
               submitLabel="保存"
               disabled={!dirty}
               submitting={submitting}
             />
           </div>
-        </div>
+        </form>
       </div>
     </div>
   );

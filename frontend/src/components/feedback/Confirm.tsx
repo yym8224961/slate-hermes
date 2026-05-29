@@ -22,7 +22,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { IconBlock } from '@/components/ui/IconBlock';
-import { dialogContentConfirmCls, dialogOverlayConfirmCls } from '@/lib/styles';
+import { cn } from '@/lib/cn';
 
 export interface ConfirmOptions {
   title: string;
@@ -138,3 +138,13 @@ export function useConfirm() {
   if (!ctx) throw new Error('useConfirm outside ConfirmProvider');
   return ctx;
 }
+
+const dialogContentConfirmCls = cn(
+  'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
+  'w-[calc(100vw-2rem)] max-w-md',
+  'bg-paper border-2 border-ink',
+  'shadow-dialog',
+  'z-[60] p-6'
+);
+
+const dialogOverlayConfirmCls = 'fixed inset-0 bg-ink/20 z-50';

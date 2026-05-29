@@ -34,10 +34,10 @@ export function parseJson(
 }
 
 export function canonicalJsonKey(value: unknown): string {
-  return formatJsonKey(value);
+  return formatJsonKey(value, new WeakSet<object>());
 }
 
-function formatJsonKey(value: unknown): string {
+function formatJsonKey(value: unknown, seen: WeakSet<object>): string {
   if (value === null) return 'n';
   if (value === undefined) return 'u';
   if (typeof value === 'string') return `s:${JSON.stringify(value)}`;
@@ -46,19 +46,28 @@ function formatJsonKey(value: unknown): string {
   }
   if (typeof value === 'boolean') return `b:${value ? '1' : '0'}`;
   if (typeof value === 'bigint') return `i:${value.toString()}`;
-  if (typeof value === 'function') return `f:${JSON.stringify(String(value))}`;
   if (typeof value === 'symbol') return `y:${JSON.stringify(value.description ?? null)}`;
   if (Array.isArray(value)) {
-    return `a:[${value.map(formatJsonKey).join(',')}]`;
+    if (seen.has(value)) return 'r:[Circular]';
+    seen.add(value);
+    const key = `a:[${value.map((item) => formatJsonKey(item, seen)).join(',')}]`;
+    seen.delete(value);
+    return key;
   }
   if (value instanceof Date) {
     const time = value.getTime();
     return `t:${JSON.stringify(Number.isNaN(time) ? 'Invalid Date' : value.toISOString())}`;
   }
-  return `o:{${Object.keys(value)
+  if (typeof value !== 'object') return `x:${JSON.stringify(String(value))}`;
+  if (seen.has(value)) return 'r:[Circular]';
+  seen.add(value);
+  const key = `o:{${Object.keys(value)
     .sort()
     .map(
-      (key) => `${JSON.stringify(key)}:${formatJsonKey((value as Record<string, unknown>)[key])}`
+      (key) =>
+        `${JSON.stringify(key)}:${formatJsonKey((value as Record<string, unknown>)[key], seen)}`
     )
     .join(',')}}`;
+  seen.delete(value);
+  return key;
 }

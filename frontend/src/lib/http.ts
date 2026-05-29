@@ -1,7 +1,8 @@
 import axios, { type AxiosError } from 'axios';
-import { getAuthToken, notifyUnauthorized } from './auth-storage';
+import { API_PREFIX } from 'shared';
+import { notifyUnauthorized, tokenStorage } from './auth-storage';
 
-export const API_V1 = '/api/v1';
+export const API_V1 = API_PREFIX;
 
 export const api = axios.create({
   baseURL: '/',
@@ -9,7 +10,7 @@ export const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const token = getAuthToken();
+  const token = tokenStorage.get();
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }

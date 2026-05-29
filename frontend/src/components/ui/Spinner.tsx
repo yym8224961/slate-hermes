@@ -9,7 +9,11 @@ interface SpinnerProps {
 
 export function Spinner({ label, className }: SpinnerProps) {
   return (
-    <span className={cn('inline-flex items-center gap-2.5', className)}>
+    <span
+      role="status"
+      aria-label={label ?? '加载中'}
+      className={cn('inline-flex items-center gap-2.5', className)}
+    >
       <span className="inline-flex items-center" aria-hidden="true">
         <span className="heart-dot" />
         <span className="heart-dot" />

@@ -12,7 +12,12 @@ import { escapeXml, fontFamily, lineHeight } from '../fonts';
 function approxCharWidth(ch: string, size: number): number {
   // 中文/日文/韩文 + 全角符号宽度 ≈ 字号；其他按 0.55 倍
   const code = ch.codePointAt(0) ?? 0;
-  if (code >= 0x4e00 || (code >= 0x3000 && code <= 0x33ff)) {
+  if (
+    code >= 0x4e00 ||
+    (code >= 0x3000 && code <= 0x33ff) ||
+    (code >= 0xff01 && code <= 0xff60) ||
+    (code >= 0xffe0 && code <= 0xffe6)
+  ) {
     return size;
   }
   return size * 0.55;

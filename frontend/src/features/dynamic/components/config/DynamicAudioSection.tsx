@@ -1,4 +1,4 @@
-import { TTS_VOICES, type DynamicConfigT, type TtsVoiceT } from 'shared';
+import { TTS_VOICES, isTtsVoice, type DynamicConfigT } from 'shared';
 import { Select, SelectItem } from '@/components/ui/Select';
 import { Checkbox } from '@/components/ui/Checkbox';
 import type { AudioDynamicConfig } from '@/features/dynamic/types';
@@ -21,7 +21,10 @@ export function DynamicAudioSection({
         <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">音色</p>
         <Select
           value={config.audio_voice}
-          onValueChange={(value) => onChange({ ...config, audio_voice: value as TtsVoiceT })}
+          onValueChange={(value) => {
+            if (!isTtsVoice(value)) return;
+            onChange({ ...config, audio_voice: value });
+          }}
           disabled={!config.audio_enabled}
         >
           {TTS_VOICES.map((voice) => (

@@ -1,6 +1,6 @@
 // Mono Press 按钮：0px 圆角、uppercase 字母间距、实心墨 / 描边 / 危险三变体。
 
-import type { ButtonHTMLAttributes, ReactNode } from 'react';
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -11,16 +11,20 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   iconRight?: ReactNode;
 }
 
-export function Button({
-  variant = 'primary',
-  size = 'md',
-  fullWidth,
-  iconLeft,
-  iconRight,
-  className,
-  children,
-  ...rest
-}: ButtonProps) {
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
+  {
+    type = 'button',
+    variant = 'primary',
+    size = 'md',
+    fullWidth,
+    iconLeft,
+    iconRight,
+    className,
+    children,
+    ...rest
+  },
+  ref
+) {
   const sizeCls =
     size === 'sm'
       ? 'h-9 px-3.5 text-[11px] gap-1.5'
@@ -48,6 +52,8 @@ export function Button({
 
   return (
     <button
+      ref={ref}
+      type={type}
       className={cn(base, variant !== 'link' && sizeCls, tone, fullWidth && 'w-full', className)}
       {...rest}
     >
@@ -56,4 +62,4 @@ export function Button({
       {iconRight}
     </button>
   );
-}
+});

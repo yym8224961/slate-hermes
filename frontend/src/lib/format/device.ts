@@ -1,10 +1,17 @@
 import type { DeviceSummaryT } from 'shared';
 
 const ONLINE_THRESHOLD_MS = 5 * 60 * 1000;
+export const DEVICE_ONLINE_TICK_MS = 10_000;
 
 export function isOnline(d: { last_seen_at: string | null }): boolean {
+  return isOnlineAt(d, Date.now());
+}
+
+export function isOnlineAt(d: { last_seen_at: string | null }, now: number): boolean {
   if (!d.last_seen_at) return false;
-  return Date.now() - new Date(d.last_seen_at).getTime() < ONLINE_THRESHOLD_MS;
+  const lastSeen = new Date(d.last_seen_at).getTime();
+  if (!Number.isFinite(lastSeen)) return false;
+  return now - lastSeen < ONLINE_THRESHOLD_MS;
 }
 
 export function rssiLabel(rssi: number | null): string {

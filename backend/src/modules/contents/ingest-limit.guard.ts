@@ -6,8 +6,13 @@ import {
   Injectable,
 } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import { RateLimitedError } from '../../common/errors';
-import { FixedWindowRateLimiter } from '../../common/rate-limit/fixed-window-rate-limiter';
+import { RateLimitGuardBase } from '../../common/rate-limit/rate-limit-guard';
+
+const INGEST_WINDOW_MS = 60_000;
+const INGEST_MAX_PER_WINDOW = 30;
+const INGEST_MAX_BODY_BYTES = 64 * 1024;
+const INGEST_MAX_BUCKETS = 10_000;
+const INGEST_STALE_BUCKET_MS = INGEST_WINDOW_MS * 2;
 
 /**
  * Ingest 端点的简易限流 + body 大小检查。
@@ -22,18 +27,7 @@ import { FixedWindowRateLimiter } from '../../common/rate-limit/fixed-window-rat
  */
 @Injectable()
 export class IngestLimitGuard implements CanActivate {
-  private static readonly WINDOW_MS = 60_000;
-  private static readonly MAX_PER_WINDOW = 30;
-  private static readonly MAX_BODY_BYTES = 64 * 1024;
-  /** 防止攻击者用随机 contentId 把 Map 打爆内存 */
-  private static readonly MAX_BUCKETS = 10_000;
-  private static readonly STALE_BUCKET_MS = IngestLimitGuard.WINDOW_MS * 2;
-
-  private readonly limiter = new FixedWindowRateLimiter({
-    windowMs: IngestLimitGuard.WINDOW_MS,
-    maxBuckets: IngestLimitGuard.MAX_BUCKETS,
-    staleBucketMs: IngestLimitGuard.STALE_BUCKET_MS,
-  });
+  private readonly rateLimit = new IngestRateLimitGuard();
 
   canActivate(ctx: ExecutionContext): boolean {
     const req = ctx.switchToHttp().getRequest<FastifyRequest>();
@@ -47,27 +41,35 @@ export class IngestLimitGuard implements CanActivate {
     const lenHeader = req.headers['content-length'];
     if (typeof lenHeader === 'string') {
       const len = Number.parseInt(lenHeader, 10);
-      if (Number.isFinite(len) && len > IngestLimitGuard.MAX_BODY_BYTES) {
+      if (Number.isFinite(len) && len > INGEST_MAX_BODY_BYTES) {
         throw tooLarge();
       }
     }
 
     // 2. 速率限制（按 contentId 维度，capability URL 模型下没有更细粒度的身份）
-    const hit = this.limiter.hit(contentId, IngestLimitGuard.MAX_PER_WINDOW);
-    if (!hit.allowed) {
-      throw new RateLimitedError(`每分钟最多 ${IngestLimitGuard.MAX_PER_WINDOW} 次推送`, {
-        retry_after_sec: hit.retryAfterSec,
-      });
-    }
-
-    return true;
+    return this.rateLimit.canActivate(ctx);
   }
 
   static assertPayloadSize(body: unknown): void {
     const bytes = Buffer.byteLength(JSON.stringify(body ?? null), 'utf8');
-    if (bytes > IngestLimitGuard.MAX_BODY_BYTES) {
+    if (bytes > INGEST_MAX_BODY_BYTES) {
       throw tooLarge();
     }
+  }
+}
+
+class IngestRateLimitGuard extends RateLimitGuardBase {
+  constructor() {
+    super({
+      limiter: {
+        windowMs: INGEST_WINDOW_MS,
+        maxBuckets: INGEST_MAX_BUCKETS,
+        staleBucketMs: INGEST_STALE_BUCKET_MS,
+      },
+      key: (req) => (req.params as { contentId?: string })?.contentId ?? '',
+      maxPerWindow: INGEST_MAX_PER_WINDOW,
+      message: `每分钟最多 ${INGEST_MAX_PER_WINDOW} 次推送`,
+    });
   }
 }
 

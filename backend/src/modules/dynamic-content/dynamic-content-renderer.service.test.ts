@@ -12,9 +12,11 @@ describe('DynamicContentRendererService queueing', () => {
   it('does not run a scheduled render queued behind a failed force render', async () => {
     const first = deferred<unknown>();
     let fetchCalls = 0;
-    const service = createService(() => {
-      fetchCalls++;
-      return first.promise;
+    const service = createService({
+      fetchData: () => {
+        fetchCalls++;
+        return first.promise;
+      },
     });
 
     const forceRender = service.renderDynamicContent('content-1', { force: true });
@@ -30,10 +32,12 @@ describe('DynamicContentRendererService queueing', () => {
   it('still runs a force render queued behind a failed force render', async () => {
     const first = deferred<unknown>();
     let fetchCalls = 0;
-    const service = createService(() => {
-      fetchCalls++;
-      if (fetchCalls === 1) return first.promise;
-      return Promise.resolve({ tempC: 21 });
+    const service = createService({
+      fetchData: () => {
+        fetchCalls++;
+        if (fetchCalls === 1) return first.promise;
+        return Promise.resolve({ tempC: 21 });
+      },
     });
 
     const failedRender = service.renderDynamicContent('content-1', { force: true });
@@ -49,9 +53,104 @@ describe('DynamicContentRendererService queueing', () => {
     });
     expect(fetchCalls).toBe(2);
   });
+
+  it('rejects non-object render data instead of silently rendering empty fields', async () => {
+    const service = createService({ fetchData: () => Promise.resolve(['not', 'an', 'object']) });
+
+    await expect(service.renderDynamicContent('content-1', { force: true })).rejects.toThrow(
+      '动态数据必须是 JSON 对象或 null'
+    );
+  });
+
+  it('keeps a successful render response when dynamic audio sync fails', async () => {
+    const service = createService({
+      fetchData: () => Promise.resolve({ tempC: 21 }),
+      syncAudio: async () => {
+        throw new Error('audio cleanup failed');
+      },
+    });
+
+    await expect(service.renderDynamicContent('content-1', { force: true })).resolves.toMatchObject(
+      {
+        contentId: 'content-1',
+        imageEtag: expect.any(String),
+        audioEtag: null,
+        groupEtag: 'group-etag',
+        unchanged: false,
+      }
+    );
+  });
+
+  it('does not reuse stale time-sensitive dynamic data after fetch failure', async () => {
+    const service = createService({
+      fetchData: () => Promise.reject(new Error('provider down')),
+      imageSize: FRAME_BYTES,
+      dynamicData: {
+        tempC: 21,
+        summary: '晴',
+        updatedAt: '2026-05-17T00:00:00.000Z',
+      },
+      dynamicLastRunAt: new Date('2026-05-17T00:00:00.000Z'),
+    });
+
+    await expect(
+      service.renderDynamicContent('content-1', {
+        force: true,
+        now: new Date('2026-05-18T00:00:00.000Z'),
+      })
+    ).rejects.toThrow('provider down');
+  });
+
+  it('reuses fresh time-sensitive dynamic data after fetch failure', async () => {
+    const service = createService({
+      fetchData: () => Promise.reject(new Error('provider down')),
+      imageSize: FRAME_BYTES,
+      dynamicData: {
+        tempC: 21,
+        summary: '晴',
+        updatedAt: '2026-05-17T04:00:00.000Z',
+      },
+      dynamicLastRunAt: new Date('2026-05-17T04:00:00.000Z'),
+    });
+
+    await expect(
+      service.renderDynamicContent('content-1', {
+        force: true,
+        now: new Date('2026-05-17T04:10:00.000Z'),
+      })
+    ).resolves.toMatchObject({
+      contentId: 'content-1',
+      groupEtag: 'group-etag',
+    });
+  });
+
+  it('returns the current DB audio etag when audio sync fails after changing audio state', async () => {
+    const service = createService({
+      fetchData: () => Promise.resolve({ tempC: 21 }),
+      audioEtag: 'old-audio',
+      currentAudioEtag: null,
+      syncAudio: async () => {
+        throw new Error('audio cleanup failed');
+      },
+    });
+
+    await expect(service.renderDynamicContent('content-1', { force: true })).resolves.toMatchObject(
+      {
+        audioEtag: null,
+      }
+    );
+  });
 });
 
-function createService(fetchData: () => Promise<unknown>): DynamicContentRendererService {
+function createService(opts: {
+  fetchData: () => Promise<unknown>;
+  syncAudio?: () => Promise<boolean>;
+  audioEtag?: string | null;
+  currentAudioEtag?: string | null;
+  dynamicData?: unknown;
+  dynamicLastRunAt?: Date | null;
+  imageSize?: number;
+}): DynamicContentRendererService {
   const content = {
     id: 'content-1',
     groupId: 'group-1',
@@ -59,14 +158,26 @@ function createService(fetchData: () => Promise<unknown>): DynamicContentRendere
     kind: 'dynamic',
     dynamicType: 'weather',
     dynamicConfig: {},
-    dynamicData: null,
+    dynamicData: opts.dynamicData ?? null,
+    dynamicLastRunAt: opts.dynamicLastRunAt ?? null,
     dynamicNextRunAt: null,
+    audioEtag: opts.audioEtag ?? null,
     imageEtag: 'old-image-etag',
-    imageSize: 0,
+    imageSize: opts.imageSize ?? 0,
   };
   const prisma = {
     content: {
-      findUnique: async () => content,
+      findUnique: async (args?: { select?: { audioEtag?: boolean } }) => {
+        if (
+          args?.select?.audioEtag &&
+          Object.keys(args.select as Record<string, unknown>).length === 1
+        ) {
+          return {
+            audioEtag: 'currentAudioEtag' in opts ? opts.currentAudioEtag! : content.audioEtag,
+          };
+        }
+        return content;
+      },
       update: async () => content,
     },
   };
@@ -82,7 +193,7 @@ function createService(fetchData: () => Promise<unknown>): DynamicContentRendere
       provider: {
         type: 'weather',
         validateConfig: () => ({}),
-        fetchData,
+        fetchData: opts.fetchData,
       },
     }),
     defaultTtlSec: () => 300,
@@ -91,10 +202,14 @@ function createService(fetchData: () => Promise<unknown>): DynamicContentRendere
     render: async () => Buffer.alloc(FRAME_BYTES, 0xff),
   };
   const groups = {
-    recomputeManifestEtag: async () => 'group-etag',
+    recomputeGroupEtags: async () => ({
+      structureEtag: 'structure-etag',
+      manifestEtag: 'group-etag',
+      contentEtags: [{ id: 'content-1', etag: 'content-etag', previousEtag: 'old-content-etag' }],
+    }),
   };
   const dynamicAudio = {
-    sync: async () => false,
+    sync: opts.syncAudio ?? (async () => false),
   };
   return new DynamicContentRendererService(
     prisma as unknown as PrismaService,

@@ -32,6 +32,7 @@ export function resolveDashboardRenderInput(
     return { template: config.data.template.template, data };
   }
   const system = DASHBOARD_SYSTEM_TEMPLATES[config.data.template.id];
+  if (!system) return null;
   return { template: system.template, data };
 }
 
@@ -61,10 +62,15 @@ export function resolvePath(data: Record<string, unknown>, path: string): unknow
       const idx = Number(part);
       cur = Number.isInteger(idx) ? cur[idx] : undefined;
     } else {
+      if (isUnsafePathPart(part)) return undefined;
       cur = cur[part];
     }
   }
   return cur;
+}
+
+function isUnsafePathPart(part: string): boolean {
+  return part === '__proto__' || part === 'prototype' || part === 'constructor';
 }
 
 function resolvePathFromUnknown(value: unknown, path: string): unknown {

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { WeatherConfig, type WeatherConfigT } from 'shared';
 import { AppConfig } from '../../../infra/config/app.config';
 import { fetchJson as fetchJsonWithTimeout } from '../../../common/http/fetch';
+import { setBoundedCache } from '../../../common/utils';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { datePartsInTz } from '../timezone';
 
@@ -77,10 +78,21 @@ interface QWeatherCityLookupResponse {
   }>;
 }
 
+export interface WeatherCitySearchResult {
+  id: string;
+  name: string;
+  adm1: string;
+  adm2: string;
+}
+
 const DEFAULT_CACHE_TTL_SEC = 600;
 const LOOKUP_CACHE_TTL_MS = 86_400_000;
+const CITY_SEARCH_CACHE_TTL_MS = 3_600_000;
 const FETCH_TIMEOUT_MS = 5000;
 const FC_LABELS = ['今日', '明日', '后天'];
+const MAX_CACHE_ENTRIES = 128;
+const MAX_LOOKUP_CACHE_ENTRIES = 256;
+const MAX_CITY_SEARCH_CACHE_ENTRIES = 128;
 
 @Injectable()
 export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProviderData> {
@@ -88,12 +100,55 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
   private readonly cache = new Map<string, CacheEntry>();
   private readonly lookupCache = new Map<string, LookupCacheEntry>();
   private readonly lookupInflight = new Map<string, Promise<string>>();
+  private readonly citySearchCache = new Map<
+    string,
+    { data: WeatherCitySearchResult[]; fetchedAt: number }
+  >();
+  private readonly citySearchInflight = new Map<string, Promise<WeatherCitySearchResult[]>>();
   private readonly inflight = new Map<string, Promise<WeatherProviderData>>();
 
   constructor(private readonly config: AppConfig) {}
 
   validateConfig(raw: unknown): WeatherConfigT {
     return WeatherConfig.parse(raw);
+  }
+
+  async searchCities(
+    query: string,
+    limit = 8,
+    now = Date.now()
+  ): Promise<WeatherCitySearchResult[]> {
+    const normalizedQuery = query.trim();
+    if (!normalizedQuery) return [];
+    const apiKey = this.config.qweatherApiKey;
+    if (!apiKey) throw new Error('QWEATHER_API_KEY 未配置');
+    if (!this.config.qweatherApiHost) {
+      throw new Error('QWEATHER_API_HOST 未配置，请在和风天气控制台-设置中复制你的 API Host');
+    }
+
+    const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 20);
+    const key = `${normalizedQuery}:${safeLimit}`;
+    const cached = this.citySearchCache.get(key);
+    if (cached && now - cached.fetchedAt < CITY_SEARCH_CACHE_TTL_MS) return cached.data;
+    if (cached) this.citySearchCache.delete(key);
+
+    const existing = this.citySearchInflight.get(key);
+    if (existing) return existing;
+
+    const host = this.config.qweatherApiHost.replace(/\/+$/, '');
+    const p = this.fetchCitySearch(host, apiKey, normalizedQuery, safeLimit)
+      .then((data) => {
+        setBoundedCache(
+          this.citySearchCache,
+          key,
+          { data, fetchedAt: now },
+          MAX_CITY_SEARCH_CACHE_ENTRIES
+        );
+        return data;
+      })
+      .finally(() => this.citySearchInflight.delete(key));
+    this.citySearchInflight.set(key, p);
+    return p;
   }
 
   private cacheKey(c: WeatherConfigT): string {
@@ -117,7 +172,7 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
 
     const p = this.fetchFromQWeather(config, ctx)
       .then((data) => {
-        this.cache.set(key, { data, fetchedAt: now });
+        setBoundedCache(this.cache, key, { data, fetchedAt: now }, MAX_CACHE_ENTRIES);
         return data;
       })
       .finally(() => this.inflight.delete(key));
@@ -131,12 +186,12 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
   ): Promise<WeatherProviderData> {
     const apiKey = this.config.qweatherApiKey;
     if (!apiKey) {
-      const fallback = this.fallbackFromLastData(ctx.lastData, ctx.now);
+      const fallback = this.fallbackFromLastData(config, ctx.lastData, ctx.now);
       if (fallback) return fallback;
       throw new Error('QWEATHER_API_KEY 未配置');
     }
     if (!this.config.qweatherApiHost) {
-      const fallback = this.fallbackFromLastData(ctx.lastData, ctx.now);
+      const fallback = this.fallbackFromLastData(config, ctx.lastData, ctx.now);
       if (fallback) return fallback;
       throw new Error('QWEATHER_API_HOST 未配置，请在和风天气控制台-设置中复制你的 API Host');
     }
@@ -225,7 +280,12 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
 
     const p = this.fetchLocationId(host, apiKey, locationId)
       .then((id) => {
-        this.lookupCache.set(locationId, { id, fetchedAt: now });
+        setBoundedCache(
+          this.lookupCache,
+          locationId,
+          { id, fetchedAt: now },
+          MAX_LOOKUP_CACHE_ENTRIES
+        );
         return id;
       })
       .finally(() => this.lookupInflight.delete(locationId));
@@ -244,10 +304,36 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
     return id;
   }
 
-  private fallbackFromLastData(lastData: unknown, now: Date): WeatherProviderData | null {
+  private async fetchCitySearch(
+    host: string,
+    apiKey: string,
+    query: string,
+    limit: number
+  ): Promise<WeatherCitySearchResult[]> {
+    const url =
+      `${host}/geo/v2/city/lookup?location=${encodeURIComponent(query)}` +
+      `&range=cn&number=${limit}&lang=zh`;
+    const json = await fetchJson<QWeatherCityLookupResponse>(url, apiKey);
+    if (json.code !== '200') throw new Error(`QWeather city lookup code ${json.code ?? 'unknown'}`);
+    return (json.location ?? [])
+      .map((location) => ({
+        id: location.id?.trim() ?? '',
+        name: location.name?.trim() ?? '',
+        adm1: location.adm1?.trim() ?? '',
+        adm2: location.adm2?.trim() ?? '',
+      }))
+      .filter((location) => location.id && location.name);
+  }
+
+  private fallbackFromLastData(
+    config: WeatherConfigT,
+    lastData: unknown,
+    now: Date
+  ): WeatherProviderData | null {
     if (!lastData || typeof lastData !== 'object' || Array.isArray(lastData)) return null;
     const data = lastData as Partial<WeatherProviderData>;
     if (!data.summary && data.tempC === undefined) return null;
+    if (!isRecentTimestamp(data.updatedAt, now, reusableWeatherAgeMs(config))) return null;
     return {
       tempC: data.tempC ?? '--',
       feelsLikeC: data.feelsLikeC ?? '--',
@@ -261,6 +347,17 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
       fc: Array.isArray(data.fc) ? data.fc.slice(0, 3) : [],
     };
   }
+}
+
+function reusableWeatherAgeMs(config: WeatherConfigT): number {
+  const ttlSec = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_SEC, 300);
+  return Math.min(Math.max(ttlSec * 3, 900), 43_200) * 1000;
+}
+
+function isRecentTimestamp(value: unknown, now: Date, maxAgeMs: number): boolean {
+  if (typeof value !== 'string') return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && now.getTime() - timestamp <= maxAgeMs;
 }
 
 async function fetchJson<T>(url: string, apiKey: string): Promise<T> {
@@ -280,7 +377,7 @@ function toDisplayNumber(value: unknown): number | string {
   return '--';
 }
 
-function forecastLabel(value: unknown, timeZone: string, now: Date): string | null {
+export function forecastLabel(value: unknown, timeZone: string, now: Date): string | null {
   if (typeof value !== 'string' || !value) return '--';
   const [year, month, day] = value.split('-').map((part) => Number.parseInt(part, 10));
   if (!year || !month || !day) return value.slice(5);

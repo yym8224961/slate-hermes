@@ -10,6 +10,7 @@ import {
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { HOT_LIST_SOURCE_REGISTRY } from '../hot-list/hot-list-sources';
 import type { HotListItem, HotListProviderData, HotListSource } from '../hot-list/hot-list.types';
+import { withRanks } from '../hot-list/text';
 
 interface CacheEntry {
   data: HotListProviderData;
@@ -22,7 +23,7 @@ interface FetchFreshResult {
   items: HotListItem[];
 }
 
-const DEFAULT_CACHE_TTL_MS = 600_000;
+const DEFAULT_CACHE_TTL_SEC = 600;
 const FETCH_TIMEOUT_MS = 5000;
 
 /** 测试通过构造函数注入 mock sources；生产由 NestJS 走 @Optional 走默认值。 */
@@ -55,7 +56,7 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
   ): Promise<HotListProviderData> {
     const key = config.source;
     const now = ctx.now.getTime();
-    const ttlMs = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_MS / 1000, 300) * 1000;
+    const ttlMs = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_SEC, 300) * 1000;
     const cached = this.cache.get(key);
     if (cached && now - cached.fetchedAt < ttlMs) return cached.data;
     if (cached) this.cache.delete(key);
@@ -63,7 +64,7 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
     const existing = this.inflight.get(key);
     if (existing) {
       const fresh = await existing.catch(() => null);
-      return this.dataFromFreshResult(fresh, config.source, ctx);
+      return this.dataFromFreshResult(fresh, config, ctx);
     }
 
     const p = this.fetchFresh(config.source);
@@ -75,7 +76,7 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
       this.inflight.delete(key);
     }
 
-    const data = this.dataFromFreshResult(fresh, config.source, ctx);
+    const data = this.dataFromFreshResult(fresh, config, ctx);
     if (fresh && fresh.items.length > 0) {
       this.cache.set(key, { data, fetchedAt: now });
     }
@@ -84,7 +85,7 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
 
   private dataFromFreshResult(
     fresh: FetchFreshResult | null,
-    sourceId: CurrentHotListSourceIdT,
+    config: HotListConfigT,
     ctx: DynamicContentFetchCtx
   ): HotListProviderData {
     if (fresh && fresh.items.length > 0) {
@@ -96,9 +97,9 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
       };
     }
 
-    const fallback = this.fallbackFromLastData(ctx.lastData);
+    const fallback = this.fallbackFromLastData(config, ctx.lastData, ctx.now);
     if (fallback) return fallback;
-    return this.emptyData(sourceId, ctx.now);
+    return this.emptyData(config.source, ctx.now);
   }
 
   private async fetchFresh(sourceId: CurrentHotListSourceIdT): Promise<FetchFreshResult> {
@@ -108,7 +109,7 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
     try {
-      const items = (await source.fetch({ signal: controller.signal })).slice(0, 30);
+      const items = withRanks(await source.fetch({ signal: controller.signal })).slice(0, 30);
       return {
         sourceId: source.id,
         sourceLabel: source.label || hotListSourceLabel(source.id),
@@ -119,17 +120,22 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
     }
   }
 
-  private fallbackFromLastData(lastData: unknown): HotListProviderData | null {
+  private fallbackFromLastData(
+    config: HotListConfigT,
+    lastData: unknown,
+    now: Date
+  ): HotListProviderData | null {
     if (!lastData || typeof lastData !== 'object' || Array.isArray(lastData)) return null;
     const data = lastData as Partial<HotListProviderData>;
     const source = HotListSourceId.safeParse(data.source);
     if (!source.success || !Array.isArray(data.items) || data.items.length === 0) return null;
+    if (!isRecentTimestamp(data.updatedAt, now, reusableHotListAgeMs(config))) return null;
     const normalizedSource = normalizeHotListSourceId(source.data);
     return {
       source: normalizedSource,
       sourceLabel: data.sourceLabel ?? hotListSourceLabel(normalizedSource),
       updatedAt: data.updatedAt ?? new Date().toISOString(),
-      items: data.items,
+      items: withRanks(data.items),
     };
   }
 
@@ -141,4 +147,15 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
       items: [],
     };
   }
+}
+
+function reusableHotListAgeMs(config: HotListConfigT): number {
+  const ttlSec = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_SEC, 300);
+  return Math.min(Math.max(ttlSec * 3, 900), 3_600) * 1000;
+}
+
+function isRecentTimestamp(value: unknown, now: Date, maxAgeMs: number): boolean {
+  if (typeof value !== 'string') return false;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && now.getTime() - timestamp <= maxAgeMs;
 }

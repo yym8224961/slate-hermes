@@ -41,7 +41,11 @@ export class BlobRollbackPlan {
           op.previousBytes,
           true,
           this.logger
-        ).catch(() => {})
+        ).catch((err: unknown) => {
+          this.logger.warn(
+            `blob rollback operation failed content=${op.contentId} kind=${op.kind}: ${formatError(err)}`
+          );
+        })
       )
     );
   }

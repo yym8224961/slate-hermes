@@ -114,10 +114,3 @@ export const CITIES: City[] = [
   { name: '贵阳', province: '贵州', locationId: '贵阳' },
   { name: '昆明', province: '云南', locationId: '昆明' },
 ];
-
-/** 按城市名或省份名模糊匹配，返回匹配项（不限制数量，调用方自行 slice）。 */
-export function searchCities(query: string): City[] {
-  const q = query.trim();
-  if (!q) return [];
-  return CITIES.filter((c) => c.name.includes(q) || c.province.includes(q));
-}

@@ -33,24 +33,3 @@ export function DynamicFramePreview({
     </div>
   );
 }
-
-export function DynamicCreatePreview({
-  liveData,
-  livePending,
-  hasConfig,
-  caption,
-}: {
-  liveData: ArrayBuffer | null;
-  livePending: boolean;
-  hasConfig: boolean;
-  caption?: string | null;
-}) {
-  return (
-    <DynamicFramePreview
-      data={liveData}
-      pending={livePending}
-      hasConfig={hasConfig}
-      caption={caption}
-    />
-  );
-}

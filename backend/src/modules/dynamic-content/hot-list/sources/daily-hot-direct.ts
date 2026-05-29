@@ -17,7 +17,6 @@ type DirectSourceId =
   | '52pojie'
   | 'acfun'
   | 'csdn'
-  | 'coolapk'
   | 'dgtle'
   | 'douban-group'
   | 'douban-movie'
@@ -53,10 +52,6 @@ interface DirectSourceDef {
 const MOBILE_UA =
   'Mozilla/5.0 (Linux; Android 10; Mi 10) AppleWebKit/537.36 ' +
   '(KHTML, like Gecko) Chrome/123.0.0.0 Mobile Safari/537.36';
-const COOLAPK_UA =
-  'Dalvik/2.1.0 (Linux; U; Android 10; Redmi K30 5G MIUI/V12.0.3.0.QGICMXM) ' +
-  '(#Build; Redmi; Redmi K30 5G; QKQ1.191222.002 test-keys; 10) +CoolMarket/11.0-2101202';
-
 export const DAILY_HOT_DIRECT_SOURCES: readonly HotListSource[] = [
   directSource({
     id: '51cto',
@@ -139,24 +134,6 @@ export const DAILY_HOT_DIRECT_SOURCES: readonly HotListSource[] = [
           hot: compactHot(item.hotRankScore, '热度'),
           timestamp: normalizeTimestamp(item.period),
           url: item.articleDetailUrl,
-        }))
-      );
-    },
-  }),
-  directSource({
-    id: 'coolapk',
-    label: '酷安',
-    async fetch(signal) {
-      const json = await fetchJson<CoolapkResponse>(
-        'https://api.coolapk.com/v6/page/dataList?url=/feed/statList?cacheExpires=300&statType=day&sortField=detailnum&title=今日热门&subTitle=&page=1',
-        { signal, headers: coolapkHeaders() }
-      );
-      return withRanks(
-        (json.data ?? []).map((item) => ({
-          title: item.message ?? '',
-          desc: item.ttitle,
-          author: item.username,
-          url: item.shareUrl,
         }))
       );
     },
@@ -565,8 +542,7 @@ export const DAILY_HOT_DIRECT_SOURCES: readonly HotListSource[] = [
     id: 'sina-news',
     label: '新浪新闻',
     async fetch(signal) {
-      const date = new Date();
-      const ymd = `${date.getFullYear()}${pad2(date.getMonth() + 1)}${pad2(date.getDate())}`;
+      const ymd = currentDateYmdInTimeZone('Asia/Shanghai');
       const text = await fetchText(
         `https://top.news.sina.com.cn/ws/GetTopDataList.php?top_type=day&top_cat=www_www_all_suda_suda&top_time=${ymd}&top_show_num=50`,
         { signal }
@@ -729,31 +705,6 @@ function md5(value: string): string {
   return crypto.createHash('md5').update(value).digest('hex');
 }
 
-function coolapkHeaders(): Record<string, string> {
-  const deviceId = [10, 6, 6, 6, 14]
-    .map((len) => Math.random().toString(36).slice(2, len))
-    .join('-');
-  const now = Math.round(Date.now() / 1000);
-  const md5Now = md5(String(now));
-  const raw =
-    'token://com.coolapk.market/c67ef5943784d09750dcfbb31020f0ab?' +
-    md5Now +
-    '$' +
-    deviceId +
-    '&com.coolapk.market';
-  return {
-    'X-Requested-With': 'XMLHttpRequest',
-    'X-App-Id': 'com.coolapk.market',
-    'X-App-Token': md5(Buffer.from(raw).toString('base64')) + deviceId + `0x${now.toString(16)}`,
-    'X-Sdk-Int': '29',
-    'X-Sdk-Locale': 'zh-CN',
-    'X-App-Version': '11.0',
-    'X-Api-Version': '11',
-    'X-App-Code': '2101202',
-    'User-Agent': COOLAPK_UA,
-  };
-}
-
 function parseSinaNewsJsonp(text: string): SinaNewsJsonp {
   const raw = text
     .trim()
@@ -790,6 +741,17 @@ function wereadId(bookId: string): string {
 
 function pad2(value: string | number): string {
   return String(value).padStart(2, '0');
+}
+
+function currentDateYmdInTimeZone(timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date());
+  const pick = (type: string) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${pick('year')}${pick('month')}${pick('day')}`;
 }
 
 interface CtoTokenResponse {
@@ -829,10 +791,6 @@ interface CsdnResponse {
     hotRankScore?: number;
     articleDetailUrl?: string;
   }>;
-}
-
-interface CoolapkResponse {
-  data?: Array<{ message?: string; username?: string; ttitle?: string; shareUrl?: string }>;
 }
 
 interface DgtleResponse {

@@ -1,7 +1,7 @@
 // 统一新建编辑器 — 图片 + 所有动态类型在同一页面切换。
 // 仅用于新建；编辑流程仍使用各自的 ImageContentEditor / DynamicContentEditor。
 
-import { useState } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { DynamicConfig, isAudioDynamicConfig, type DynamicConfigT } from 'shared';
 import {
@@ -22,7 +22,7 @@ import { DynamicConfigForm } from '@/features/dynamic/components/DynamicConfigFo
 import { DynamicAudioSection } from '@/features/dynamic/components/config/DynamicAudioSection';
 import { getApiErrorMessage } from '@/lib/api-errors';
 import { ContentTypeCardGrid, ContentTypePicker } from './ContentTypePicker';
-import { DynamicCreatePreview } from '@/features/dynamic/components/preview/DynamicPreview';
+import { DynamicFramePreview } from '@/features/dynamic/components/preview/DynamicPreview';
 import {
   defaultFrameName,
   effectiveFrameName,
@@ -92,7 +92,7 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
   const submitting = createImage.isPending || createDynamic.isPending || generateTts.isPending;
   const canSubmit = type === 'image' ? imageForm.canCreate : !!(type && config);
 
-  async function onSubmit() {
+  async function submitContent() {
     if (!type) return;
     try {
       if (type === 'image') {
@@ -137,6 +137,11 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
     }
   }
 
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitContent();
+  }
+
   const frameNamePlaceholder = type === 'dashboard' ? '如：AI 使用统计' : '';
 
   return (
@@ -150,45 +155,46 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
 
       <div className="mt-6 fade-up fade-up-1">
         {type === 'image' ? (
-          <ImageFormBody
-            gid={gid}
-            form={imageForm}
-            isEdit={false}
-            gridClassName="lg:grid-cols-2"
-            showSafeArea={Boolean(imageForm.imageFile)}
-            beforeFields={
-              <div className="space-y-3">
-                <ContentTypePicker
-                  value={type}
-                  onChange={handleTypeChange}
-                  onBack={resetTypeSelection}
+          <form onSubmit={onSubmit}>
+            <ImageFormBody
+              gid={gid}
+              form={imageForm}
+              isEdit={false}
+              gridClassName="lg:grid-cols-2"
+              showSafeArea={Boolean(imageForm.imageFile)}
+              beforeFields={
+                <div className="space-y-3">
+                  <ContentTypePicker
+                    value={type}
+                    onChange={handleTypeChange}
+                    onBack={resetTypeSelection}
+                  />
+                  <p className="font-sans text-[12px] text-stone leading-relaxed">
+                    {TYPE_META[type].description}
+                  </p>
+                  <div className="border-t border-line" />
+                </div>
+              }
+              actions={
+                <FormActions
+                  onCancel={onDone}
+                  submitLabel="创建"
+                  disabled={!canSubmit}
+                  submitting={submitting}
                 />
-                <p className="font-sans text-[12px] text-stone leading-relaxed">
-                  {TYPE_META[type].description}
-                </p>
-                <div className="border-t border-line" />
-              </div>
-            }
-            actions={
-              <FormActions
-                onCancel={onDone}
-                onSubmit={onSubmit}
-                submitLabel="创建"
-                disabled={!canSubmit}
-                submitting={submitting}
-              />
-            }
-          />
+              }
+            />
+          </form>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+          <form onSubmit={onSubmit} className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
             {/* 预览（desktop 左侧 / mobile 排在控件下方）*/}
             <div className="order-2 min-w-0 lg:order-1">
               <p className="font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] ml-0.5 mb-2">
                 设备预览
               </p>
-              <DynamicCreatePreview
-                liveData={livePreviewData}
-                livePending={preview.isPending}
+              <DynamicFramePreview
+                data={livePreviewData}
+                pending={preview.isPending}
                 hasConfig={!!config}
                 caption={effectiveStatusBarText(type, config, dynamicFrameName)}
               />
@@ -261,7 +267,6 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
                   {/* 操作按钮：粘在表单列底部 */}
                   <FormActions
                     onCancel={onDone}
-                    onSubmit={onSubmit}
                     submitLabel="创建"
                     disabled={!canSubmit}
                     submitting={submitting}
@@ -269,7 +274,7 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
                 </>
               )}
             </div>
-          </div>
+          </form>
         )}
       </div>
     </div>

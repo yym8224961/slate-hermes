@@ -1,4 +1,13 @@
-import { useEffect, useRef, type MutableRefObject, type ReactNode } from 'react';
+import {
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MutableRefObject,
+  type ReactNode,
+} from 'react';
 import { inputCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
 
@@ -35,16 +44,68 @@ export function SearchDropdown<Item>({
   noResult,
   panelClassName,
 }: SearchDropdownProps<Item>) {
+  const listboxId = useId();
   const blurTimerRef = useRef<number | null>(null);
   const valueRef = useRef(value);
+  const resultKeys = useMemo(() => results.map(getKey).join('\0'), [getKey, results]);
+  const [activeResultKeys, setActiveResultKeys] = useState(resultKeys);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const resultSetChanged = activeResultKeys !== resultKeys;
+  const selectedIndex = resultSetChanged
+    ? 0
+    : Math.min(activeIndex, Math.max(results.length - 1, 0));
 
   useEffect(() => {
     valueRef.current = value;
   }, [value]);
 
   useEffect(() => {
+    if (activeResultKeys !== resultKeys) {
+      setActiveResultKeys(resultKeys);
+      setActiveIndex(0);
+      return;
+    }
+    setActiveIndex((index) => Math.min(index, Math.max(results.length - 1, 0)));
+  }, [activeResultKeys, resultKeys, results.length]);
+
+  useEffect(() => {
     return () => clearBlurTimer(blurTimerRef);
   }, []);
+
+  function selectResult(item: Item) {
+    clearBlurTimer(blurTimerRef);
+    onSelect(item);
+    onOpenChange(false);
+  }
+
+  function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Escape') {
+      if (!open) return;
+      event.preventDefault();
+      onOpenChange(false);
+      return;
+    }
+    if (!results.length) return;
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      if (!open) {
+        onOpenChange(true);
+        setActiveIndex(event.key === 'ArrowDown' ? 0 : results.length - 1);
+        return;
+      }
+      const offset = event.key === 'ArrowDown' ? 1 : -1;
+      setActiveIndex((index) => {
+        const currentIndex = resultSetChanged ? 0 : index;
+        return (currentIndex + offset + results.length) % results.length;
+      });
+      return;
+    }
+    if (event.key === 'Enter' && open) {
+      event.preventDefault();
+      const result = results[selectedIndex];
+      if (result) selectResult(result);
+    }
+  }
 
   return (
     <div className="relative">
@@ -68,29 +129,41 @@ export function SearchDropdown<Item>({
               onOpenChange(false);
             }, 150);
           }}
+          onKeyDown={onInputKeyDown}
           placeholder={placeholder}
           autoComplete="off"
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={open && results.length > 0 ? listboxId : undefined}
+          aria-activedescendant={
+            open && results.length > 0 ? `${listboxId}-${selectedIndex}` : undefined
+          }
         />
       </label>
-      {open && noResult}
+      {open && results.length === 0 && noResult}
       {open && results.length > 0 && (
         <div
+          id={listboxId}
+          role="listbox"
           className={cn(
             'absolute z-10 top-full mt-1 left-0 right-0 border border-ink bg-paper shadow',
             panelClassName
           )}
         >
-          {results.map((result) => (
+          {results.map((result, index) => (
             <button
               key={getKey(result)}
+              id={`${listboxId}-${index}`}
               type="button"
-              className="w-full text-left px-3 py-2 font-sans text-[13px] text-ink hover:bg-cream"
+              role="option"
+              aria-selected={index === selectedIndex}
+              className={cn(
+                'w-full text-left px-3 py-2 font-sans text-[13px] text-ink hover:bg-cream',
+                index === selectedIndex && 'bg-cream'
+              )}
               onMouseDown={(event) => event.preventDefault()}
-              onClick={() => {
-                clearBlurTimer(blurTimerRef);
-                onSelect(result);
-                onOpenChange(false);
-              }}
+              onMouseEnter={() => setActiveIndex(index)}
+              onClick={() => selectResult(result)}
             >
               {renderItem(result)}
             </button>

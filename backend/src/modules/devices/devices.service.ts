@@ -1,9 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
-import type { DeviceStateT, DeviceSummaryT } from 'shared';
+import { MacAddress, type DeviceStateT, type DeviceSummaryT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
+import {
+  ConflictError,
+  ForbiddenError,
+  InternalError,
+  NotFoundError,
+  ValidationError,
+} from '../../common/errors';
 import { lockUserRow } from '../../common/db/row-locks';
 import { bulkSetDeviceSortOrder } from '../../common/db/bulk-sort-order';
 import type { PrismaClientLike } from '../../common/db/prisma-client-like';
@@ -78,6 +84,7 @@ const PAIR_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 const PAIR_CODE_RANDOM_LIMIT =
   Math.floor(256 / PAIR_CODE_ALPHABET.length) * PAIR_CODE_ALPHABET.length;
 const REGISTER_RESET_THROTTLE_MS = 60_000;
+const PAIR_CODE_MAX_RANDOM_CHUNKS = 32;
 
 interface RegisterResetOutcome {
   deviceId: string;
@@ -85,6 +92,14 @@ interface RegisterResetOutcome {
   previousOwnerUserId: string | null;
   previousSecretHash: string | null;
   isFirstRegister: boolean;
+}
+
+interface ExistingRegisterDevice {
+  id: string;
+  mac: string;
+  ownerUserId: string | null;
+  lastRegisteredAt: Date | null;
+  secretHash: string | null;
 }
 
 @Injectable()
@@ -118,14 +133,12 @@ export class DevicesService {
     reclaimed: boolean;
     serverTime: string;
   }> {
+    const normalizedMac = MacAddress.parse(mac);
     const now = new Date();
 
     // 预检：节流命中时直接拒绝，避免白白消耗熵 + 一次 pair_code 唯一性查询。
     // 事务内持 device 行锁后还会复检一次，保证并发 reset 不会绕过节流。
-    const preExisting = await this.prisma.device.findUnique({
-      where: { mac },
-      select: { lastRegisteredAt: true },
-    });
+    const preExisting = await this.findRegisterDeviceByMac(this.prisma, normalizedMac, mac);
     if (preExisting?.lastRegisteredAt) {
       const elapsedMs = now.getTime() - preExisting.lastRegisteredAt.getTime();
       if (elapsedMs < REGISTER_RESET_THROTTLE_MS) {
@@ -136,17 +149,16 @@ export class DevicesService {
     const outcome = await this.prisma
       .$transaction(
         async (tx): Promise<RegisterResetOutcome & { secret: string; pairCode: string }> => {
-          await lockDeviceMacRow(tx, mac);
-          const current = await tx.device.findUnique({
-            where: { mac },
-            select: { id: true, ownerUserId: true, lastRegisteredAt: true, secretHash: true },
-          });
+          for (const candidate of macLookupCandidates(normalizedMac, mac)) {
+            await lockDeviceMacRow(tx, candidate);
+          }
+          const current = await this.findRegisterDeviceByMac(tx, normalizedMac, mac);
           if (!current) {
             const secret = generateSecret();
             const secretHash = hashDeviceSecret(secret);
             const pairCode = await this.generateUniquePairCode(tx);
             const created = await tx.device.create({
-              data: { mac, secretHash, pairCode, lastRegisteredAt: now },
+              data: { mac: normalizedMac, secretHash, pairCode, lastRegisteredAt: now },
               select: { id: true },
             });
             return {
@@ -170,8 +182,9 @@ export class DevicesService {
           const secretHash = hashDeviceSecret(secret);
           const pairCode = await this.generateUniquePairCode(tx);
           await tx.device.update({
-            where: { mac },
+            where: { id: current.id },
             data: {
+              mac: normalizedMac,
               secretHash,
               pairCode,
               ownerUserId: null,
@@ -207,13 +220,15 @@ export class DevicesService {
       });
 
     if (outcome.isFirstRegister) {
-      this.logger.log(`device first registered: mac=${mac} id=${outcome.deviceId}`);
+      this.logger.log(`device first registered: mac=${normalizedMac} id=${outcome.deviceId}`);
     } else if (outcome.reclaimed) {
       this.logger.log(
-        `device reclaimed (physical reset): mac=${mac} id=${outcome.deviceId} prev_owner=${maskId(outcome.previousOwnerUserId)}`
+        `device reclaimed (physical reset): mac=${normalizedMac} id=${outcome.deviceId} prev_owner=${maskId(outcome.previousOwnerUserId)}`
       );
     } else {
-      this.logger.log(`device re-registered (was unowned): mac=${mac} id=${outcome.deviceId}`);
+      this.logger.log(
+        `device re-registered (was unowned): mac=${normalizedMac} id=${outcome.deviceId}`
+      );
     }
     invalidateDeviceSecretHash(outcome.previousSecretHash);
 
@@ -263,10 +278,10 @@ export class DevicesService {
     deviceId: string,
     cached?: { group?: CycleResult; device?: DevicePollSnapshot }
   ): Promise<DeviceStateT> {
-    const [device, resolvedGroup] = await Promise.all([
+    const device =
       cached?.device !== undefined
-        ? Promise.resolve(cached.device)
-        : this.prisma.device.findUnique({
+        ? cached.device
+        : await this.prisma.device.findUnique({
             where: { id: deviceId },
             select: {
               id: true,
@@ -277,16 +292,14 @@ export class DevicesService {
               pairCode: true,
               selectedGroup: { select: { manifestEtag: true } },
             },
-          }),
-      cached?.group !== undefined
-        ? Promise.resolve(cached.group)
-        : cached?.device !== undefined
-          ? this.groups.describeDeviceGroupSnapshot(cached.device)
-          : this.groups.describeDeviceGroup(deviceId),
-    ]);
+          });
     if (!device) {
       throw new NotFoundError(`device ${deviceId} disappeared mid-request`);
     }
+    const resolvedGroup =
+      cached?.group !== undefined
+        ? cached.group
+        : await this.groups.describeDeviceGroupSnapshot(device);
 
     const bound = device.ownerUserId !== null;
     const group = normalizeCycleResult(resolvedGroup);
@@ -349,7 +362,11 @@ export class DevicesService {
       }
     }
     if (Object.keys(data).length === 0) return;
-    await this.prisma.device.update({ where: { id: deviceId }, data });
+    const updated = await this.prisma.device.updateMany({
+      where: { id: deviceId, ownerUserId },
+      data,
+    });
+    if (updated.count !== 1) throw new NotFoundError('设备不存在');
   }
 
   async claimByPairCode(code: string, ownerUserId: string): Promise<DeviceSummaryT> {
@@ -497,16 +514,38 @@ export class DevicesService {
     return d;
   }
 
+  private async findRegisterDeviceByMac(
+    client: PrismaClientLike,
+    normalizedMac: string,
+    rawMac: string
+  ): Promise<ExistingRegisterDevice | null> {
+    const select = {
+      id: true,
+      mac: true,
+      ownerUserId: true,
+      lastRegisteredAt: true,
+      secretHash: true,
+    } as const satisfies Prisma.DeviceSelect;
+    for (const candidate of macLookupCandidates(normalizedMac, rawMac)) {
+      const row = await client.device.findUnique({ where: { mac: candidate }, select });
+      if (row) return row;
+    }
+    return null;
+  }
+
   // 6 位字母表：A-Z 去 I/L/O + 2-9。PAIR_CODE_ALPHABET.length^6 ≈ 8.8 亿，撞概率极低，
   // 但仍按 unique 约束最多重试 8 次以兜底。
   private async generateUniquePairCode(client: PrismaClientLike = this.prisma): Promise<string> {
+    const batchSize = 8;
     for (let attempt = 0; attempt < 8; attempt++) {
-      const code = generatePairCode();
-      const exists = await client.device.findUnique({
-        where: { pairCode: code },
-        select: { id: true },
-      });
-      if (!exists) return code;
+      const candidates = uniquePairCodeBatch(batchSize);
+      const existing = (await client.device.findMany({
+        where: { pairCode: { in: candidates } },
+        select: { pairCode: true },
+      })) as Array<{ pairCode: string }>;
+      const existingCodes = new Set(existing.map((device) => device.pairCode));
+      const available = candidates.find((code) => !existingCodes.has(code));
+      if (available) return available;
     }
     throw new ConflictError('配对码生成冲突，请重试', { code: 'pair_code_generation_failed' });
   }
@@ -534,14 +573,31 @@ function generateSecret(): string {
 
 function generatePairCode(): string {
   let code = '';
-  while (code.length < 6) {
+  for (let attempts = 0; attempts < PAIR_CODE_MAX_RANDOM_CHUNKS && code.length < 6; attempts++) {
     for (const byte of randomBytes(8)) {
       if (byte >= PAIR_CODE_RANDOM_LIMIT) continue;
       code += PAIR_CODE_ALPHABET[byte % PAIR_CODE_ALPHABET.length];
       if (code.length === 6) break;
     }
   }
+  if (code.length !== 6) {
+    throw new InternalError('配对码生成失败', { code: 'pair_code_entropy_unavailable' });
+  }
   return code;
+}
+
+function uniquePairCodeBatch(size: number): string[] {
+  const codes = new Set<string>();
+  while (codes.size < size) codes.add(generatePairCode());
+  return [...codes];
+}
+
+function macLookupCandidates(normalizedMac: string, rawMac: string): string[] {
+  const noSep = normalizedMac.replace(/:/g, '');
+  const hyphenUpper = normalizedMac.replace(/:/g, '-');
+  const colonLower = normalizedMac.toLowerCase();
+  const hyphenLower = hyphenUpper.toLowerCase();
+  return [...new Set([normalizedMac, rawMac, colonLower, hyphenUpper, hyphenLower, noSep])];
 }
 
 function throttleError(elapsedMs: number): ConflictError {
@@ -581,7 +637,7 @@ function normalizeCycleResult(result: CycleResult): {
     result.sortOrder === null ||
     result.position === null
   ) {
-    throw new Error(`invalid cycle result for group ${result.groupId}`);
+    throw new InternalError(`invalid cycle result for group ${result.groupId}`);
   }
   return {
     groupId: result.groupId,

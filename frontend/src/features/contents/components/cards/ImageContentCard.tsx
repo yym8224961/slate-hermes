@@ -7,7 +7,7 @@ import { ContentCardActions } from './ContentCardActions';
 import { ContentCardShell } from './ContentCardShell';
 import { useDeleteContentWithConfirm } from './useDeleteContentWithConfirm';
 import { FrameBitmapPreview } from '@/features/contents/components/preview/FrameBitmapPreview';
-import { useSortableStyle } from '@/lib/dnd';
+import { useSortableStyle } from '@/hooks/dnd';
 
 interface ImageContentCardProps {
   gid: string;

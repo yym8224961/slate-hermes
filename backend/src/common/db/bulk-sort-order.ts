@@ -1,4 +1,17 @@
 import { Prisma } from '@prisma/client';
+import { ValidationError } from '../errors';
+
+const ALLOWED_TABLES = new Set(['devices', 'groups', 'contents']);
+const ALLOWED_SCOPE_COLUMNS = new Set(['owner_user_id', 'group_id']);
+
+export function assertSortOrderIdentifiers(table: string, scopeColumn: string): void {
+  if (!ALLOWED_TABLES.has(table)) {
+    throw new ValidationError('非法排序表名', { code: 'invalid_sort_table' });
+  }
+  if (!ALLOWED_SCOPE_COLUMNS.has(scopeColumn)) {
+    throw new ValidationError('非法排序作用域列', { code: 'invalid_sort_scope_column' });
+  }
+}
 
 // 把 order 中的 id 按下标依次写回该表的 sort_order 列。
 // 两步式 staging：先把每行写到唯一的负数槽位，再 finalize 成 0..N-1，避开 (scope, sort_order)
@@ -11,6 +24,10 @@ async function bulkSetSortOrder(
   order: string[]
 ): Promise<void> {
   if (order.length === 0) return;
+  if (new Set(order).size !== order.length) {
+    throw new ValidationError('排序列表不能包含重复 ID', { code: 'order_duplicate' });
+  }
+  assertSortOrderIdentifiers(table, scopeColumn);
   const tableSql = Prisma.raw(`\`${table}\``);
   const scopeColSql = Prisma.raw(`\`${scopeColumn}\``);
   const ids = Prisma.join(order);

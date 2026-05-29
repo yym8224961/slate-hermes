@@ -18,8 +18,7 @@ type ReferenceHotListSourceId =
   | 'netease-music'
   | 'qq'
   | 'quark'
-  | 'woshipm'
-  | 'xiaohongshu';
+  | 'woshipm';
 
 export const REFERENCE_HOT_LIST_SOURCES: readonly HotListSource[] = [
   source({
@@ -199,28 +198,6 @@ export const REFERENCE_HOT_LIST_SOURCES: readonly HotListSource[] = [
       );
     },
   }),
-  source({
-    id: 'xiaohongshu',
-    async fetch(signal) {
-      const json = await fetchJson<XiaohongshuResponse>(
-        'https://edith.xiaohongshu.com/api/sns/v1/search/hot_list',
-        {
-          signal,
-          headers: xiaohongshuHeaders(),
-        }
-      );
-      return withRanks(
-        (json.data?.items ?? []).map((item) => ({
-          title: item.title ?? '',
-          hot: compactHot(item.score),
-          desc: item.word_type && item.word_type !== '无' ? item.word_type : undefined,
-          url: item.title
-            ? `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(item.title)}`
-            : undefined,
-        }))
-      );
-    },
-  }),
 ] as const satisfies readonly HotListSource[];
 
 function source(def: {
@@ -242,22 +219,6 @@ function formatDuration(value: unknown): string | undefined {
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
-}
-
-function xiaohongshuHeaders(): Record<string, string> {
-  return {
-    'User-Agent':
-      'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 ' +
-      '(KHTML, like Gecko) Mobile/15E148 MicroMessenger/8.0.7(0x18000733) NetType/WIFI Language/zh_CN',
-    referer: 'https://app.xhs.cn/',
-    shield:
-      'XYAAAAAQAAAAEAAABTAAAAUzUWEe4xG1IYD9/c+qCLOlKGmTtFa+lG434Oe+FTRagxxoaz6rUWSZ3+juJYz8RZqct+oNMyZQxLEBaBEL+H3i0RhOBVGrauzVSARchIWFYwbwkV',
-    'xy-common-params':
-      'app_id=ECFAAF02&build=8070515&channel=AppStore&deviceId=C323D3A5-6A27-4CE6-AA0E-51C9D4C26A24&device_fingerprint=20230920120211bd7b71a80778509cf4211099ea911000010d2f20f6050264&device_fingerprint1=20230920120211bd7b71a80778509cf4211099ea911000010d2f20f6050264&device_model=phone&fid=1695182528-0-0-63b29d709954a1bb8c8733eb2fb58f29&gid=7dc4f3d168c355f1a886c54a898c6ef21fe7b9a847359afc77fc24ad&identifier_flag=0&lang=zh-Hans&launch_id=716882697&platform=iOS&project_id=ECFAAF&sid=session.1695189743787849952190&t=1695190591&teenager=0&tz=Asia/Shanghai&uis=light&version=8.7',
-    'xy-direction': '22',
-    'xy-platform-info':
-      'platform=iOS&version=8.7&build=8070515&deviceId=C323D3A5-6A27-4CE6-AA0E-51C9D4C26A24&bundle=com.xingin.discover',
-  };
 }
 
 interface DongchediNextData {
@@ -308,14 +269,4 @@ interface WoshipmResponse {
       articleAuthor?: string;
     };
   }>;
-}
-
-interface XiaohongshuResponse {
-  data?: {
-    items?: Array<{
-      title?: string;
-      score?: string | number;
-      word_type?: string;
-    }>;
-  };
 }

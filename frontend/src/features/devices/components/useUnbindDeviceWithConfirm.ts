@@ -22,7 +22,6 @@ export function useUnbindDeviceWithConfirm(device: DeviceSummaryT, onSuccess?: (
     errorToast: '解绑失败',
     onSuccess: useCallback(() => onSuccess?.(), [onSuccess]),
   });
-
   const unbindWithConfirm = useCallback(() => {
     void confirmUnbind(device.id);
   }, [confirmUnbind, device.id]);

@@ -1,8 +1,7 @@
-import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import { RateLimitedError } from '../../common/errors';
 import { clientIp } from '../../common/http/client-ip';
-import { FixedWindowRateLimiter } from '../../common/rate-limit/fixed-window-rate-limiter';
+import { RateLimitGuardBase } from '../../common/rate-limit/rate-limit-guard';
 
 type AuthLimitKind = 'login' | 'register';
 
@@ -14,26 +13,19 @@ const LIMITS: Record<AuthLimitKind, number> = {
 };
 
 @Injectable()
-export class AuthRateLimitGuard implements CanActivate {
-  /**
-   * 单进程固定窗口限速，只作为当前单实例部署的本地保护。
-   * 多实例部署时需要替换为 Redis/网关限速，否则各实例之间不会共享计数。
-   */
-  private readonly limiter = new FixedWindowRateLimiter({
-    windowMs: WINDOW_MS,
-    maxBuckets: MAX_BUCKETS,
-  });
-
-  canActivate(ctx: ExecutionContext): boolean {
-    const req = ctx.switchToHttp().getRequest<FastifyRequest>();
-    const kind = authLimitKind(req);
-    const key = `${kind}:${clientIp(req)}`;
-    const hit = this.limiter.hit(key, LIMITS[kind]);
-
-    if (hit.allowed) return true;
-
-    throw new RateLimitedError('请求过于频繁，请稍后重试', {
-      retry_after_sec: hit.retryAfterSec,
+export class AuthRateLimitGuard extends RateLimitGuardBase {
+  constructor() {
+    super({
+      limiter: {
+        windowMs: WINDOW_MS,
+        maxBuckets: MAX_BUCKETS,
+      },
+      key: (req) => {
+        const kind = authLimitKind(req);
+        return `${kind}:${clientIp(req)}`;
+      },
+      maxPerWindow: (req) => LIMITS[authLimitKind(req)],
+      message: '请求过于频繁，请稍后重试',
     });
   }
 }

@@ -21,6 +21,13 @@ function audioGenerationRefetchInterval(query: { state: { data?: ContentDetailT[
     : false;
 }
 
+function contentAudioGenerationRefetchInterval(query: { state: { data?: ContentDetailT } }) {
+  const row = query.state.data;
+  return row?.audio_status === 'pending' || row?.audio_status === 'generating'
+    ? AUDIO_GENERATING_REFETCH_INTERVAL_MS
+    : false;
+}
+
 function invalidateGroupContent(
   qc: ReturnType<typeof useQueryClient>,
   gid: string,
@@ -30,6 +37,7 @@ function invalidateGroupContent(
   void qc.invalidateQueries({ queryKey: queryKeys.groups });
   void qc.invalidateQueries({ queryKey: queryKeys.group(gid) });
   if (contentId) {
+    void qc.invalidateQueries({ queryKey: contentKeys.detail(contentId) });
     qc.removeQueries({ queryKey: contentKeys.image(contentId) });
     qc.removeQueries({ queryKey: contentKeys.audio(contentId) });
   }
@@ -37,13 +45,25 @@ function invalidateGroupContent(
 
 export function useGroupContents(gid: string | undefined) {
   return useQuery({
-    queryKey: gid ? contentKeys.group(gid) : contentKeys.maybeGroup(gid),
+    queryKey: contentKeys.group(gid),
     queryFn: async () => {
       const { data } = await api.get<ContentDetailT[]>(`${API_V1}/groups/${gid}/contents`);
       return data;
     },
     enabled: !!gid,
     refetchInterval: audioGenerationRefetchInterval,
+  });
+}
+
+export function useContentDetail(contentId: string | undefined) {
+  return useQuery({
+    queryKey: contentKeys.detail(contentId),
+    queryFn: async () => {
+      const { data } = await api.get<ContentDetailT>(`${API_V1}/contents/${contentId}`);
+      return data;
+    },
+    enabled: !!contentId,
+    refetchInterval: contentAudioGenerationRefetchInterval,
   });
 }
 
@@ -60,8 +80,8 @@ export function useCreateImageContent(gid: string) {
       );
       return data;
     },
-    onSuccess: () => {
-      invalidateGroupContent(qc, gid);
+    onSuccess: (data) => {
+      invalidateGroupContent(qc, gid, data.id);
     },
   });
 }
@@ -77,8 +97,8 @@ export function useUpdateImageContent(gid: string) {
       );
       return data;
     },
-    onSuccess: () => {
-      invalidateGroupContent(qc, gid);
+    onSuccess: (data) => {
+      invalidateGroupContent(qc, gid, data.id);
     },
   });
 }
@@ -130,8 +150,8 @@ export function useDeleteContentAudio(gid: string) {
     mutationFn: async (contentId: string) => {
       await api.delete(`${API_V1}/contents/${contentId}/audio`);
     },
-    onSuccess: () => {
-      invalidateGroupContent(qc, gid);
+    onSuccess: (_data, contentId) => {
+      invalidateGroupContent(qc, gid, contentId);
     },
   });
 }
@@ -152,18 +172,17 @@ export function useGenerateContentTts(gid: string) {
       );
       return data;
     },
-    onSuccess: () => {
-      invalidateGroupContent(qc, gid);
+    onSuccess: (data) => {
+      invalidateGroupContent(qc, gid, data.id);
     },
   });
 }
 
-export function useReorderContents(gid: string | undefined) {
+export function useReorderContents(gid: string) {
   const qc = useQueryClient();
-  const groupKey = gid ? contentKeys.group(gid) : contentKeys.maybeGroup(gid);
+  const groupKey = contentKeys.group(gid);
   return useMutation({
     mutationFn: async (body: ReorderContentsRequestT) => {
-      if (!gid) throw new Error('缺少内容组 ID，无法保存排序。');
       await api.put(`${API_V1}/groups/${gid}/contents/order`, body);
     },
     // 乐观更新 seq：避免拖拽落点到 refetch 完成之间 ContentCard 显示旧序号。
@@ -187,7 +206,7 @@ export function useReorderContents(gid: string | undefined) {
     },
     // 后端 reorder 会重算 manifest_etag，所以 groups 缓存也要 invalidate。
     onSettled: () => {
-      if (gid) invalidateGroupContent(qc, gid);
+      invalidateGroupContent(qc, gid);
     },
   });
 }
@@ -205,8 +224,8 @@ export function useCreateDynamicContent(gid: string) {
       );
       return data;
     },
-    onSuccess: () => {
-      invalidateGroupContent(qc, gid);
+    onSuccess: (data) => {
+      invalidateGroupContent(qc, gid, data.id);
     },
   });
 }
@@ -232,8 +251,8 @@ export function useUpdateDynamicContent(gid: string) {
       );
       return data;
     },
-    onSuccess: () => {
-      invalidateGroupContent(qc, gid);
+    onSuccess: (data) => {
+      invalidateGroupContent(qc, gid, data.id);
     },
   });
 }
@@ -257,10 +276,12 @@ export function usePreviewDynamicContent(contentId: string | undefined) {
       config,
       frameName,
       data: previewData,
+      signal,
     }: {
       config: DynamicConfigT;
       frameName?: string | null;
       data?: unknown;
+      signal?: AbortSignal;
     }) => {
       const url = contentId
         ? `${API_V1}/contents/${contentId}/preview`
@@ -268,6 +289,7 @@ export function usePreviewDynamicContent(contentId: string | undefined) {
       const body = { config, frame_name: frameName, data: previewData };
       const { data } = await api.post<ArrayBuffer>(url, body, {
         responseType: 'arraybuffer',
+        signal,
       });
       return data;
     },

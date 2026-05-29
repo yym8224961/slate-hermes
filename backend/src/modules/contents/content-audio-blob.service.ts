@@ -50,9 +50,8 @@ export class ContentAudioBlobService {
     };
 
     if (content.audioSource === 'tts' && content.audioText && content.audioVoice) {
-      data.audioStatus = 'pending';
-      data.audioLastError = 'TTS 音频文件丢失，已重新排队';
-      data.audioAttempts = 0;
+      data.audioStatus = 'failed';
+      data.audioLastError = 'TTS 音频文件丢失，请重新生成';
     } else if (content.audioSource === 'upload') {
       data.audioStatus = 'failed';
       data.audioLastError = '上传音频文件丢失，请重新上传';

@@ -17,6 +17,7 @@ interface DeviceRecord {
 
 interface FindUniqueArgs {
   where: {
+    id?: string;
     mac?: string;
     pairCode?: string;
   };
@@ -24,7 +25,8 @@ interface FindUniqueArgs {
 
 interface UpdateArgs {
   where: {
-    mac: string;
+    id?: string;
+    mac?: string;
   };
   data: Partial<DeviceRecord>;
 }
@@ -57,11 +59,22 @@ function createService(record?: DeviceRecord): {
         };
       }
       if (args.where.pairCode !== undefined) return null;
+      if (args.where.id !== undefined) {
+        if (!current || current.id !== args.where.id) return null;
+        return current;
+      }
       return null;
     },
+    findMany: async () => [],
     update: async (args: UpdateArgs) => {
       updates.push(args);
-      if (!current || current.mac !== args.where.mac) throw new Error('missing device');
+      if (
+        !current ||
+        (args.where.mac !== undefined && current.mac !== args.where.mac) ||
+        (args.where.id !== undefined && current.id !== args.where.id)
+      ) {
+        throw new Error('missing device');
+      }
       current = { ...current, ...args.data };
       return current;
     },
@@ -160,6 +173,21 @@ describe('DevicesService.registerOrReset', () => {
     expect(getRecord()?.ownerUserId).toBeNull();
     expect(getRecord()?.selectedGroupId).toBeNull();
   });
+
+  it('finds and normalizes an existing device stored with legacy MAC formatting', async () => {
+    const { service, updates, getRecord } = createService(
+      device({ mac: 'aa-bb-cc-dd-ee-ff', lastRegisteredAt: new Date(Date.now() - 61_000) })
+    );
+
+    const result = await service.registerOrReset('aa-bb-cc-dd-ee-ff');
+
+    expect(result.deviceId).toBe('device-1');
+    expect(result.reclaimed).toBe(true);
+    expect(updates).toHaveLength(1);
+    expect(updates[0]!.where).toEqual({ id: 'device-1' });
+    expect(updates[0]!.data.mac).toBe('AA:BB:CC:DD:EE:FF');
+    expect(getRecord()?.mac).toBe('AA:BB:CC:DD:EE:FF');
+  });
 });
 
 function createClaimService(
@@ -181,6 +209,7 @@ function createClaimService(
       if (!current || args.where.pairCode !== current.pairCode) return null;
       return current;
     },
+    findMany: async () => [],
     findFirst: async () => ({ sortOrder: 1 }),
     update: async (args: {
       where: { id?: string; ownerUserId?: string | null };

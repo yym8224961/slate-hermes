@@ -1,17 +1,22 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback } from 'react';
 import {
   DASHBOARD_CUSTOM_STARTER_TEMPLATE,
-  DASHBOARD_CUSTOM_STARTER_TEST_DATA,
   DashboardSystemTemplateId,
   DASHBOARD_SYSTEM_TEMPLATES,
+  type DashboardTemplateT,
   type DynamicConfigT,
 } from 'shared';
+import {
+  DASHBOARD_CUSTOM_STARTER_TEST_DATA,
+  DASHBOARD_SYSTEM_TEMPLATE_TEST_DATA,
+} from 'shared/dynamic/test-fixtures';
 import { Select, SelectItem } from '@/components/ui/Select';
 import { JsonEditor } from './JsonEditor';
 import { DynamicRefreshSettings } from './RefreshSettings';
 import { DashboardPushPanel } from './DashboardPushPanel';
-import { canonicalJsonKey, parseDashboardTemplate, parseJsonRecord } from '@/lib/json';
+import { parseDashboardTemplate, parseJsonRecord } from '@/lib/json';
 import type { DynamicConfigChange } from '@/features/dynamic/types';
+import { useJsonDraftWithEcho } from './useJsonDraftWithEcho';
 
 const CUSTOM_DASHBOARD_TEMPLATE_VALUE = 'custom';
 const DASHBOARD_SYSTEM_TEMPLATE_OPTIONS = Object.values(DASHBOARD_SYSTEM_TEMPLATES);
@@ -28,60 +33,34 @@ export function DashboardConfigPanel({
   const templateSelection =
     config.template.kind === 'system' ? config.template.id : CUSTOM_DASHBOARD_TEMPLATE_VALUE;
   const customTemplate = config.template.kind === 'custom' ? config.template.template : null;
-  const testDataKey = useMemo(() => canonicalJsonKey(config.test_data), [config.test_data]);
-  const customTemplateKey = useMemo(
-    () => (customTemplate ? canonicalJsonKey(customTemplate) : null),
-    [customTemplate]
-  );
   const activeDescription =
     config.template.kind === 'custom'
       ? '编辑 JSON 模板和测试数据；推送接口只接收 version + data，模板保存在内容配置中。'
       : DASHBOARD_SYSTEM_TEMPLATES[config.template.id].description;
-  const [customTemplateText, setCustomTemplateText] = useState(() =>
-    JSON.stringify(
-      config.template.kind === 'custom'
-        ? config.template.template
-        : DASHBOARD_CUSTOM_STARTER_TEMPLATE,
-      null,
-      2
-    )
+  const updateCustomTemplate = useCallback(
+    (template: DashboardTemplateT) => {
+      onChange({ ...config, template: { kind: 'custom', template } });
+    },
+    [config, onChange]
   );
-  const [testDataText, setTestDataText] = useState(() => JSON.stringify(config.test_data, null, 2));
-  const [templateError, setTemplateError] = useState<string | null>(null);
-  const [dataError, setDataError] = useState<string | null>(null);
-  const customTemplateTextRef = useRef(customTemplateText);
-  const testDataTextRef = useRef(testDataText);
-
-  function setCustomTemplateDraft(text: string) {
-    customTemplateTextRef.current = text;
-    setCustomTemplateText(text);
-  }
-
-  function setTestDataDraft(text: string) {
-    testDataTextRef.current = text;
-    setTestDataText(text);
-  }
-
-  useEffect(() => {
-    const local = parseJsonRecord(testDataTextRef.current);
-    if (local.ok && canonicalJsonKey(local.data) === testDataKey) {
-      setDataError(null);
-      return;
-    }
-    setTestDataDraft(JSON.stringify(config.test_data, null, 2));
-    setDataError(null);
-  }, [config.test_data, testDataKey]);
-
-  useEffect(() => {
-    if (!customTemplate || !customTemplateKey) return;
-    const local = parseDashboardTemplate(customTemplateTextRef.current);
-    if (local.ok && canonicalJsonKey(local.template) === customTemplateKey) {
-      setTemplateError(null);
-      return;
-    }
-    setCustomTemplateDraft(JSON.stringify(customTemplate, null, 2));
-    setTemplateError(null);
-  }, [customTemplate, customTemplateKey]);
+  const updateTestData = useCallback(
+    (testData: Record<string, unknown>) => {
+      onChange({ ...config, test_data: testData });
+    },
+    [config, onChange]
+  );
+  const templateDraft = useJsonDraftWithEcho({
+    value: customTemplate,
+    fallback: DASHBOARD_CUSTOM_STARTER_TEMPLATE,
+    parse: parseDashboardTemplateDraft,
+    onValidChange: updateCustomTemplate,
+  });
+  const testDataDraft = useJsonDraftWithEcho({
+    value: config.test_data,
+    fallback: config.test_data,
+    parse: parseJsonRecord,
+    onValidChange: updateTestData,
+  });
 
   return (
     <div className="space-y-4">
@@ -91,7 +70,7 @@ export function DashboardConfigPanel({
           value={templateSelection}
           onValueChange={(value) => {
             if (value === CUSTOM_DASHBOARD_TEMPLATE_VALUE) {
-              const parsed = parseDashboardTemplate(customTemplateText);
+              const parsed = parseDashboardTemplate(templateDraft.text);
               const template = parsed.ok ? parsed.template : DASHBOARD_CUSTOM_STARTER_TEMPLATE;
               onChange({
                 ...config,
@@ -101,18 +80,17 @@ export function DashboardConfigPanel({
                     ? config.test_data
                     : DASHBOARD_CUSTOM_STARTER_TEST_DATA,
               });
-              setTemplateError(parsed.ok ? null : parsed.error);
+              templateDraft.setError(parsed.ok ? null : parsed.error);
             } else {
               const parsedId = DashboardSystemTemplateId.safeParse(value);
               if (!parsedId.success) return;
               const id = parsedId.data;
-              const system = DASHBOARD_SYSTEM_TEMPLATES[id];
               onChange({
                 ...config,
                 template: { kind: 'system', id },
-                test_data: system.test_data,
+                test_data: DASHBOARD_SYSTEM_TEMPLATE_TEST_DATA[id],
               });
-              setTemplateError(null);
+              templateDraft.setError(null);
             }
           }}
         >
@@ -133,36 +111,29 @@ export function DashboardConfigPanel({
       {templateSelection === CUSTOM_DASHBOARD_TEMPLATE_VALUE && (
         <JsonEditor
           label="自定义模板 JSON"
-          value={customTemplateText}
-          error={templateError}
+          value={templateDraft.text}
+          error={templateDraft.error}
           minRows={8}
-          onChange={(text) => {
-            setCustomTemplateDraft(text);
-            const parsed = parseDashboardTemplate(text);
-            setTemplateError(parsed.ok ? null : parsed.error);
-            if (parsed.ok) {
-              onChange({ ...config, template: { kind: 'custom', template: parsed.template } });
-            }
-          }}
+          onChange={templateDraft.updateDraft}
         />
       )}
 
       <JsonEditor
         label="测试数据 JSON"
-        value={testDataText}
-        error={dataError}
+        value={testDataDraft.text}
+        error={testDataDraft.error}
         minRows={6}
-        onChange={(text) => {
-          setTestDataDraft(text);
-          const parsed = parseJsonRecord(text);
-          setDataError(parsed.ok ? null : parsed.error);
-          if (parsed.ok) {
-            onChange({ ...config, test_data: parsed.data });
-          }
-        }}
+        onChange={testDataDraft.updateDraft}
       />
 
       {contentId && <DashboardPushPanel contentId={contentId} config={config} />}
     </div>
   );
+}
+
+function parseDashboardTemplateDraft(
+  text: string
+): { ok: true; data: DashboardTemplateT } | { ok: false; error: string } {
+  const parsed = parseDashboardTemplate(text);
+  return parsed.ok ? { ok: true, data: parsed.template } : parsed;
 }

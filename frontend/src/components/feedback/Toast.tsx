@@ -30,12 +30,13 @@ interface ToastApi {
 }
 
 const ToastCtx = createContext<ToastApi | null>(null);
+const MAX_TOASTS = 4;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
 
   const push = useCallback((tone: Tone, message: string, hint?: string) => {
-    setItems((p) => [...p, { id: createToastId(), tone, message, hint }]);
+    setItems((p) => [...p, { id: createToastId(), tone, message, hint }].slice(-MAX_TOASTS));
   }, []);
 
   const api = useMemo<ToastApi>(

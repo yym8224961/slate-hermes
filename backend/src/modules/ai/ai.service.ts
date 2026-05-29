@@ -6,6 +6,7 @@ import { parseSsePayloads } from '../../common/http/sse';
 
 const REQUEST_TIMEOUT_MS = 45_000;
 const HISTORY_TODAY_PROMPT_VERSION = '2026-05-21.v5';
+const MAX_AI_RESPONSE_BYTES = 512 * 1024;
 
 const HistoryTodayOptimized = z.object({
   dateLabel: z.string().min(1).max(24),
@@ -132,7 +133,7 @@ export class AiService {
         const detail = await resp.text().catch(() => '');
         throw new Error(`AI HTTP ${resp.status}${detail ? `: ${detail.slice(0, 240)}` : ''}`);
       }
-      const body = await resp.text();
+      const body = await readResponseText(resp, MAX_AI_RESPONSE_BYTES);
       const content = parseChatCompletionContent(body);
       if (!content) {
         throw new Error(`AI 响应无有效内容: ${body.slice(0, 240)}`);
@@ -143,6 +144,28 @@ export class AiService {
       return null;
     }
   }
+}
+
+async function readResponseText(resp: Response, maxBytes: number): Promise<string> {
+  if (!resp.body) return await resp.text();
+  const reader = resp.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > maxBytes) {
+        await reader.cancel().catch(() => {});
+        throw new Error(`AI 响应超过 ${maxBytes} bytes`);
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
 function parseChatCompletionContent(body: string): string | null {

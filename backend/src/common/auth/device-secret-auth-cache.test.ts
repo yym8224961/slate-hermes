@@ -42,4 +42,23 @@ describe('device secret auth cache', () => {
 
     expect(calls).toBe(2);
   });
+
+  it('caches misses briefly to avoid repeated DB lookups for random secrets', async () => {
+    const secret = 'b'.repeat(64);
+    let calls = 0;
+    const prisma = {
+      device: {
+        findUnique: async () => {
+          calls += 1;
+          return null;
+        },
+      },
+    } as unknown as PrismaService;
+
+    expect(await authenticateDeviceSecret(prisma, secret, 1_000)).toBeNull();
+    expect(await authenticateDeviceSecret(prisma, secret, 2_000)).toBeNull();
+    expect(await authenticateDeviceSecret(prisma, secret, 7_000)).toBeNull();
+
+    expect(calls).toBe(2);
+  });
 });

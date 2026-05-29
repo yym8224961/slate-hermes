@@ -7,7 +7,7 @@ import { effectiveFrameName } from '@/features/contents/model/frame-name';
 type PreviewMutation = UseMutationResult<
   ArrayBuffer,
   Error,
-  { config: DynamicConfigT; frameName?: string | null; data?: unknown }
+  { config: DynamicConfigT; frameName?: string | null; data?: unknown; signal?: AbortSignal }
 >;
 
 export function useDynamicPreview({
@@ -25,11 +25,10 @@ export function useDynamicPreview({
 }) {
   const [livePreviewData, setLivePreviewData] = useState<ArrayBuffer | null>(null);
   const previewSeq = useRef(0);
-  const mutateRef = useRef(preview.mutate);
-
-  useEffect(() => {
-    mutateRef.current = preview.mutate;
-  }, [preview.mutate]);
+  // React Query v5 exposes a stable mutate reference; keeping it as a named
+  // dependency makes the debounce effect explicit without depending on the
+  // whole mutation result object.
+  const previewMutate = preview.mutate;
 
   const invalidatePreview = useCallback(() => {
     previewSeq.current++;
@@ -48,8 +47,9 @@ export function useDynamicPreview({
     }
     const seq = ++previewSeq.current;
     setLivePreviewData(null);
+    const controller = new AbortController();
     const timer = setTimeout(() => {
-      mutateRef.current(
+      previewMutate(
         {
           config: parsed.data,
           frameName: effectiveFrameName(type, parsed.data, frameName),
@@ -57,6 +57,7 @@ export function useDynamicPreview({
             parsed.data.type === 'dashboard'
               ? { version: 1, data: parsed.data.test_data }
               : undefined,
+          signal: controller.signal,
         },
         {
           onSuccess: (data) => {
@@ -68,8 +69,11 @@ export function useDynamicPreview({
         }
       );
     }, debounceMs);
-    return () => clearTimeout(timer);
-  }, [config, debounceMs, frameName, invalidatePreview, type]);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [config, debounceMs, frameName, invalidatePreview, previewMutate, type]);
 
   return { livePreviewData, invalidatePreview };
 }

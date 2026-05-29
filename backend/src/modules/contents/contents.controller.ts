@@ -22,6 +22,7 @@ import {
 } from '../../common/decorators/current-device.decorator';
 import { JsonBody } from '../../common/decorators/json-body.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { JwtOrDeviceAuthGuard } from '../../common/guards/jwt-or-device-auth.guard';
 import { etagMatches, respondWithEtag } from '../../common/etag/etag.util';
 import { ContentsService } from './contents.service';
@@ -218,6 +219,7 @@ export class ContentsController {
   }
 
   @Post('contents/preview')
+  @UseGuards(JwtAuthGuard)
   async previewDynamicDirect(
     @Body() body: PreviewDynamicContentDto,
     @Res() reply: FastifyReply

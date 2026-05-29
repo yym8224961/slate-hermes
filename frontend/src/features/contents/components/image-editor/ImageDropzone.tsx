@@ -3,6 +3,7 @@
 import { useDropzone } from 'react-dropzone';
 import { ImagePlus } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { formatBytes } from '@/lib/format';
 
 interface ImageDropzoneProps {
   isEdit: boolean;
@@ -37,7 +38,7 @@ export function ImageDropzone({ isEdit, imageFile, onPick }: ImageDropzoneProps)
         <>
           <p className="font-serif text-[14px] text-ink truncate">{imageFile.name}</p>
           <p className="font-sans text-[11px] text-stone mt-0.5">
-            {(imageFile.size / 1024).toFixed(1)} KB · 点击换图
+            {formatBytes(imageFile.size)} · 点击换图
           </p>
         </>
       ) : isEdit ? (

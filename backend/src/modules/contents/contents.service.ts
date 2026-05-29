@@ -16,7 +16,7 @@ import {
 import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { computeETag } from '../../common/etag/etag.util';
-import { ConflictError, NotFoundError, ValidationError } from '../../common/errors';
+import { ConflictError, InternalError, NotFoundError, ValidationError } from '../../common/errors';
 import { lockGroupRow } from '../../common/db/row-locks';
 import { bulkSetContentSortOrder } from '../../common/db/bulk-sort-order';
 import type { PrismaClientLike } from '../../common/db/prisma-client-like';
@@ -28,18 +28,12 @@ import { GroupsService } from '../groups/groups.service';
 import { ImageRendererService } from '../image-renderer/image-renderer.service';
 import { DynamicContentRegistry } from '../dynamic-content/dynamic-content-registry';
 import { DynamicContentRendererService } from '../dynamic-content/dynamic-content-renderer.service';
-import type { RenderDynamicContentResult } from '../dynamic-content/dynamic-content-renderer.service';
 import { ContentAudioBlobService } from './content-audio-blob.service';
 import { contentToDetail, contentToSummary, defaultDynamicFrameName } from './content-presenter';
 import type { ParsedContentUpload } from './multipart.parser';
 import type { DevicePollSnapshot } from '../devices/devices.service';
 import { dashboardPayloadConfigChanged } from './dashboard-config-signature';
 import { BlobRollbackPlan } from './blob-rollback';
-
-type RenderDynamicContentResultExt = RenderDynamicContentResult & {
-  contentEtag: string;
-  audioEtag: string | null;
-};
 
 interface CurrentContentRequest {
   deviceId: string;
@@ -76,6 +70,7 @@ const CONTENT_SELECT = {
 @Injectable()
 export class ContentsService {
   private readonly logger = new Logger(ContentsService.name);
+  private readonly dynamicMutationTails = new Map<string, Promise<unknown>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -90,6 +85,24 @@ export class ContentsService {
   ) {}
 
   async assertReadable(gid: string, scope: { userId?: string; deviceId?: string }): Promise<void> {
+    if (scope.deviceId !== undefined && scope.userId === undefined) {
+      const device = await this.prisma.device.findUnique({
+        where: { id: scope.deviceId },
+        select: {
+          ownerUserId: true,
+          selectedGroup: { select: { id: true, ownerUserId: true } },
+        },
+      });
+      if (
+        !device?.selectedGroup ||
+        device.selectedGroup.id !== gid ||
+        device.ownerUserId !== device.selectedGroup.ownerUserId
+      ) {
+        throw new NotFoundError('相册不存在');
+      }
+      return;
+    }
+
     const group = await this.prisma.group.findUnique({
       where: { id: gid },
       select: { ownerUserId: true },
@@ -97,16 +110,6 @@ export class ContentsService {
     if (!group) throw new NotFoundError('相册不存在');
     if (scope.userId !== undefined) {
       if (group.ownerUserId !== scope.userId) throw new NotFoundError('相册不存在');
-      return;
-    }
-    if (scope.deviceId !== undefined) {
-      const device = await this.prisma.device.findUnique({
-        where: { id: scope.deviceId },
-        select: { selectedGroupId: true, ownerUserId: true },
-      });
-      if (!device || device.selectedGroupId !== gid || device.ownerUserId !== group.ownerUserId) {
-        throw new NotFoundError('相册不存在');
-      }
       return;
     }
     throw new NotFoundError('相册不存在');
@@ -485,6 +488,8 @@ export class ContentsService {
             select: { audioEtag: true },
           })
           .catch(() => null);
+        let rollbackOk = true;
+        let rollbackError: string | null = null;
         await this.prisma
           .$transaction(async (tx) => {
             await lockGroupRow(tx, gid);
@@ -493,10 +498,19 @@ export class ContentsService {
             await this.groups.recomputeManifestEtag(gid, tx);
           })
           .catch((rollbackErr: unknown) => {
+            rollbackOk = false;
+            rollbackError = formatError(rollbackErr);
             this.logger.warn(
-              `创建动态内容失败后的 DB 回滚失败 content=${contentId}: ${formatError(rollbackErr)}`
+              `创建动态内容失败后的 DB 回滚失败 content=${contentId}: ${rollbackError}`
             );
           });
+        if (!rollbackOk) {
+          throw new InternalError('创建动态内容失败，且 DB 回滚未完成', {
+            code: 'dynamic_create_rollback_failed',
+            original_error: formatError(err),
+            rollback_error: rollbackError,
+          });
+        }
         const cleaned = await Promise.allSettled([
           this.blob.delete(gid, contentId, 'image'),
           this.audioBlobs.delete(gid, contentId, stale?.audioEtag ?? null),
@@ -538,59 +552,62 @@ export class ContentsService {
     ownerUserId: string,
     body: { frame_name?: string | null; config?: unknown }
   ): Promise<ContentMutationResponseT> {
-    const content = await this.prisma.content.findUnique({
-      where: { id: contentId },
-      select: {
-        id: true,
-        groupId: true,
-        sortOrder: true,
-        kind: true,
-        dynamicType: true,
-        dynamicConfig: true,
-      },
-    });
-    if (!content) throw new NotFoundError('内容不存在');
-    if (content.kind !== 'dynamic' || !content.dynamicType)
-      throw new ValidationError('该内容不是动态类型');
-    await this.groups.assertOwned(content.groupId, ownerUserId);
     if (body.frame_name === undefined && body.config === undefined) {
       throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
     }
 
-    const data: Prisma.ContentUpdateInput = {};
-    if (body.frame_name !== undefined) data.frameName = body.frame_name;
-    if (body.config !== undefined) {
-      const validated = DynamicConfig.parse(body.config);
-      const currentType = content.dynamicType;
-      if (validated.type !== currentType) {
-        throw new ValidationError(
-          `不能在已有动态内容上改 type（${currentType} → ${validated.type}），请删除后重建`
-        );
+    return this.runDynamicMutation(contentId, async () => {
+      const content = await this.prisma.content.findUnique({
+        where: { id: contentId },
+        select: {
+          id: true,
+          groupId: true,
+          sortOrder: true,
+          kind: true,
+          dynamicType: true,
+          dynamicConfig: true,
+        },
+      });
+      if (!content) throw new NotFoundError('内容不存在');
+      if (content.kind !== 'dynamic' || !content.dynamicType)
+        throw new ValidationError('该内容不是动态类型');
+      await this.groups.assertOwned(content.groupId, ownerUserId);
+
+      const data: Prisma.ContentUpdateInput = {};
+      if (body.frame_name !== undefined) data.frameName = body.frame_name;
+      if (body.config !== undefined) {
+        const validated = DynamicConfig.parse(body.config);
+        const currentType = content.dynamicType;
+        if (validated.type !== currentType) {
+          throw new ValidationError(
+            `不能在已有动态内容上改 type（${currentType} → ${validated.type}），请删除后重建`
+          );
+        }
+        data.dynamicConfig = validated as unknown as Prisma.InputJsonValue;
+        data.dynamicRefreshDueAt = new Date();
+        data.dynamicRefreshLeaseUntil = null;
+        if (
+          currentType === 'dashboard' &&
+          validated.type === 'dashboard' &&
+          dashboardPayloadConfigChanged(content.dynamicConfig, validated)
+        ) {
+          data.dynamicData = validated.test_data as Prisma.InputJsonValue;
+        }
+        if (body.frame_name === undefined && currentType !== 'dashboard') {
+          data.frameName = defaultDynamicFrameName(currentType, validated);
+        }
       }
-      data.dynamicConfig = validated as unknown as Prisma.InputJsonValue;
-      data.dynamicRefreshDueAt = new Date();
-      data.dynamicRefreshLeaseUntil = null;
-      if (
-        currentType === 'dashboard' &&
-        validated.type === 'dashboard' &&
-        dashboardPayloadConfigChanged(content.dynamicConfig, validated)
-      ) {
-        data.dynamicData = validated.test_data as Prisma.InputJsonValue;
-      }
-      if (body.frame_name === undefined && currentType !== 'dashboard') {
-        data.frameName = defaultDynamicFrameName(currentType, validated);
-      }
-    }
-    await this.prisma.content.update({ where: { id: contentId }, data });
-    const rendered = await this.renderDynamicAndReadEtag(contentId);
-    return this.toMutationResponse(
-      contentId,
-      content.sortOrder,
-      rendered.imageEtag,
-      rendered.audioEtag,
-      rendered.groupEtag,
-      rendered.contentEtag
-    );
+      await this.prisma.content.update({ where: { id: contentId }, data });
+      const rendered = await this.renderDynamicAndReadEtag(contentId);
+      return this.toMutationResponse(
+        contentId,
+        content.sortOrder,
+        rendered.imageEtag,
+        rendered.audioEtag,
+        rendered.groupEtag,
+        rendered.contentEtag
+      );
+    });
   }
 
   async patchFrameName(
@@ -604,8 +621,10 @@ export class ContentsService {
       throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
     }
     if (content.kind === 'dynamic') {
-      await this.prisma.content.update({ where: { id: contentId }, data: { frameName } });
-      const rendered = await this.renderDynamicAndReadEtag(contentId);
+      const rendered = await this.runDynamicMutation(contentId, async () => {
+        await this.prisma.content.update({ where: { id: contentId }, data: { frameName } });
+        return this.renderDynamicAndReadEtag(contentId);
+      });
       return this.toMutationResponse(
         contentId,
         content.sortOrder,
@@ -739,7 +758,7 @@ export class ContentsService {
       });
       return this.groups.recomputeManifestEtag(content.groupId, tx);
     });
-    await this.audioBlobs.delete(content.groupId, contentId, previousAudioEtag);
+    await this.cleanupAudioBlobAfterCommit(content.groupId, contentId, previousAudioEtag);
     return { manifest_etag };
   }
 
@@ -782,7 +801,7 @@ export class ContentsService {
       const contentEtag = await this.readContentEtag(contentId, tx);
       return { groupEtag, contentEtag };
     });
-    await this.audioBlobs.delete(content.groupId, contentId, previousAudioEtag);
+    await this.cleanupAudioBlobAfterCommit(content.groupId, contentId, previousAudioEtag);
     return this.toMutationResponse(
       contentId,
       content.sortOrder,
@@ -891,14 +910,14 @@ export class ContentsService {
     parsed: ParsedContentUpload,
     previousAudioEtag: string | null
   ): Promise<ContentMutationResponseT> {
-    const { image, audio } = await this.renderUpload(parsed);
     const data: Prisma.ContentUpdateInput = {};
     if (parsed.hasFrameName) data.frameName = parsed.frameName;
-    const previousImageBytes = image ? await this.blob.read(gid, contentId, 'image') : null;
-    const shouldClearStaleAudio = Boolean(image && !audio && previousAudioEtag);
-    if (parsed.hasFrameName === false && !image && !audio) {
+    if (parsed.hasFrameName === false && !parsed.hasImage && !parsed.hasAudio) {
       throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
     }
+    const { image, audio } = await this.renderUpload(parsed);
+    const previousImageBytes = image ? await this.blob.read(gid, contentId, 'image') : null;
+    const shouldClearStaleAudio = Boolean(image && !audio && previousAudioEtag);
 
     const rollback = new BlobRollbackPlan(this.blob, this.logger);
     let dbUpdated = false;
@@ -953,7 +972,7 @@ export class ContentsService {
         (audio || shouldClearStaleAudio) &&
         previousAudioEtag !== updated.audioEtag
       ) {
-        await this.audioBlobs.delete(gid, contentId, previousAudioEtag);
+        await this.cleanupAudioBlobAfterCommit(gid, contentId, previousAudioEtag);
       }
       return this.toMutationResponse(
         contentId,
@@ -1040,17 +1059,40 @@ export class ContentsService {
     return content;
   }
 
-  private async renderDynamicAndReadEtag(
+  private renderDynamicAndReadEtag(
     contentId: string,
     opts: Parameters<DynamicContentRendererService['renderDynamicContent']>[1] = { force: true }
-  ): Promise<RenderDynamicContentResultExt> {
-    const rendered = await this.dynamicRenderer.renderDynamicContent(contentId, opts);
-    const row = await this.prisma.content.findUnique({
-      where: { id: contentId },
-      select: { contentEtag: true, audioEtag: true },
+  ): ReturnType<DynamicContentRendererService['renderDynamicContent']> {
+    return this.dynamicRenderer.renderDynamicContent(contentId, opts);
+  }
+
+  private runDynamicMutation<T>(contentId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.dynamicMutationTails.get(contentId) ?? Promise.resolve();
+    // These are per-content mutation locks. A failed request should not block a later,
+    // independent edit of the same dynamic content.
+    const task = previous.then(fn, () => fn());
+    this.dynamicMutationTails.set(contentId, task);
+    void task
+      .finally(() => {
+        if (this.dynamicMutationTails.get(contentId) === task) {
+          this.dynamicMutationTails.delete(contentId);
+        }
+      })
+      .catch(() => undefined);
+    return task;
+  }
+
+  private async cleanupAudioBlobAfterCommit(
+    groupId: string,
+    contentId: string,
+    audioEtag: string | null
+  ): Promise<void> {
+    if (!audioEtag) return;
+    await this.audioBlobs.delete(groupId, contentId, audioEtag).catch((err: unknown) => {
+      this.logger.warn(
+        `post-commit audio blob cleanup failed content=${contentId}: ${formatError(err)}`
+      );
     });
-    if (!row) throw new NotFoundError('内容不存在');
-    return { ...rendered, contentEtag: row.contentEtag, audioEtag: row.audioEtag };
   }
 
   private isCurrentDynamicDue(content: {

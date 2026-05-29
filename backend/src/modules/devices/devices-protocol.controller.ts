@@ -1,5 +1,5 @@
 import { Body, Controller, Post, Put, UseGuards } from '@nestjs/common';
-import type { DeviceStateT, RegisterDeviceResponseT } from 'shared';
+import { MacAddress, type DeviceStateT, type RegisterDeviceResponseT } from 'shared';
 import { Public } from '../../common/decorators/public.decorator';
 import { DeviceAuthGuard } from '../../common/guards/device-auth.guard';
 import {
@@ -32,7 +32,7 @@ export class DevicesProtocolController {
     const r = await this.devices.registerOrReset(body.mac);
     return {
       id: r.deviceId,
-      mac: body.mac,
+      mac: MacAddress.parse(body.mac),
       device_secret: r.deviceSecret,
       pair_code: r.pairCode,
       reclaimed: r.reclaimed,
@@ -61,6 +61,8 @@ export class DevicesProtocolController {
       state.group.manifest_etag === resolvedCurrentFrame.manifestEtag
     ) {
       state.current_content = await this.contents.currentContentForDevice(resolvedCurrentFrame);
+    } else {
+      state.current_content = null;
     }
     return state;
   }

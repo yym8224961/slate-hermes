@@ -16,7 +16,6 @@
 import { type ReactNode } from 'react';
 import * as RS from '@radix-ui/react-select';
 import { ChevronDown, Check } from 'lucide-react';
-import { selectTriggerCls, selectContentCls, selectViewportCls, selectItemCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
 
 interface SelectProps {
@@ -91,3 +90,36 @@ export function SelectItem({ value, children, hint, className }: SelectItemProps
 export function SelectSeparator() {
   return <RS.Separator className="h-px bg-line my-1 mx-3" />;
 }
+
+const selectTriggerCls = cn(
+  'w-full inline-flex items-center justify-between gap-2',
+  'px-4 py-3',
+  'font-serif text-[16px]',
+  'border border-ink bg-cream/30 text-ink',
+  'transition-colors duration-150',
+  'focus-visible:!outline-none focus-visible:bg-cream/60',
+  'hover:bg-cream/50',
+  'disabled:opacity-40 disabled:cursor-not-allowed'
+);
+
+const selectContentCls = cn(
+  'w-[var(--radix-select-trigger-width)] max-w-[calc(100vw-2rem)]',
+  'bg-paper border border-ink',
+  'shadow-dropdown',
+  'py-1 z-[60] overflow-hidden',
+  'outline-none focus-visible:!outline-none'
+);
+
+const selectViewportCls = cn(
+  'max-h-[min(22rem,var(--radix-select-content-available-height))]',
+  'overflow-y-auto',
+  'outline-none focus-visible:!outline-none'
+);
+
+const selectItemCls = cn(
+  'flex min-w-0 items-center gap-2 mx-1 px-3 py-2 text-[14px]',
+  'cursor-pointer outline-none focus-visible:!outline-none',
+  'hover:bg-cream',
+  'data-[highlighted]:bg-cream',
+  'data-[state=checked]:text-ink data-[state=checked]:font-medium data-[state=checked]:bg-cream-deep'
+);

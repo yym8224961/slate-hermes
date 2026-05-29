@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { fetchArrayBuffer, fetchJson, fetchText, DESKTOP_UA } from '../fetch';
+import { fetchArrayBuffer, fetchJson, fetchResponse, fetchText, DESKTOP_UA } from '../fetch';
 import type { HotListItem, HotListSource } from '../hot-list.types';
 import {
   firstMatch,
@@ -531,10 +531,10 @@ export const NEWSNOW_DIRECT_SOURCES: readonly HotListSource[] = [
     id: 'xueqiu-hotstock',
     label: '雪球',
     async fetch(signal) {
-      const cookie = await xueqiuCookie(signal);
+      const cookie = await xueqiuCookie(signal).catch(() => '');
       const json = await fetchJson<XueqiuHotStockResponse>(
         'https://stock.xueqiu.com/v5/stock/hot_stock/list.json?size=30&_type=10&type=10',
-        { signal, headers: { cookie } }
+        { signal, headers: cookie ? { cookie } : undefined }
       );
       return withRanks(
         (json.data?.items ?? [])
@@ -729,16 +729,16 @@ function parseFreebufNuxtPosts(html: string): Array<Omit<HotListItem, 'rank'>> {
     (match) => ({
       title: stripHtml(match[2] ?? ''),
       url: absoluteUrl('https://www.freebuf.com', (match[3] ?? '').replace(/\\u002F/g, '/')),
-      timestamp: match[1],
     })
   );
   return posts;
 }
 
 async function xueqiuCookie(signal: AbortSignal): Promise<string> {
-  const resp = await fetch('https://xueqiu.com/hq', {
+  const resp = await fetchResponse('https://xueqiu.com/hq', {
     signal,
-    headers: { 'User-Agent': DESKTOP_UA },
+    timeoutMs: 5000,
+    headers: { Referer: 'https://xueqiu.com/' },
   });
   const headers = resp.headers as Headers & { getSetCookie?: () => string[] };
   return headers.getSetCookie?.().join('; ') ?? headers.get('set-cookie') ?? '';

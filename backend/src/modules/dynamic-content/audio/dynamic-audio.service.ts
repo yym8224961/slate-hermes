@@ -29,6 +29,7 @@ const WORKER_INTERVAL_MS = 5_000;
 const WORKER_BATCH_SIZE = 3;
 const LEASE_MS = 120_000;
 const MAX_AUDIO_ATTEMPTS = 3;
+const LEASE_MATCH_TOLERANCE_MS = 1000;
 
 @Injectable()
 export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
@@ -241,7 +242,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
           audioSource: 'tts',
           audioVoice: input.voice,
           audioText: input.text,
-          audioLeaseUntil: input.leaseUntil,
+          audioLeaseUntil: leaseWindow(input.leaseUntil),
         },
         data: {
           audioEtag: generatedEtag,
@@ -312,7 +313,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
       current.audioSource !== 'tts' ||
       current.audioVoice !== input.voice ||
       current.audioText !== input.text ||
-      current.audioLeaseUntil?.getTime() !== input.leaseUntil.getTime()
+      !sameLeaseTime(current.audioLeaseUntil, input.leaseUntil)
     ) {
       return;
     }
@@ -326,7 +327,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
         audioSource: 'tts',
         audioVoice: input.voice,
         audioText: input.text,
-        audioLeaseUntil: input.leaseUntil,
+        audioLeaseUntil: leaseWindow(input.leaseUntil),
       },
       data: {
         audioStatus: exhausted ? 'failed' : 'pending',
@@ -383,6 +384,21 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
     }, delayMs);
     this.timer.unref?.();
   }
+}
+
+function sameLeaseTime(actual: Date | null | undefined, expected: Date): boolean {
+  return (
+    actual !== null &&
+    actual !== undefined &&
+    Math.abs(actual.getTime() - expected.getTime()) <= LEASE_MATCH_TOLERANCE_MS
+  );
+}
+
+function leaseWindow(date: Date): { gte: Date; lte: Date } {
+  return {
+    gte: new Date(date.getTime() - LEASE_MATCH_TOLERANCE_MS),
+    lte: new Date(date.getTime() + LEASE_MATCH_TOLERANCE_MS),
+  };
 }
 
 export function buildDynamicAudioTextForContent(

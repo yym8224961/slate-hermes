@@ -3,15 +3,17 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import sharp from 'sharp';
 import {
-  DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA,
-  DASHBOARD_AI_USAGE_STATS_TEST_DATA,
   DASHBOARD_CUSTOM_STARTER_TEMPLATE,
-  DASHBOARD_CUSTOM_STARTER_TEST_DATA,
   DEFAULT_TTS_VOICE,
   FONT_TEST_FONTS,
   FRAME_HEIGHT,
   FRAME_WIDTH,
 } from 'shared';
+import {
+  DASHBOARD_AI_QUOTA_MONITOR_TEST_DATA,
+  DASHBOARD_AI_USAGE_STATS_TEST_DATA,
+  DASHBOARD_CUSTOM_STARTER_TEST_DATA,
+} from 'shared/dynamic/test-fixtures';
 import {
   DynamicFrameRendererService,
   type DynamicRenderContext,

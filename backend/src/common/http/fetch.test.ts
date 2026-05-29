@@ -68,22 +68,46 @@ describe('fetchWithTimeout', () => {
 });
 
 describe('fetch helpers', () => {
-  it('defaults string request bodies to application/json when no content type is provided', async () => {
+  it('defaults object request bodies to application/json when no content type is provided', async () => {
     let contentType: string | null = null;
+    let body: BodyInit | null | undefined;
     globalThis.fetch = (async (
       _input: Parameters<typeof fetch>[0],
       init?: Parameters<typeof fetch>[1]
     ) => {
       contentType = new Headers(init?.headers).get('Content-Type');
+      body = init?.body;
       return new Response('ok');
     }) as unknown as typeof fetch;
 
     await fetchResponse('https://example.invalid/post', {
       method: 'POST',
-      body: JSON.stringify({ ok: true }),
+      body: { ok: true },
     });
 
     expect(contentType).toBe('application/json');
+    expect(body).toBe('{"ok":true}');
+  });
+
+  it('does not mark plain string request bodies as application/json by default', async () => {
+    let contentType: string | null = 'unexpected';
+    let body: BodyInit | null | undefined;
+    globalThis.fetch = (async (
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ) => {
+      contentType = new Headers(init?.headers).get('Content-Type');
+      body = init?.body;
+      return new Response('ok');
+    }) as unknown as typeof fetch;
+
+    await fetchResponse('https://example.invalid/plain', {
+      method: 'POST',
+      body: 'plain text',
+    });
+
+    expect(contentType).toBe(null);
+    expect(body).toBe('plain text');
   });
 
   it('does not default URLSearchParams request bodies to application/json', async () => {
@@ -122,11 +146,125 @@ describe('fetch helpers', () => {
     }
   });
 
+  it('rejects non-json content types for JSON responses', async () => {
+    globalThis.fetch = (async () => {
+      return new Response('<html>ok</html>', {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchJson('https://example.invalid/not-json')).rejects.toThrow(
+      'Expected JSON response'
+    );
+  });
+
+  it('accepts json suffix content types for JSON responses', async () => {
+    globalThis.fetch = (async () => {
+      return new Response('{"ok":true}', {
+        headers: { 'Content-Type': 'application/problem+json' },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchJson<{ ok: boolean }>('https://example.invalid/problem')).resolves.toEqual({
+      ok: true,
+    });
+  });
+
+  it('redacts URL credentials and query from HTTP status errors', async () => {
+    globalThis.fetch = (async () => {
+      return new Response('bad token', { status: 403 });
+    }) as unknown as typeof fetch;
+
+    try {
+      await fetchText('https://user:pass@example.invalid/secret?token=abc#frag');
+      throw new Error('expected HTTP error');
+    } catch (err) {
+      expect(String((err as Error).message)).toContain('https://example.invalid/secret');
+      expect(String((err as Error).message)).not.toContain('token=abc');
+      expect(String((err as Error).message)).not.toContain('user:pass');
+    }
+  });
+
+  it('only reads a bounded prefix from huge error response bodies', async () => {
+    globalThis.fetch = (async () => {
+      return new Response('x'.repeat(64 * 1024), { status: 502 });
+    }) as unknown as typeof fetch;
+
+    try {
+      await fetchText('https://example.invalid/huge-error');
+      throw new Error('expected HTTP error');
+    } catch (err) {
+      expect(err).toBeInstanceOf(HttpStatusError);
+      expect((err as HttpStatusError).bodySnippet.length).toBeLessThanOrEqual(512);
+    }
+  });
+
   it('throws an HTTP status error for text responses too', async () => {
     globalThis.fetch = (async () => {
       return new Response('rate limited', { status: 429 });
     }) as unknown as typeof fetch;
 
     await expect(fetchText('https://example.invalid/limited')).rejects.toThrow('HTTP 429');
+  });
+
+  it('blocks obvious private-network URLs by default', async () => {
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response('unexpected');
+    }) as unknown as typeof fetch;
+
+    await expect(fetchText('http://127.0.0.1/admin')).rejects.toThrow(
+      'private network URL is not allowed'
+    );
+    await expect(fetchText('http://localhost/admin')).rejects.toThrow(
+      'private network URL is not allowed'
+    );
+    await expect(fetchText('http://0177.0.0.1/admin')).rejects.toThrow(
+      'private network URL is not allowed'
+    );
+    await expect(fetchText('http://0x7f.0.0.1/admin')).rejects.toThrow(
+      'private network URL is not allowed'
+    );
+    await expect(fetchText('http://2130706433/admin')).rejects.toThrow(
+      'private network URL is not allowed'
+    );
+    await expect(fetchText('http://100.64.0.1/admin')).rejects.toThrow(
+      'private network URL is not allowed'
+    );
+    await expect(fetchText('http://198.18.0.1/admin')).rejects.toThrow(
+      'private network URL is not allowed'
+    );
+    await expect(fetchText('http://240.0.0.1/admin')).rejects.toThrow(
+      'private network URL is not allowed'
+    );
+    await expect(fetchText('http://[::ffff:127.0.0.1]/admin')).rejects.toThrow(
+      'private network URL is not allowed'
+    );
+    expect(called).toBe(false);
+  });
+
+  it('does not treat ordinary hostnames beginning with fc or fd as private IPv6 addresses', async () => {
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response('ok');
+    }) as unknown as typeof fetch;
+
+    await expect(fetchText('https://fca.com/')).resolves.toBe('ok');
+    expect(called).toBe(true);
+  });
+
+  it('can explicitly allow private-network URLs for trusted callers', async () => {
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return new Response('ok');
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchText('http://127.0.0.1/healthz', { allowPrivateNetwork: true })
+    ).resolves.toBe('ok');
+    expect(called).toBe(true);
   });
 });

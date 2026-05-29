@@ -6,7 +6,7 @@ import { Spinner } from './Spinner';
 
 interface FormActionsProps {
   onCancel: () => void;
-  onSubmit: () => void;
+  onSubmit?: () => void;
   submitLabel: string;
   submitting?: boolean;
   disabled?: boolean;
@@ -32,10 +32,11 @@ export function FormActions({
         className
       )}
     >
-      <Button variant="outline" onClick={onCancel} className="flex-1">
+      <Button type="button" variant="outline" onClick={onCancel} className="flex-1">
         {cancelLabel}
       </Button>
       <Button
+        type={onSubmit ? 'button' : 'submit'}
         onClick={onSubmit}
         disabled={disabled || submitting}
         iconLeft={!submitting ? submitIcon : undefined}

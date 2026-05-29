@@ -4,7 +4,7 @@
 
 import { useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Layers, Pencil, Check } from 'lucide-react';
+import { ArrowLeft, Plus, Layers } from 'lucide-react';
 import { useGroup, useUpdateGroup } from '@/features/groups/queries';
 import { useGroupContents, useReorderContents } from '@/features/contents/queries';
 import type { ContentDetailT, GroupSummaryT } from 'shared';
@@ -15,37 +15,16 @@ import { SortableGrid } from '@/components/ui/SortableGrid';
 import { ImageContentCard } from '@/features/contents/components/cards/ImageContentCard';
 import { DynamicContentCard } from '@/features/contents/components/cards/DynamicContentCard';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { InlineRename } from '@/components/ui/InlineRename';
 import { useToast } from '@/components/feedback/Toast';
-import { inputCls } from '@/lib/styles';
-import { cn } from '@/lib/cn';
-import { useInlineRename } from '@/lib/hooks';
+import { getApiErrorMessage } from '@/lib/api-errors';
+import { useInlineRename } from '@/hooks/useInlineRename';
 import { formatBytes } from '@/lib/format';
-import { useDndOrder } from '@/lib/dnd';
+import { useDndOrder } from '@/hooks/dnd';
 
 export function GroupDetailPage() {
   const { gid } = useParams();
   const navigate = useNavigate();
-  const groupQuery = useGroup(gid);
-  const contents = useGroupContents(gid);
-  const reorder = useReorderContents(gid);
-  const toast = useToast();
-
-  const group = groupQuery.data;
-  const { sensors, currentOrder, orderedItems, onDragEnd } = useDndOrder(
-    contents.data,
-    useCallback((f) => f.id, []),
-    (newOrder, { commit, rollback }) =>
-      reorder.mutate(
-        { order: newOrder },
-        {
-          onSuccess: commit,
-          onError: () => {
-            rollback();
-            toast.error('排序保存失败');
-          },
-        }
-      )
-  );
 
   if (!gid) {
     return (
@@ -63,6 +42,39 @@ export function GroupDetailPage() {
       />
     );
   }
+
+  return <GroupDetailContent gid={gid} navigate={navigate} />;
+}
+
+function GroupDetailContent({
+  gid,
+  navigate,
+}: {
+  gid: string;
+  navigate: ReturnType<typeof useNavigate>;
+}) {
+  const groupQuery = useGroup(gid);
+  const contents = useGroupContents(gid);
+  const reorder = useReorderContents(gid);
+  const toast = useToast();
+
+  const group = groupQuery.data;
+  const { sensors, currentOrder, orderedItems, onDragEnd } = useDndOrder(
+    contents.data,
+    useCallback((f) => f.id, []),
+    (newOrder, { commit, rollback }) =>
+      reorder.mutate(
+        { order: newOrder },
+        {
+          onSuccess: commit,
+          onError: (err) => {
+            rollback();
+            toast.error('排序保存失败', getApiErrorMessage(err));
+          },
+        }
+      )
+  );
+
   if (groupQuery.isPending) {
     return (
       <div className="pt-16 text-center">
@@ -166,7 +178,7 @@ function GroupHeader({
         await update.mutateAsync({ name });
         toast.success('已改名');
       } catch (err) {
-        toast.error('改名失败');
+        toast.error('改名失败', getApiErrorMessage(err));
         throw err;
       }
     }
@@ -179,35 +191,19 @@ function GroupHeader({
       icon={<KindIcon size={24} />}
       title={group.name}
       titleContent={
-        <div className="flex items-center gap-2 min-w-0">
-          {editing ? (
-            <input
-              autoFocus
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onBlur={commit}
-              onKeyDown={handleKeyDown}
-              maxLength={64}
-              className={cn(
-                inputCls,
-                'flex-1 min-w-0 !font-serif !font-bold !text-[32px] sm:!text-[40px] !leading-[1.2]'
-              )}
-            />
-          ) : (
-            <h1 className="font-serif text-[32px] sm:text-[40px] font-bold leading-[1.2] truncate tracking-tight">
-              {group.name}
-            </h1>
-          )}
-          <button
-            onClick={() => (editing ? commit() : startEditing())}
-            disabled={update.isPending}
-            aria-label={editing ? '保存名称' : '改名'}
-            title={editing ? '保存' : '改名'}
-            className="text-stone-light hover:text-ink disabled:opacity-50 transition-colors p-2 -m-1 hover:bg-cream flex-shrink-0"
-          >
-            {editing ? <Check size={18} /> : <Pencil size={16} />}
-          </button>
-        </div>
+        <InlineRename
+          editing={editing}
+          value={group.name}
+          draft={draft}
+          onDraftChange={setDraft}
+          onStart={startEditing}
+          onCommit={commit}
+          onKeyDown={handleKeyDown}
+          pending={update.isPending}
+          titleClassName="font-serif text-[32px] sm:text-[40px] font-bold leading-[1.2] truncate tracking-tight"
+          inputClassName="!font-serif !font-bold !text-[32px] sm:!text-[40px] !leading-[1.2]"
+          buttonClassName="p-2 -m-1"
+        />
       }
       subtitle={`${group.content_count} 项 · ${formatBytes(group.total_bytes)}`}
       action={

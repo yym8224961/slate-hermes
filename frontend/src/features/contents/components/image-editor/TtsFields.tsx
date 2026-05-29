@@ -1,4 +1,4 @@
-import { TTS_VOICES, type TtsVoiceT, type ContentAudioStatusT } from 'shared';
+import { TTS_VOICES, isTtsVoice, type TtsVoiceT, type ContentAudioStatusT } from 'shared';
 import { Select, SelectItem } from '@/components/ui/Select';
 import { inputCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
@@ -35,7 +35,13 @@ export function TtsFields({
       </label>
       <div>
         <p className="font-mono text-[10px] text-stone uppercase tracking-[0.18em] mb-1.5">音色</p>
-        <Select value={voice} onValueChange={(v) => onVoiceChange(v as TtsVoiceT)}>
+        <Select
+          value={voice}
+          onValueChange={(value) => {
+            if (!isTtsVoice(value)) return;
+            onVoiceChange(value);
+          }}
+        >
           {TTS_VOICES.map((item) => (
             <SelectItem key={item} value={item}>
               {item}

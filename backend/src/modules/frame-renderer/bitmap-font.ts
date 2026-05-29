@@ -26,16 +26,30 @@ interface SerializedBitmapFont {
 }
 
 const fontCache = new Map<string, Promise<BitmapFont>>();
+const MAX_FONT_CACHE_ENTRIES = 32;
 
 export async function loadBitmapFont(path: string): Promise<BitmapFont> {
   const cached = fontCache.get(path);
-  if (cached) return cached;
+  if (cached) {
+    fontCache.delete(path);
+    fontCache.set(path, cached);
+    return cached;
+  }
   const task = readBitmapFont(path).catch((err: unknown) => {
     fontCache.delete(path);
     throw err;
   });
   fontCache.set(path, task);
+  trimCache(fontCache, MAX_FONT_CACHE_ENTRIES);
   return task;
+}
+
+function trimCache<K, V>(cache: Map<K, V>, maxEntries: number): void {
+  while (cache.size > maxEntries) {
+    const oldest = cache.keys().next().value as K | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
 }
 
 async function readBitmapFont(path: string): Promise<BitmapFont> {

@@ -3,6 +3,7 @@ import { Observable } from 'rxjs';
 import { randomUUID } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { requestContext } from '../request-context';
+import { safeRequestId } from '../request-id';
 
 @Injectable()
 export class RequestIdInterceptor implements NestInterceptor {
@@ -27,12 +28,4 @@ export class RequestIdInterceptor implements NestInterceptor {
       });
     });
   }
-}
-
-function safeRequestId(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
-    ? trimmed
-    : null;
 }

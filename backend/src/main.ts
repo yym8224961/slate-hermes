@@ -13,7 +13,7 @@ const MODULE_DIR = import.meta.dirname ?? import.meta.dir;
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ trustProxy: true, bodyLimit: 32 * 1024 * 1024 }),
+    new FastifyAdapter({ trustProxy: 1, bodyLimit: 32 * 1024 * 1024 }),
     { bufferLogs: true }
   );
   app.useLogger(app.get(Logger));
@@ -60,4 +60,7 @@ async function bootstrap(): Promise<void> {
   await app.listen({ port: config.port, host: '0.0.0.0' });
 }
 
-void bootstrap();
+bootstrap().catch((err: unknown) => {
+  console.error('Backend bootstrap failed', err);
+  process.exitCode = 1;
+});

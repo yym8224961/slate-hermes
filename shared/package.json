@@ -8,7 +8,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./types/*": "./src/types/*.ts",
-    "./api": "./src/api.ts"
+    "./api": "./src/api.ts",
+    "./dynamic/*": "./src/dynamic/*.ts"
   },
   "scripts": {
     "build": "tsc",

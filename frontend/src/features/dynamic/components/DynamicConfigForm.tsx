@@ -58,11 +58,12 @@ function DynamicConfigFields({
   }
 }
 
-function UnsupportedConfigNotice({ config }: { config: DynamicConfigT }) {
-  const type = (config as { type?: unknown }).type;
+function UnsupportedConfigNotice({ config }: { config: unknown }) {
+  const type =
+    config && typeof config === 'object' && 'type' in config
+      ? String((config as { type?: unknown }).type)
+      : 'unknown';
   return (
-    <p className="font-sans text-[12px] text-stone">
-      当前动态配置类型暂不支持编辑{typeof type === 'string' && type ? `：${type}` : ''}。
-    </p>
+    <p className="font-sans text-[12px] leading-relaxed text-clay">暂不支持此动态类型：{type}</p>
   );
 }

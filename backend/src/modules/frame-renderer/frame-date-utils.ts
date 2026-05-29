@@ -1,16 +1,27 @@
 import { pickText } from './frame-value-utils';
-import { utcOffsetMin } from '../dynamic-content/timezone';
+import { utcFromWallTimeInTz } from '../dynamic-content/timezone';
 
 export function monthFromMonthDay(value: unknown, fallback: Date, timeZone: string): string {
-  const text = pickText(value, formatDatePart(fallback, 'monthDay', timeZone));
-  const parts = text.split(/[/-]/);
-  if (parts.length < 2) return formatDatePart(fallback, 'monthDay', timeZone).split('/')[0] ?? '1';
-  return String(Number(parts[0] ?? 1));
+  const parsed = parseMonthDay(value);
+  if (parsed) return String(parsed.month);
+  return formatDatePart(fallback, 'monthDay', timeZone).split('/')[0] ?? '1';
 }
 
 export function dayFromMonthDay(value: unknown, fallback: Date, timeZone: string): string {
-  const text = pickText(value, formatDatePart(fallback, 'monthDay', timeZone));
-  return String(Number(text.split(/[/-]/)[1] ?? text));
+  const parsed = parseMonthDay(value);
+  if (parsed) return String(parsed.day);
+  return formatDatePart(fallback, 'monthDay', timeZone).split('/')[1] ?? '1';
+}
+
+function parseMonthDay(value: unknown): { month: number; day: number } | null {
+  const text = pickText(value, '').trim();
+  const match = text.match(/^(\d{1,2})[/-](\d{1,2})$/);
+  if (!match) return null;
+  const month = Number(match[1]);
+  const day = Number(match[2]);
+  if (!Number.isInteger(month) || !Number.isInteger(day)) return null;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+  return { month, day };
 }
 
 export function formatDatePart(
@@ -79,21 +90,18 @@ function parseWallTimeInZone(value: string, timeZone: string): Date | null {
   if (!match) return null;
   const [, y, mo, d, h = '0', mi = '0', s = '0', ms = '0'] = match;
   const paddedMs = ms.padEnd(3, '0');
-  const localUtcMs = Date.UTC(
-    Number(y),
-    Number(mo) - 1,
-    Number(d),
-    Number(h),
-    Number(mi),
-    Number(s),
-    Number(paddedMs)
+  return utcFromWallTimeInTz(
+    {
+      year: Number(y),
+      month: Number(mo),
+      day: Number(d),
+      hour: Number(h),
+      minute: Number(mi),
+      second: Number(s),
+      millisecond: Number(paddedMs),
+    },
+    timeZone
   );
-  let utcMs = localUtcMs;
-  for (let i = 0; i < 2; i += 1) {
-    utcMs = localUtcMs - utcOffsetMin(new Date(utcMs), timeZone) * 60_000;
-  }
-  const parsed = new Date(utcMs);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
 export function shortEarthquakeTime(value: string): string {

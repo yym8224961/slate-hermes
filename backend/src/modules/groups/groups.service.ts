@@ -37,6 +37,7 @@ export interface DeviceGroupSnapshot {
 export interface GroupEtags {
   structureEtag: string;
   manifestEtag: string;
+  contentEtags: Array<{ id: string; etag: string; previousEtag: string }>;
 }
 
 @Injectable()
@@ -99,7 +100,7 @@ export class GroupsService {
       where: { id: groupId },
       data: { structureEtag, manifestEtag },
     });
-    return { structureEtag, manifestEtag };
+    return { structureEtag, manifestEtag, contentEtags };
   }
 
   // ── 设备 cycle / select / describe ─────────────────────────
@@ -290,6 +291,7 @@ export class GroupsService {
   async update(gid: string, ownerUserId: string, body: { name?: string }): Promise<GroupSummaryT> {
     // 校验 + 更新 + recomputeManifestEtag 收进同一事务；name 没变直接跳过 update。
     const group = await this.prisma.$transaction(async (tx) => {
+      await lockUserRow(tx, ownerUserId);
       const g = await tx.group.findUnique({
         where: { id: gid },
         include: { _count: { select: { contents: true } } },

@@ -11,7 +11,8 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Spinner } from '@/components/ui/Spinner';
 import { SortableGrid } from '@/components/ui/SortableGrid';
-import { useDndOrder } from '@/lib/dnd';
+import { getApiErrorMessage } from '@/lib/api-errors';
+import { useDndOrder } from '@/hooks/dnd';
 
 interface GroupsSectionProps {
   groups: GroupSummaryT[] | undefined;
@@ -38,9 +39,9 @@ export const GroupsSection = memo(function GroupsSection({
         { order: newOrder },
         {
           onSuccess: commit,
-          onError: () => {
+          onError: (err) => {
             rollback();
-            toast.error('排序保存失败');
+            toast.error('排序保存失败', getApiErrorMessage(err));
           },
         }
       )
@@ -84,7 +85,7 @@ export const GroupsSection = memo(function GroupsSection({
                 if (!ok) return;
                 del.mutate(group.id, {
                   onSuccess: () => toast.success('已删除'),
-                  onError: () => toast.error('删除失败'),
+                  onError: (err) => toast.error('删除失败', getApiErrorMessage(err)),
                 });
               }}
             />
@@ -111,8 +112,8 @@ export const GroupsSection = memo(function GroupsSection({
             await create.mutateAsync({ name });
             toast.success('已创建');
             setCreateOpen(false);
-          } catch {
-            toast.error('创建失败');
+          } catch (err) {
+            toast.error('创建失败', getApiErrorMessage(err));
           }
         }}
         isPending={create.isPending}

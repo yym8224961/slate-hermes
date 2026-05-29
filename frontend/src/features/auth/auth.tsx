@@ -6,8 +6,9 @@ import { createContext, useContext, useState, useCallback, useEffect, type React
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { setUnauthorizedHandler, tokenStorage } from '@/lib/auth-storage';
-import { api } from '@/lib/http';
+import { API_V1, api } from '@/lib/http';
 import { meQueryKey, useMe, type CurrentUser } from '@/features/auth/queries';
+import { closeSharedAudioContext } from '@/features/contents/components/audio/sharedAudioContext';
 import { clearContentBitmapCache } from '@/features/contents/components/preview/useContentBitmap';
 import { safeRedirectPath } from '@/features/auth/redirect';
 import type { LoginRequestT, LoginResponseT, RegisterRequestT, RegisterResponseT } from 'shared';
@@ -31,17 +32,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     return setUnauthorizedHandler(() => {
-      tokenStorage.clear();
+      tokenStorage.clear({ resetUnauthorized: false });
       setToken(null);
       qc.clear();
       clearContentBitmapCache();
+      closeSharedAudioContext();
       if (window.location.pathname !== '/login') navigate('/login', { replace: true });
     });
   }, [navigate, qc]);
 
   const login = useCallback(
     async (creds: LoginRequestT, redirectTo = '/') => {
-      const { data } = await api.post<LoginResponseT>('/api/v1/sessions', creds);
+      const { data } = await api.post<LoginResponseT>(`${API_V1}/sessions`, creds);
       tokenStorage.set(data.token);
       setToken(data.token);
       qc.setQueryData(meQueryKey, data.user);
@@ -52,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const register = useCallback(
     async (creds: RegisterRequestT, redirectTo = '/') => {
-      const { data } = await api.post<RegisterResponseT>('/api/v1/users', creds);
+      const { data } = await api.post<RegisterResponseT>(`${API_V1}/users`, creds);
       tokenStorage.set(data.token);
       setToken(data.token);
       qc.setQueryData(meQueryKey, data.user);
@@ -69,10 +71,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setToken(null);
     qc.clear();
     clearContentBitmapCache();
+    closeSharedAudioContext();
     navigate('/login', { replace: true });
     if (existingToken) {
       api
-        .delete('/api/v1/sessions/current', {
+        .delete(`${API_V1}/sessions/current`, {
           headers: { Authorization: `Bearer ${existingToken}` },
         })
         .catch(() => {});

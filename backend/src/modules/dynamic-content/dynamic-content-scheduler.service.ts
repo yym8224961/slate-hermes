@@ -50,14 +50,22 @@ export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDes
     this.running = true;
     try {
       const jobs = await this.claimDueJobs(WORKER_BATCH_SIZE);
-      for (const job of jobs) {
-        await this.renderDue(job.id, job.dynamicType).catch(async (err: unknown) => {
-          this.logger.warn(
-            `dynamic refresh job failed content=${job.id}: ${err instanceof Error ? err.message : String(err)}`
-          );
-          await this.markRetry(job, err);
-        });
-      }
+      await Promise.all(
+        jobs.map((job) =>
+          this.renderDue(job.id, job.dynamicType).catch(async (err: unknown) => {
+            this.logger.warn(
+              `dynamic refresh job failed content=${job.id}: ${
+                err instanceof Error ? err.message : String(err)
+              }`
+            );
+            await this.markRetry(job, err).catch((retryErr: unknown) => {
+              this.logger.error(
+                `dynamic refresh retry mark failed content=${job.id}: ${formatError(retryErr)}`
+              );
+            });
+          })
+        )
+      );
       const delayMs =
         jobs.length >= WORKER_BATCH_SIZE ? 0 : await this.nextDelayMs(jobs.length > 0);
       this.schedule(delayMs);

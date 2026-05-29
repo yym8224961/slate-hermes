@@ -16,17 +16,25 @@ export function wrapText(
   if (!source) return [];
   const lines: string[] = [];
   let cur = '';
+  let truncated = false;
   for (const ch of source) {
     if (ch === '\n') {
-      lines.push(cur);
+      if (cur) lines.push(cur);
       cur = '';
+      if (lines.length >= maxLines) {
+        truncated = true;
+        break;
+      }
       continue;
     }
     const next = `${cur}${ch}`;
     if (textWidthFallback(font, fallback, next) > maxWidth && cur.length > 0) {
       lines.push(cur);
       cur = ch;
-      if (lines.length >= maxLines) break;
+      if (lines.length >= maxLines) {
+        truncated = true;
+        break;
+      }
     } else {
       cur = next;
     }
@@ -39,7 +47,7 @@ export function wrapText(
     textWidthFallback(font, fallback, clipped[clipped.length - 1] ?? '') > maxWidth
   ) {
     clipped[clipped.length - 1] = ellipsize(font, fallback, clipped[clipped.length - 1]!, maxWidth);
-  } else if (ellipsis && source.length > clipped.join('').length && clipped.length > 0) {
+  } else if (ellipsis && truncated && clipped.length > 0) {
     clipped[clipped.length - 1] = ellipsize(font, fallback, clipped[clipped.length - 1]!, maxWidth);
   }
   return clipped;

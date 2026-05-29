@@ -7,7 +7,7 @@ import { DragHandle } from '@/components/ui/DragHandle';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { useSortableStyle } from '@/lib/dnd';
+import { useSortableStyle } from '@/hooks/dnd';
 
 export function GroupCardSortable({
   group,

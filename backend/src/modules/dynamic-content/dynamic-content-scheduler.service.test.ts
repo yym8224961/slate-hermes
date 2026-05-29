@@ -44,4 +44,46 @@ describe('DynamicContentSchedulerService', () => {
     service.onModuleDestroy();
     expect((service as unknown as { timer: unknown }).timer).toBeNull();
   });
+
+  it('logs retry marker failures instead of swallowing them inside a job catch', async () => {
+    const logged: string[] = [];
+    const service = new DynamicContentSchedulerService(
+      { backgroundWorkers: true } as AppConfig,
+      {
+        content: {
+          findMany: async () => [
+            { id: 'content-1', dynamicType: 'weather', dynamicRefreshAttempts: 0 },
+          ],
+          updateMany: async ({
+            data,
+          }: {
+            data?: { dynamicRefreshLeaseUntil?: Date; dynamicRefreshAttempts?: unknown };
+          }) => {
+            if (data?.dynamicRefreshAttempts) return { count: 1 };
+            throw new Error('db unavailable');
+          },
+          findFirst: async () => null,
+        },
+      } as unknown as PrismaService,
+      {
+        renderDynamicContent: async () => {
+          throw new Error('render failed');
+        },
+      } as unknown as DynamicContentRendererService
+    );
+    (
+      service as unknown as {
+        logger: { warn: (msg: string) => void; error: (msg: string) => void };
+      }
+    ).logger = {
+      warn: (msg: string) => logged.push(`warn:${msg}`),
+      error: (msg: string) => logged.push(`error:${msg}`),
+    };
+
+    await service.tick();
+    service.onModuleDestroy();
+
+    expect(logged.some((msg) => msg.includes('dynamic refresh job failed'))).toBe(true);
+    expect(logged.some((msg) => msg.includes('dynamic refresh retry mark failed'))).toBe(true);
+  });
 });

@@ -6,6 +6,7 @@
 //   AudioDropzone   — 选音频 + 删除已有音频
 //   DitherControls  — 缩放 / 抖动算法 / 阈值
 
+import type { FormEvent } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import type { ContentDetailT } from 'shared';
 import {
@@ -37,7 +38,7 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
   const existingImg = useContentImage(content.id, !form.imageFile ? content.image_etag : null);
   const canSubmit = form.canEdit;
 
-  async function onSubmit() {
+  async function submitContent() {
     try {
       const fd = await form.buildFormData();
       if (form.hasImagePatch) {
@@ -51,8 +52,7 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
           });
         } catch (err) {
           const title = form.hasImagePatch ? '图片/名称已保存，TTS 生成失败' : 'TTS 生成失败';
-          toast.error(title, getApiErrorMessage(err));
-          if (form.hasImagePatch) onDone();
+          toast.error(title, `${getApiErrorMessage(err)}。可调整 TTS 文案后重新保存。`);
           return;
         }
       }
@@ -61,6 +61,11 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
     } catch (err) {
       toast.error('保存失败', getApiErrorMessage(err));
     }
+  }
+
+  function onSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    void submitContent();
   }
 
   return (
@@ -73,34 +78,35 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
       />
 
       <div className="mt-6 fade-up fade-up-1">
-        <ImageFormBody
-          gid={gid}
-          form={form}
-          isEdit
-          existingImage={existingImg.data}
-          existingImagePending={existingImg.isPending && !form.imageFile}
-          hasExistingAudio={!!content.audio_etag}
-          editingContentId={content.id}
-          audioStatus={content.audio_status}
-          audioError={content.audio_error}
-          beforeFields={
-            <div className="space-y-3">
-              <p className="font-sans text-[12px] text-stone leading-relaxed">
-                {TYPE_META.image.description}
-              </p>
-              <div className="border-t border-line" />
-            </div>
-          }
-          actions={
-            <FormActions
-              onCancel={onDone}
-              onSubmit={onSubmit}
-              submitLabel="保存"
-              disabled={!canSubmit}
-              submitting={submitting}
-            />
-          }
-        />
+        <form onSubmit={onSubmit}>
+          <ImageFormBody
+            gid={gid}
+            form={form}
+            isEdit
+            existingImage={existingImg.data}
+            existingImagePending={existingImg.isPending && !form.imageFile}
+            hasExistingAudio={!!content.audio_etag}
+            editingContentId={content.id}
+            audioStatus={content.audio_status}
+            audioError={content.audio_error}
+            beforeFields={
+              <div className="space-y-3">
+                <p className="font-sans text-[12px] text-stone leading-relaxed">
+                  {TYPE_META.image.description}
+                </p>
+                <div className="border-t border-line" />
+              </div>
+            }
+            actions={
+              <FormActions
+                onCancel={onDone}
+                submitLabel="保存"
+                disabled={!canSubmit}
+                submitting={submitting}
+              />
+            }
+          />
+        </form>
       </div>
     </div>
   );

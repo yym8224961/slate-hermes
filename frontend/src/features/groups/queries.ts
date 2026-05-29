@@ -78,6 +78,7 @@ export function useDeleteGroup() {
     onSuccess: (_data, gid) => {
       qc.removeQueries({ queryKey: queryKeys.group(gid) });
       qc.invalidateQueries({ queryKey: queryKeys.groups });
+      qc.invalidateQueries({ queryKey: queryKeys.devices });
     },
   });
 }

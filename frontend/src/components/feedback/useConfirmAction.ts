@@ -1,10 +1,11 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
+import { getApiErrorMessage } from '@/lib/api-errors';
 import { useConfirm, type ConfirmOptions } from './Confirm';
 import { useToast } from './Toast';
 
 interface MutationCallbacks {
   onSuccess?: () => void;
-  onError?: () => void;
+  onError?: (error: unknown) => void;
 }
 
 interface ToastText {
@@ -14,7 +15,7 @@ interface ToastText {
 
 type ToastInput<T> = string | ToastText | ((value: T) => string | ToastText);
 
-interface ConfirmActionOptions<T> {
+export interface ConfirmActionOptions<T> {
   isPending: boolean;
   getConfirmOptions: (value: T) => ConfirmOptions;
   run: (value: T, callbacks: MutationCallbacks) => void;
@@ -48,11 +49,26 @@ export function useConfirmAction<T>({
           showToast(toast.success, successToast, value);
           onSuccess?.(value);
         },
-        onError: () => showToast(toast.error, errorToast, value),
+        onError: (error) => showErrorToast(toast.error, errorToast, value, error),
       });
     },
     [confirm, errorToast, getConfirmOptions, onSuccess, run, successToast, toast]
   );
+}
+
+function showErrorToast<T>(
+  push: (message: string, hint?: string) => void,
+  input: ToastInput<T> | undefined,
+  value: T,
+  error: unknown
+) {
+  if (!input) return;
+  const text = resolveToastInput(input, value);
+  if (typeof text === 'string') {
+    push(text, getApiErrorMessage(error));
+    return;
+  }
+  push(text.message, text.hint ?? getApiErrorMessage(error));
 }
 
 function showToast<T>(
@@ -61,10 +77,14 @@ function showToast<T>(
   value: T
 ) {
   if (!input) return;
-  const text = typeof input === 'function' ? input(value) : input;
+  const text = resolveToastInput(input, value);
   if (typeof text === 'string') {
     push(text);
     return;
   }
   push(text.message, text.hint);
+}
+
+function resolveToastInput<T>(input: ToastInput<T>, value: T): string | ToastText {
+  return typeof input === 'function' ? input(value) : input;
 }

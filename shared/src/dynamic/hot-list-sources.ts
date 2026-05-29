@@ -36,12 +36,10 @@ export const CurrentHotListSourceIdValues = [
   'qq',
   'quark',
   'woshipm',
-  'xiaohongshu',
   '51cto',
   '52pojie',
   'acfun',
   'csdn',
-  'coolapk',
   'dgtle',
   'douban-group',
   'douban-movie',
@@ -191,13 +189,11 @@ export const HOT_LIST_SOURCES = [
   hotListSource('qq', '腾讯新闻', C, '腾讯热点', '热点榜（Next）'),
   hotListSource('quark', '夸克', T, '夸克热点'),
   hotListSource('woshipm', '人人都是产品经理', T, '人人都是产品经理'),
-  hotListSource('xiaohongshu', '小红书', C),
 
   hotListSource('51cto', '51CTO', T),
   hotListSource('52pojie', '吾爱破解', C),
   hotListSource('acfun', 'AcFun', G),
   hotListSource('csdn', 'CSDN', T),
-  hotListSource('coolapk', '酷安', T),
   hotListSource('dgtle', '数字尾巴', T),
   hotListSource('douban-group', '豆瓣讨论小组', C, '豆瓣小组'),
   hotListSource('douban-movie', '豆瓣电影', G, '豆瓣新片', '新片榜（DailyHot）'),
@@ -259,6 +255,39 @@ export const HOT_LIST_SOURCES = [
   hotListSource('qqvideo-tv-hotsearch', '腾讯视频', G, '腾讯视频电视热搜榜', '电视热搜榜'),
 ] as const satisfies readonly HotListSourceCatalogEntry[];
 
+export const MAINSTREAM_HOT_LIST_SOURCE_IDS = [
+  'weibo',
+  'baidu',
+  'zhihu',
+  'douyin',
+  'kuaishou',
+  'bilibili',
+  'tieba',
+  'toutiao',
+  'qq',
+  'netease',
+  'thepaper',
+  'ithome',
+  '36kr',
+  'huxiu',
+  'juejin',
+  'v2ex',
+  'github-trending',
+  'wallstreetcn-hot',
+  'cls-hot',
+  'xueqiu-hotstock',
+] as const satisfies readonly CurrentHotListSourceIdT[];
+
+const HOT_LIST_SOURCE_BY_ID = new Map<CurrentHotListSourceIdT, HotListSourceCatalogEntry>(
+  HOT_LIST_SOURCES.map((source) => [source.id, source])
+);
+
+export const MAINSTREAM_HOT_LIST_SOURCES = MAINSTREAM_HOT_LIST_SOURCE_IDS.map((id) => {
+  const source = HOT_LIST_SOURCE_BY_ID.get(id);
+  if (!source) throw new Error(`Missing hot-list source: ${id}`);
+  return source;
+});
+
 export function hotListSourceLabel(source: HotListSourceIdT): string {
   const normalized = normalizeHotListSourceId(source);
   return HOT_LIST_SOURCES.find((item) => item.id === normalized)?.label ?? source;
@@ -274,6 +303,10 @@ const HOT_LIST_SOURCE_COLLATOR = new Intl.Collator('zh-Hans-CN-u-co-pinyin', {
 });
 
 export const HOT_LIST_SOURCES_BY_NAME = [...HOT_LIST_SOURCES].sort((a, b) =>
+  HOT_LIST_SOURCE_COLLATOR.compare(hotListSourceDisplayLabel(a), hotListSourceDisplayLabel(b))
+);
+
+export const MAINSTREAM_HOT_LIST_SOURCES_BY_NAME = [...MAINSTREAM_HOT_LIST_SOURCES].sort((a, b) =>
   HOT_LIST_SOURCE_COLLATOR.compare(hotListSourceDisplayLabel(a), hotListSourceDisplayLabel(b))
 );
 

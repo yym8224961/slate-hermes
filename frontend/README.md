@@ -116,7 +116,7 @@ src/
 
 ## API 客户端
 
-`lib/api.ts` 的 axios 实例：
+`lib/http.ts` 的 axios 实例：
 
 - `baseURL: '/'`；dev 时 Vite 反代 `/api` 与 `/healthz` 到 `:3001`，prod 同域。
 - request 拦截器读 `localStorage.getItem('slate_jwt')` 自动补 `Authorization: Bearer`。

@@ -3,6 +3,7 @@ import { Check, Copy } from 'lucide-react';
 import type { DynamicConfigT } from 'shared';
 import { fieldBaseCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
+import { API_V1 } from '@/lib/http';
 
 export function DashboardPushPanel({
   contentId,
@@ -13,7 +14,7 @@ export function DashboardPushPanel({
 }) {
   const [copied, setCopied] = useState(false);
   const url = useMemo(() => {
-    const path = `/api/v1/contents/${contentId}/data`;
+    const path = `${API_V1}/contents/${contentId}/data`;
     if (typeof window === 'undefined') return path;
     return `${window.location.origin}${path}`;
   }, [contentId]);

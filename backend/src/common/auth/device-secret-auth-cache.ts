@@ -7,11 +7,12 @@ export interface DeviceSecretAuthContext {
 }
 
 interface CacheEntry {
-  device: DeviceSecretAuthContext;
+  device: DeviceSecretAuthContext | null;
   expiresAt: number;
 }
 
 const DEVICE_SECRET_CACHE_TTL_MS = 30_000;
+const DEVICE_SECRET_NEGATIVE_CACHE_TTL_MS = 5_000;
 const DEVICE_SECRET_CACHE_MAX = 10_000;
 const cache = new Map<string, CacheEntry>();
 
@@ -37,14 +38,13 @@ export async function authenticateDeviceSecret(
     where: { secretHash: hash },
     select: { id: true, mac: true },
   });
-  if (!device) return null;
-
-  if (cache.size >= DEVICE_SECRET_CACHE_MAX) {
-    const oldest = cache.keys().next().value as string | undefined;
-    if (oldest !== undefined) cache.delete(oldest);
+  if (!device) {
+    setCache(hash, null, now + DEVICE_SECRET_NEGATIVE_CACHE_TTL_MS);
+    return null;
   }
+
   const context = { deviceId: device.id, mac: device.mac };
-  cache.set(hash, { device: context, expiresAt: now + DEVICE_SECRET_CACHE_TTL_MS });
+  setCache(hash, context, now + DEVICE_SECRET_CACHE_TTL_MS);
   return context;
 }
 
@@ -54,4 +54,14 @@ export function invalidateDeviceSecretHash(secretHash: string | null | undefined
 
 export function clearDeviceSecretAuthCache(): void {
   cache.clear();
+}
+
+function setCache(hash: string, device: DeviceSecretAuthContext | null, expiresAt: number): void {
+  if (cache.has(hash)) cache.delete(hash);
+  while (cache.size >= DEVICE_SECRET_CACHE_MAX) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest === undefined) break;
+    cache.delete(oldest);
+  }
+  cache.set(hash, { device, expiresAt });
 }

@@ -14,6 +14,8 @@ const MAX_DURATION_SEC = 60;
 const MAX_OUTPUT_BYTES = SAMPLE_RATE * 2 * MAX_DURATION_SEC;
 const MAX_FFMPEG_CONCURRENCY = 2;
 const FFMPEG_MISSING_RETRY_MS = 60_000;
+const FFMPEG_AVAILABLE_RECHECK_MS = 5 * 60_000;
+const FFMPEG_QUEUE_TIMEOUT_MS = 30_000;
 
 export class AudioTranscodeError extends AppError {
   readonly code: string;
@@ -29,11 +31,12 @@ export class AudioService {
   private ffmpegAvailable: boolean | null = null;
   private ffmpegCheckedAt = 0;
   private activeFfmpeg = 0;
-  private readonly ffmpegQueue: Array<() => void> = [];
+  private readonly ffmpegQueue: Array<() => boolean> = [];
 
   async checkFfmpegAvailable(): Promise<boolean> {
     if (
-      this.ffmpegAvailable === true ||
+      (this.ffmpegAvailable === true &&
+        Date.now() - this.ffmpegCheckedAt < FFMPEG_AVAILABLE_RECHECK_MS) ||
       (this.ffmpegAvailable === false &&
         Date.now() - this.ffmpegCheckedAt < FFMPEG_MISSING_RETRY_MS)
     ) {
@@ -171,18 +174,34 @@ export class AudioService {
         new RateLimitedError('音频转码繁忙，请稍后重试', { retry_after_sec: 5 })
       );
     }
-    return new Promise((resolve) => {
-      this.ffmpegQueue.push(() => {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const entry = () => {
+        if (settled) return false;
+        settled = true;
+        clearTimeout(timer);
         this.activeFfmpeg++;
         resolve(() => this.releaseFfmpegSlot());
-      });
+        return true;
+      };
+      const timer = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        const index = this.ffmpegQueue.indexOf(entry);
+        if (index >= 0) this.ffmpegQueue.splice(index, 1);
+        reject(new RateLimitedError('音频转码排队超时，请稍后重试', { retry_after_sec: 5 }));
+      }, FFMPEG_QUEUE_TIMEOUT_MS);
+      timer.unref?.();
+      this.ffmpegQueue.push(entry);
     });
   }
 
   private releaseFfmpegSlot(): void {
     this.activeFfmpeg = Math.max(0, this.activeFfmpeg - 1);
-    const next = this.ffmpegQueue.shift();
-    if (next) next();
+    while (this.ffmpegQueue.length > 0) {
+      const next = this.ffmpegQueue.shift();
+      if (next?.()) return;
+    }
   }
 }
 
