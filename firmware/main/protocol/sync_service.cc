@@ -425,24 +425,24 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     }
     if (!complete) {
         ESP_LOGW(kTag, "Manifest sync incomplete, not committing state");
-        cache::AbortFrameStage(gid);
+        cache::CleanupFrameStage(gid);
         return false;
     }
     for (auto& f : mf.contents) {
         if (!cache::CommitStagedFrame(gid, f.seq, f.image_etag, f.audio_etag)) {
             ESP_LOGW(kTag, "Frame %d stage commit failed", f.seq);
-            cache::AbortFrameStage(gid);
+            cache::CleanupFrameStage(gid);
             return false;
         }
     }
     if (!cache::WriteManifest(gid, mf.manifest_etag, mf.contents.size())) {
         ESP_LOGW(kTag, "Manifest write failed, not committing state");
-        cache::AbortFrameStage(gid);
+        cache::CleanupFrameStage(gid);
         return false;
     }
     if (!cache::WriteStateMeta(gid, mf.manifest_etag)) {
         ESP_LOGW(kTag, "State write failed, not switching group");
-        cache::AbortFrameStage(gid);
+        cache::CleanupFrameStage(gid);
         return false;
     }
     for (auto& f : mf.contents) {
@@ -452,7 +452,7 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     for (int idx = total; idx < old_content_count; ++idx) {
         cache::DeleteFrameFiles(gid, idx);
     }
-    cache::AbortFrameStage(gid);
+    cache::CleanupFrameStage(gid);
     SetCurrentGroupLocked(gid);
     group_changed = true;
     // 真有内容变化(新增/修改/删除帧),让 FrameScene 重读当前帧并触发 EPD 刷新。
@@ -639,7 +639,7 @@ void SyncService::SyncOnce(SyncMode mode) {
         } else {
             ESP_LOGW(kTag, "Background refresh missing current_content; keep cached frame schedule");
             power_state::RestoreCurrentFrameScheduleFromCache();
-            sync_ok = false;
+            sync_ok = tel.current_content_seq < 0;
         }
     } else if (mode == SyncMode::kBackgroundRefresh) {
         ClearCurrentGroupLocked();

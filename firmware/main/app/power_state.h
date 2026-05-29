@@ -24,6 +24,9 @@ struct CurrentFrameSchedule {
     uint32_t server_sync_sec = 0;
 };
 
+// Explicitly reset RTC slow-memory state on cold boot. Deep-sleep wake keeps it.
+void Init(bool cold_boot);
+
 // 当前展示帧的刷新策略。FrameScene::LoadFrame 写入；RTC timer 唤醒后台同步当前
 // 动态帧时,SyncService 也会更新这里的 next_wake_sec。静态帧不会自己变更,
 // 不配置定时唤醒,避免为了无意义同步空耗电。

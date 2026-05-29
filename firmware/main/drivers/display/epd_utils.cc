@@ -63,6 +63,11 @@ bool GetPx1(const uint8_t* fb, int width, int x, int y) {
 }
 
 void Copy1bppInto(uint8_t* fb, int fb_w, int fb_h, int x, int y, int w, int h, const uint8_t* data) {
+    if (!fb || !data || fb_w <= 0 || fb_h <= 0 || w <= 0 || h <= 0)
+        return;
+    if (x >= fb_w || y >= fb_h || x + w <= 0 || y + h <= 0)
+        return;
+
     const int src_bpr = (w + 7) >> 3;
     const int dst_bpr = (fb_w + 7) >> 3;
     if (x == 0 && w == fb_w) {
@@ -90,8 +95,16 @@ void Copy1bppInto(uint8_t* fb, int fb_w, int fb_h, int x, int y, int w, int h, c
 }
 
 void Copy1bppFrom(const uint8_t* fb, int fb_w, int fb_h, int x, int y, int w, int h, uint8_t* data) {
+    if (!fb || !data || fb_w <= 0 || fb_h <= 0 || w <= 0 || h <= 0)
+        return;
+
     const int dst_bpr = (w + 7) >> 3;
     const int src_bpr = (fb_w + 7) >> 3;
+    if (x >= fb_w || y >= fb_h || x + w <= 0 || y + h <= 0) {
+        std::memset(data, 0xFF, dst_bpr * h);
+        return;
+    }
+
     if (x == 0 && w == fb_w) {
         for (int row = 0; row < h; row++) {
             const int sy = y + row;

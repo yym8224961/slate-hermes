@@ -63,28 +63,19 @@ bool WriteAll(const std::string& path, const void* data, size_t len) {
 }
 
 bool ReadAll(const std::string& path, std::vector<uint8_t>& out) {
+    struct stat st;
+    if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+        return false;
+    const off_t len = st.st_size;
+    if (len < 0)
+        return false;
+    if (len > kMaxReadBytes) {
+        ESP_LOGW(kTag, "Read %s refused: %ld B exceeds limit", path.c_str(), len);
+        return false;
+    }
     FILE* f = fopen(path.c_str(), "rb");
     if (!f)
         return false;
-    if (fseek(f, 0, SEEK_END) != 0) {
-        fclose(f);
-        return false;
-    }
-    long len = ftell(f);
-    if (len < 0) {
-        ESP_LOGW(kTag, "Ftell %s failed: %d", path.c_str(), errno);
-        fclose(f);
-        return false;
-    }
-    if (len > kMaxReadBytes) {
-        ESP_LOGW(kTag, "Read %s refused: %ld B exceeds limit", path.c_str(), len);
-        fclose(f);
-        return false;
-    }
-    if (fseek(f, 0, SEEK_SET) != 0) {
-        fclose(f);
-        return false;
-    }
     out.resize(static_cast<size_t>(len));
     size_t r = fread(out.data(), 1, static_cast<size_t>(len), f);
     fclose(f);
@@ -631,7 +622,7 @@ bool BeginFrameStage(const std::string& gid) {
     return DirEnsure(StageDir(gid));
 }
 
-void AbortFrameStage(const std::string& gid) {
+void CleanupFrameStage(const std::string& gid) {
     if (!gid.empty())
         RemoveTree(StageDir(gid));
 }

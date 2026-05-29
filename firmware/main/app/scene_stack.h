@@ -5,6 +5,7 @@
 // 所有同步切换方法（Push/Pop/Replace）只能由 ui_loop task 调用，否则 LVGL 不安全。
 // Scene::OnEvent 内若需切换，应调 RequestX；ui_loop 在 Dispatch 后调 ApplyPending。
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -52,7 +53,12 @@ class SceneStack {
         std::unique_ptr<Scene> scene;
     };
 
+    void ResetRootRetry();
+
     SceneContext                        ctx_;
     std::vector<std::unique_ptr<Scene>> stack_;
     std::vector<PendingOp>              pending_ops_;
+    Scene*                              root_retry_scene_   = nullptr;
+    int64_t                             next_root_retry_ms_ = 0;
+    uint8_t                             root_retry_count_   = 0;
 };

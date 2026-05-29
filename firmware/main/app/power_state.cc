@@ -15,9 +15,7 @@ constexpr char kTag[] = "PowerState";
 // 最小 wake 间隔：太短会把 deep sleep 的省电优势磨没。
 constexpr uint32_t kMinWakeIntervalSec = 60u;
 
-// RTC slow memory 持久化变量。深睡跨越保留。
-// 注意：这些变量在 cold boot 第一次启动时是 0（BSS-like 行为）。
-//
+// RTC slow memory 持久化变量。深睡跨越保留；cold boot 由 Init(true) 显式清零。
 RTC_DATA_ATTR bool     s_frame_dynamic         = false;
 RTC_DATA_ATTR uint32_t s_frame_server_sync_sec = 0;
 RTC_DATA_ATTR int      s_current_frame_seq     = 0;
@@ -65,6 +63,18 @@ uint32_t HashBytes(const uint8_t* data, size_t len) {
 }
 
 }  // namespace
+
+void Init(bool cold_boot) {
+    if (!cold_boot)
+        return;
+    StateLock lock;
+    s_frame_dynamic         = false;
+    s_frame_server_sync_sec = 0;
+    s_current_frame_seq     = 0;
+    s_status_bar_magic      = 0;
+    s_status_bar_hash       = 0;
+    std::memset(s_status_bar_snapshot, 0, sizeof(s_status_bar_snapshot));
+}
 
 CurrentFrameSchedule GetCurrentFrameSchedule() {
     CurrentFrameSchedule schedule;

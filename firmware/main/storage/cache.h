@@ -56,7 +56,7 @@ bool ReadFrameMeta(const std::string& gid, int idx, FrameMeta& out);
 // required frame files into the stage and only publish them after the batch is
 // complete, so a failed sync does not partially overwrite the committed cache.
 bool BeginFrameStage(const std::string& gid);
-void AbortFrameStage(const std::string& gid);
+void CleanupFrameStage(const std::string& gid);
 bool StagedFrameImageExists(const std::string& gid, int idx, const std::string& expected_etag);
 bool WriteStagedFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag);
 bool StagedFrameAudioExists(const std::string& gid, int idx, const std::string& expected_etag);

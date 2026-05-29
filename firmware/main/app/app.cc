@@ -3,6 +3,7 @@
 #include <esp_log.h>
 #include <esp_mac.h>
 #include <esp_pm.h>
+#include <esp_sleep.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
@@ -567,6 +568,7 @@ void App::Init() {
 
     cred::Credentials creds;
     cred::Load(creds);
+    power_state::Init(esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED);
     decision_ = boot_mode::Decide(creds);
 
     SleepManager::Policy policy;

@@ -144,11 +144,14 @@ void EpdSsd1683::Init() {
 
     constexpr int kRenderRows = 40;
     constexpr int kRender     = kWidth * kRenderRows * 2;
-    lvgl_render_buf_      = (uint8_t*)heap_caps_malloc(kRender, MALLOC_CAP_SPIRAM);
+    lvgl_render_buf_          = (uint8_t*)heap_caps_malloc(kRender, MALLOC_CAP_SPIRAM);
     if (!lvgl_render_buf_) {
         ESP_LOGE(kTag, "Failed to allocate render buffer; restarting");
         esp_restart();
     }
+    // Partial mode intentionally uses a single LVGL render buffer. The async EPD
+    // refresh task owns separate 1bpp frame buffers, so a second LVGL draw buffer
+    // would only increase PSRAM use without changing panel refresh semantics.
     lv_display_set_buffers(lvgl_display_, lvgl_render_buf_, NULL, kRender, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     StartRefreshTask();

@@ -1,5 +1,7 @@
 #include "scene_stack.h"
 
+#include <esp_timer.h>
+
 #include <utility>
 
 #include "esp_log.h"
@@ -7,11 +9,32 @@
 
 namespace {
 constexpr char kTag[] = "SceneStack";
+
+constexpr int     kRootRetryMinDelayMs = 500;
+constexpr int     kRootRetryMaxDelayMs = 8000;
+constexpr uint8_t kRootRetryAttemptCounterMax = 0xFF;
+
+int RootRetryDelayMs(uint8_t retry_count) {
+    int delay = kRootRetryMinDelayMs;
+    for (uint8_t i = 1; i < retry_count && delay < kRootRetryMaxDelayMs; ++i) {
+        delay *= 2;
+        if (delay > kRootRetryMaxDelayMs)
+            delay = kRootRetryMaxDelayMs;
+    }
+    return delay;
+}
+}  // namespace
+
+void SceneStack::ResetRootRetry() {
+    root_retry_scene_   = nullptr;
+    next_root_retry_ms_ = 0;
+    root_retry_count_   = 0;
 }
 
 void SceneStack::Push(std::unique_ptr<Scene> s) {
     if (!s)
         return;
+    ResetRootRetry();
     if (Top())
         Top()->OnExit(ctx_);
     stack_.push_back(std::move(s));
@@ -21,6 +44,7 @@ void SceneStack::Push(std::unique_ptr<Scene> s) {
 void SceneStack::Pop() {
     if (stack_.empty())
         return;
+    ResetRootRetry();
     Top()->OnExit(ctx_);
     stack_.pop_back();
     if (Top())
@@ -30,6 +54,7 @@ void SceneStack::Pop() {
 void SceneStack::Replace(std::unique_ptr<Scene> s) {
     if (!s)
         return;
+    ResetRootRetry();
     if (Top()) {
         Top()->OnExit(ctx_);
         stack_.pop_back();
@@ -76,11 +101,27 @@ void SceneStack::Dispatch(const UiEvent& e) {
     if (!top)
         return;
     if (top->RequiresRoot() && !top->Root()) {
-        ESP_LOGW(kTag, "Retry OnEnter for scene without root: %s", top->Name());
-        top->OnEnter(ctx_);
+        const int64_t now_ms = esp_timer_get_time() / 1000;
+        if (top != root_retry_scene_) {
+            root_retry_scene_   = top;
+            next_root_retry_ms_ = 0;
+            root_retry_count_   = 0;
+        }
+        if (now_ms >= next_root_retry_ms_) {
+            if (root_retry_count_ < kRootRetryAttemptCounterMax)
+                ++root_retry_count_;
+            ESP_LOGW(kTag, "Retry OnEnter for scene without root: %s attempt=%u", top->Name(),
+                     static_cast<unsigned>(root_retry_count_));
+            top->OnEnter(ctx_);
+            next_root_retry_ms_ = now_ms + RootRetryDelayMs(root_retry_count_);
+        }
+        if (!top->RequiresRoot() || top->Root())
+            ResetRootRetry();
         if (top->RequiresRoot() && !top->Root() && e.kind != UiEventKind::kButtonLong &&
             e.kind != UiEventKind::kButtonDouble)
             return;
+    } else if (top == root_retry_scene_) {
+        ResetRootRetry();
     }
     top->OnEvent(ctx_, e);
 }

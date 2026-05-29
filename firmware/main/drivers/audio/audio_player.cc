@@ -454,9 +454,7 @@ void AudioPlayer::TaskLoop() {
         size_t off         = 0;
         bool   wrote_first = false;
         while (off < len) {
-            xSemaphoreTake(shared_mutex_, portMAX_DELAY);
             bool stop = stop_flag_.load(std::memory_order_acquire);
-            xSemaphoreGive(shared_mutex_);
             if (chat_active_.load(std::memory_order_relaxed))
                 stop = true;
             if (stop)

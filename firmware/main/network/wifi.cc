@@ -42,6 +42,7 @@ bool SsidEquals(const uint8_t lhs[32], const uint8_t rhs[32]) {
 }
 
 bool FillStaConfig(wifi_config_t& wc, const std::string& ssid, const std::string& password, std::string* reason) {
+    wc = {};
     if (ssid.empty()) {
         if (reason)
             *reason = "SSID 不能为空";
