@@ -3,13 +3,10 @@
 // 集中字体 / 颜色 / 间距，避免每个控件自己 LV_FONT_DECLARE。
 //
 // 字体清单（全固件统一一份中文字体，避免风格不一致）：
-//   - SourceHanSansSC_Regular_slim   16px Regular 1bpp，GB2312 6763 汉字 ~2.16 MB。
-//                                    所有中文显示统一用这个（BootSplash + 状态栏标题）。
-//                                    1bpp 字模在 EPD 上比 4bpp 抗锯齿二值化干净不少。
-//   - font_awesome_14_1              14px FontAwesome 图标，wifi/电池用。
-//
-// 像素字体:
-//   - FusionPixel_12    12px 像素体，ASCII 子集 ~18 KB，用于状态栏百分比数字。
+//   - Zfull_16           16px Zfull-GB 墨水屏优化位图，GB2312 + 符号。
+//                        所有中文显示统一用这个（BootSplash + 状态栏标题）。
+//   - Zfull_12           12px Zfull-GB，ASCII 子集，状态栏百分比数字。
+//   - font_awesome_14_1  14px FontAwesome 图标，wifi/电池用。
 //
 // 状态栏 24px 高 = 16px line_height + 上下 4px 边距。
 
@@ -17,10 +14,10 @@
 
 #include <font_awesome.h>
 
-LV_FONT_DECLARE(SourceHanSansSC_Regular_slim);
+LV_FONT_DECLARE(Zfull_16);
+LV_FONT_DECLARE(Zfull_12);
 LV_FONT_DECLARE(font_awesome_14_1);
 LV_FONT_DECLARE(font_awesome_30_1);
-LV_FONT_DECLARE(FusionPixel_12);
 
 namespace theme {
 constexpr int kStatusBarHeight = 24;

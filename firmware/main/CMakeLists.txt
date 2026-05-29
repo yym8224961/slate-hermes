@@ -57,8 +57,8 @@ set(SOURCES
     "storage/cache.cc"
     "storage/nvs_store.cc"
 
-    "generated/fonts/source_han_sans_sc_regular_slim.c"
-    "generated/fonts/fusion_pixel_12.c"
+    "generated/fonts/zfull_16.c"
+    "generated/fonts/zfull_12.c"
     "generated/fonts/font_awesome_14_1.c"
     "generated/fonts/font_awesome_30_1.c"
 )

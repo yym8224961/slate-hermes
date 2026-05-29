@@ -50,7 +50,7 @@ void VolumePage::OnEnter(SceneContext& ctx) {
 
     // 数值 "6 / 10",大写字号靠居中视觉强调
     value_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(value_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(value_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(value_label_, lv_color_black(), 0);
     lv_obj_align(value_label_, LV_ALIGN_CENTER, 0, -32);
 
@@ -77,7 +77,7 @@ void VolumePage::OnEnter(SceneContext& ctx) {
     lv_obj_clear_flag(bar_fill_, LV_OBJ_FLAG_SCROLLABLE);
 
     hint_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(hint_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(hint_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(hint_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(hint_label_, target_ == Target::kAlbum ? "上/下 调节   按确认 返回   长按确认 试听"

@@ -33,7 +33,7 @@ void FactoryResetPage::OnEnter(SceneContext& ctx) {
     RefreshStatusBarFromSensors(ctx, *status_bar_);
 
     auto* warn = lv_label_create(root_);
-    lv_obj_set_style_text_font(warn, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(warn, &Zfull_16, 0);
     lv_obj_set_style_text_color(warn, lv_color_black(), 0);
     lv_obj_set_style_text_align(warn, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(warn, 8, 0);
@@ -48,7 +48,7 @@ void FactoryResetPage::OnEnter(SceneContext& ctx) {
     lv_obj_align(warn, LV_ALIGN_CENTER, 0, -8);
 
     auto* hint = lv_label_create(root_);
-    lv_obj_set_style_text_font(hint, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(hint, &Zfull_16, 0);
     lv_obj_set_style_text_color(hint, lv_color_black(), 0);
     lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(hint, "按确认 返回   长按确认 执行");

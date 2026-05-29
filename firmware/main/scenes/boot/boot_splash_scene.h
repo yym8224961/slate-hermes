@@ -52,7 +52,7 @@ class BootSplashScene : public Scene {
     uint8_t progress_total_ = 0;
 
     lv_obj_t* root_       = nullptr;
-    lv_obj_t* text_label_ = nullptr;  // 主文案(中文,SourceHanSansSC)
+    lv_obj_t* text_label_ = nullptr;  // 主文案(中文,Zfull)
     lv_obj_t* code_label_ = nullptr;  // 配对码大字(montserrat_48,仅 kAwaitingPair 显示)
     lv_obj_t* hint_label_ = nullptr;  // 底部应急逃生 hint
 

@@ -115,6 +115,26 @@ bool DecodeUtf8Codepoint(const std::string& text, size_t pos, uint32_t& cp, size
     return true;
 }
 
+bool IsSupportedEmojiLikeCodepoint(uint32_t cp) {
+    switch (cp) {
+        case 0x2600:   // ☀
+        case 0x2601:   // ☁
+        case 0x2602:   // ☂
+        case 0x2603:   // ☃
+        case 0x26A1:   // ⚡
+        case 0x2744:   // ❄
+        case 0x279C:   // ➜
+        case 0x279D:   // ➝
+        case 0x279E:   // ➞
+        case 0x27A4:   // ➤
+            // 仅放行 zfull_16 字体实际包含的 BMP 符号。U+1Fxxx 高位 emoji 字体无字形
+            // （gen_zfull_fonts.sh 明确排除），如需显示需另走 image/font 路径。
+            return true;
+        default:
+            return false;
+    }
+}
+
 bool IsUnsupportedDisplayCodepoint(uint32_t cp) {
     if (cp == 0xFFFD)
         return true;
@@ -125,8 +145,8 @@ bool IsUnsupportedDisplayCodepoint(uint32_t cp) {
     if (cp == 0x200D || (cp >= 0x200B && cp <= 0x200F))
         return true;
     if (cp >= 0x2600 && cp <= 0x27BF)
-        return true;
-    if (cp >= 0x1F000)
+        return !IsSupportedEmojiLikeCodepoint(cp);
+    if (cp >= 0x1F000)  // 高位 emoji 字体无字形，一律过滤
         return true;
     return false;
 }
@@ -160,12 +180,6 @@ std::string SanitizeForScreen(const std::string& text) {
             pos += step;
             continue;
         }
-        if (cp == 0xFF5E) {
-            out.push_back('~');
-            previous_space = false;
-            pos += step;
-            continue;
-        }
 
         out.append(text, pos, step);
         previous_space = false;
@@ -193,7 +207,8 @@ std::string MessagesKey(const xiaozhi::ChatSnapshot& snap) {
 }
 
 const char* EmotionIcon(const std::string& emotion, xiaozhi::ChatState state) {
-    if (state == xiaozhi::ChatState::kCheckingConfig || state == xiaozhi::ChatState::kConnecting)
+    if (state == xiaozhi::ChatState::kCheckingConfig || state == xiaozhi::ChatState::kConnecting ||
+        state == xiaozhi::ChatState::kStopping)
         return FONT_AWESOME_THINKING;
     if (state == xiaozhi::ChatState::kError)
         return FONT_AWESOME_SAD;
@@ -250,6 +265,7 @@ std::string StatusTitle(const xiaozhi::ChatSnapshot& snap) {
         case xiaozhi::ChatState::kSpeaking:
             return snap.status.empty() ? "回复中" : snap.status;
         case xiaozhi::ChatState::kConnecting:
+        case xiaozhi::ChatState::kStopping:
         case xiaozhi::ChatState::kCheckingConfig:
         case xiaozhi::ChatState::kAwaitingActivation:
         case xiaozhi::ChatState::kError:
@@ -322,7 +338,7 @@ void ChatScene::OnEnter(SceneContext& ctx) {
     lv_obj_align(standby_icon_label_, LV_ALIGN_CENTER, 0, RootCenterYOffset(StandbyContentCenterY() - 26));
 
     standby_body_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(standby_body_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(standby_body_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(standby_body_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(standby_body_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(standby_body_label_, "按确认开始聊天");
@@ -330,7 +346,7 @@ void ChatScene::OnEnter(SceneContext& ctx) {
     lv_obj_align(standby_body_label_, LV_ALIGN_CENTER, 0, RootCenterYOffset(StandbyContentCenterY() + 26));
 
     system_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(system_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(system_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(system_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(system_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(system_label_, 6, 0);
@@ -358,7 +374,7 @@ void ChatScene::OnEnter(SceneContext& ctx) {
     lv_obj_set_flex_align(chat_content_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
     chat_empty_label_ = lv_label_create(chat_area_);
-    lv_obj_set_style_text_font(chat_empty_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(chat_empty_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(chat_empty_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(chat_empty_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(chat_empty_label_, "正在听，想聊点什么？");
@@ -367,7 +383,7 @@ void ChatScene::OnEnter(SceneContext& ctx) {
     lv_obj_add_flag(chat_empty_label_, LV_OBJ_FLAG_HIDDEN);
 
     hint_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(hint_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(hint_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(hint_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(hint_label_, LV_LABEL_LONG_WRAP);
@@ -479,8 +495,9 @@ void ChatScene::RenderContent() {
                 break;
             case xiaozhi::ChatState::kAwaitingActivation:
                 RenderSystemMessage(
-                    snap.activation_message.empty() ? "请在小智控制台输入激活码" : snap.activation_message, true,
-                    snap.activation_code);
+                    snap.activation_message.empty() ? "请在小智控制台输入激活码"
+                                                    : DisplayText(snap.activation_message),
+                    true, snap.activation_code);
                 break;
             case xiaozhi::ChatState::kReadyIdle:
                 lv_obj_clear_flag(standby_icon_label_, LV_OBJ_FLAG_HIDDEN);
@@ -489,12 +506,15 @@ void ChatScene::RenderContent() {
             case xiaozhi::ChatState::kConnecting:
                 RenderSystemMessage("正在连接小智服务器...", false, "");
                 break;
+            case xiaozhi::ChatState::kStopping:
+                RenderSystemMessage("正在结束当前对话...", false, "");
+                break;
             case xiaozhi::ChatState::kListening:
             case xiaozhi::ChatState::kSpeaking:
                 RenderChatMessages(snap);
                 break;
             case xiaozhi::ChatState::kError:
-                RenderSystemMessage("小智暂不可用\n\n" + TrimForScreen(snap.error, 72), false, "");
+                RenderSystemMessage("小智暂不可用\n\n" + TrimForScreen(SanitizeForScreen(snap.error), 72), false, "");
                 break;
         }
     }
@@ -585,7 +605,7 @@ void ChatScene::AppendChatBubble(const std::string& role, const std::string& tex
     lv_obj_t* bubble = lv_obj_create(row);
     StyleBubble(bubble);
     lv_obj_t* label = lv_label_create(bubble);
-    lv_obj_set_style_text_font(label, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(label, &Zfull_16, 0);
     lv_obj_set_style_text_color(label, lv_color_black(), 0);
     lv_obj_set_style_text_line_space(label, 4, 0);
     LayoutBubble(bubble, label, display_text, user);

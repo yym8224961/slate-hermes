@@ -47,9 +47,13 @@ bool MqttProtocol::Start() {
 }
 
 bool MqttProtocol::StartMqttClient(bool report_error) {
-    if (mqtt_) {
-        mqtt_.reset();
+    ESP_LOGI(kTag, "StartMqttClient begin report_error=%d", report_error ? 1 : 0);
+    std::shared_ptr<Mqtt> old_mqtt;
+    {
+        std::lock_guard<std::mutex> lock(send_mutex_);
+        old_mqtt = std::move(mqtt_);
     }
+    old_mqtt.reset();
 
     settings::MqttConfig cfg;
     if (!settings::LoadMqtt(cfg)) {
@@ -60,13 +64,19 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
     publish_topic_ = cfg.publish_topic;
 
     EspNetwork network;
-    mqtt_ = network.CreateMqtt(0);
-    mqtt_->SetKeepAlive(cfg.keepalive);
-    mqtt_->OnConnected([this]() {
+    auto mqtt_unique = network.CreateMqtt(0);
+    if (!mqtt_unique) {
+        if (report_error)
+            SetError("小智 MQTT 初始化失败");
+        return false;
+    }
+    std::shared_ptr<Mqtt> mqtt(std::move(mqtt_unique));
+    mqtt->SetKeepAlive(cfg.keepalive);
+    mqtt->OnConnected([this]() {
         if (on_connected_)
             on_connected_();
     });
-    mqtt_->OnDisconnected([this]() {
+    mqtt->OnDisconnected([this]() {
         ESP_LOGW(kTag, "MQTT disconnected");
         if (on_disconnected_)
             on_disconnected_();
@@ -75,8 +85,8 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
         if (*alive_)
             PostChannelClosedEvent();
     });
-    mqtt_->OnError([this](const std::string& err) { ESP_LOGW(kTag, "MQTT error: %s", err.c_str()); });
-    mqtt_->OnMessage([this](const std::string& topic, const std::string& payload) {
+    mqtt->OnError([this](const std::string& err) { ESP_LOGW(kTag, "MQTT error: %s", err.c_str()); });
+    mqtt->OnMessage([this](const std::string& topic, const std::string& payload) {
         cJSON* root = cJSON_Parse(payload.c_str());
         if (!root) {
             ESP_LOGW(kTag, "MQTT rx ignored: invalid JSON");
@@ -113,32 +123,50 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
         port = std::atoi(cfg.endpoint.substr(pos + 1).c_str());
     }
 
-    if (!mqtt_->Connect(host, port, cfg.client_id, cfg.username, cfg.password)) {
-        ESP_LOGW(kTag, "MQTT connect failed: last_error=%d", mqtt_->GetLastError());
+    if (!mqtt->Connect(host, port, cfg.client_id, cfg.username, cfg.password)) {
+        ESP_LOGW(kTag, "MQTT connect failed: last_error=%d", mqtt->GetLastError());
         if (report_error)
             SetError("连接小智服务器失败");
         return false;
     }
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    if (IsAudioChannelCloseRequested()) {
+        mqtt.reset();
+        return false;
+    }
+    mqtt_ = std::move(mqtt);
+    ESP_LOGI(kTag, "StartMqttClient connected");
     return true;
+}
+
+bool MqttProtocol::IsMqttConnected() const {
+    std::lock_guard<std::mutex> lock(send_mutex_);
+    return mqtt_ && mqtt_->IsConnected();
 }
 
 bool MqttProtocol::SendText(const std::string& text) {
     std::lock_guard<std::mutex> lock(send_mutex_);
+    return SendTextLocked(text, true);
+}
+
+bool MqttProtocol::SendTextLocked(const std::string& text, bool report_error) {
     if (!mqtt_ || publish_topic_.empty()) {
-        SetError("MQTT 未连接");
+        if (report_error)
+            SetError("MQTT 未连接");
         return false;
     }
     if (!mqtt_->Publish(publish_topic_, text)) {
         ESP_LOGW(kTag, "MQTT publish failed: connected=%d last_error=%d", mqtt_->IsConnected() ? 1 : 0,
                  mqtt_->GetLastError());
-        SetError("发送小智消息失败");
+        if (report_error)
+            SetError("发送小智消息失败");
         return false;
     }
     return true;
 }
 
 bool MqttProtocol::OpenAudioChannel() {
-    if (!mqtt_ || !mqtt_->IsConnected()) {
+    if (!IsMqttConnected()) {
         if (!StartMqttClient(true))
             return false;
     }
@@ -167,7 +195,7 @@ bool MqttProtocol::OpenAudioChannel() {
     if (bits & kServerGoodbyeEvent) {
         if (IsAudioChannelCloseRequested())
             return false;
-        ESP_LOGW(kTag, "MQTT server closed before hello: connected=%d", mqtt_ && mqtt_->IsConnected() ? 1 : 0);
+        ESP_LOGW(kTag, "MQTT server closed before hello: connected=%d", IsMqttConnected() ? 1 : 0);
         ESP_LOGW(kTag, "Clear cached Xiaozhi MQTT config after pre-hello goodbye");
         settings::ClearMqtt();
         SetError("小智服务器关闭连接");
@@ -181,7 +209,7 @@ bool MqttProtocol::OpenAudioChannel() {
         return false;
     }
     if (!(bits & kServerHelloEvent)) {
-        ESP_LOGW(kTag, "MQTT server hello timeout: connected=%d", mqtt_ && mqtt_->IsConnected() ? 1 : 0);
+        ESP_LOGW(kTag, "MQTT server hello timeout: connected=%d", IsMqttConnected() ? 1 : 0);
         SetError("小智服务器响应超时");
         return false;
     }
@@ -269,6 +297,7 @@ bool MqttProtocol::OpenAudioChannel() {
 }
 
 void MqttProtocol::CloseAudioChannel(bool send_goodbye) {
+    ESP_LOGI(kTag, "CloseAudioChannel begin goodbye=%d", send_goodbye ? 1 : 0);
     MarkAudioChannelCloseRequested();
     if (event_group_)
         xEventGroupSetBits(event_group_, kChannelClosedEvent);
@@ -286,16 +315,26 @@ void MqttProtocol::CloseAudioChannel(bool send_goodbye) {
     udp.reset();
     const std::string session_id = SessionIdCopy();
     if (send_goodbye && !session_id.empty()) {
-        SendText("{\"session_id\":" + json_utils::JsonStringLiteral(session_id) + ",\"type\":\"goodbye\"}");
+        std::lock_guard<std::mutex> lock(send_mutex_);
+        SendTextLocked("{\"session_id\":" + json_utils::JsonStringLiteral(session_id) + ",\"type\":\"goodbye\"}",
+                       false);
     }
+    std::shared_ptr<Mqtt> mqtt;
+    {
+        std::lock_guard<std::mutex> lock(send_mutex_);
+        mqtt = std::move(mqtt_);
+    }
+    if (mqtt)
+        mqtt->Disconnect();
+    mqtt.reset();
     if (notify_closed && on_audio_channel_closed_)
         on_audio_channel_closed_();
+    ESP_LOGI(kTag, "CloseAudioChannel end notify_closed=%d", notify_closed ? 1 : 0);
 }
 
 bool MqttProtocol::IsAudioChannelOpened() const {
     std::lock_guard<std::mutex> lock(channel_mutex_);
-    return mqtt_ && mqtt_->IsConnected() && udp_ != nullptr &&
-           !error_occurred_.load(std::memory_order_acquire) && !IsTimeout();
+    return udp_ != nullptr && IsMqttConnected() && !error_occurred_.load(std::memory_order_acquire) && !IsTimeout();
 }
 
 bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {

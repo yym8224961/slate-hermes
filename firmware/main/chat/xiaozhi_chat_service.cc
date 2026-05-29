@@ -68,7 +68,14 @@ void ChatService::EnterMode() {
         snapshot_.assistant_text.clear();
         ClearAlertLocked();
     }
-    if (settings::HasProtocolConfig()) {
+    bool has_conversation_task = false;
+    {
+        std::lock_guard<std::mutex> task_lock(conversation_task_mutex_);
+        has_conversation_task = HasConversationTaskLocked();
+    }
+    if (has_conversation_task || conversation_stopping_.load(std::memory_order_relaxed)) {
+        SetState(ChatState::kStopping, "小智正在收尾...");
+    } else if (settings::HasProtocolConfig()) {
         SetState(ChatState::kReadyIdle, "小智待机");
     } else {
         StartConfigTask();
@@ -77,12 +84,16 @@ void ChatService::EnterMode() {
 
 void ChatService::LeaveMode() {
     in_mode_.store(false, std::memory_order_relaxed);
+    pending_conversation_start_.store(false, std::memory_order_relaxed);
     StopConfigTask(true);
     StopConversation(true);
+    const bool stopped = WaitForConversationStopped(3000);
+    ESP_LOGI(kTag, "LeaveMode wait stopped=%d", stopped ? 1 : 0);
 }
 
 void ChatService::ToggleChat() {
     const ChatState state = CurrentState();
+    ESP_LOGI(kTag, "ToggleChat state=%d", static_cast<int>(state));
     switch (state) {
         case ChatState::kReadyIdle:
         case ChatState::kError:
@@ -99,6 +110,12 @@ void ChatService::ToggleChat() {
         case ChatState::kSpeaking:
             InterruptSpeaking();
             break;
+        case ChatState::kStopping:
+            if (settings::HasProtocolConfig()) {
+                pending_conversation_start_.store(true, std::memory_order_relaxed);
+                SetState(ChatState::kStopping, "小智正在收尾...");
+            }
+            break;
         case ChatState::kCheckingConfig:
         case ChatState::kAwaitingActivation:
             break;
@@ -106,23 +123,30 @@ void ChatService::ToggleChat() {
 }
 
 void ChatService::StopConversation(bool send_goodbye) {
-    conversation_running_.store(false, std::memory_order_relaxed);
-    pending_listen_after_playback_.store(false, std::memory_order_relaxed);
+    ESP_LOGI(kTag, "StopConversation begin goodbye=%d", send_goodbye ? 1 : 0);
+    const bool was_running = conversation_running_.exchange(false, std::memory_order_relaxed);
+    bool       has_task     = false;
+    {
+        std::lock_guard<std::mutex> task_lock(conversation_task_mutex_);
+        has_task = HasConversationTaskLocked();
+    }
     std::shared_ptr<Protocol> protocol;
     {
         std::lock_guard<std::mutex> lock(protocol_mutex_);
         protocol = protocol_;
         protocol_.reset();
     }
+    if (was_running || has_task || protocol) {
+        conversation_stopping_.store(true, std::memory_order_relaxed);
+        if (CurrentState() != ChatState::kError)
+            SetState(ChatState::kStopping, "小智正在收尾...");
+    }
+    pending_listen_after_playback_.store(false, std::memory_order_relaxed);
     if (protocol)
         protocol->CloseAudioChannel(send_goodbye);
     EndAudioSession();
-    if (in_mode_.load(std::memory_order_relaxed) && CurrentState() != ChatState::kError) {
-        if (settings::HasProtocolConfig())
-            SetState(ChatState::kReadyIdle, "小智待机");
-        else
-            StartConfigTask();
-    }
+    ESP_LOGI(kTag, "StopConversation end was_running=%d has_task=%d had_protocol=%d", was_running ? 1 : 0,
+             has_task ? 1 : 0, protocol ? 1 : 0);
 }
 
 void ChatService::AdjustVolume(int delta) {
@@ -143,14 +167,18 @@ void ChatService::SetVolume(int level) {
 
 bool ChatService::BlocksSleep() const {
     return in_mode_.load(std::memory_order_relaxed) || config_running_.load(std::memory_order_relaxed) ||
-           conversation_running_.load(std::memory_order_relaxed) || AudioService::Get().IsActive();
+           conversation_running_.load(std::memory_order_relaxed) ||
+           conversation_stopping_.load(std::memory_order_relaxed) ||
+           pending_conversation_start_.load(std::memory_order_relaxed) || AudioService::Get().IsActive();
 }
 
 void ChatService::SuspendForSleep() {
     in_mode_.store(false, std::memory_order_relaxed);
+    pending_conversation_start_.store(false, std::memory_order_relaxed);
     StopConfigTask(true);
     control_close_requested_.store(false, std::memory_order_relaxed);
     conversation_running_.store(false, std::memory_order_relaxed);
+    conversation_stopping_.store(true, std::memory_order_relaxed);
     pending_listen_after_playback_.store(false, std::memory_order_relaxed);
     AudioService::Get().EnableVoiceProcessing(false);
     std::shared_ptr<Protocol> protocol;
@@ -163,6 +191,7 @@ void ChatService::SuspendForSleep() {
         protocol->CloseAudioChannel(false);
     WaitForConversationStopped(3000);
     EndAudioSession();
+    conversation_stopping_.store(false, std::memory_order_relaxed);
 }
 
 void ChatService::NotifyNetworkClosed(uint32_t conversation_token) {
@@ -203,19 +232,26 @@ void ChatService::StartConfigTask() {
 }
 
 void ChatService::StartConversationTask() {
-    if (!started_.load(std::memory_order_relaxed) || conversation_running_.exchange(true))
+    if (!started_.load(std::memory_order_relaxed))
         return;
     std::lock_guard<std::mutex> task_lock(conversation_task_mutex_);
-    if (conversation_task_) {
-        conversation_running_.store(false, std::memory_order_relaxed);
-        ESP_LOGW(kTag, "Conversation task is still stopping");
+    if (conversation_task_ || conversation_stopping_.load(std::memory_order_relaxed)) {
+        ESP_LOGI(kTag, "StartConversationTask queued task=%p stopping=%d", conversation_task_,
+                 conversation_stopping_.load(std::memory_order_relaxed) ? 1 : 0);
+        QueueConversationStartLocked();
         return;
     }
+    if (conversation_running_.exchange(true))
+        return;
     if (conversation_done_notify_) {
         while (xSemaphoreTake(conversation_done_notify_, 0) == pdTRUE) {
         }
     }
+    conversation_stopping_.store(false, std::memory_order_relaxed);
+    pending_conversation_start_.store(false, std::memory_order_relaxed);
     conversation_token_.fetch_add(1, std::memory_order_acq_rel);
+    ESP_LOGI(kTag, "StartConversationTask create token=%lu",
+             static_cast<unsigned long>(conversation_token_.load(std::memory_order_acquire)));
     BaseType_t ok = xTaskCreatePinnedToCore(&ChatService::ConversationTaskEntry, "xiaozhi_conv", 10 * 1024, this, 4,
                                             &conversation_task_, 0);
     if (ok != pdPASS) {
@@ -227,7 +263,44 @@ void ChatService::StartConversationTask() {
         if (conversation_done_notify_)
             xSemaphoreGive(conversation_done_notify_);
         SetError("小智对话任务启动失败");
+    } else {
+        ESP_LOGI(kTag, "StartConversationTask created task=%p", conversation_task_);
     }
+}
+
+bool ChatService::HasConversationTaskLocked() const {
+    return conversation_task_ != nullptr;
+}
+
+void ChatService::QueueConversationStartLocked() {
+    ESP_LOGI(kTag, "QueueConversationStart");
+    pending_conversation_start_.store(true, std::memory_order_relaxed);
+    conversation_stopping_.store(true, std::memory_order_relaxed);
+    conversation_running_.store(false, std::memory_order_relaxed);
+    if (in_mode_.load(std::memory_order_relaxed) && CurrentState() != ChatState::kError)
+        SetState(ChatState::kStopping, "小智正在收尾...");
+}
+
+void ChatService::MaybeStartPendingConversation() {
+    conversation_stopping_.store(false, std::memory_order_relaxed);
+    control_close_requested_.store(false, std::memory_order_relaxed);
+    if (!in_mode_.load(std::memory_order_relaxed)) {
+        pending_conversation_start_.store(false, std::memory_order_relaxed);
+        return;
+    }
+    if (!settings::HasProtocolConfig()) {
+        pending_conversation_start_.store(false, std::memory_order_relaxed);
+        if (CurrentState() != ChatState::kError)
+            StartConfigTask();
+        return;
+    }
+    if (pending_conversation_start_.exchange(false, std::memory_order_relaxed)) {
+        ESP_LOGI(kTag, "MaybeStartPendingConversation starting queued conversation");
+        StartConversationTask();
+        return;
+    }
+    if (CurrentState() != ChatState::kError)
+        SetState(ChatState::kReadyIdle, "小智待机");
 }
 
 void ChatService::StartControlTask() {
@@ -254,8 +327,16 @@ void ChatService::StartControlTask() {
 void ChatService::RequestControlClose(uint32_t conversation_token) {
     if (conversation_token != conversation_token_.load(std::memory_order_acquire))
         return;
+    ESP_LOGI(kTag, "RequestControlClose token=%lu", static_cast<unsigned long>(conversation_token));
     control_close_token_.store(conversation_token, std::memory_order_release);
     control_close_requested_.store(true, std::memory_order_release);
+    if (control_notify_)
+        xSemaphoreGive(control_notify_);
+}
+
+void ChatService::RequestConversationStoppedHandling() {
+    ESP_LOGI(kTag, "RequestConversationStoppedHandling");
+    control_conversation_stopped_.store(true, std::memory_order_release);
     if (control_notify_)
         xSemaphoreGive(control_notify_);
 }
@@ -277,15 +358,20 @@ void ChatService::SignalConfigTaskStopped() {
 }
 
 bool ChatService::WaitForConversationStopped(int timeout_ms) {
+    ESP_LOGI(kTag, "WaitForConversationStopped begin timeout=%d", timeout_ms);
     {
         std::lock_guard<std::mutex> task_lock(conversation_task_mutex_);
-        if (!conversation_running_.load(std::memory_order_relaxed) && !conversation_task_)
+        if (!conversation_running_.load(std::memory_order_relaxed) && !conversation_task_) {
+            ESP_LOGI(kTag, "WaitForConversationStopped already stopped");
             return true;
+        }
     }
     if (!conversation_done_notify_)
         return false;
-    if (xSemaphoreTake(conversation_done_notify_, pdMS_TO_TICKS(timeout_ms)) == pdTRUE)
+    if (xSemaphoreTake(conversation_done_notify_, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
+        ESP_LOGI(kTag, "WaitForConversationStopped done");
         return true;
+    }
     ESP_LOGW(kTag, "Timed out waiting for conversation task");
     return false;
 }
@@ -321,6 +407,9 @@ void ChatService::ConversationTaskEntry(void* arg) {
     self->conversation_running_.store(false, std::memory_order_relaxed);
     if (signal_stopped && self->conversation_done_notify_)
         xSemaphoreGive(self->conversation_done_notify_);
+    if (signal_stopped)
+        self->RequestConversationStoppedHandling();
+    ESP_LOGI(kTag, "ConversationTaskEntry exit signal_stopped=%d", signal_stopped ? 1 : 0);
     vTaskDelete(nullptr);
 }
 
@@ -341,8 +430,14 @@ void ChatService::ControlTask() {
         xSemaphoreTake(control_notify_, portMAX_DELAY);
         if (control_close_requested_.exchange(false, std::memory_order_acq_rel)) {
             const uint32_t token = control_close_token_.load(std::memory_order_acquire);
+            ESP_LOGI(kTag, "ControlTask close request token=%lu current=%lu", static_cast<unsigned long>(token),
+                     static_cast<unsigned long>(conversation_token_.load(std::memory_order_acquire)));
             if (token == conversation_token_.load(std::memory_order_acquire))
                 StopConversation(false);
+        }
+        if (control_conversation_stopped_.exchange(false, std::memory_order_acq_rel)) {
+            ESP_LOGI(kTag, "ControlTask conversation stopped");
+            MaybeStartPendingConversation();
         }
     }
 }
@@ -394,6 +489,7 @@ void ChatService::ConfigTask() {
 
 void ChatService::ConversationTask() {
     const uint32_t token = conversation_token_.load(std::memory_order_acquire);
+    ESP_LOGI(kTag, "ConversationTask begin token=%lu", static_cast<unsigned long>(token));
     if (!settings::HasProtocolConfig()) {
         StartConfigTask();
         return;
@@ -405,8 +501,8 @@ void ChatService::ConversationTask() {
         SetError("未获取小智协议配置");
         return;
     }
-    ConfigureProtocolCallbacks(protocol.get());
     protocol->SetOwnerToken(token);
+    ConfigureProtocolCallbacks(protocol.get());
     protocol->PrepareAudioChannelOpen();
     std::shared_ptr<Protocol> active_protocol = std::move(protocol);
     {
@@ -419,6 +515,9 @@ void ChatService::ConversationTask() {
         active_protocol->Start()) {
         opened = active_protocol->OpenAudioChannel();
     }
+    ESP_LOGI(kTag, "ConversationTask open result opened=%d running=%d in_mode=%d", opened ? 1 : 0,
+             conversation_running_.load(std::memory_order_relaxed) ? 1 : 0,
+             in_mode_.load(std::memory_order_relaxed) ? 1 : 0);
     if (!opened || !conversation_running_.load(std::memory_order_relaxed) ||
         !in_mode_.load(std::memory_order_relaxed)) {
         const bool cancelled =
@@ -465,6 +564,10 @@ void ChatService::ConversationTask() {
         }
     }
 
+    ESP_LOGI(kTag, "ConversationTask loop exit running=%d in_mode=%d channel_open=%d",
+             conversation_running_.load(std::memory_order_relaxed) ? 1 : 0,
+             in_mode_.load(std::memory_order_relaxed) ? 1 : 0,
+             active_protocol->IsAudioChannelOpened() ? 1 : 0);
     conversation_running_.store(false, std::memory_order_relaxed);
     EndAudioSession();
     pending_listen_after_playback_.store(false, std::memory_order_relaxed);
@@ -478,25 +581,41 @@ void ChatService::ConversationTask() {
     }
     if (close_channel)
         active_protocol->CloseAudioChannel(false);
-    if (in_mode_.load(std::memory_order_relaxed) && CurrentState() != ChatState::kError)
-        SetState(ChatState::kReadyIdle, "小智待机");
+    if (CurrentState() != ChatState::kError)
+        SetState(ChatState::kStopping, "小智正在收尾...");
 }
 
 void ChatService::ConfigureProtocolCallbacks(Protocol* protocol) {
-    protocol->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+    const uint32_t token = protocol->owner_token();
+    protocol->OnIncomingAudio([this, token](std::unique_ptr<AudioStreamPacket> packet) {
+        if (token != conversation_token_.load(std::memory_order_acquire))
+            return;
         if (CurrentState() == ChatState::kSpeaking)
             AudioService::Get().PushPacketToDecodeQueue(std::move(packet));
     });
-    protocol->OnIncomingJson([this](const cJSON* root) { HandleIncomingJson(root); });
-    protocol->OnAudioChannelClosed([this]() {
+    protocol->OnIncomingJson([this, token](const cJSON* root) {
+        if (token != conversation_token_.load(std::memory_order_acquire))
+            return;
+        HandleIncomingJson(root);
+    });
+    protocol->OnAudioChannelClosed([this, token]() {
+        ESP_LOGI(kTag, "OnAudioChannelClosed token=%lu current=%lu", static_cast<unsigned long>(token),
+                 static_cast<unsigned long>(conversation_token_.load(std::memory_order_acquire)));
+        if (token != conversation_token_.load(std::memory_order_acquire))
+            return;
         conversation_running_.store(false, std::memory_order_relaxed);
+        conversation_stopping_.store(true, std::memory_order_relaxed);
         pending_listen_after_playback_.store(false, std::memory_order_relaxed);
         AudioService::Get().EnableVoiceProcessing(false);
         AudioService::Get().ResetDecoder();
-        if (in_mode_.load(std::memory_order_relaxed) && CurrentState() != ChatState::kError)
-            SetState(ChatState::kReadyIdle, "小智待机");
+        if (CurrentState() != ChatState::kError)
+            SetState(ChatState::kStopping, "小智正在收尾...");
     });
-    protocol->OnNetworkError([this](const std::string& message) {
+    protocol->OnNetworkError([this, token](const std::string& message) {
+        ESP_LOGI(kTag, "OnNetworkError token=%lu current=%lu message=%s", static_cast<unsigned long>(token),
+                 static_cast<unsigned long>(conversation_token_.load(std::memory_order_acquire)), message.c_str());
+        if (token != conversation_token_.load(std::memory_order_acquire))
+            return;
         conversation_running_.store(false, std::memory_order_relaxed);
         pending_listen_after_playback_.store(false, std::memory_order_relaxed);
         AudioService::Get().EnableVoiceProcessing(false);

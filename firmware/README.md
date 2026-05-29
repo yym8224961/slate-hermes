@@ -303,8 +303,9 @@ idf                      >= 5.5
 
 字体生成产物在 `main/generated/fonts/`：
 
-- `source_han_sans_sc_regular_slim.c`（生产用，GB2312 6763 字，~2.16 MB）
-- `fusion_pixel_12.c`（生产用 ASCII 子集，状态栏百分比数字，~18 KB）
-- `tools/gen_fonts.sh` 用 `lv_font_conv` 重新生成（`npm i -g lv_font_conv`）
+- `zfull_16.c`（生产用，Zfull-GB 墨水屏优化位图，GB2312 + 符号）
+- `zfull_12.c`（生产用，Zfull-GB ASCII 子集，状态栏百分比数字）
+- 源字体建议放在 `backend/assets/fonts/vector/Zfull-GB.ttf`，从项目根用 `firmware/tools/gen_zfull_fonts.sh` 重新生成（`npm i -g lv_font_conv`）
+- 如需临时指定其他字体，可用仓库相对路径：`ZFULL_TTF=backend/assets/fonts/vector/Zfull-GB.ttf firmware/tools/gen_zfull_fonts.sh`
 
 格式化边界：项目根的 `bun run format(:check)` 不覆盖 `firmware/`；固件若手动跑 `clang-format`，`.clang-format-ignore` 排除 `build/`、`managed_components/`、`main/generated/` 与 `components/xiaozhi-fonts/`，避免重写构建产物、托管依赖、生成字体和本地第三方组件。

@@ -68,10 +68,9 @@ StatusBar::StatusBar(lv_obj_t* parent) {
     lv_obj_align(battery_label_, LV_ALIGN_RIGHT_MID, -8, 0);
 
     // 百分比偏左 — 14px 图标 advance ~14px + 4px 间距 = 18,起算偏移 -26。
-    // 数字用 FusionPixel 12px 像素体(ASCII 子集),比 16px 思源更紧凑工整,
-    // 1bpp EPD 下小字号像素感强、笔画整齐。
+    // 数字用 Zfull 12px(ASCII 子集),比 16px 更紧凑工整。
     battery_pct_lbl_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(battery_pct_lbl_, &FusionPixel_12, 0);
+    lv_obj_set_style_text_font(battery_pct_lbl_, &Zfull_12, 0);
     lv_obj_set_style_text_color(battery_pct_lbl_, lv_color_black(), 0);
     lv_label_set_text(battery_pct_lbl_, "");
     lv_obj_align(battery_pct_lbl_, LV_ALIGN_RIGHT_MID, -26, 0);
@@ -80,10 +79,9 @@ StatusBar::StatusBar(lv_obj_t* parent) {
     ApplyIconStyle(title_icon_label_);
     lv_obj_align(title_icon_label_, LV_ALIGN_CENTER, 0, 0);
 
-    // 中央标题：16px SourceHanSansSC Regular 1bpp。和 BootSplash 同字体,
-    // 整固件统一中文风格,EPD 1bpp 渲染最干净（无抗锯齿伪边）。
+    // 中央标题：16px Zfull-GB 1bpp。和 BootSplash 同字体,整固件统一中文风格。
     title_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(title_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(title_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(title_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(title_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(title_label_, LV_LABEL_LONG_CLIP);

@@ -63,7 +63,7 @@ void DeviceInfoPage::OnEnter(SceneContext& ctx) {
     lv_obj_set_scrollbar_mode(scroll_area_, LV_SCROLLBAR_MODE_OFF);
 
     info_ = lv_label_create(scroll_area_);
-    lv_obj_set_style_text_font(info_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(info_, &Zfull_16, 0);
     lv_obj_set_style_text_color(info_, lv_color_black(), 0);
     lv_obj_set_style_text_line_space(info_, 4, 0);
     lv_obj_set_style_text_align(info_, LV_TEXT_ALIGN_LEFT, 0);

@@ -69,7 +69,7 @@ void BootSplashScene::OnEnter(SceneContext& ctx) {
 
     // 主文案(中文 + 阿拉伯数字),Awaiting pair 状态下放在码上方做提示。
     text_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(text_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(text_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(text_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(text_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(text_label_, 8, 0);
@@ -86,7 +86,7 @@ void BootSplashScene::OnEnter(SceneContext& ctx) {
 
     // 应急逃生 hint:始终在底部,长按 ENTER 进设置(配网恢复 / 看设备信息 / 工厂重置)。
     hint_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(hint_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(hint_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(hint_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_text(hint_label_, "长按确认 进入设置");

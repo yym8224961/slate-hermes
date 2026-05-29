@@ -32,9 +32,9 @@ class MqttProtocol : public Protocol {
     static constexpr EventBits_t       kChannelClosedEvent = BIT2;
     std::shared_ptr<std::atomic<bool>> alive_              = std::make_shared<std::atomic<bool>>(true);
     EventGroupHandle_t                 event_group_        = nullptr;
-    std::unique_ptr<Mqtt>              mqtt_;
+    std::shared_ptr<Mqtt>              mqtt_;
     std::unique_ptr<Udp>               udp_;
-    std::mutex                         send_mutex_;
+    mutable std::mutex                 send_mutex_;
     mutable std::mutex                 channel_mutex_;
     bool                               channel_open_notified_ = false;
     std::string                        publish_topic_;
@@ -48,7 +48,9 @@ class MqttProtocol : public Protocol {
     mbedtls_aes_context                aes_decrypt_ctx_;
 
     bool        StartMqttClient(bool report_error);
+    bool        IsMqttConnected() const;
     bool        SendText(const std::string& text) override;
+    bool        SendTextLocked(const std::string& text, bool report_error);
     std::string GetHelloMessage() const;
     void        ParseServerHello(const cJSON* root);
     std::string DecodeHexString(const std::string& hex) const;

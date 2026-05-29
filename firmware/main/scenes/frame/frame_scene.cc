@@ -42,7 +42,7 @@ void FrameScene::OnEnter(SceneContext& ctx) {
     frame_view_ = std::make_unique<FrameView>(root_);
 
     empty_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(empty_label_, &SourceHanSansSC_Regular_slim, 0);
+    lv_obj_set_style_text_font(empty_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(empty_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(empty_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_style_text_line_space(empty_label_, 8, 0);

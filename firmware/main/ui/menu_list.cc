@@ -60,14 +60,14 @@ MenuList::MenuList(lv_obj_t* parent, std::vector<Item> items, int initial_cursor
 
         // 主文字
         auto* lbl = lv_label_create(row);
-        lv_obj_set_style_text_font(lbl, &SourceHanSansSC_Regular_slim, 0);
+        lv_obj_set_style_text_font(lbl, &Zfull_16, 0);
         lv_obj_set_style_text_color(lbl, lv_color_black(), 0);
         lv_label_set_text(lbl, items_[i].title.c_str());
         lv_obj_align(lbl, LV_ALIGN_LEFT_MID, kRowPadL, 0);
 
         // 右侧 chevron(用 ASCII '>' 配合现有 16px 字体即可,不必引大字号)
         auto* chev = lv_label_create(row);
-        lv_obj_set_style_text_font(chev, &SourceHanSansSC_Regular_slim, 0);
+        lv_obj_set_style_text_font(chev, &Zfull_16, 0);
         lv_obj_set_style_text_color(chev, lv_color_black(), 0);
         lv_label_set_text(chev, ">");
         lv_obj_align(chev, LV_ALIGN_RIGHT_MID, -kRowPadR, 0);

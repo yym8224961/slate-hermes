@@ -61,6 +61,8 @@ CONFIG_SPIRAM_TYPE_AUTO=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_BOOT_INIT=y
 CONFIG_SPIRAM_USE_MALLOC=y
+# 默认 malloc 超过 4KB 走 PSRAM，避免 15KB frame/download buffer 挤占内部 RAM。
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
 # M2.1 起需要联网,允许 WiFi/lwip 用 PSRAM
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
@@ -92,6 +94,9 @@ CONFIG_HTTPD_MAX_URI_LEN=512
 CONFIG_LWIP_MAX_SOCKETS=10
 # TLS 握手内存动态分配,省 RAM
 CONFIG_MBEDTLS_DYNAMIC_BUFFER=y
+# 小智 MQTT/HTTP TLS 与音频/显示并发时，内部 RAM 最大连续块容易被打碎；
+# TLS buffer 放 PSRAM，内部 RAM 留给 task stack / DMA / WiFi 必需分配。
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
 
 # esp_http_client + 内置 root CA bundle(api_client.cc 挂 esp_crt_bundle_attach 验证证书)
 CONFIG_ESP_TLS_USING_MBEDTLS=y

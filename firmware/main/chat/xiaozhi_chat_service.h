@@ -23,6 +23,7 @@ enum class ChatState {
     kConnecting,
     kListening,
     kSpeaking,
+    kStopping,
     kError,
 };
 
@@ -79,7 +80,11 @@ class ChatService {
     void      StartConfigTask();
     void      StartConversationTask();
     void      StartControlTask();
+    bool      HasConversationTaskLocked() const;
+    void      QueueConversationStartLocked();
+    void      MaybeStartPendingConversation();
     void      RequestControlClose(uint32_t conversation_token);
+    void      RequestConversationStoppedHandling();
     void      StopConfigTask(bool wait);
     void      SignalConfigTaskStopped();
     bool      WaitForConversationStopped(int timeout_ms);
@@ -104,9 +109,12 @@ class ChatService {
     std::atomic<bool>     config_running_{false};
     std::atomic<bool>     config_stop_requested_{false};
     std::atomic<bool>     conversation_running_{false};
+    std::atomic<bool>     conversation_stopping_{false};
+    std::atomic<bool>     pending_conversation_start_{false};
     std::atomic<bool>     pending_listen_after_playback_{false};
     std::atomic<bool>     control_running_{false};
     std::atomic<bool>     control_close_requested_{false};
+    std::atomic<bool>     control_conversation_stopped_{false};
     std::atomic<uint32_t> conversation_token_{0};
     std::atomic<uint32_t> control_close_token_{0};
 

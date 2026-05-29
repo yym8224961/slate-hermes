@@ -46,6 +46,8 @@ std::string ChatStateName(xiaozhi::ChatState state) {
             return "listening";
         case xiaozhi::ChatState::kSpeaking:
             return "speaking";
+        case xiaozhi::ChatState::kStopping:
+            return "stopping";
         case xiaozhi::ChatState::kError:
             return "error";
     }
