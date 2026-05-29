@@ -6,7 +6,7 @@ PROBE_DIR="${SLATE_FONT_PROBE_DIR:-/private/tmp/slate-font-probe}"
 WORK_DIR="${SLATE_FONT_WORK_DIR:-/private/tmp/slate-font-test}"
 OUT_DIR="$ROOT/backend/assets/fonts/bitmap-1bpp"
 SYMBOLS="墨水屏字体测试中文点阵简繁日"
-DEMO_SYMBOLS="墨水屏字体测试中文点阵今日天气多云风力级简繁标点，。！？；：一二三四五六七八九十口日目田回黑白像素横竖撇捺线面黑墨屏°"
+DEMO_SYMBOLS="墨水屏字体测试中文点阵今日天气多云风力级简繁标点，。！？；：～一二三四五六七八九十口日目田回黑白像素横竖撇捺线面黑墨屏°"
 LV_FONT_CONV_BIN="$(command -v lv_font_conv || true)"
 
 mkdir -p "$PROBE_DIR" "$WORK_DIR" "$OUT_DIR"
@@ -76,7 +76,6 @@ need lv_font_conv
 need unzip
 need tar
 
-download_release TakWolf/fusion-pixel-font 2026.05.07 "$PROBE_DIR/fusion8" --pattern "fusion-pixel-font-8px-proportional-ttf-*.zip"
 download_release TakWolf/fusion-pixel-font 2026.05.07 "$PROBE_DIR/fusion10" --pattern "fusion-pixel-font-10px-proportional-ttf-*.zip"
 download_release TakWolf/fusion-pixel-font 2026.05.07 "$PROBE_DIR/fusion12" --pattern "fusion-pixel-font-12px-proportional-ttf-*.zip"
 download_release TakWolf/ark-pixel-font 2026.05.07 "$PROBE_DIR/ark10" --pattern "ark-pixel-font-10px-proportional-ttf-*.zip"
@@ -85,25 +84,20 @@ download_release TakWolf/ark-pixel-font 2026.05.07 "$PROBE_DIR/ark16" --pattern 
 download_release fcambus/spleen 2.2.0 "$PROBE_DIR/spleen" --pattern "spleen-2.2.0.tar.gz"
 download_release the-moonwitch/Cozette v.1.30.0 "$PROBE_DIR/cozette" --pattern "CozetteVector.ttf"
 download_release multitheftauto/unifont v16.0.04 "$PROBE_DIR/unifont" --pattern "unifont-16.0.04.otf"
-download_release itouhiro/PixelMplus v1.0.0 "$PROBE_DIR/pixelmplus" --pattern "PixelMplus-20130602.zip"
 download_release Astro-2539/ZLabs-Pixel-12px Build_20260519 "$PROBE_DIR/zlabs-pixel" --pattern "ZLabsPixel_12px_M_CN.ttf"
 download_release Astro-2539/ZLabs-RoundPix-12px Build_20260508 "$PROBE_DIR/zlabs-round12" --pattern "ZLabsRoundPix_12px_M_CN.ttf"
 download_release Astro-2539/ZLabs-RoundPix-16px Build_20260501 "$PROBE_DIR/zlabs-round16" --pattern "ZLabsRoundPix_16px_M_CN.ttf"
 download_release Warren2060/ChillBitmap v2.502 "$PROBE_DIR/chill" --pattern "ChillBitmap_New.zip"
 download_raw ACh-K/Cubic-11 fonts/ttf/Cubic_11.ttf "$PROBE_DIR/cubic/Cubic_11.ttf"
-download_raw DWNfonts/XiaoyaPixel-Classic XiaoyaPixel.ttf "$PROBE_DIR/xiaoya/XiaoyaPixel.ttf"
 
-unzip -o -q "$PROBE_DIR/fusion8"/fusion-pixel-font-8px-proportional-ttf-*.zip -d "$PROBE_DIR/fusion8"
 unzip -o -q "$PROBE_DIR/fusion10"/fusion-pixel-font-10px-proportional-ttf-*.zip -d "$PROBE_DIR/fusion10"
 unzip -o -q "$PROBE_DIR/fusion12"/fusion-pixel-font-12px-proportional-ttf-*.zip -d "$PROBE_DIR/fusion12"
 unzip -o -q "$PROBE_DIR/ark10"/ark-pixel-font-10px-proportional-ttf-*.zip -d "$PROBE_DIR/ark10"
 unzip -o -q "$PROBE_DIR/ark12"/ark-pixel-font-12px-proportional-ttf-*.zip -d "$PROBE_DIR/ark12"
 unzip -o -q "$PROBE_DIR/ark16"/ark-pixel-font-16px-proportional-ttf-*.zip -d "$PROBE_DIR/ark16"
-unzip -o -q "$PROBE_DIR/pixelmplus/PixelMplus-20130602.zip" -d "$PROBE_DIR/pixelmplus"
 unzip -o -q "$PROBE_DIR/chill/ChillBitmap_New.zip" -d "$PROBE_DIR/chill"
 tar -xzf "$PROBE_DIR/spleen/spleen-2.2.0.tar.gz" -C "$PROBE_DIR/spleen"
 
-convert_ttf_full "$PROBE_DIR/fusion8/fusion-pixel-8px-proportional-zh_hans.ttf" 8 FusionPixel_8 fusion-pixel-8
 convert_ttf_full "$PROBE_DIR/fusion10/fusion-pixel-10px-proportional-zh_hans.ttf" 10 FusionPixel_10 fusion-pixel-10
 convert_ttf_full "$PROBE_DIR/fusion12/fusion-pixel-12px-proportional-zh_hans.ttf" 12 FusionPixel_12 fusion-pixel-12
 convert_ttf_full "$PROBE_DIR/ark10/ark-pixel-10px-proportional-zh_cn.ttf" 10 ArkPixel_10 ark-pixel-10
@@ -111,8 +105,6 @@ convert_ttf_full "$PROBE_DIR/ark12/ark-pixel-12px-proportional-zh_cn.ttf" 12 Ark
 convert_ttf_full "$PROBE_DIR/ark16/ark-pixel-16px-proportional-zh_cn.ttf" 16 ArkPixel_16 ark-pixel-16
 convert_ttf_full "$PROBE_DIR/unifont/unifont-16.0.04.otf" 16 Unifont_16 unifont-16
 convert_ttf_full "$PROBE_DIR/cozette/CozetteVector.ttf" 13 Cozette_13 cozette-13
-convert_ttf_full "$PROBE_DIR/pixelmplus/PixelMplus-20130602/PixelMplus10-Regular.ttf" 10 PixelMplus_10 pixelmplus-10
-convert_ttf_full "$PROBE_DIR/pixelmplus/PixelMplus-20130602/PixelMplus12-Regular.ttf" 12 PixelMplus_12 pixelmplus-12
 convert_ttf_full "$ROOT/firmware/managed_components/lvgl__lvgl/scripts/built_in_font/Montserrat-Medium.ttf" 48 Montserrat_48 montserrat-48
 convert_ttf_full "$ROOT/firmware/managed_components/lvgl__lvgl/scripts/built_in_font/FontAwesome5-Solid+Brands+Regular.woff" 14 FontAwesome_14 font-awesome-14
 convert_ttf_full "$ROOT/firmware/managed_components/lvgl__lvgl/scripts/built_in_font/FontAwesome5-Solid+Brands+Regular.woff" 30 FontAwesome_30 font-awesome-30
@@ -120,7 +112,6 @@ convert_ttf_demo "$PROBE_DIR/zlabs-pixel/ZLabsPixel_12px_M_CN.ttf" 12 ZLabsPixel
 convert_ttf_demo "$PROBE_DIR/zlabs-round12/ZLabsRoundPix_12px_M_CN.ttf" 12 ZLabsRoundPix_12_Demo zlabs-roundpix-12-demo
 convert_ttf_demo "$PROBE_DIR/zlabs-round16/ZLabsRoundPix_16px_M_CN.ttf" 16 ZLabsRoundPix_16_Demo zlabs-roundpix-16-demo
 convert_ttf_demo "$PROBE_DIR/chill/ChillBitmap_New/ChillBitmap_16px.ttf" 16 ChillBitmap_16_Demo chill-bitmap-16-demo
-convert_ttf_demo "$PROBE_DIR/xiaoya/XiaoyaPixel.ttf" 12 XiaoyaPixel_12_Demo xiaoya-pixel-12-demo
 convert_ttf_demo "$PROBE_DIR/cubic/Cubic_11.ttf" 11 Cubic_11_Demo cubic-11-demo
 
 for item in 6x12:12 8x16:16 12x24:24 16x32:32 32x64:64; do
@@ -131,3 +122,4 @@ done
 
 bun "$ROOT/backend/scripts/extract-bdf-font.ts" "$PROBE_DIR/spleen/spleen-2.2.0/spleen-5x8.bdf" "$OUT_DIR/spleen-5x8.json"
 bun "$ROOT/backend/scripts/extract-lvgl-font.ts" "$ROOT/firmware/main/generated/fonts/source_han_sans_sc_regular_slim.c" "$OUT_DIR/source-han-sans-16-slim.json"
+bash "$ROOT/backend/scripts/generate-zfull-font-assets.sh"

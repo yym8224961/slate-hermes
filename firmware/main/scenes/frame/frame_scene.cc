@@ -19,6 +19,87 @@
 
 namespace {
 constexpr char kTag[] = "Frame";
+
+size_t Utf8CharLen(unsigned char ch) {
+    if ((ch & 0x80) == 0)
+        return 1;
+    if ((ch & 0xE0) == 0xC0)
+        return 2;
+    if ((ch & 0xF0) == 0xE0)
+        return 3;
+    if ((ch & 0xF8) == 0xF0)
+        return 4;
+    return 1;
+}
+
+std::string ShortGroupName(const char* raw) {
+    constexpr size_t kMaxChars = 8;
+    if (!raw || raw[0] == '\0')
+        return "内容组";
+    const std::string s(raw);
+    size_t            bytes = 0;
+    size_t            chars = 0;
+    while (bytes < s.size() && chars < kMaxChars) {
+        const size_t len = Utf8CharLen(static_cast<unsigned char>(s[bytes]));
+        if (bytes + len > s.size())
+            break;
+        bytes += len;
+        ++chars;
+    }
+    if (bytes >= s.size())
+        return s;
+    return s.substr(0, bytes) + "…";
+}
+
+std::string MarkedGroupName(const char* raw) {
+    return "《" + ShortGroupName(raw) + "》";
+}
+
+std::string FormatGroupSyncCaption(const UiEvent& e) {
+    char buf[96];
+    switch (e.u.group_sync.mode) {
+        case GroupSyncStatusMode::kSwitchTarget:
+            return "切到" + MarkedGroupName(e.u.group_sync.name);
+        case GroupSyncStatusMode::kSwitchCached:
+            return "已切到" + MarkedGroupName(e.u.group_sync.name);
+        case GroupSyncStatusMode::kSwitchDownload:
+            if (e.u.group_sync.total > 0) {
+                std::snprintf(buf, sizeof(buf), "下载%s %u/%u", MarkedGroupName(e.u.group_sync.name).c_str(),
+                              e.u.group_sync.current, e.u.group_sync.total);
+                return buf;
+            }
+            return "下载" + MarkedGroupName(e.u.group_sync.name);
+        case GroupSyncStatusMode::kCurrentUpdate:
+            if (e.u.group_sync.total > 0) {
+                std::snprintf(buf, sizeof(buf), "更新当前组 %u/%u", e.u.group_sync.current, e.u.group_sync.total);
+                return buf;
+            }
+            return "更新当前组";
+        case GroupSyncStatusMode::kStartupDownload:
+            if (e.u.group_sync.total > 0) {
+                std::snprintf(buf, sizeof(buf), "下载%s %u/%u", MarkedGroupName(e.u.group_sync.name).c_str(),
+                              e.u.group_sync.current, e.u.group_sync.total);
+                return buf;
+            }
+            return "下载内容组";
+        case GroupSyncStatusMode::kSavingGroup:
+            if (e.u.group_sync.total > 0) {
+                std::snprintf(buf, sizeof(buf), "应用%s %u/%u", MarkedGroupName(e.u.group_sync.name).c_str(),
+                              e.u.group_sync.current, e.u.group_sync.total);
+                return buf;
+            }
+            return "应用" + MarkedGroupName(e.u.group_sync.name);
+        case GroupSyncStatusMode::kSavingCurrentGroup:
+            if (e.u.group_sync.total > 0) {
+                std::snprintf(buf, sizeof(buf), "应用当前组 %u/%u", e.u.group_sync.current, e.u.group_sync.total);
+                return buf;
+            }
+            return "应用当前组";
+        case GroupSyncStatusMode::kSwitchFailed:
+            return "切换失败，保留当前组";
+    }
+    return "";
+}
 }  // namespace
 
 FrameScene::FrameScene(const char* gid, int content_count) : gid_(gid ? gid : ""), content_count_(content_count) {
@@ -48,7 +129,7 @@ void FrameScene::OnEnter(SceneContext& ctx) {
     lv_obj_set_style_text_line_space(empty_label_, 8, 0);
     lv_label_set_long_mode(empty_label_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(empty_label_, LV_HOR_RES - 32);
-    lv_label_set_text(empty_label_, "相册暂无内容\n\n请在管理端为本相册添加内容");
+    lv_label_set_text(empty_label_, "内容组暂无内容\n\n请在管理端添加内容");
     lv_obj_align(empty_label_, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(empty_label_, LV_OBJ_FLAG_HIDDEN);
 
@@ -139,11 +220,11 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             break;
         }
         case UiEventKind::kSyncProgress: {
-            char buf[64];
-            std::snprintf(buf, sizeof(buf), "下载 %u / %u", e.u.progress.current, e.u.progress.total);
-            if (status_bar_ && status_bar_->SetCaption(buf)) {
-                SyncRender(ctx, /*force_full*/ false);
-            }
+            // FrameScene 使用带内容组名称的 kGroupSyncStatus；旧进度事件保留给启动页兜底。
+            break;
+        }
+        case UiEventKind::kGroupSyncStatus: {
+            HandleGroupSyncStatus(ctx, e);
             break;
         }
         case UiEventKind::kSyncFinished: {
@@ -210,13 +291,20 @@ void FrameScene::PrevFrame(SceneContext& ctx) {
 
 void FrameScene::CycleGroup(SceneContext& ctx, bool next) {
     if (status_bar_) {
-        status_bar_->SetCaption(next ? "切换到下一相册..." : "切换到上一相册...");
+        status_bar_->SetCaption("切换内容组…");
         SyncRender(ctx, /*force_full*/ false);
     }
     if (next)
         SyncService::Get().CycleNext();
     else
         SyncService::Get().CyclePrev();
+}
+
+void FrameScene::HandleGroupSyncStatus(SceneContext& ctx, const UiEvent& e) {
+    const std::string caption = FormatGroupSyncCaption(e);
+    if (!caption.empty() && status_bar_ && status_bar_->SetCaption(caption)) {
+        SyncRender(ctx, /*force_full*/ false);
+    }
 }
 
 void FrameScene::RebindGroup(SceneContext& ctx, const char* gid, int content_count) {

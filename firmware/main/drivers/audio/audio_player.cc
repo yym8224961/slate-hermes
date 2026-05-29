@@ -33,7 +33,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
         return false;
     };
 
-    // ── I2S0 master duplex 16 kHz mono 16-bit。相册只用 TX；小智对话进入时
+    // ── I2S0 master duplex 16 kHz mono 16-bit。内容只用 TX；小智对话进入时
     // 使用同一套 RX/TX，避免重复创建 I2S0 channel。
     i2s_chan_config_t chan_cfg = {};
     chan_cfg.id                = I2S_NUM_0;

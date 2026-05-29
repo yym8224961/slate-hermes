@@ -55,9 +55,11 @@ class SyncService {
     void        Loop();
     int         NextIntervalSec() const;
     enum class SyncMode { kUserActive, kBackgroundRefresh };
+    enum class SyncReason { kUserActive, kBackgroundRefresh, kCycle };
     void SyncOnce(SyncMode mode);
     void DoCycle(const std::string& direction);
-    bool SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, bool& group_changed);
+    bool SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, const std::string& group_name,
+                               int expected_content_count, SyncReason reason, bool& group_changed);
     bool SyncCurrentContent(const std::string& gid, const api::ContentMeta& content, bool& changed);
     void PostSyncedGroupReady(const std::string& gid, const std::string& name, int content_count, bool content_changed);
     std::string GetCurrentGroupLocked() const;

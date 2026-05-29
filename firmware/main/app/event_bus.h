@@ -24,6 +24,7 @@ enum class UiEventKind : uint8_t {
     kWifiStateChanged,  // u.wifi
     kSyncStarted,
     kSyncProgress,      // u.progress { current, total }  帧级下载进度
+    kGroupSyncStatus,   // u.group_sync  内容组切换/下载/更新状态
     kSyncFinished,      // u.sync
     kCachedGroupReady,  // u.group
     kSyncedGroupReady,  // u.group
@@ -31,7 +32,7 @@ enum class UiEventKind : uint8_t {
     kIdleTimeout,
     // 启动阶段进度,由 app.cc TryConnectAndSetup 各步 emit;splash 用 stage 切文案。
     kBootStage,  // u.boot_stage
-    // 设备从 unbound 翻 bound:Web 端用户输入了配对码。splash 切「等待相册」。
+    // 设备从 unbound 翻 bound:Web 端用户输入了配对码。splash 切「等待内容组」。
     kBound,
     // 设备从 bound 翻 unbound:Web 端主动解绑。任何场景需 RequestReplace 回 splash。
     kUnbound,  // u.unbound { pair_code[8] }
@@ -47,6 +48,17 @@ enum class UiEventKind : uint8_t {
 
 enum class ButtonId : uint8_t { kEnter = 0, kUp, kDown };
 
+enum class GroupSyncStatusMode : uint8_t {
+    kSwitchTarget = 0,    // 已拿到切换目标，用 name 显示“切到《name》”
+    kSwitchCached,        // 目标内容组缓存命中
+    kSwitchDownload,      // 正在下载切换目标内容组
+    kCurrentUpdate,       // 正在更新当前内容组
+    kStartupDownload,     // 启动/普通同步下载
+    kSavingGroup,         // 下载后正在保存目标内容组缓存
+    kSavingCurrentGroup,  // 下载后正在保存当前内容组缓存
+    kSwitchFailed,        // 主动切换失败，保留当前内容组
+};
+
 // boot 阶段枚举;splash 用此切文案。顺序对应 splash 状态机典型路径。
 enum class BootStage : uint8_t {
     kInitializing = 0,
@@ -57,7 +69,7 @@ enum class BootStage : uint8_t {
     kRegistering,        // 调 /devices
     kServerUnreachable,  // 服务器 30s 无响应
     kAwaitingPair,       // 注册完毕,等待 Web 端 claim(载荷带 pair_code)
-    kAwaitingGroup,      // 已 bound,等待管理端分配相册
+    kAwaitingGroup,      // 已 bound,等待管理端分配内容组
     kNetError,           // 其它网络异常
 };
 
@@ -90,6 +102,13 @@ struct UiEvent {
             uint8_t current;
             uint8_t total;
         } progress;
+        struct {
+            char                gid[32];
+            char                name[48];
+            GroupSyncStatusMode mode;
+            uint8_t             current;
+            uint8_t             total;
+        } group_sync;
         struct {
             char gid[32];
             char name[64];  // 当前组名（UTF-8），用于状态栏 / boot splash 文案

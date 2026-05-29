@@ -6,7 +6,6 @@ import {
   DashboardSystemTemplateId,
   DashboardTemplate,
 } from './templates.js';
-import { DASHBOARD_CUSTOM_STARTER_TEST_DATA } from './test-fixtures.js';
 
 // 内置动态内容类型清单。每种对应一个服务端 compiler + 设备端基础 block 组合。
 export const DynamicType = z.enum([
@@ -172,13 +171,17 @@ export const DashboardTemplateRef = z.discriminatedUnion('kind', [
 ]);
 export type DashboardTemplateRefT = z.infer<typeof DashboardTemplateRef>;
 
+export const DashboardDataPayload = z
+  .record(z.string().max(64), z.unknown())
+  .refine((data) => Object.keys(data).length > 0, '必须至少包含一个字段');
+export type DashboardDataPayloadT = z.infer<typeof DashboardDataPayload>;
+
 export const DashboardConfig = z.object({
   type: z.literal('dashboard'),
   template: DashboardTemplateRef.default({
     kind: 'custom',
     template: DASHBOARD_CUSTOM_STARTER_TEMPLATE,
   }),
-  test_data: z.record(z.string().max(64), z.unknown()).default(DASHBOARD_CUSTOM_STARTER_TEST_DATA),
   refresh_interval_sec: z.coerce.number().int().min(60).max(86400).default(600),
 });
 export type DashboardConfigT = z.infer<typeof DashboardConfig>;
@@ -224,8 +227,6 @@ export function isAudioDynamicConfig(config: DynamicConfigT): config is Extract<
     config.type === 'earthquake_report'
   );
 }
-
-const DashboardDataPayload = z.record(z.string().max(64), z.unknown());
 
 // POST /api/v1/contents/:contentId/data —— 外部数据推送（仅 dashboard 动态内容）。
 //   capability URL: contentId(cuid，~110 bit 熵) 本身充当访问能力，不需要额外 token。

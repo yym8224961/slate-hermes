@@ -9,7 +9,7 @@ namespace vol {
 constexpr int kDefault = 9;
 constexpr int kMax     = 10;
 
-int  GetAlbum();  // 相册音量,0..10,首次读返回 kDefault
+int  GetAlbum();  // 内容音量,0..10,首次读返回 kDefault
 void SetAlbum(int level);
 int  GetXiaozhi();
 void SetXiaozhi(int level);

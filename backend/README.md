@@ -1,158 +1,228 @@
 # Slate / Backend
 
-NestJS 11（Fastify）+ Prisma 7 + MySQL 8 服务端。单个进程同时承担：
+后端是 Bun 运行的 NestJS 11（Fastify）服务，使用 Prisma 7 + MySQL 8。单进程承担四类工作：
 
-1. **Web 管理 API** —— frontend 用，JWT 鉴权
-2. **设备协议** —— firmware 用，`Authorization: Bearer <device_secret>` 鉴权
-3. **资源下发** —— frontend 预览与 firmware 同步共用同一组端点（dual-auth + ETag/304）
-4. **生产部署托管 frontend dist** —— `@fastify/static` + SPA fallback
+1. Web 管理 API：给 frontend 使用，JWT 鉴权。
+2. 设备协议：给 firmware 使用，`Authorization: Bearer <device_secret>` 鉴权。
+3. 内容渲染与资源下发：图片、动态帧、音频、manifest，支持 ETag / 304。
+4. 生产静态托管：同镜像内托管 frontend `dist/`，并提供 SPA fallback。
 
 ## 技术栈
 
 | 层 | 选型 |
-|---|---|
-| Runtime | Bun 1.x（**不预编译**，`bun run src/main.ts` 直跑 TS） |
-| HTTP | Fastify 5 + `@nestjs/platform-fastify` |
-| ORM | Prisma 7 + `@prisma/adapter-mariadb`（直连 MySQL，不走 Prisma engine） |
-| 校验 | zod 4（自实现 `ZodValidationPipe` 挂 APP_PIPE） |
-| 日志 | nestjs-pino + pino-pretty（单行输出） |
-| 图像 | sharp 0.34（→ 1bpp packed） |
-| 鉴权 | bcryptjs 密码 + jsonwebtoken JWT |
+| --- | --- |
+| Runtime | Bun 1.x，直接 `bun run src/main.ts` 运行 TypeScript |
+| HTTP | NestJS 11 + Fastify 5 + `@nestjs/platform-fastify` |
+| ORM | Prisma 7 + `@prisma/adapter-mariadb`，直连 MySQL |
+| 校验 | zod 4 + 全局 `ZodValidationPipe` |
+| 日志 | nestjs-pino + pino |
+| 图像 | sharp 0.34 + shared 1bpp dither |
+| 音频 | ffmpeg 转 16 kHz mono s16le PCM |
+| 认证 | bcryptjs 密码哈希 + jsonwebtoken JWT |
 
 ## 目录
 
-```
-src/
-├── main.ts                  bootstrap：Fastify + 全局 prefix /api/v1 + SPA fallback
-├── app.module.ts            装载所有 module 与 4 个 APP_* provider
-├── infra/
-│   ├── assets/              asset-paths.ts：运行时资产目录定位
-│   ├── blob/                BlobService：{BLOB_DIR}/{groupId}/{contentId}.img|.pcm
-│   ├── config/              env.schema.ts（zod 校验）→ AppConfig
-│   ├── logger/              pino + nestjs-pino
-│   └── prisma/              PrismaService（MariaDB adapter）
-├── common/
-│   ├── auth/                HTTP token 提取
-│   ├── db/                  行锁与批量 sort_order 更新 helper
-│   ├── decorators/          @Public / @CurrentUser / @CurrentDevice
-│   ├── errors/              AppError 体系（NotFound / Forbidden / Validation / Conflict / Auth）
-│   ├── etag/                computeETag + respondWithEtag（304 策略）
-│   ├── filters/             AppExceptionFilter：统一错误 envelope
-│   ├── guards/              JwtAuthGuard / DeviceAuthGuard / JwtOrDeviceAuthGuard
-│   ├── interceptors/        RequestIdInterceptor：每请求一个 reqId 串日志
-│   ├── pipes/               ZodValidationPipe（DTO 上挂 static schema = *Request）
-│   ├── request-context.ts   AsyncLocalStorage 请求上下文
-│   └── utils.ts             通用格式化 helper
-└── modules/
-    ├── ai/                  OpenAI-compatible chat completions，用于历史事件筛选/改写
-    ├── audio/               ffmpeg 转 16 kHz mono s16le PCM（容器内自带 ffmpeg）
-    ├── auth/                POST /users 注册、POST /sessions 登录、GET /users/current 当前用户
-    ├── contents/            /groups/:gid/contents + manifest + multipart 解析
-    ├── devices/             两个 controller：protocol（设备协议）+ admin（Web 端 CRUD），都挂 /devices 前缀
-    ├── dynamic-content/     动态内容定义、provider、layout engine、刷新调度与动态帧渲染
-    ├── frame-renderer/      bitmap canvas/font + 动态帧 400x300 renderer
-    ├── groups/              /groups CRUD + cycle（next/prev）+ 设备绑组
-    ├── health/              GET /healthz（不挂 /api/v1，docker HEALTHCHECK 用）
-    ├── image-renderer/      sharp 图片管线 + 内存与磁盘双层缓存
-    ├── tts/                 OpenAI-compatible TTS 调用与音色校验
-    └── users/               用户表 CRUD + bcrypt 哈希
-prisma/
-├── schema.prisma            User / Device / Group / Content
-└── migrations/              prisma migrate dev 自动管
+```text
+backend/
+├── src/
+│   ├── main.ts                  Fastify bootstrap、/api/v1 前缀、multipart、static dist、SPA fallback
+│   ├── app.module.ts            全局 filter / guard / pipe / interceptor 与业务模块装配
+│   ├── common/
+│   │   ├── auth/                bearer token 提取、device secret auth cache
+│   │   ├── db/                  行锁与批量 sort_order 更新 helper
+│   │   ├── decorators/          @Public、@CurrentUser、@CurrentDevice、@JsonBody
+│   │   ├── errors/              AppError 体系与 Prisma error map
+│   │   ├── etag/                ETag 计算与 304 响应 helper
+│   │   ├── filters/             统一错误 envelope
+│   │   ├── guards/              JWT、device secret、JWT-or-device
+│   │   ├── http/                fetch timeout、SSE parser、client IP
+│   │   ├── interceptors/        request id
+│   │   ├── pipes/               zod DTO 校验
+│   │   └── rate-limit/          固定窗口限速
+│   ├── infra/
+│   │   ├── assets/              运行时资产路径定位
+│   │   ├── blob/                image/audio blob 原子写入与清理
+│   │   ├── config/              env schema 与 AppConfig
+│   │   ├── logger/              pino 配置
+│   │   └── prisma/              PrismaService + MariaDB adapter
+│   └── modules/
+│       ├── ai/                  OpenAI-compatible chat completions，用于历史事件优化
+│       ├── audio/               ffmpeg 音频转码与重采样
+│       ├── auth/                注册、登录、当前用户
+│       ├── contents/            内容 CRUD、manifest、binary、preview、dashboard ingest
+│       ├── devices/             Web 设备管理 + 固件设备协议
+│       ├── dynamic-content/     动态内容 provider、调度、layout engine、渲染入口
+│       ├── frame-renderer/      400x300 1bpp bitmap canvas、字体、天气图标、dashboard template
+│       ├── groups/              内容组 CRUD、排序、设备切组
+│       ├── health/              /healthz
+│       ├── image-renderer/      sharp 图片管线 + 渲染缓存
+│       ├── tts/                 OpenAI-compatible TTS
+│       └── users/               用户表操作
+├── assets/
+│   ├── fonts/bitmap-1bpp/       动态帧运行时位图字库
+│   ├── fonts/vector/            字体源资产
+│   ├── icons/qweather/          天气图标
+│   └── vehicles/                示例脚本资产
+├── prisma/
+│   ├── schema.prisma
+│   └── migrations/
+└── scripts/                     调试、创建示例组、推送 dashboard 数据、字体资产生成
 ```
 
 ## 数据模型
 
-```
-User    id(cuid) email(unique) username?(unique；注册接口必填) password(bcrypt)
-          └ owns ──► Device.ownerUserId
-          └ owns ──► Group.ownerUserId
+核心模型在 [prisma/schema.prisma](prisma/schema.prisma)：
 
-Device  id mac(unique) secret_hash(sha256) pair_code(unique, 6 位，A-Z 去 I/L/O + 2-9)
-        name? owner_user_id? selected_group_id? sort_order
-        last_seen_at? battery_pct? rssi_dbm? fw_version?
+```text
+User
+  id, email(unique), username(unique), password(bcrypt)
+  └─ owns Device / Group
 
-Group   id name structure_etag manifest_etag owner_user_id? sort_order
-        └ contents: Content[]（cascade delete）
+Device
+  mac(unique), secret_hash(unique), pair_code(unique)
+  owner_user_id?, selected_group_id?, sort_order
+  last_registered_at?, last_seen_at?, battery_pct?, rssi_dbm?, fw_version?
 
-Content id (group_id, sort_order) unique 复合键
-        frame_name? kind image_etag image_size content_etag
-        audio_etag? audio_size? audio_status audio_source? audio_voice?
-        audio_text? audio_last_error? audio_updated_at? audio_lease_until? audio_attempts
-        dynamic_type? dynamic_config? dynamic_data?
-        dynamic_last_run_at? dynamic_next_run_at? dynamic_refresh_due_at?
-        dynamic_refresh_lease_until? dynamic_refresh_attempts dynamic_last_error?
-```
+Group
+  name, owner_user_id?, sort_order
+  structure_etag, manifest_etag
+  └─ contents cascade delete
 
-关键约束：
-
-- **Device.mac** unique，物理重置后凭 mac 重新走 `POST /devices` 拿回新的 `device_secret + pair_code`，实现「物理控制权 = 数字所有权」
-- **Device.secret_hash** = `sha256(device_secret)`，明文 secret 仅注册响应里返回一次，固件 NVS 持久化；丢了只能工厂重置
-- **Group.structure_etag** = 顺序/增删变化摘要；**Group.manifest_etag** = 完整 manifest 摘要，便于固件 manifest 304
-- **Content** 唯一键 `(group_id, sort_order)`，删/重排时整组重写 sort_order
-
-## API 全景
-
-所有端点挂在 `/api/v1` 下，**例外**：`/healthz` 不带前缀（docker HEALTHCHECK 用）。
-
-### 公开
-
-```
-POST   /api/v1/users                 注册，body {email, username, password} → {token, user}
-POST   /api/v1/sessions              登录，body {identifier, password} → {token, user}
-                                     identifier 支持邮箱或用户名（含 @ 视为邮箱）
-GET    /healthz                      {status:'ok', ts}
+Content
+  group_id, sort_order, frame_name?
+  kind = image | dynamic
+  image_etag, image_size, content_etag
+  audio_etag?, audio_size?, audio_status, audio_source?, audio_voice?, audio_text?
+  dynamic_type?, dynamic_config?, dynamic_data?
+  dynamic_last_run_at?, dynamic_next_run_at?, dynamic_refresh_due_at?
+  lease / retry 字段用于 TTS 与动态刷新 worker
 ```
 
-### Web 管理（`Authorization: Bearer <jwt>`）
+关键语义：
 
-```
-GET    /api/v1/users/current                   whoami {id, email, username}
-DELETE /api/v1/sessions/current                占位 logout（JWT 无服务端状态）
+- `Device.mac` 是物理设备锚点。同 mac 再注册会走 reset 语义：清 owner、清 selected group、轮换 secret 和 pair code。
+- `device_secret` 只在注册响应返回一次，数据库只存 `sha256(secret)`。
+- `pair_code` 用于 Web claim；绑定或解绑后都会轮换，避免截图复用。
+- `Group.structure_etag` 反映组结构变化，`manifest_etag` 反映完整 manifest 变化。
+- `Content.content_etag` 是设备当前帧快速刷新用摘要；图片、音频、标题、动态类型和动态数据变化都会影响相关 etag。
 
-GET    /api/v1/devices                         列当前用户设备
-PUT    /api/v1/devices/order                   拖拽重排，body {order: id[]}
-POST   /api/v1/devices/claims                  用 6 位 pair_code 认领，body {pair_code}
-GET    /api/v1/devices/:id                     单台 summary
-PATCH  /api/v1/devices/:id                     改 name 与 / 或 selected_group_id
-DELETE /api/v1/devices/:id/binding             解绑（owner 置 null + 轮换 pair_code）
+## API
 
-GET    /api/v1/groups                          owner 的相册
-POST   /api/v1/groups                          新建（201）
-PUT    /api/v1/groups/order                    批量重排（须在 :gid 之前注册）
-GET    /api/v1/groups/:gid
-PATCH  /api/v1/groups/:gid                     改 name，并返回最新 group summary
-DELETE /api/v1/groups/:gid                     删相册（cascade 删 contents + blobs）
+除 `/healthz` 外，所有端点都在 `/api/v1` 下。
 
-POST   /api/v1/groups/:gid/contents                multipart 创建图片内容，或 JSON 创建动态内容
-PUT    /api/v1/groups/:gid/contents/order          批量重排
-PATCH  /api/v1/contents/:contentId                 multipart 更新图片/音频/标题，或 JSON 更新标题/动态配置
-DELETE /api/v1/contents/:contentId                 删除内容
-DELETE /api/v1/contents/:contentId/audio           只清音频留图
-POST   /api/v1/contents/:contentId/audio/tts       给图片内容生成 TTS 音频
-POST   /api/v1/contents/:contentId/refresh         手动刷新动态内容
-POST   /api/v1/contents/preview                    创建模式动态内容预览
-POST   /api/v1/contents/:contentId/preview         编辑模式动态内容预览
+### 公开端点
+
+```text
+POST /api/v1/users
+POST /api/v1/sessions
+GET  /healthz
 ```
 
-### 内容读取与资源下发（dual-auth：JWT 或 device_secret）
+注册 body：
 
-```
-GET /api/v1/groups/:gid/contents                 内容列表（content detail[]）
-GET /api/v1/groups/:gid/manifest                 {group, contents[]}，ETag/304
-GET /api/v1/contents/:contentId                  单个 content detail
-GET /api/v1/contents/:contentId/image            400x300 1bpp packed image，15000 字节，ETag/304
-GET /api/v1/contents/:contentId/audio            16 kHz mono s16le raw PCM，ETag/304
+```json
+{ "email": "you@example.com", "username": "you", "password": "password123" }
 ```
 
-### 外部数据推送（capability URL）
+登录 body：
 
-```
-POST /api/v1/contents/:contentId/data            dashboard 动态内容外部数据推送
-                                                 无 JWT；contentId 作为 capability，IngestLimitGuard 限速
+```json
+{ "identifier": "you@example.com", "password": "password123" }
 ```
 
-Body 固定为：
+`identifier` 支持邮箱或用户名。
+
+### Web 管理端点（JWT）
+
+```text
+GET    /api/v1/users/current
+DELETE /api/v1/sessions/current
+
+GET    /api/v1/devices
+PUT    /api/v1/devices/order
+POST   /api/v1/devices/claims
+GET    /api/v1/devices/:id
+PATCH  /api/v1/devices/:id
+DELETE /api/v1/devices/:id/binding
+
+GET    /api/v1/groups
+POST   /api/v1/groups
+PUT    /api/v1/groups/order
+GET    /api/v1/groups/:groupId
+PATCH  /api/v1/groups/:groupId
+DELETE /api/v1/groups/:groupId
+
+POST   /api/v1/groups/:groupId/contents
+PUT    /api/v1/groups/:groupId/contents/order
+PATCH  /api/v1/contents/:contentId
+DELETE /api/v1/contents/:contentId
+DELETE /api/v1/contents/:contentId/audio
+POST   /api/v1/contents/:contentId/audio/tts
+POST   /api/v1/contents/:contentId/refresh
+POST   /api/v1/contents/preview
+POST   /api/v1/contents/:contentId/preview
+
+GET    /api/v1/dynamic/weather/cities?q=北京
+```
+
+`POST /groups/:groupId/contents` 和 `PATCH /contents/:contentId` 支持两种 content type：
+
+- `multipart/form-data`：图片内容。字段包括 `image`、`audio`、`threshold`、`mode`、`frame_name`。
+- `application/json`：动态内容。body 符合 `shared` 的 `CreateDynamicContentRequest` 或 `PatchDynamicContentRequest`。
+
+### 内容读取与设备资源下发（JWT 或 device secret）
+
+```text
+GET /api/v1/groups/:groupId/contents
+GET /api/v1/groups/:groupId/manifest
+GET /api/v1/contents/:contentId
+GET /api/v1/contents/:contentId/image
+GET /api/v1/contents/:contentId/audio
+```
+
+这些端点由 `JwtOrDeviceAuthGuard` 保护，Web 预览和固件同步共用同一套读取路径。manifest、image、audio 都支持 ETag；ETag 命中时返回 304。
+
+manifest response：
+
+```ts
+{
+  group: {
+    id: string;
+    structure_etag: string;
+    manifest_etag: string;
+    name: string;
+    sort_order: number;
+    position: { current: number; total: number };
+  };
+  contents: Array<{
+    id: string;
+    seq: number;
+    content_etag: string;
+    frame_name: string | null;
+    device_status_bar_text: string;
+    image_etag: string;
+    audio_etag: string | null;
+    image_size: number;
+    audio_size: number | null;
+    audio_status: 'none' | 'pending' | 'generating' | 'ready' | 'failed';
+    audio_source: 'upload' | 'tts' | null;
+    audio_voice: string | null;
+    kind: 'image' | 'dynamic';
+    dynamic_type: string | null;
+    next_wake_sec: number | null;
+  }>;
+}
+```
+
+### Dashboard 外部数据推送
+
+```text
+POST /api/v1/contents/:contentId/data
+```
+
+该端点只用于 `dashboard` 动态内容，不需要 JWT。`contentId` 本身是 capability URL 凭证；拿到 URL 就能推送。保护措施是 body limit 64 KB 与 `30 req/min/contentId` 固定窗口限速。泄漏后应删除内容重建。
+
+body：
 
 ```json
 {
@@ -165,135 +235,253 @@ Body 固定为：
 }
 ```
 
-模板保存在内容配置中，推送接口不接收模板定义。
+模板保存在内容配置里；推送接口只接收数据。
 
-### 设备协议（`Authorization: Bearer <device_secret>`，除 register 外）
+### 设备协议
 
+注册端点无鉴权：
+
+```text
+POST /api/v1/devices
 ```
-POST /api/v1/devices                      无鉴权，body {mac} → {id, device_secret, pair_code, reclaimed, server_time}
-                                          同 mac 二次进来一律走 reset 路径（清 owner、清相册、轮换 secret + pair_code）
-POST /api/v1/devices/current/poll         body {telemetry?} → DeviceState
-PUT  /api/v1/devices/current/group        body {id} → DeviceState
-POST /api/v1/devices/current/group/next   环回切下一组 → DeviceState
-POST /api/v1/devices/current/group/prev   环回切上一组 → DeviceState
+
+body：
+
+```json
+{ "mac": "AA:BB:CC:DD:EE:FF" }
+```
+
+响应：
+
+```ts
+{
+  id: string;
+  mac: string;
+  device_secret: string; // 64 hex
+  pair_code: string;     // 6 chars
+  reclaimed: boolean;
+  server_time: string;
+}
+```
+
+后续设备端点使用 `Authorization: Bearer <device_secret>`：
+
+```text
+POST /api/v1/devices/current/poll
+PUT  /api/v1/devices/current/group
+POST /api/v1/devices/current/group/next
+POST /api/v1/devices/current/group/prev
+```
+
+poll body 可选：
+
+```json
+{
+  "telemetry": {
+    "battery_pct": 85,
+    "rssi_dbm": -56,
+    "fw_version": "0.1.0",
+    "wake_reason": "timer",
+    "current_group": "gid",
+    "current_content_seq": 3,
+    "current_content_etag": "etag",
+    "manifest_etag": "etag"
+  }
+}
 ```
 
 `DeviceState`：
 
 ```ts
 {
-  device: { id, mac, name, bound, pair_code: string|null, server_time },
-  group:  { id, structure_etag, manifest_etag, name, content_count, sort_order, position: {current, total} } | null
+  device: {
+    id: string;
+    mac: string;
+    name: string | null;
+    bound: boolean;
+    pair_code: string | null;
+    server_time: string;
+  };
+  group: {
+    id: string;
+    structure_etag: string;
+    manifest_etag: string;
+    name: string;
+    content_count: number;
+    sort_order: number;
+    position: { current: number; total: number };
+  } | null;
+  current_content?: ContentSummary | null;
 }
 ```
 
-`pair_code` 仅在 `bound=false` 时返回；`group=null` 表示用户尚未给该设备分配相册。
+`current_content` 只在设备上报 timer wake 且当前帧确实需要刷新、并且无需完整 manifest 同步时返回，用于固件低功耗增量刷新当前帧。
 
 ## 鉴权矩阵
 
-`JwtAuthGuard` 是 `APP_GUARD` 全局生效，默认所有端点都需要 JWT。例外通过装饰器 + 局部 guard 实现：
+`JwtAuthGuard` 是全局 guard，默认所有端点都要求 JWT。例外由 `@Public()` 和局部 guard 实现：
 
-| 端点类 | 装饰器组合 | 实际 guard |
-|---|---|---|
-| Web 管理 | （默认） | JwtAuthGuard |
-| 内容读取与资源下发 | `@Public()` + `@UseGuards(JwtOrDeviceAuthGuard)` | JWT 或 device_secret |
-| dashboard 外部数据推送 | `@Public()` + `@UseGuards(IngestLimitGuard)` | contentId capability URL + 限速 |
-| 设备 `/devices/current/*` | `@Public()` + `@UseGuards(DeviceAuthGuard)` | device_secret |
-| 设备 register | `@Public()` | 无（mac 在 body 里） |
-| `/healthz` | `@Public()` | 无 |
+| 端点类型 | guard |
+| --- | --- |
+| Web 管理 | 全局 `JwtAuthGuard` |
+| 注册、登录 | `@Public()` + `AuthRateLimitGuard` |
+| 设备注册 | `@Public()` + `DeviceRegisterRateLimitGuard` |
+| 设备 current 协议 | `@Public()` + `DeviceAuthGuard` |
+| 内容读取 / binary / manifest | `@Public()` + `JwtOrDeviceAuthGuard` |
+| dashboard ingest | `@Public()` + `IngestLimitGuard` |
+| `/healthz` | `@Public()` |
 
-设备 secret 提取规则：`Authorization: Bearer <64 字符 hex>`。非 64 字符 hex 直接被 reject（保证 dual-auth guard 里 JWT 三段 base64 与 device_secret hex 两条路径不会互相误识别）。
+device secret 必须是 64 字符 hex bearer token；JWT 与 device secret 不会互相误判。
 
-## Blob 与渲染缓存
+## 渲染与存储
 
-```
-{BLOB_DIR}/                                   默认 ./blobs（dev）或 /data/blobs（docker）
-├── {groupId}/{contentId}.img                 1bpp packed，15000 字节
-├── {groupId}/{contentId}.{audioEtag}.pcm     16 kHz mono s16le raw PCM
-└── image-render-cache/{key0..2}/{key}.bin
-                                              sharp 渲染产物 key = sha1(sourceEtag|w|h|threshold|mode|...)
-                                              两层 hex 前缀分桶避免单目录爆 inode
-```
+### Blob
 
-ETag 算法：`computeETag(buf) = sha256(buf).slice(0, 16)`。manifest 的 `group.manifest_etag` 会随内容图片、音频、标题或动态类型变化而更新。
+默认 `BLOB_DIR=./blobs`，Docker 中为 `/data/blobs`。
 
-## 图片渲染管线（`ImageRendererService`）
-
-接受任意 PNG / JPG / WebP，按以下顺序产出 1bpp packed：
-
-1. `sharp(input).flatten({white bg}).resize(400, 300, {fit: letterbox?'contain':'cover'}).grayscale().raw()`
-2. `shared.autoInvert` —— 四角自适应反相
-3. `shared.autoContrast(cutoff=1)` —— 拉对比
-4. `shared.ditherTo1bpp(mode, threshold)` —— 6 种算法，见 [shared/README.md](../shared/README.md#dither-算法)
-
-输出字节序与 firmware `epd_ssd1683.cc` 对齐：MSB-first，bit=1 为白 / bit=0 为黑。前端图片内容编辑器用同一份 `shared.preprocess + shared.dither` 在浏览器里预览，确保所见即所得。
-
-`image-render-cache.service.ts` 在内存里做 `inFlight` 去重并落盘 sha1 keyed cache，同 key 并发只跑一次 sharp。
-
-## 字体资产
-
-`assets/fonts/bitmap-1bpp/*.json` 是 `DynamicFrameRendererService` 的运行时资产，包含从字体源生成的字形指标和 packed bitmap 数据，后端可以直接画进 400x300 的 1bpp 设备帧，避免在请求时再做 SVG 或字体栅格化。这些文件需要和 `assets/fonts/vector/` 一起打进 Docker 镜像。
-
-`font_test` 使用 `shared/src/dynamic/index.ts` 里的共享 catalog。重新生成可下载测试资产：
-
-```bash
-backend/scripts/generate-font-test-assets.sh
+```text
+{BLOB_DIR}/
+├── {groupId}/{contentId}.img                   400 x 300 1bpp packed，15000 bytes
+├── {groupId}/{contentId}.{audioEtag}.pcm       16 kHz mono s16le raw PCM
+└── image-render-cache/{xx}/{key}.bin
 ```
 
-脚本默认把源字体下载到 `/private/tmp/slate-font-probe`，只把生成后的 1bpp JSON 文件写入 `assets/fonts/bitmap-1bpp/`。生成 JSON 已有意加入 Prettier ignore：`backend/assets/fonts/bitmap-1bpp/*.json`，因为提取脚本输出紧凑的 `JSON.stringify` 格式，而且这些文件是运行时资产，不是手写源码。
+写入使用临时文件 + rename，按 blob key 串行化，启动时清理 24 小时以上的 `.tmp`。
+
+### 图片内容
+
+`ImageRendererService` 管线：
+
+1. sharp 解码，白底 flatten。
+2. resize 到 400 x 300，默认 `contain` letterbox。
+3. grayscale raw。
+4. `shared.autoInvert` 四角判断黑底反相。
+5. `shared.autoContrast(cutoff=1)`。
+6. `shared.ditherTo1bpp(mode, threshold)` 输出 packed 1bpp。
+
+输出格式与固件一致：MSB-first，bit=1 白，bit=0 黑。
+
+### 动态内容
+
+动态类型在 `shared/src/dynamic/config.ts` 定义，在 `dynamic-content-registry.ts` 注册 provider 与 JSON definition。当前类型：
+
+- `daily_calendar`
+- `month_calendar`
+- `weather`
+- `history_today`
+- `weather_alert`
+- `earthquake_report`
+- `dashboard`
+- `font_test`
+- `hot_list`
+
+动态帧由 `DynamicFrameRendererService` 直接用 bitmap canvas 和位图字体绘制成 1bpp，不走浏览器或 SVG。`DynamicContentSchedulerService` 在 `BACKGROUND_WORKERS=true` 时启动，每次最多 claim 5 个到期任务，失败后指数退避。
+
+刷新时间语义：
+
+- provider 计算数据，renderer 写 image blob 和 etag。
+- `dynamic_next_run_at` 是下次内容应更新的目标时间。
+- `dynamic_refresh_due_at` 是 worker 提前刷新时间，通常会预留 lead time。
+- manifest 下发 `next_wake_sec`，固件据此配置 RTC timer。
+
+### 音频与 TTS
+
+上传音频经 ffmpeg 转成：
+
+```text
+16000 Hz, mono, signed 16-bit little-endian raw PCM
+```
+
+限制：
+
+- 上传音频最大 5 MB。
+- 输出最长 60 秒。
+- ffmpeg 并发 2，队列上限为并发的 4 倍，繁忙时返回 429。
+
+TTS 使用 OpenAI-compatible `/chat/completions`，请求 `audio: { format: 'pcm16', voice }` 并解析 SSE 中的 base64 PCM，源采样率按 24 kHz 处理，再重采样到设备 16 kHz。
 
 ## 环境变量
 
-通过 `infra/config/env.schema.ts` 的 zod 校验；缺必填或格式错时启动直接挂。
+配置由 `EnvSchema` 校验，缺必填或格式错误会直接启动失败。
 
-| key | 默认 | 备注 |
-|---|---|---|
+| 变量 | 默认 | 说明 |
+| --- | --- | --- |
 | `NODE_ENV` | `development` | `development` / `production` / `test` |
 | `LOG_LEVEL` | `info` | `debug` / `info` / `warn` / `error` |
-| `PORT` | `3001` | |
-| `DATABASE_URL` | —— | 必填，`mysql://user:pwd@host:3306/db` |
-| `JWT_SECRET` | —— | 必填，≥ 32 字符，建议 `openssl rand -hex 64` |
-| `JWT_EXPIRATION` | `7d` | |
-| `BLOB_DIR` | `./blobs` | docker 镜像内固定 `/data/blobs` |
-| `QWEATHER_API_KEY` | —— | 可选，天气动态帧使用；从 QWeather 控制台创建 API KEY |
-| `QWEATHER_API_HOST` | —— | 可选，天气动态帧使用；从 QWeather 控制台「设置」复制 API Host，需带 `https://` |
-| `AI_API_KEY` | —— | 可选，历史上的今天 AI 筛选/改写使用 |
-| `AI_BASE_URL` | —— | 可选，OpenAI-compatible chat completions base URL，需带 `https://` |
-| `AI_MODEL` | `gpt-4o-mini` | AI 内容优化模型 |
-| `TTS_API_KEY` | —— | 可选，动态内容语音生成使用 |
-| `TTS_BASE_URL` | —— | 可选，OpenAI-compatible audio/chat completions base URL，需带 `https://` |
+| `PORT` | `3001` | HTTP 监听端口 |
+| `DATABASE_URL` | 无 | 必填，`mysql://user:pwd@host:3306/db` |
+| `DB_ALLOW_PUBLIC_KEY_RETRIEVAL` | `false` | 本地 MySQL `caching_sha2_password` 无 TLS 时通常需设 `true` |
+| `JWT_SECRET` | 无 | 必填，至少 32 字符，且需满足基础熵检查 |
+| `JWT_EXPIRATION` | `7d` | 秒数或 `15m` / `7d` / `1h` 这类 duration |
+| `BLOB_DIR` | `./blobs` | blob 根目录 |
+| `QWEATHER_API_KEY` | 空 | 天气动态帧 |
+| `QWEATHER_API_HOST` | 空 | QWeather API Host，必须带 `https://` |
+| `AI_API_KEY` | 空 | 历史上的今天 AI 优化 |
+| `AI_BASE_URL` | 空 | OpenAI-compatible chat completions base URL |
+| `AI_MODEL` | `gpt-4o-mini` | AI 优化模型 |
+| `TTS_API_KEY` | 空 | TTS provider key |
+| `TTS_BASE_URL` | 空 | OpenAI-compatible TTS base URL |
 | `TTS_MODEL` | `mimo-v2.5-tts` | TTS 模型 |
-| `TTS_DEFAULT_VOICE` | `冰糖` | 默认音色，需在共享 `TTS_VOICES` 列表中 |
-| `BACKGROUND_WORKERS` | `true` | 是否启动动态内容定时刷新与 TTS 后台 worker |
+| `TTS_DEFAULT_VOICE` | `冰糖` | 默认音色，需属于 shared 的 `TTS_VOICES` |
+| `BACKGROUND_WORKERS` | `true` | 是否启动动态刷新后台 worker |
 
-本地开发：放 `backend/.env`（**不是仓库根**，Prisma CLI 与 Bun runtime 都从 cwd 读取）。docker 部署：使用根目录 `.env.example` 复制出的 `.env`；`compose.yml` 会通过 `env_file` 传入后端运行时变量，并自动从 `MYSQL_PASSWORD` 拼出容器内的 `DATABASE_URL`。
-
-动态内容的外部数据会在 provider 内存中做缓存和并发去重：天气实时/三日预报缓存 10 分钟，QWeather 城市 ID 查询缓存 24 小时；「历史上的今天」按时区和日期缓存 24 小时。渲染失败时会优先回退到上次已落库的数据，避免设备端显示空白。
+开发环境示例见 [.env.example](.env.example)。
 
 ## 本地开发
 
 ```bash
+cp backend/.env.example backend/.env
 bun install
-cp backend/.env.example backend/.env       # 改 DATABASE_URL / JWT_SECRET
-                                            # 按需配置 QWeather / AI / TTS
 bun run --cwd backend prisma:generate
-bun run --cwd backend prisma:migrate       # 首次会创建 dev migration
-
-bun run dev:backend                         # http://localhost:3001
+bun run --cwd backend prisma:migrate
+bun run --cwd backend dev
 ```
 
-第一个账号通过 frontend `/register` 注册，或直接 `curl`：
+`dev` 脚本会执行：
 
-```bash
-curl -X POST http://localhost:3001/api/v1/users \
-  -H 'content-type: application/json' \
-  -d '{"email":"...","username":"...","password":"..."}'
+```text
+prisma generate && prisma migrate deploy && bun --watch src/main.ts
 ```
 
-## 测试
+如果需要创建新 migration，使用：
 
 ```bash
+bun run --cwd backend prisma:migrate
+```
+
+## 校验
+
+```bash
+bun run --cwd backend lint
+bun run --cwd backend typecheck
 bun run --cwd backend test
 ```
 
-当前覆盖 `image-renderer.service.test.ts`、`dynamic-frame-renderer.service.test.ts`、`layout-engine/engine.test.ts` 与设备服务测试，包含 sharp 图片管线、动态帧渲染、layout engine 和设备状态流转。
+根目录也提供聚合命令：
+
+```bash
+bun run lint
+bun run typecheck
+bun run format:check
+```
+
+## Docker 运行方式
+
+生产镜像内：
+
+- `entrypoint.sh` 会 `cd /app/backend`。
+- 启动前执行 `bunx prisma migrate deploy`。
+- 然后 `exec bun run src/main.ts`。
+- frontend `dist/` 位于 `/app/frontend/dist`，由 `main.ts` 自动发现并托管。
+- 镜像安装了 ffmpeg。
+
+Compose 会注入：
+
+```text
+DATABASE_URL=mysql://slate:${MYSQL_PASSWORD}@mysql:3306/slate
+NODE_ENV=production
+PORT=${PORT:-3001}
+BLOB_DIR=/data/blobs
+```
+
+更多部署步骤见根 [README.md](../README.md)。

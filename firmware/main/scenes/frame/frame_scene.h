@@ -37,6 +37,7 @@ class FrameScene : public Scene {
     void CycleGroup(SceneContext& ctx, bool next);
     void RebindGroup(SceneContext& ctx, const char* gid, int content_count);
     void ApplyEmptyState();
+    void HandleGroupSyncStatus(SceneContext& ctx, const UiEvent& e);
 
     std::string gid_;
     int         content_count_           = 0;

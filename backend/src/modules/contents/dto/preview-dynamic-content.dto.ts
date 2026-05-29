@@ -4,5 +4,5 @@ export class PreviewDynamicContentDto implements PreviewDynamicContentRequestT {
   static readonly schema = PreviewDynamicContentRequest;
   declare config: PreviewDynamicContentRequestT['config'];
   declare frame_name?: string | null;
-  declare data?: unknown;
+  declare data?: PreviewDynamicContentRequestT['data'];
 }

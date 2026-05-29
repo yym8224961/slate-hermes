@@ -33,12 +33,12 @@ void SettingsScene::OnEnter(SceneContext& ctx) {
     status_bar_->SetCaption("设置");
 
     // 三段语义分组(MenuList 不显式画分隔,靠顺序传达):
-    //   偏好    相册音量 / 小智音量
+    //   偏好    内容音量 / 小智音量
     //   信息    设备信息
     //   危险    重启设备 / 恢复出厂(永远末尾,避免误触)
     auto*                       stack = ctx.stack;
     std::vector<MenuList::Item> items = {
-        {"相册音量", [stack]() { stack->RequestPush(std::make_unique<VolumePage>(VolumePage::Target::kAlbum)); }},
+        {"内容音量", [stack]() { stack->RequestPush(std::make_unique<VolumePage>(VolumePage::Target::kAlbum)); }},
         {"小智音量", [stack]() { stack->RequestPush(std::make_unique<VolumePage>(VolumePage::Target::kXiaozhi)); }},
         {"设备信息", [stack]() { stack->RequestPush(std::make_unique<DeviceInfoPage>()); }},
         {"重启设备", [stack]() { stack->RequestPush(std::make_unique<RestartDevicePage>()); }},

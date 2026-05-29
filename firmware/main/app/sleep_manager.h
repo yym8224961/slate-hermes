@@ -9,7 +9,7 @@
 // 再按 UP 翻。
 //
 // Unbound grace 窗口:设备未绑定时禁 deep sleep,让 SyncService 快轮询,
-// 用户在 Web 端输码后屏切「等待相册」。轮询间隔阶梯退避(10s→30s→60s),
+// 用户在 Web 端输码后屏切「等待内容组」。轮询间隔阶梯退避(10s→30s→60s),
 // 窗口最长 2h,过期或低电量(<20%)后回退正常省电策略,避免耗光电池。
 
 #include <atomic>
@@ -50,7 +50,7 @@ class SleepManager {
     void Tick(int64_t now_ms);
 
     // 主动进 deep sleep。**正常情况不返回**；若被 paused_(充电中)/enabled_=false 短路，
-    // 会立刻 return,调用方应转入正常 active 模式(例如把 cache 中的相册 push 成 FrameScene)。
+    // 会立刻 return,调用方应转入正常 active 模式(例如把 cache 中的内容组 push 成 FrameScene)。
     SleepDecision TryEnterDeepSleep();
 
    private:

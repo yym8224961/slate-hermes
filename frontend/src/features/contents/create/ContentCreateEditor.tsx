@@ -4,6 +4,7 @@
 import { useState, type FormEvent } from 'react';
 import { Plus } from 'lucide-react';
 import { DynamicConfig, isAudioDynamicConfig, type DynamicConfigT } from 'shared';
+import { DASHBOARD_CUSTOM_STARTER_TEST_DATA } from 'shared/dynamic/test-fixtures';
 import {
   useCreateImageContent,
   useCreateDynamicContent,
@@ -57,12 +58,14 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
 
   // 动态类型专属
   const [config, setConfig] = useState<DynamicConfigT | null>(null);
+  const [dashboardData, setDashboardData] = useState<Record<string, unknown> | null>(null);
   const activeFrameName = type === 'image' ? imageForm.frameName : dynamicFrameName;
   const preview = usePreviewDynamicContent(undefined);
   const { livePreviewData, invalidatePreview } = useDynamicPreview({
     type,
     config,
     frameName: activeFrameName,
+    dashboardData,
     preview,
   });
 
@@ -73,11 +76,13 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
     if (t === 'image') {
       setDynamicFrameName('');
       setConfig(null);
+      setDashboardData(null);
     } else {
       const nextConfig = defaultConfig(t);
       setDynamicFrameName(defaultFrameName(t, nextConfig));
       imageForm.reset();
       setConfig(nextConfig);
+      setDashboardData(t === 'dashboard' ? { ...DASHBOARD_CUSTOM_STARTER_TEST_DATA } : null);
     }
   }
 
@@ -87,10 +92,15 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
     setDynamicFrameName('');
     imageForm.reset();
     setConfig(null);
+    setDashboardData(null);
   }
 
   const submitting = createImage.isPending || createDynamic.isPending || generateTts.isPending;
-  const canSubmit = type === 'image' ? imageForm.canCreate : !!(type && config);
+  const hasDashboardData = dashboardData !== null && Object.keys(dashboardData).length > 0;
+  const canSubmit =
+    type === 'image'
+      ? imageForm.canCreate
+      : !!(type && config && (type !== 'dashboard' || hasDashboardData));
 
   async function submitContent() {
     if (!type) return;
@@ -124,10 +134,19 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
           );
           return;
         }
+        let initialData: Record<string, unknown> | undefined;
+        if (parsed.data.type === 'dashboard') {
+          if (!hasDashboardData) {
+            toast.error('配置有误', 'dashboard 初始数据不能为空');
+            return;
+          }
+          initialData = dashboardData ?? undefined;
+        }
         await createDynamic.mutateAsync({
           kind: 'dynamic',
           config: parsed.data,
           frame_name: effectiveFrameName(type, parsed.data, dynamicFrameName),
+          initial_data: initialData,
         });
         toast.success('已创建');
       }
@@ -250,6 +269,13 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
                             if (nextFrameName) setDynamicFrameName(nextFrameName);
                             setConfig(next);
                           }}
+                          dashboardData={dashboardData ?? undefined}
+                          onDashboardDataChange={
+                            config.type === 'dashboard'
+                              ? (data) => setDashboardData(data)
+                              : undefined
+                          }
+                          dashboardDataLabel="初始数据 JSON"
                         />
                       )}
                     </FormSection>

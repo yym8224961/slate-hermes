@@ -178,7 +178,7 @@ void VolumePage::SaveLevel() {
 }
 
 const char* VolumePage::Caption() const {
-    return target_ == Target::kAlbum ? "相册音量" : "小智音量";
+    return target_ == Target::kAlbum ? "内容音量" : "小智音量";
 }
 
 void VolumePage::PlayTestTone(SceneContext& ctx) {

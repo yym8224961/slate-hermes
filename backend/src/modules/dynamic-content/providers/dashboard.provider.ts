@@ -1,12 +1,12 @@
 import { Injectable } from '@nestjs/common';
-import { DashboardConfig, type DashboardConfigT } from 'shared';
+import { DashboardConfig, DashboardDataPayload, type DashboardConfigT } from 'shared';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 
 /**
  * dashboard provider —— external data + template.
  *
- * fetchData 不主动请求外部系统。首次创建/预览使用 config.test_data；收到推送后
- * 复用上一份数据，设备刷新时只重新渲染。
+ * fetchData 不主动请求外部系统，只复用 Content.dynamicData 中的当前 payload。
+ * 新建时由 initial_data 初始化 dynamicData；后续由推送接口更新。
  */
 @Injectable()
 export class DashboardProvider implements DataProvider<
@@ -20,11 +20,13 @@ export class DashboardProvider implements DataProvider<
   }
 
   fetchData(
-    config: DashboardConfigT,
+    _config: DashboardConfigT,
     ctx: DynamicContentFetchCtx
   ): Promise<Record<string, unknown> | null> {
-    return Promise.resolve(
-      (ctx.lastData as Record<string, unknown> | undefined) ?? config.test_data
-    );
+    const parsed = DashboardDataPayload.safeParse(ctx.lastData);
+    if (!parsed.success) {
+      throw new Error('dashboard 数据为空，请先提供初始数据或推送数据');
+    }
+    return Promise.resolve(parsed.data);
   }
 }

@@ -69,6 +69,44 @@ bool ComboBit(uint8_t bit) {
     return (g_combo.load(std::memory_order_acquire) & bit) != 0;
 }
 
+size_t Utf8CharLen(unsigned char ch) {
+    if ((ch & 0x80) == 0)
+        return 1;
+    if ((ch & 0xE0) == 0xC0)
+        return 2;
+    if ((ch & 0xF0) == 0xE0)
+        return 3;
+    if ((ch & 0xF8) == 0xF0)
+        return 4;
+    return 1;
+}
+
+bool IsUtf8Continuation(unsigned char ch) {
+    return (ch & 0xC0) == 0x80;
+}
+
+void CopyUtf8Truncated(char* out, size_t cap, const std::string& value) {
+    if (cap == 0)
+        return;
+    size_t bytes = 0;
+    while (bytes < value.size()) {
+        const size_t len = Utf8CharLen(static_cast<unsigned char>(value[bytes]));
+        if (bytes + len > value.size() || bytes + len >= cap)
+            break;
+        bool valid = true;
+        for (size_t i = 1; i < len; ++i) {
+            if (!IsUtf8Continuation(static_cast<unsigned char>(value[bytes + i]))) {
+                valid = false;
+                break;
+            }
+        }
+        bytes += valid ? len : 1;
+    }
+    if (bytes > 0)
+        std::memcpy(out, value.data(), bytes);
+    out[bytes] = '\0';
+}
+
 void TryFireCombo() {
     uint8_t cur = g_combo.load(std::memory_order_acquire);
     while (true) {
@@ -126,7 +164,7 @@ void GracefulRestart() {
 
 // 联网 + 注册流程。c 是 in/out:首次 register 成功后会回填 device_id/device_secret,
 // 调用方据此判断是不是首次启动 (是 → 跳过 PostCachedGroupReadyIfAny,让 splash 显示
-// 「配对码」或「等待相册」,而不是先闪一下旧 cache 的 FrameScene)。
+// 「配对码」或「等待内容组」,而不是先闪一下旧 cache 的 FrameScene)。
 bool TryConnectAndSetup(cred::Credentials& c) {
     EmitBootStage(BootStage::kWifiConnecting, c.wifi_ssid.c_str(), nullptr);
     if (!Wifi::Get().Connect(c.wifi_ssid, c.wifi_pwd, 20000)) {
@@ -182,8 +220,8 @@ bool TryConnectAndSetup(cred::Credentials& c) {
         EmitBootStage(BootStage::kAwaitingPair, nullptr, rr.pair_code.c_str());
     } else {
         // 不 emit kRegistering / kAwaitingPair,让 sync_service 第一轮 poll 拿到真实
-        // bound/group 状态后再决定 splash 显示什么(已绑且有相册 → kSyncedGroupReady 切 FrameScene;
-        // 已绑无相册 → kBound 切「等待相册」;远程被踢 → kUnbound 切「配对码」)。
+        // bound/group 状态后再决定 splash 显示什么(已绑且有内容组 → kSyncedGroupReady 切 FrameScene;
+        // 已绑无内容组 → kBound 切「等待内容组」;远程被踢 → kUnbound 切「配对码」)。
     }
     return true;
 }
@@ -205,8 +243,7 @@ bool PostCachedGroupReadyIfAny() {
     e.kind = UiEventKind::kCachedGroupReady;
     std::strncpy(e.u.group.gid, summary.gid.c_str(), sizeof(e.u.group.gid) - 1);
     e.u.group.gid[sizeof(e.u.group.gid) - 1] = '\0';
-    // cache 不存 group name；SyncService 下一轮拉到 manifest 后会 Post 带 name 的事件。
-    e.u.group.name[0]         = '\0';
+    CopyUtf8Truncated(e.u.group.name, sizeof(e.u.group.name), summary.name);
     e.u.group.content_count   = summary.content_count;
     e.u.group.content_changed = false;
     evt::Post(e);

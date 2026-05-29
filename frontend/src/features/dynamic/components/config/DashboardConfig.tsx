@@ -24,10 +24,16 @@ const DASHBOARD_SYSTEM_TEMPLATE_OPTIONS = Object.values(DASHBOARD_SYSTEM_TEMPLAT
 export function DashboardConfigPanel({
   config,
   onChange,
+  dashboardData,
+  onDashboardDataChange,
+  dataLabel = onDashboardDataChange ? '初始数据 JSON' : '当前数据 JSON',
   contentId,
 }: {
   config: Extract<DynamicConfigT, { type: 'dashboard' }>;
   onChange: DynamicConfigChange;
+  dashboardData: Record<string, unknown>;
+  onDashboardDataChange?: (data: Record<string, unknown>) => void;
+  dataLabel?: string;
   contentId?: string;
 }) {
   const templateSelection =
@@ -35,7 +41,7 @@ export function DashboardConfigPanel({
   const customTemplate = config.template.kind === 'custom' ? config.template.template : null;
   const activeDescription =
     config.template.kind === 'custom'
-      ? '编辑 JSON 模板和测试数据；推送接口只接收 version + data，模板保存在内容配置中。'
+      ? '编辑 JSON 模板；数据由新建初始数据或推送接口提供，模板保存在内容配置中。'
       : DASHBOARD_SYSTEM_TEMPLATES[config.template.id].description;
   const updateCustomTemplate = useCallback(
     (template: DashboardTemplateT) => {
@@ -43,11 +49,11 @@ export function DashboardConfigPanel({
     },
     [config, onChange]
   );
-  const updateTestData = useCallback(
-    (testData: Record<string, unknown>) => {
-      onChange({ ...config, test_data: testData });
+  const updateDashboardData = useCallback(
+    (data: Record<string, unknown>) => {
+      onDashboardDataChange?.(data);
     },
-    [config, onChange]
+    [onDashboardDataChange]
   );
   const templateDraft = useJsonDraftWithEcho({
     value: customTemplate,
@@ -55,11 +61,11 @@ export function DashboardConfigPanel({
     parse: parseDashboardTemplateDraft,
     onValidChange: updateCustomTemplate,
   });
-  const testDataDraft = useJsonDraftWithEcho({
-    value: config.test_data,
-    fallback: config.test_data,
+  const dashboardDataDraft = useJsonDraftWithEcho({
+    value: dashboardData,
+    fallback: DASHBOARD_CUSTOM_STARTER_TEST_DATA,
     parse: parseJsonRecord,
-    onValidChange: updateTestData,
+    onValidChange: updateDashboardData,
   });
 
   return (
@@ -75,11 +81,10 @@ export function DashboardConfigPanel({
               onChange({
                 ...config,
                 template: { kind: 'custom', template },
-                test_data:
-                  config.template.kind === 'custom'
-                    ? config.test_data
-                    : DASHBOARD_CUSTOM_STARTER_TEST_DATA,
               });
+              if (config.template.kind !== 'custom') {
+                onDashboardDataChange?.({ ...DASHBOARD_CUSTOM_STARTER_TEST_DATA });
+              }
               templateDraft.setError(parsed.ok ? null : parsed.error);
             } else {
               const parsedId = DashboardSystemTemplateId.safeParse(value);
@@ -88,8 +93,8 @@ export function DashboardConfigPanel({
               onChange({
                 ...config,
                 template: { kind: 'system', id },
-                test_data: DASHBOARD_SYSTEM_TEMPLATE_TEST_DATA[id],
               });
+              onDashboardDataChange?.({ ...DASHBOARD_SYSTEM_TEMPLATE_TEST_DATA[id] });
               templateDraft.setError(null);
             }
           }}
@@ -119,14 +124,15 @@ export function DashboardConfigPanel({
       )}
 
       <JsonEditor
-        label="测试数据 JSON"
-        value={testDataDraft.text}
-        error={testDataDraft.error}
+        label={dataLabel}
+        value={dashboardDataDraft.text}
+        error={dashboardDataDraft.error}
         minRows={6}
-        onChange={testDataDraft.updateDraft}
+        onChange={onDashboardDataChange ? dashboardDataDraft.updateDraft : undefined}
+        readOnly={!onDashboardDataChange}
       />
 
-      {contentId && <DashboardPushPanel contentId={contentId} config={config} />}
+      {contentId && <DashboardPushPanel contentId={contentId} data={dashboardData} />}
     </div>
   );
 }

@@ -150,6 +150,28 @@ void BootSplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             pair_code_[sizeof(pair_code_) - 1] = '\0';
             need_render                        = true;
         }
+    } else if (e.kind == UiEventKind::kGroupSyncStatus) {
+        const auto mode = e.u.group_sync.mode;
+        if (mode == GroupSyncStatusMode::kStartupDownload || mode == GroupSyncStatusMode::kSwitchDownload ||
+            mode == GroupSyncStatusMode::kCurrentUpdate || mode == GroupSyncStatusMode::kSavingGroup ||
+            mode == GroupSyncStatusMode::kSavingCurrentGroup) {
+            const uint8_t    cur = e.u.group_sync.current;
+            const TickType_t now = xTaskGetTickCount();
+            if (cur == last_progress_current_)
+                return;
+            if ((now - last_progress_tick_) < pdMS_TO_TICKS(500))
+                return;
+            last_progress_current_ = cur;
+            last_progress_tick_    = now;
+            progress_cur_   = e.u.group_sync.current;
+            progress_total_ = e.u.group_sync.total;
+            std::strncpy(progress_name_, e.u.group_sync.name, sizeof(progress_name_) - 1);
+            progress_name_[sizeof(progress_name_) - 1] = '\0';
+            if (state_ != State::kProvisioning) {
+                state_      = State::kSyncProgress;
+                need_render = true;
+            }
+        }
     } else if (e.kind == UiEventKind::kSyncProgress) {
         // 节流：current 不变 / 距上次 < 500 ms 都跳过
         const uint8_t    cur = e.u.progress.current;
@@ -220,15 +242,20 @@ void BootSplashScene::RenderContent() {
             show_code = true;
             break;
         case State::kAwaitingGroup:
-            // 后端 claim 已自动绑「第一个相册」、create 第一个相册也会反向绑;
-            // 走到这里 = owner 一个相册都没有,直接告诉用户去创建。
-            std::snprintf(buf, sizeof(buf), "已绑定\n\n请在管理端创建相册");
+            // 后端 claim 已自动绑「第一个内容组」、create 第一个内容组也会反向绑;
+            // 走到这里 = owner 一个内容组都没有,直接告诉用户去创建。
+            std::snprintf(buf, sizeof(buf), "已绑定\n\n请在管理端创建内容组");
             break;
         case State::kNetError:
             std::snprintf(buf, sizeof(buf), "网络异常,稍后自动重试…");
             break;
         case State::kSyncProgress:
-            std::snprintf(buf, sizeof(buf), "正在准备\n%u / %u", progress_cur_, progress_total_);
+            if (progress_name_[0]) {
+                std::snprintf(buf, sizeof(buf), "正在准备\n%s\n%u / %u", progress_name_, progress_cur_,
+                              progress_total_);
+            } else {
+                std::snprintf(buf, sizeof(buf), "正在准备\n%u / %u", progress_cur_, progress_total_);
+            }
             break;
     }
 

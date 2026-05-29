@@ -3,8 +3,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { ContentAudioSource, ContentKind } from '@prisma/client';
 import {
+  DashboardDataPayload,
   DynamicConfig,
-  IngestPayload,
   isAudioDynamicConfig,
   type ContentDetailT,
   type IngestPayloadT,
@@ -32,7 +32,6 @@ import { ContentAudioBlobService } from './content-audio-blob.service';
 import { contentToDetail, contentToSummary, defaultDynamicFrameName } from './content-presenter';
 import type { ParsedContentUpload } from './multipart.parser';
 import type { DevicePollSnapshot } from '../devices/devices.service';
-import { dashboardPayloadConfigChanged } from './dashboard-config-signature';
 import { BlobRollbackPlan } from './blob-rollback';
 
 interface CurrentContentRequest {
@@ -356,10 +355,7 @@ export class ContentsService {
     data?: unknown;
   }): Promise<Buffer> {
     const config = DynamicConfig.parse(raw.config);
-    const previewData =
-      config.type === 'dashboard' && raw.data !== undefined
-        ? IngestPayload.parse(raw.data).data
-        : undefined;
+    const previewData = this.parseDashboardPreviewData(config.type, raw.data);
     return this.dynamicRenderer.renderPreviewDirect(
       config.type,
       config,
@@ -405,8 +401,21 @@ export class ContentsService {
       throw new ValidationError('只有外部数据预览支持 data 参数');
     }
     const frameName = body.frame_name === undefined ? content.frameName : body.frame_name;
-    const previewData = IngestPayload.parse(body.data).data;
+    const previewData = this.parseDashboardData(body.data, 'dashboard 预览数据不能为空');
     return this.dynamicRenderer.renderPreviewDirect(config.type, config, frameName, previewData);
+  }
+
+  private parseDashboardPreviewData(dynamicType: string, rawData: unknown): unknown {
+    if (dynamicType !== 'dashboard') return undefined;
+    return this.parseDashboardData(rawData, 'dashboard 预览数据不能为空');
+  }
+
+  private parseDashboardData(rawData: unknown, message: string): Record<string, unknown> {
+    const parsed = DashboardDataPayload.safeParse(rawData);
+    if (!parsed.success) {
+      throw new ValidationError(message, { issues: parsed.error.issues });
+    }
+    return parsed.data;
   }
 
   async appendImage(
@@ -436,6 +445,10 @@ export class ContentsService {
         `dynamic_type 与 config.type 不一致: ${dynamic_type} vs ${validatedConfig.type}`
       );
     }
+    const initialDashboardData =
+      validatedConfig.type === 'dashboard'
+        ? this.parseDashboardData(raw.initial_data, 'dashboard 初始数据不能为空')
+        : undefined;
 
     const contentId = createId();
     const placeholderEtag = computeETag(`dynamic-init:${contentId}`);
@@ -459,6 +472,9 @@ export class ContentsService {
             kind: 'dynamic',
             dynamicType: dynamic_type,
             dynamicConfig: validatedConfig as unknown as Prisma.InputJsonValue,
+            ...(initialDashboardData === undefined
+              ? {}
+              : { dynamicData: initialDashboardData as Prisma.InputJsonValue }),
             imageEtag: placeholderEtag,
             imageSize: 0,
             audioStatus: audioEnabled ? 'pending' : 'none',
@@ -586,13 +602,6 @@ export class ContentsService {
         data.dynamicConfig = validated as unknown as Prisma.InputJsonValue;
         data.dynamicRefreshDueAt = new Date();
         data.dynamicRefreshLeaseUntil = null;
-        if (
-          currentType === 'dashboard' &&
-          validated.type === 'dashboard' &&
-          dashboardPayloadConfigChanged(content.dynamicConfig, validated)
-        ) {
-          data.dynamicData = validated.test_data as Prisma.InputJsonValue;
-        }
         if (body.frame_name === undefined && currentType !== 'dashboard') {
           data.frameName = defaultDynamicFrameName(currentType, validated);
         }

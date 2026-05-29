@@ -45,11 +45,12 @@ class BootSplashScene : public Scene {
     void RenderContent();
     void Render(SceneContext& ctx);
 
-    State   state_          = State::kInitializing;
-    char    ssid_[33]       = {0};
-    char    pair_code_[8]   = {0};
-    uint8_t progress_cur_   = 0;
-    uint8_t progress_total_ = 0;
+    State   state_             = State::kInitializing;
+    char    ssid_[33]          = {0};
+    char    pair_code_[8]      = {0};
+    char    progress_name_[48] = {0};
+    uint8_t progress_cur_      = 0;
+    uint8_t progress_total_    = 0;
 
     lv_obj_t* root_       = nullptr;
     lv_obj_t* text_label_ = nullptr;  // 主文案(中文,Zfull)

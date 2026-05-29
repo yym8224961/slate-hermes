@@ -12,6 +12,7 @@ export interface FetchOptions {
   body?: unknown;
   userAgent?: string | null;
   allowPrivateNetwork?: boolean;
+  requireJsonContentType?: boolean;
 }
 
 const DEFAULT_FETCH_TIMEOUT_MS = 15_000;
@@ -37,10 +38,20 @@ export class HttpStatusError extends Error {
 export async function fetchJson<T>(url: string, opts: FetchOptions = {}): Promise<T> {
   const resp = await fetchResponse(url, opts);
   const contentType = resp.headers.get('content-type') ?? '';
-  if (contentType && !JSON_CONTENT_TYPE_RE.test(contentType)) {
+  if (opts.requireJsonContentType && contentType && !JSON_CONTENT_TYPE_RE.test(contentType)) {
     throw new Error(`Expected JSON response from ${redactUrlForMessage(url)}, got ${contentType}`);
   }
-  return JSON.parse(await resp.text()) as T;
+  const body = await resp.text();
+  try {
+    return JSON.parse(body) as T;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `Invalid JSON response from ${redactUrlForMessage(url)}` +
+        (contentType ? ` (content-type: ${contentType})` : '') +
+        `: ${detail}`
+    );
+  }
 }
 
 export async function fetchText(url: string, opts: FetchOptions = {}): Promise<string> {

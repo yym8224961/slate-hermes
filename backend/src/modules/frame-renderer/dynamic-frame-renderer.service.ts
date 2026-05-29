@@ -109,6 +109,13 @@ const CONTENT_RIGHT = FRAME_WIDTH - 20;
 const CONTENT_WIDTH = CONTENT_RIGHT - CONTENT_LEFT;
 const FALLBACK_TEXT = '暂无数据';
 const HOT_LIST_RENDER_COUNT = 8;
+const FONT_TEST_COMPACT_METRICS: Record<string, { lineHeight: number; baseLine: number }> = {
+  fusion_pixel_10: { lineHeight: 10, baseLine: 2 },
+  fusion_pixel_12: { lineHeight: 12, baseLine: 2 },
+  ark_pixel_10: { lineHeight: 10, baseLine: 2 },
+  ark_pixel_12: { lineHeight: 12, baseLine: 2 },
+  ark_pixel_16: { lineHeight: 16, baseLine: 3 },
+};
 
 @Injectable()
 export class DynamicFrameRendererService implements OnModuleInit {
@@ -180,7 +187,7 @@ export class DynamicFrameRendererService implements OnModuleInit {
       sans16: await loadBitmapFont(resolveFontPath('source-han-sans-16-slim.json')),
       sans12: fusionPixel10,
       calendarSub10: fusionPixel10,
-      metric12: await loadBitmapFont(resolveFontPath('pixelmplus-12.json')),
+      metric12: await loadBitmapFont(resolveFontPath('spleen-6x12.json')),
       fallback16: await loadBitmapFont(resolveFontPath('unifont-16.json')),
       displayLarge: await loadBitmapFont(resolveFontPath('spleen-32x64.json')),
       catalog: await loadDeviceFontCatalog(),
@@ -715,7 +722,8 @@ export class DynamicFrameRendererService implements OnModuleInit {
   private renderFontTest(c: BitmapCanvas, fonts: FontSet, ctx: DynamicRenderContext): void {
     const fontId = readFontId(ctx.config.font_id);
     const entry = getDeviceFontEntry(fontId);
-    const sampleFont = fonts.catalog[entry.id] ?? fonts.sans16;
+    const sourceFont = fonts.catalog[entry.id] ?? fonts.sans16;
+    const sampleFont = compactFontTestFont(sourceFont, entry);
     const invert = ctx.config.invert === true;
     const specimenKind =
       entry.kind === 'latin' && sampleFont.lineHeight >= 28 ? 'display' : entry.kind;
@@ -936,7 +944,10 @@ export class DynamicFrameRendererService implements OnModuleInit {
           rect.h,
           resolveTemplate(pickText(rawBlock.label, ''), dataRoot),
           resolveTemplate(pickText(rawBlock.value_text, ''), dataRoot),
-          resolvePercentage(rawBlock.percentage, rawBlock.value, rawBlock.max, dataRoot)
+          resolvePercentage(rawBlock.percentage, rawBlock.value, rawBlock.max, dataRoot),
+          rawBlock.label_font_size,
+          rawBlock.value_font_size,
+          rawBlock.bar_height
         );
       } else if (type === 'sparkline') {
         const rect = blockRect(rawBlock);
@@ -1195,10 +1206,13 @@ export class DynamicFrameRendererService implements OnModuleInit {
     h: number,
     label: string,
     valueText: string,
-    percentage: number
+    percentage: number,
+    labelFontSize = 12,
+    valueFontSize = 12,
+    barHeight = 9
   ): void {
-    const labelFont = fonts.sans12;
-    const valueFont = fonts.sans12;
+    const labelFont = labelFontSize === 16 ? fonts.sans16 : fonts.sans12;
+    const valueFont = valueFontSize === 16 ? fonts.sans16 : fonts.sans12;
     const labelTextW = textWidthFallback(labelFont, this.fallbackForFont(labelFont), label);
     const valueTextW = valueText
       ? textWidthFallback(valueFont, this.fallbackForFont(valueFont), valueText)
@@ -1207,7 +1221,7 @@ export class DynamicFrameRendererService implements OnModuleInit {
     const barX = x + labelW;
     const valueW = valueText ? Math.min(Math.max(valueTextW + 4, 34), 78) : 0;
     const barW = Math.max(12, w - labelW - valueW - 10);
-    const barH = 9;
+    const barH = Math.max(4, Math.min(barHeight, h - 4));
     const centerY = y + Math.round(h / 2);
     const barY = centerY - Math.floor(barH / 2);
     this.drawTextCenteredY(c, labelFont, label, x, centerY, {
@@ -1361,4 +1375,14 @@ async function loadDeviceFontCatalog(): Promise<Partial<Record<string, BitmapFon
     })
   );
   return out;
+}
+
+function compactFontTestFont(font: BitmapFont, entry: DeviceFontCatalogEntry): BitmapFont {
+  const metrics = FONT_TEST_COMPACT_METRICS[entry.id];
+  if (!metrics) return font;
+  return {
+    ...font,
+    lineHeight: metrics.lineHeight,
+    baseLine: metrics.baseLine,
+  };
 }

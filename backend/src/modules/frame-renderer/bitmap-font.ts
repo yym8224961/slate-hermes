@@ -26,7 +26,7 @@ interface SerializedBitmapFont {
 }
 
 const fontCache = new Map<string, Promise<BitmapFont>>();
-const MAX_FONT_CACHE_ENTRIES = 32;
+const MAX_FONT_CACHE_ENTRIES = 64;
 
 export async function loadBitmapFont(path: string): Promise<BitmapFont> {
   const cached = fontCache.get(path);

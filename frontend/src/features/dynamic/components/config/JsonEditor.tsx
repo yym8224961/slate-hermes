@@ -7,12 +7,14 @@ export function JsonEditor({
   error,
   minRows,
   onChange,
+  readOnly = false,
 }: {
   label: string;
   value: string;
   error: string | null;
   minRows: number;
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
+  readOnly?: boolean;
 }) {
   return (
     <label className="block">
@@ -27,7 +29,8 @@ export function JsonEditor({
         rows={minRows}
         value={value}
         spellCheck={false}
-        onChange={(e) => onChange(e.target.value)}
+        readOnly={readOnly}
+        onChange={(e) => onChange?.(e.target.value)}
       />
       {error && <p className="mt-1.5 font-sans text-[11px] text-clay">{error}</p>}
     </label>

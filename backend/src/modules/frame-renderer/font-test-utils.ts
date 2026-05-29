@@ -34,8 +34,8 @@ export function fontSpecimen(kind: string, fontId: FontTestFontIdT): FontSpecime
     return {
       hero: compact ? '中文 0123456789 ABC abc' : '墨水屏字体测试 中文点阵 0123456789',
       body: compact
-        ? ['中文 ABC abc 123', '23:59 100% OK', 'A0 iIl1 O0 8B']
-        : ['今日天气 多云 23°C  风力 2 级', '简繁中文 标点，。！？', 'ABC abc 0123456789 +12.8%'],
+        ? ['中文标点，。！？～', '23:59 100% OK', 'A0 iIl1 O0 8B']
+        : ['今日天气 多云 23°C  风力 2 级', '简繁中文 标点，。！？～', 'ABC abc 0123456789 +12.8%'],
       metrics: ['0123456789 23:59'],
       glyphs: ['一二三 口日目 黑墨屏'],
     };
@@ -90,7 +90,7 @@ export function fontReadingLines(
       '中文测试 墨水屏 点阵字体',
       '今天多云 23°C 风力 2级',
       '黑白像素 横竖撇捺 点线面',
-      '简繁中文 标点，。！？；：',
+      '简繁中文 标点，。！？；：～',
       '一二三四五六七八九十 口日目田回',
       '0123456789 23:59 100% +12.8',
       'ABC abc A0 O0 I1 l1 []{}<>',

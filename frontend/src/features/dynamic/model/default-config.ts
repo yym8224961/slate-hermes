@@ -4,7 +4,6 @@ import {
   type DynamicConfigT,
   type DynamicTypeT,
 } from 'shared';
-import { DASHBOARD_CUSTOM_STARTER_TEST_DATA } from 'shared/dynamic/test-fixtures';
 
 const TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
@@ -62,7 +61,6 @@ export function defaultConfig(type: DynamicTypeT): DynamicConfigT {
       return {
         type: 'dashboard',
         template: { kind: 'custom', template: DASHBOARD_CUSTOM_STARTER_TEMPLATE },
-        test_data: DASHBOARD_CUSTOM_STARTER_TEST_DATA,
         refresh_interval_sec: 600,
       };
     case 'font_test':

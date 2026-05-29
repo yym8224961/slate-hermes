@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { DITHER_MODES } from '../dither.js';
-import { DynamicConfig, DynamicType, TtsVoice } from './dynamic.js';
+import { DashboardDataPayload, DynamicConfig, DynamicType, TtsVoice } from './dynamic.js';
 
 export const ContentKind = z.enum(['image', 'dynamic']);
 export type ContentKindT = z.infer<typeof ContentKind>;
@@ -63,11 +63,21 @@ export const ContentMutationResponse = z.object({
 });
 export type ContentMutationResponseT = z.infer<typeof ContentMutationResponse>;
 
-export const CreateDynamicContentRequest = z.object({
-  kind: z.literal('dynamic'),
-  config: DynamicConfig,
-  frame_name: z.string().max(64).nullable().optional(),
-});
+export const CreateDynamicContentRequest = z
+  .object({
+    kind: z.literal('dynamic'),
+    config: DynamicConfig,
+    frame_name: z.string().max(64).nullable().optional(),
+    initial_data: DashboardDataPayload.optional(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.config.type !== 'dashboard' || body.initial_data !== undefined) return;
+    ctx.addIssue({
+      code: 'custom',
+      path: ['initial_data'],
+      message: 'dashboard 初始数据不能为空',
+    });
+  });
 export type CreateDynamicContentRequestT = z.infer<typeof CreateDynamicContentRequest>;
 
 export const PatchDynamicContentRequest = z.object({
@@ -79,7 +89,7 @@ export type PatchDynamicContentRequestT = z.infer<typeof PatchDynamicContentRequ
 export const PreviewDynamicContentRequest = z.object({
   config: DynamicConfig,
   frame_name: z.string().max(64).nullable().optional(),
-  data: z.unknown().optional(),
+  data: DashboardDataPayload.optional(),
 });
 export type PreviewDynamicContentRequestT = z.infer<typeof PreviewDynamicContentRequest>;
 

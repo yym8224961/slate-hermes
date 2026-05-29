@@ -1,16 +1,15 @@
 import { useMemo, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
-import type { DynamicConfigT } from 'shared';
 import { fieldBaseCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
 import { API_V1 } from '@/lib/http';
 
 export function DashboardPushPanel({
   contentId,
-  config,
+  data,
 }: {
   contentId: string;
-  config: Extract<DynamicConfigT, { type: 'dashboard' }>;
+  data: Record<string, unknown>;
 }) {
   const [copied, setCopied] = useState(false);
   const url = useMemo(() => {
@@ -19,8 +18,8 @@ export function DashboardPushPanel({
     return `${window.location.origin}${path}`;
   }, [contentId]);
   const examplePayload = useMemo(() => {
-    return { version: 1, data: config.test_data };
-  }, [config.test_data]);
+    return { version: 1, data };
+  }, [data]);
   const exampleCurl = useMemo(
     () =>
       `curl -X POST -H 'Content-Type: application/json' --data-binary @- \\\n  ${url} <<'JSON'\n${JSON.stringify(examplePayload, null, 2)}\nJSON`,

@@ -26,7 +26,7 @@ export function resolveDashboardRenderInput(
 ): { template: DashboardTemplateT; data: Record<string, unknown> } | null {
   const config = DashboardConfig.safeParse(ctx.config);
   if (!config.success) return null;
-  const data = ctx.data ?? config.data.test_data;
+  const data = ctx.data;
   if (!isRecord(data)) return null;
   if (config.data.template.kind === 'custom') {
     return { template: config.data.template.template, data };
@@ -132,6 +132,10 @@ function formatDashboardValue(value: unknown, format: string | undefined): strin
       return `$${formatUsd(n, 2)}`;
     case 'usd4':
       return `$${formatUsd(n, 4)}`;
+    case 'usd_per_million':
+      return `$${trimFixed(n, 2)}/M`;
+    case 'percent':
+      return `${trimFixed(n, 1)}%`;
     case 'duration':
       return n >= 1000 ? `${trimFixed(n / 1000, 2)}s` : `${Math.round(n)}ms`;
     default:

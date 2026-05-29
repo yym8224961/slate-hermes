@@ -3,16 +3,17 @@
  * 从 Sub2API 获取 AI 使用统计数据，推送到 Slate 的 ai_usage_stats 动态帧。
  *
  * 环境变量：
- *   SUB2API_BASE       Sub2API 地址，如 http://localhost:8080
+ *   SUB2API_BASE       Sub2API 地址，如 http://localhost:8080（不含 /api/v1）
  *   SUB2API_TOKEN      Bearer token（admin 或 user 级别）
  *   SLATE_API_BASE     Slate 后端地址，如 http://localhost:3000
  *   SUB2API_CONTENT_ID Slate 中 ai_usage_stats 类型动态帧的 contentId
- *   SUB2API_USER_ID    （可选）指定用户 ID，默认查询当前 token 对应用户
  */
 
-const SUB2API_BASE = env('SUB2API_BASE');
+import { IngestPayload, type DashboardDataPayloadT } from 'shared';
+
+const SUB2API_BASE = stripTrailingSlash(env('SUB2API_BASE'));
 const SUB2API_TOKEN = env('SUB2API_TOKEN');
-const SLATE_API_BASE = env('SLATE_API_BASE');
+const SLATE_API_BASE = stripTrailingSlash(env('SLATE_API_BASE'));
 const CONTENT_ID = env('SUB2API_CONTENT_ID');
 
 function env(key: string): string {
@@ -22,6 +23,10 @@ function env(key: string): string {
     process.exit(1);
   }
   return v;
+}
+
+function stripTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '');
 }
 
 async function sub2apiFetch<T>(path: string): Promise<T> {
@@ -74,25 +79,7 @@ interface UserDashboardStats {
   }>;
 }
 
-// Sub2API GET /api/v1/usage/dashboard/models 响应
-interface ModelStat {
-  model: string;
-  requests: number;
-  input_tokens: number;
-  output_tokens: number;
-  cache_creation_tokens: number;
-  cache_read_tokens: number;
-  total_tokens: number;
-  cost: number;
-  actual_cost: number;
-  account_cost: number;
-}
-
-interface ModelsResponse {
-  models: ModelStat[];
-}
-
-function formatUpdatedLabel(): string {
+function formatLastUpdatedLabel(): string {
   const now = new Date();
   const mm = String(now.getMonth() + 1).padStart(2, '0');
   const dd = String(now.getDate()).padStart(2, '0');
@@ -101,40 +88,81 @@ function formatUpdatedLabel(): string {
   return `${mm}-${dd} ${hh}:${mi}`;
 }
 
-async function main() {
-  // 并行请求 stats + models
-  const [stats, modelsRes] = await Promise.all([
-    sub2apiFetch<UserDashboardStats>('/api/v1/usage/dashboard/stats'),
-    sub2apiFetch<ModelsResponse>('/api/v1/usage/dashboard/models'),
-  ]);
+function formatLastUpdatedTimeLabel(): string {
+  const now = new Date();
+  const hh = String(now.getHours()).padStart(2, '0');
+  const mi = String(now.getMinutes()).padStart(2, '0');
+  return `${hh}:${mi}`;
+}
 
-  const data: Record<string, unknown> = {
-    balance: 0, // Sub2API 用户端无余额字段，admin 可按需补充
-    total_api_keys: stats.total_api_keys,
-    active_api_keys: stats.active_api_keys,
-    total_tokens: stats.total_tokens,
-    today_requests: stats.today_requests,
-    today_actual_cost: stats.today_actual_cost,
-    today_tokens: stats.today_tokens,
-    average_duration_ms: stats.average_duration_ms,
-    rpm: stats.rpm,
-    updated_label: formatUpdatedLabel(),
-    by_platform: (stats.by_platform ?? []).map((p) => ({
-      platform: p.platform,
-      today_actual_cost: p.today_actual_cost,
-      total_tokens: p.total_tokens,
-    })),
-    models: (modelsRes.models ?? []).map((m) => ({
-      model: m.model,
-      total_tokens: m.total_tokens,
-    })),
+function cacheHitRatePercent(
+  inputTokens: number,
+  cacheCreationTokens: number,
+  cacheReadTokens: number
+): number {
+  const denominator = inputTokens + cacheCreationTokens + cacheReadTokens;
+  if (!Number.isFinite(denominator) || denominator <= 0) return 0;
+  return (cacheReadTokens / denominator) * 100;
+}
+
+function costPerMillionTokens(costUsd: number, tokenCount: number): number {
+  if (!Number.isFinite(costUsd) || !Number.isFinite(tokenCount) || tokenCount <= 0) return 0;
+  return (costUsd / tokenCount) * 1_000_000;
+}
+
+function buildDashboardData(stats: UserDashboardStats): DashboardDataPayloadT {
+  return {
+    today_cost_usd: stats.today_actual_cost,
+    today_request_count: stats.today_requests,
+    today_token_count: stats.today_tokens,
+    today_cache_hit_rate_percent: cacheHitRatePercent(
+      stats.today_input_tokens,
+      stats.today_cache_creation_tokens,
+      stats.today_cache_read_tokens
+    ),
+    total_cost_usd: stats.total_actual_cost,
+    total_request_count: stats.total_requests,
+    total_token_count: stats.total_tokens,
+    total_cache_hit_rate_percent: cacheHitRatePercent(
+      stats.total_input_tokens,
+      stats.total_cache_creation_tokens,
+      stats.total_cache_read_tokens
+    ),
+    average_latency_ms: stats.average_duration_ms,
+    today_cost_per_million_tokens_usd: costPerMillionTokens(
+      stats.today_actual_cost,
+      stats.today_tokens
+    ),
+    total_cost_per_million_tokens_usd: costPerMillionTokens(
+      stats.total_actual_cost,
+      stats.total_tokens
+    ),
+    last_updated_time_label: formatLastUpdatedTimeLabel(),
+    last_updated_label: formatLastUpdatedLabel(),
+    platform_breakdown: (stats.by_platform ?? [])
+      .toSorted(
+        (a, b) =>
+          b.today_actual_cost - a.today_actual_cost ||
+          b.today_tokens - a.today_tokens ||
+          b.today_requests - a.today_requests
+      )
+      .slice(0, 2)
+      .map((p) => ({
+        platform_name: p.platform,
+        today_cost_usd: p.today_actual_cost,
+        today_request_count: p.today_requests,
+        today_token_count: p.today_tokens,
+      })),
   };
+}
 
+async function pushDashboardData(data: DashboardDataPayloadT) {
   const url = `${SLATE_API_BASE}/api/v1/contents/${CONTENT_ID}/data`;
+  const payload = IngestPayload.parse({ version: 1, data });
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ version: 1, data }),
+    body: JSON.stringify(payload),
   });
 
   if (!res.ok) {
@@ -144,6 +172,11 @@ async function main() {
 
   const result = await res.json();
   console.log('Pushed Sub2API usage stats to Slate:', JSON.stringify(result, null, 2));
+}
+
+async function main() {
+  const stats = await sub2apiFetch<UserDashboardStats>('/api/v1/usage/dashboard/stats');
+  await pushDashboardData(buildDashboardData(stats));
 }
 
 main().catch((e) => {

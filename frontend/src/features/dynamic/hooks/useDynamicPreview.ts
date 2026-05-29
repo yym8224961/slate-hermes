@@ -7,19 +7,26 @@ import { effectiveFrameName } from '@/features/contents/model/frame-name';
 type PreviewMutation = UseMutationResult<
   ArrayBuffer,
   Error,
-  { config: DynamicConfigT; frameName?: string | null; data?: unknown; signal?: AbortSignal }
+  {
+    config: DynamicConfigT;
+    frameName?: string | null;
+    data?: Record<string, unknown>;
+    signal?: AbortSignal;
+  }
 >;
 
 export function useDynamicPreview({
   type,
   config,
   frameName,
+  dashboardData,
   preview,
   debounceMs = 800,
 }: {
   type: AllContentType | null;
   config: DynamicConfigT | null;
   frameName: string;
+  dashboardData?: Record<string, unknown> | null;
   preview: PreviewMutation;
   debounceMs?: number;
 }) {
@@ -53,10 +60,7 @@ export function useDynamicPreview({
         {
           config: parsed.data,
           frameName: effectiveFrameName(type, parsed.data, frameName),
-          data:
-            parsed.data.type === 'dashboard'
-              ? { version: 1, data: parsed.data.test_data }
-              : undefined,
+          data: parsed.data.type === 'dashboard' ? (dashboardData ?? undefined) : undefined,
           signal: controller.signal,
         },
         {
@@ -73,7 +77,7 @@ export function useDynamicPreview({
       clearTimeout(timer);
       controller.abort();
     };
-  }, [config, debounceMs, frameName, invalidatePreview, previewMutate, type]);
+  }, [config, dashboardData, debounceMs, frameName, invalidatePreview, previewMutate, type]);
 
   return { livePreviewData, invalidatePreview };
 }

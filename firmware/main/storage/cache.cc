@@ -7,6 +7,7 @@
 
 #include <dirent.h>
 #include <unistd.h>
+#include <algorithm>
 #include <cctype>
 #include <cerrno>
 #include <cstdint>
@@ -157,7 +158,18 @@ int JsonNonNegativeIntField(cJSON* root, const char* key, int default_value) {
     return default_value;
 }
 
-bool WriteStateJsonUnlocked(const std::string& selected_group_id, const std::string& etag, int current_frame_seq) {
+uint32_t JsonUint32Field(cJSON* root, const char* key, uint32_t default_value) {
+    cJSON* value = cJSON_GetObjectItemCaseSensitive(root, key);
+    if (!cJSON_IsNumber(value))
+        return default_value;
+    const double v = value->valuedouble;
+    if (v < 0.0 || v > static_cast<double>(UINT32_MAX))
+        return default_value;
+    return static_cast<uint32_t>(v);
+}
+
+bool WriteStateJsonUnlocked(const std::string& selected_group_id, const std::string& etag, int current_frame_seq,
+                            uint32_t cache_access_seq) {
     if (current_frame_seq < 0)
         current_frame_seq = 0;
 
@@ -167,6 +179,7 @@ bool WriteStateJsonUnlocked(const std::string& selected_group_id, const std::str
     cJSON_AddStringToObject(root, "selected_group_id", selected_group_id.c_str());
     cJSON_AddStringToObject(root, "last_etag", etag.c_str());
     cJSON_AddNumberToObject(root, "current_frame_seq", current_frame_seq);
+    cJSON_AddNumberToObject(root, "cache_access_seq", static_cast<double>(cache_access_seq));
     char* s  = cJSON_PrintUnformatted(root);
     bool  ok = s && WriteAll(StatePath(), s, std::strlen(s));
     cJSON_free(s);
@@ -402,7 +415,8 @@ bool WriteStateMeta(const std::string& selected_group_id, const std::string& eta
         return false;
     StateJson state             = ReadStateJsonUnlocked();
     int       current_frame_seq = state.root ? JsonNonNegativeIntField(state.root, "current_frame_seq", 0) : 0;
-    return WriteStateJsonUnlocked(selected_group_id, etag, current_frame_seq);
+    uint32_t  cache_access_seq  = state.root ? JsonUint32Field(state.root, "cache_access_seq", 0) : 0;
+    return WriteStateJsonUnlocked(selected_group_id, etag, current_frame_seq, cache_access_seq);
 }
 
 std::string ReadCurrentManifestEtag() {
@@ -437,50 +451,183 @@ bool WriteCurrentFrameSeq(int seq) {
     StateJson   state = ReadStateJsonUnlocked();
     std::string gid   = state.root ? JsonStringField(state.root, "selected_group_id") : "";
     std::string etag  = state.root ? JsonStringField(state.root, "last_etag") : "";
-    return WriteStateJsonUnlocked(gid, etag, seq);
+    uint32_t    cache_access_seq = state.root ? JsonUint32Field(state.root, "cache_access_seq", 0) : 0;
+    return WriteStateJsonUnlocked(gid, etag, seq, cache_access_seq);
 }
 
 bool ReadCachedGroupSummary(CachedGroupSummary& out) {
     out = {};
     if (!ReadStateMeta(out.gid, out.manifest_etag) || out.gid.empty())
         return false;
-    if (!ReadManifestContentCount(out.gid, out.content_count) || out.content_count <= 0) {
+    ManifestMeta meta;
+    if (!ReadManifestMeta(out.gid, meta)) {
         out = {};
         return false;
     }
+    out.name           = meta.name;
+    out.manifest_etag  = meta.manifest_etag;
+    out.content_count  = meta.content_count;
     return true;
 }
 
-bool WriteManifest(const std::string& gid, const std::string& manifest_etag, int content_count) {
+namespace {
+std::string ManifestPath(const std::string& gid) {
+    return GroupDir(gid) + "/manifest.json";
+}
+
+bool ReadManifestMetaFile(const std::string& path, ManifestMeta& out) {
+    out = {};
+    std::vector<uint8_t> buf;
+    if (!ReadAll(path, buf))
+        return false;
+    cJSON* root = cJSON_ParseWithLength(reinterpret_cast<const char*>(buf.data()), buf.size());
+    if (!root)
+        return false;
+    out.gid             = JsonStringField(root, "group_id");
+    out.name            = JsonStringField(root, "group_name");
+    out.manifest_etag   = JsonStringField(root, "manifest_etag");
+    out.content_count   = JsonNonNegativeIntField(root, "content_count", 0);
+    out.last_access_seq = JsonUint32Field(root, "last_access_seq", 0);
+    cJSON_Delete(root);
+    return !out.manifest_etag.empty();
+}
+}  // namespace
+
+bool WriteManifest(const std::string& gid, const std::string& manifest_etag, int content_count,
+                   const std::string& name) {
     DirEnsure(std::string(kRoot) + "/groups");
     DirEnsure(GroupDir(gid));
     DirEnsure(FramesDir(gid));
+    ManifestMeta old;
+    ReadManifestMeta(gid, old);
     cJSON* root = cJSON_CreateObject();
     if (!root)
         return false;
+    cJSON_AddStringToObject(root, "group_id", gid.c_str());
+    cJSON_AddStringToObject(root, "group_name", name.empty() ? old.name.c_str() : name.c_str());
     cJSON_AddStringToObject(root, "manifest_etag", manifest_etag.c_str());
     cJSON_AddNumberToObject(root, "content_count", content_count);
+    cJSON_AddNumberToObject(root, "last_access_seq", static_cast<double>(old.last_access_seq));
     char* s  = cJSON_PrintUnformatted(root);
-    bool  ok = s && WriteAll(GroupDir(gid) + "/manifest.json", s, std::strlen(s));
+    bool  ok = s && WriteAll(ManifestPath(gid), s, std::strlen(s));
     cJSON_free(s);
     cJSON_Delete(root);
     return ok;
 }
 
-bool ReadManifestContentCount(const std::string& gid, int& out) {
-    std::vector<uint8_t> buf;
-    if (!ReadAll(GroupDir(gid) + "/manifest.json", buf))
+bool ReadManifestMeta(const std::string& gid, ManifestMeta& out) {
+    if (!ReadManifestMetaFile(ManifestPath(gid), out))
         return false;
-    cJSON* root = cJSON_ParseWithLength(reinterpret_cast<const char*>(buf.data()), buf.size());
+    if (out.gid.empty())
+        out.gid = gid;
+    return true;
+}
+
+bool ReadManifestContentCount(const std::string& gid, int& out) {
+    ManifestMeta meta;
+    if (!ReadManifestMeta(gid, meta))
+        return false;
+    out = meta.content_count;
+    return true;
+}
+
+bool TouchGroup(const std::string& gid) {
+    if (gid.empty())
+        return false;
+
+    uint32_t next_seq = 1;
+    {
+        ScopedMutexLock lock(StateMutex());
+        if (!lock.locked())
+            return false;
+        StateJson   state             = ReadStateJsonUnlocked();
+        std::string selected_group_id = state.root ? JsonStringField(state.root, "selected_group_id") : "";
+        std::string etag              = state.root ? JsonStringField(state.root, "last_etag") : "";
+        int         current_frame_seq = state.root ? JsonNonNegativeIntField(state.root, "current_frame_seq", 0) : 0;
+        const uint32_t current_seq    = state.root ? JsonUint32Field(state.root, "cache_access_seq", 0) : 0;
+        next_seq                      = current_seq == UINT32_MAX ? UINT32_MAX : current_seq + 1;
+        if (!WriteStateJsonUnlocked(selected_group_id, etag, current_frame_seq, next_seq))
+            return false;
+    }
+
+    // SyncService is the only writer of manifest access metadata. Keep the
+    // state counter update atomic, then rewrite this group's manifest outside
+    // StateMutex so UI/cache readers are not blocked by flash I/O.
+    ManifestMeta meta;
+    if (!ReadManifestMeta(gid, meta))
+        return false;
+    meta.last_access_seq = next_seq;
+
+    cJSON* root = cJSON_CreateObject();
     if (!root)
         return false;
-    cJSON* fc = cJSON_GetObjectItemCaseSensitive(root, "content_count");
-    bool   ok = false;
-    if (cJSON_IsNumber(fc)) {
-        out = fc->valueint;
-        ok  = true;
-    }
+    cJSON_AddStringToObject(root, "group_id", meta.gid.empty() ? gid.c_str() : meta.gid.c_str());
+    cJSON_AddStringToObject(root, "group_name", meta.name.c_str());
+    cJSON_AddStringToObject(root, "manifest_etag", meta.manifest_etag.c_str());
+    cJSON_AddNumberToObject(root, "content_count", meta.content_count);
+    cJSON_AddNumberToObject(root, "last_access_seq", static_cast<double>(meta.last_access_seq));
+    char* s = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
+    if (!s)
+        return false;
+    const bool ok = WriteAll(ManifestPath(gid), s, std::strlen(s));
+    cJSON_free(s);
+    return ok;
+}
+
+bool PruneOldGroups(const std::string& current_gid, const std::string& target_gid, size_t min_free_bytes,
+                    int max_groups) {
+    const std::string groups_dir  = std::string(kRoot) + "/groups";
+    const std::string current_dir = current_gid.empty() ? "" : GroupDir(current_gid);
+    const std::string target_dir  = target_gid.empty() ? "" : GroupDir(target_gid);
+
+    struct Candidate {
+        std::string path;
+        uint32_t    last_access_seq = 0;
+    };
+    std::vector<Candidate> candidates;
+    int                    group_count = 0;
+
+    DIR* dir = opendir(groups_dir.c_str());
+    if (!dir)
+        return errno == ENOENT;
+    while (struct dirent* ent = readdir(dir)) {
+        if (std::strcmp(ent->d_name, ".") == 0 || std::strcmp(ent->d_name, "..") == 0)
+            continue;
+        const std::string child = groups_dir + "/" + ent->d_name;
+        struct stat       st;
+        if (stat(child.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
+            continue;
+        ++group_count;
+        if (child == current_dir || child == target_dir)
+            continue;
+        ManifestMeta meta;
+        ReadManifestMetaFile(child + "/manifest.json", meta);
+        candidates.push_back({child, meta.last_access_seq});
+    }
+    closedir(dir);
+
+    std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
+        if (a.last_access_seq != b.last_access_seq)
+            return a.last_access_seq < b.last_access_seq;
+        return a.path < b.path;
+    });
+
+    auto free_bytes = []() -> size_t {
+        size_t total = 0, used = 0;
+        if (esp_littlefs_info("storage", &total, &used) != ESP_OK || total < used)
+            return 0;
+        return total - used;
+    };
+
+    bool ok = true;
+    for (const auto& c : candidates) {
+        if ((max_groups <= 0 || group_count <= max_groups) && free_bytes() >= min_free_bytes)
+            break;
+        ESP_LOGI(kTag, "Prune cached content group: %s", c.path.c_str());
+        ok = RemoveTree(c.path) && ok;
+        --group_count;
+    }
     return ok;
 }
 

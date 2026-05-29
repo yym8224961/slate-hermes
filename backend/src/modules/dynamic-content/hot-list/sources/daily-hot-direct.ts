@@ -366,20 +366,35 @@ export const DAILY_HOT_DIRECT_SOURCES: readonly HotListSource[] = [
       };
     },
   }),
-  htmlListSource({
+  directSource({
     id: 'jianshu',
     label: '简书',
-    url: 'https://www.jianshu.com/',
-    headers: { Referer: 'https://www.jianshu.com/' },
-    blockPattern: /<li[^>]*id="[^"]*"[^>]*>([\s\S]*?)<\/li>/gi,
-    map(block) {
-      const href = firstMatch(block, /<a[^>]*class="[^"]*title[^"]*"[^>]*href="([^"]+)"/i);
-      return {
-        title: firstMatch(block, /<a[^>]*class="[^"]*title[^"]*"[^>]*>([\s\S]*?)<\/a>/i) ?? '',
-        desc: firstMatch(block, /<p[^>]*class="[^"]*abstract[^"]*"[^>]*>([\s\S]*?)<\/p>/i),
-        author: firstMatch(block, /<a[^>]*class="[^"]*nickname[^"]*"[^>]*>([\s\S]*?)<\/a>/i),
-        url: absoluteUrl('https://www.jianshu.com/', href),
-      };
+    async fetch(signal) {
+      const json = await fetchJson<JianshuTrendingItem[]>(
+        'https://www.jianshu.com/asimov/trending/now',
+        {
+          signal,
+          headers: {
+            Accept: 'application/json, text/plain, */*',
+            Referer: 'https://www.jianshu.com/',
+            'User-Agent': DESKTOP_UA,
+          },
+        }
+      );
+      return withRanks(
+        json
+          .filter((item) => item.object?.type === 1)
+          .map((item) => {
+            const data = item.object?.data;
+            return {
+              title: data?.title ?? '',
+              desc: data?.public_abbr,
+              author: data?.user?.nickname,
+              hot: compactHot(data?.likes_count, '喜欢'),
+              url: data?.slug ? `https://www.jianshu.com/p/${data.slug}` : undefined,
+            };
+          })
+      );
     },
   }),
   rssSource('linuxdo', 'Linux.do', 'https://linux.do/top.rss?period=weekly'),
@@ -613,15 +628,31 @@ export const DAILY_HOT_DIRECT_SOURCES: readonly HotListSource[] = [
     id: 'zhihu-daily',
     label: '知乎日报',
     async fetch(signal) {
-      const json = await fetchJson<ZhihuDailyResponse>(
+      const items: ZhihuDailyStory[] = [];
+      const latest = await fetchJson<ZhihuDailyResponse>(
         'https://daily.zhihu.com/api/4/news/latest',
         {
           signal,
           headers: { Referer: 'https://daily.zhihu.com/' },
         }
       );
+      items.push(...(latest.stories ?? []));
+
+      let date = latest.date;
+      for (let page = 0; items.length < 30 && date && page < 8; page += 1) {
+        const before = await fetchJson<ZhihuDailyResponse>(
+          `https://daily.zhihu.com/api/4/news/before/${date}`,
+          {
+            signal,
+            headers: { Referer: 'https://daily.zhihu.com/' },
+          }
+        );
+        items.push(...(before.stories ?? []));
+        date = before.date;
+      }
+
       return withRanks(
-        (json.stories ?? [])
+        uniqueZhihuDailyStories(items)
           .filter((item) => item.type === 0)
           .map((item) => ({
             title: item.title ?? '',
@@ -853,6 +884,19 @@ interface IfanrResponse {
   }>;
 }
 
+interface JianshuTrendingItem {
+  object?: {
+    type?: number;
+    data?: {
+      title?: string;
+      slug?: string;
+      public_abbr?: string;
+      likes_count?: number;
+      user?: { nickname?: string };
+    };
+  };
+}
+
 interface MiyousheResponse {
   data?: {
     list?: Array<{
@@ -933,6 +977,25 @@ interface YystvResponse {
   data?: Array<{ id?: string; title?: string; author?: string; createtime?: string }>;
 }
 
+interface ZhihuDailyStory {
+  id?: string | number;
+  title?: string;
+  hint?: string;
+  type?: number;
+  url?: string;
+}
+
 interface ZhihuDailyResponse {
-  stories?: Array<{ id?: string; title?: string; hint?: string; type?: number; url?: string }>;
+  date?: string;
+  stories?: ZhihuDailyStory[];
+}
+
+function uniqueZhihuDailyStories(items: ZhihuDailyStory[]): ZhihuDailyStory[] {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = item.id == null ? (item.url ?? item.title ?? '') : String(item.id);
+    if (!key || seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

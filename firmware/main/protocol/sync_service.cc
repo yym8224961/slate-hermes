@@ -28,7 +28,7 @@ constexpr int  BIT_WAKE_REFRESH = BIT4;
 constexpr int  kBoundPollSec    = 60;
 constexpr int  kStopWaitMs      = 30000;
 
-// unbound 期阶梯退避轮询: 用户在 Web 端输码后快速屏切「等待相册」。
+// unbound 期阶梯退避轮询: 用户在 Web 端输码后快速屏切「等待内容组」。
 // bound 后由 SleepManager 允许 deep sleep,设备活跃时 poll 间隔固定 60s。
 constexpr int        kUnboundFastPollSec            = 10;  // 前 10 分钟
 constexpr int        kUnboundMediumPollSec          = 30;  // 10-30 分钟
@@ -36,6 +36,8 @@ constexpr int        kUnboundSlowPollSec            = 60;  // 30 分钟-2 小时
 constexpr int64_t    kUnboundFastMs                 = 10LL * 60 * 1000;
 constexpr int64_t    kUnboundMediumMs               = 30LL * 60 * 1000;
 constexpr TickType_t kCurrentGroupMutexTimeoutTicks = pdMS_TO_TICKS(200);
+constexpr size_t     kCacheMinFreeBytes             = 1024 * 1024;
+constexpr int        kMaxCachedGroups               = 4;
 
 void UpdateCurrentFrameScheduleFromMeta(int seq, const cache::FrameMeta& meta) {
     power_state::SetCurrentFrameFromMeta(seq, meta);
@@ -62,6 +64,63 @@ std::string ExistingAudioEtag(const std::string& gid, int seq, const std::string
         return expected_etag;
     }
     return "";
+}
+
+size_t Utf8CharLen(unsigned char ch) {
+    if ((ch & 0x80) == 0)
+        return 1;
+    if ((ch & 0xE0) == 0xC0)
+        return 2;
+    if ((ch & 0xF0) == 0xE0)
+        return 3;
+    if ((ch & 0xF8) == 0xF0)
+        return 4;
+    return 1;
+}
+
+bool IsUtf8Continuation(unsigned char ch) {
+    return (ch & 0xC0) == 0x80;
+}
+
+void CopyUtf8Truncated(char* out, size_t cap, const std::string& value) {
+    if (cap == 0)
+        return;
+    size_t bytes = 0;
+    while (bytes < value.size()) {
+        const size_t len = Utf8CharLen(static_cast<unsigned char>(value[bytes]));
+        if (bytes + len > value.size() || bytes + len >= cap)
+            break;
+        bool valid = true;
+        for (size_t i = 1; i < len; ++i) {
+            if (!IsUtf8Continuation(static_cast<unsigned char>(value[bytes + i]))) {
+                valid = false;
+                break;
+            }
+        }
+        bytes += valid ? len : 1;
+    }
+    if (bytes > 0)
+        std::memcpy(out, value.data(), bytes);
+    out[bytes] = '\0';
+}
+
+void PostGroupSyncStatus(GroupSyncStatusMode mode, const std::string& gid, const std::string& name, uint8_t current = 0,
+                         uint8_t total = 0) {
+    UiEvent e{};
+    e.kind = UiEventKind::kGroupSyncStatus;
+    std::strncpy(e.u.group_sync.gid, gid.c_str(), sizeof(e.u.group_sync.gid) - 1);
+    e.u.group_sync.gid[sizeof(e.u.group_sync.gid) - 1] = '\0';
+    CopyUtf8Truncated(e.u.group_sync.name, sizeof(e.u.group_sync.name), name);
+    e.u.group_sync.mode                              = mode;
+    e.u.group_sync.current                           = current;
+    e.u.group_sync.total                             = total;
+    evt::Post(e, 0);
+}
+
+uint8_t ClampProgressCount(int value) {
+    if (value < 0)
+        return 0;
+    return static_cast<uint8_t>(value > 255 ? 255 : value);
 }
 }  // namespace
 
@@ -231,8 +290,7 @@ void SyncService::PostSyncedGroupReady(const std::string& gid, const std::string
     e.kind = UiEventKind::kSyncedGroupReady;
     std::strncpy(e.u.group.gid, gid.c_str(), sizeof(e.u.group.gid) - 1);
     e.u.group.gid[sizeof(e.u.group.gid) - 1] = '\0';
-    std::strncpy(e.u.group.name, name.c_str(), sizeof(e.u.group.name) - 1);
-    e.u.group.name[sizeof(e.u.group.name) - 1] = '\0';
+    CopyUtf8Truncated(e.u.group.name, sizeof(e.u.group.name), name);
     e.u.group.content_count                    = content_count;
     e.u.group.content_changed                  = content_changed;
     evt::Post(e);
@@ -270,7 +328,9 @@ static api::Telemetry BuildTelemetry(const SyncDeps& deps, const std::string& cu
 
 // 拉某 group 的 manifest 并把缺的 frame 落盘。返回 false 表示本轮同步失败，应通过 SyncFinished 通知 UI。
 // group_changed 表示是否真的有「内容更新」。
-bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, bool& group_changed) {
+bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag,
+                                        const std::string& group_name, int expected_content_count, SyncReason reason,
+                                        bool& group_changed) {
     group_changed = false;
     if (gid.empty())
         return true;
@@ -280,40 +340,54 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         return false;
     }
 
-    std::string cached_group_id, cached_etag;
-    cache::ReadStateMeta(cached_group_id, cached_etag);
+    const std::string previous_current = GetCurrentGroupLocked();
+    std::string       selected_group_id, selected_etag;
+    cache::ReadStateMeta(selected_group_id, selected_etag);
 
-    bool need = (gid != cached_group_id) || (expected_etag != cached_etag);
-    if (!need) {
-        if (GetCurrentGroupLocked() != gid) {
-            SetCurrentGroupLocked(gid);
-            int content_count = 0;
-            cache::ReadManifestContentCount(gid, content_count);
-            // 内容没变,只是 splash → frame_scene 首次切换需要 hint;不刷屏。
-            // name 留空，下一轮 manifest 拉成功后会用真实名字补一次。
-            PostSyncedGroupReady(gid, "", content_count, /*content_changed=*/false);
-        }
+    cache::ManifestMeta cached_meta;
+    bool                cached_meta_ok = cache::ReadManifestMeta(gid, cached_meta);
+    if (cached_meta_ok && !group_name.empty() && cached_meta.name != group_name) {
+        cache::WriteManifest(gid, cached_meta.manifest_etag, cached_meta.content_count, group_name);
+        cached_meta_ok = cache::ReadManifestMeta(gid, cached_meta);
+    }
+
+    const std::string status_name = !group_name.empty() ? group_name : cached_meta.name;
+
+    if (cached_meta_ok && cached_meta.manifest_etag == expected_etag) {
+        const int content_count = expected_content_count >= 0 ? expected_content_count : cached_meta.content_count;
+        if (!cache::WriteStateMeta(gid, expected_etag))
+            return false;
+        cache::TouchGroup(gid);
+        SetCurrentGroupLocked(gid);
+        if (reason == SyncReason::kCycle && previous_current != gid)
+            PostGroupSyncStatus(GroupSyncStatusMode::kSwitchCached, gid, status_name);
+        if (previous_current != gid || selected_group_id != gid)
+            PostSyncedGroupReady(gid, status_name, content_count, /*content_changed=*/false);
         return true;
     }
 
     api::Manifest mf;
     bool          not_modified = false;
     std::string   if_none_match;
-    if (gid == cached_group_id && !cached_etag.empty()) {
-        if_none_match = cached_etag;
+    if (cached_meta_ok && !cached_meta.manifest_etag.empty()) {
+        if_none_match = cached_meta.manifest_etag;
     }
     if (!api::GetManifest(gid, if_none_match, mf, not_modified)) {
         ESP_LOGW(kTag, "GetManifest failed");
         return false;
     }
     if (not_modified) {
-        const bool first_seen = (GetCurrentGroupLocked() != gid);
+        const bool first_seen = (previous_current != gid || selected_group_id != gid);
+        if (!cache::WriteStateMeta(gid, cached_meta.manifest_etag))
+            return false;
+        cache::TouchGroup(gid);
         SetCurrentGroupLocked(gid);
+        if (reason == SyncReason::kCycle && first_seen)
+            PostGroupSyncStatus(GroupSyncStatusMode::kSwitchCached, gid, status_name);
         if (first_seen) {
-            int content_count = 0;
-            cache::ReadManifestContentCount(gid, content_count);
-            // 304 → server 没下发新 manifest，没有 group_name。留空让 UI 兜底。
-            PostSyncedGroupReady(gid, "", content_count, /*content_changed=*/false);
+            const int content_count =
+                expected_content_count >= 0 ? expected_content_count : cached_meta.content_count;
+            PostSyncedGroupReady(gid, status_name, content_count, /*content_changed=*/false);
         }
         return true;
     }
@@ -329,6 +403,36 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         ESP_LOGW(kTag, "Frame stage init failed");
         return false;
     }
+
+    int total_updates = 0;
+    for (const auto& f : mf.contents) {
+        if (f.id.empty() || f.image_etag.empty())
+            continue;
+        if (!cache::StagedFrameImageExists(gid, f.seq, f.image_etag))
+            ++total_updates;
+        if (!f.audio_etag.empty() && !cache::StagedFrameAudioExists(gid, f.seq, f.audio_etag))
+            ++total_updates;
+    }
+    const bool current_group_update =
+        reason != SyncReason::kCycle && (previous_current == gid || selected_group_id == gid);
+    const GroupSyncStatusMode progress_mode =
+        reason == SyncReason::kCycle       ? GroupSyncStatusMode::kSwitchDownload
+        : current_group_update             ? GroupSyncStatusMode::kCurrentUpdate
+                                           : GroupSyncStatusMode::kStartupDownload;
+    const std::string progress_name = !mf.group_name.empty() ? mf.group_name : status_name;
+    auto post_progress = [&]() {
+        const uint8_t cur = ClampProgressCount(done);
+        const uint8_t all = ClampProgressCount(total_updates);
+        PostGroupSyncStatus(progress_mode, gid, progress_name, cur, all);
+        UiEvent e{};
+        e.kind               = UiEventKind::kSyncProgress;
+        e.u.progress.current = cur;
+        e.u.progress.total   = all;
+        evt::Post(e, 0);
+    };
+    if (total_updates > 0)
+        post_progress();
+
     // 防日志噪音：同一 gid 的协议不匹配只 warn 一次/轮同步，避免每 tick 反复刷屏。
     // 不用 static：切组后应重新允许打 warn，便于用户修复数据后确认日志恢复。
     bool warned_missing_id = false;
@@ -339,24 +443,12 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
                 ESP_LOGW(kTag, "Frame seq=%d missing id, skip download", f.seq);
                 warned_missing_id = true;
             }
-            ++done;
             complete = false;
-            UiEvent e{};
-            e.kind               = UiEventKind::kSyncProgress;
-            e.u.progress.current = static_cast<uint8_t>(done > 255 ? 255 : done);
-            e.u.progress.total   = static_cast<uint8_t>(total > 255 ? 255 : total);
-            evt::Post(e, 0);
             continue;
         }
         if (f.image_etag.empty()) {
             ESP_LOGW(kTag, "Frame seq=%d missing image_etag, skip commit", f.seq);
             complete = false;
-            ++done;
-            UiEvent e{};
-            e.kind               = UiEventKind::kSyncProgress;
-            e.u.progress.current = static_cast<uint8_t>(done > 255 ? 255 : done);
-            e.u.progress.total   = static_cast<uint8_t>(total > 255 ? 255 : total);
-            evt::Post(e, 0);
             continue;
         }
         if (!cache::StagedFrameImageExists(gid, f.seq, f.image_etag)) {
@@ -377,6 +469,8 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
                          (long long)((esp_timer_get_time() / 1000) - image_started_ms));
                 complete = false;
             }
+            ++done;
+            post_progress();
         }
         if (!f.audio_etag.empty() && !cache::StagedFrameAudioExists(gid, f.seq, f.audio_etag)) {
             bool          nm               = false;
@@ -396,6 +490,8 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
                          (long long)((esp_timer_get_time() / 1000) - audio_started_ms));
                 complete = false;
             }
+            ++done;
+            post_progress();
         }
 
         if (cache::StagedFrameImageExists(gid, f.seq, f.image_etag) &&
@@ -414,28 +510,28 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         } else {
             complete = false;
         }
-        ++done;
-        // 帧级进度,Scene 自己决定显示与否(BootSplash + FrameScene 关心,
-        // SettingsScene 等忽略)。clamp 到 0xFF 避免极端 group 溢出。
-        UiEvent e{};
-        e.kind               = UiEventKind::kSyncProgress;
-        e.u.progress.current = static_cast<uint8_t>(done > 255 ? 255 : done);
-        e.u.progress.total   = static_cast<uint8_t>(total > 255 ? 255 : total);
-        evt::Post(e, 0);
     }
     if (!complete) {
         ESP_LOGW(kTag, "Manifest sync incomplete, not committing state");
         cache::CleanupFrameStage(gid);
         return false;
     }
+    const std::string synced_name = !mf.group_name.empty() ? mf.group_name : group_name;
+    const GroupSyncStatusMode saving_mode =
+        current_group_update ? GroupSyncStatusMode::kSavingCurrentGroup : GroupSyncStatusMode::kSavingGroup;
+    int saved = 0;
+    if (total > 0)
+        PostGroupSyncStatus(saving_mode, gid, synced_name, 0, ClampProgressCount(total));
     for (auto& f : mf.contents) {
         if (!cache::CommitStagedFrame(gid, f.seq, f.image_etag, f.audio_etag)) {
             ESP_LOGW(kTag, "Frame %d stage commit failed", f.seq);
             cache::CleanupFrameStage(gid);
             return false;
         }
+        ++saved;
+        PostGroupSyncStatus(saving_mode, gid, synced_name, ClampProgressCount(saved), ClampProgressCount(total));
     }
-    if (!cache::WriteManifest(gid, mf.manifest_etag, mf.contents.size())) {
+    if (!cache::WriteManifest(gid, mf.manifest_etag, mf.contents.size(), synced_name)) {
         ESP_LOGW(kTag, "Manifest write failed, not committing state");
         cache::CleanupFrameStage(gid);
         return false;
@@ -445,6 +541,8 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         cache::CleanupFrameStage(gid);
         return false;
     }
+    cache::TouchGroup(gid);
+    cache::PruneOldGroups(selected_group_id, gid, kCacheMinFreeBytes, kMaxCachedGroups);
     for (auto& f : mf.contents) {
         if (f.audio_etag.empty())
             cache::DeleteFrameAudio(gid, f.seq);
@@ -455,8 +553,10 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
     cache::CleanupFrameStage(gid);
     SetCurrentGroupLocked(gid);
     group_changed = true;
+    if (reason == SyncReason::kCycle && total_updates == 0)
+        PostGroupSyncStatus(GroupSyncStatusMode::kSwitchCached, gid, synced_name);
     // 真有内容变化(新增/修改/删除帧),让 FrameScene 重读当前帧并触发 EPD 刷新。
-    PostSyncedGroupReady(gid, mf.group_name, static_cast<int>(mf.contents.size()),
+    PostSyncedGroupReady(gid, synced_name, static_cast<int>(mf.contents.size()),
                          /*content_changed=*/true);
     return true;
 }
@@ -625,7 +725,8 @@ void SyncService::SyncOnce(SyncMode mode) {
         // 下一轮 SyncManifestAndFrames 会因 etag 匹配直接跳过，缺帧永远不补。
         // 这种情况回退到完整 manifest 同步路径。
         if (tel.manifest_etag != state.manifest_etag) {
-            sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
+            sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, state.group_name, state.content_count,
+                                            SyncReason::kBackgroundRefresh, group_changed);
         } else {
             sync_ok = SyncCurrentContent(state.group_id, state.current_content, group_changed);
             if (sync_ok && group_changed) {
@@ -635,7 +736,8 @@ void SyncService::SyncOnce(SyncMode mode) {
         }
     } else if (mode == SyncMode::kBackgroundRefresh && state.has_group) {
         if (tel.manifest_etag != state.manifest_etag) {
-            sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
+            sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, state.group_name, state.content_count,
+                                            SyncReason::kBackgroundRefresh, group_changed);
         } else {
             ESP_LOGW(kTag, "Background refresh missing current_content; keep cached frame schedule");
             power_state::RestoreCurrentFrameScheduleFromCache();
@@ -646,7 +748,8 @@ void SyncService::SyncOnce(SyncMode mode) {
         power_state::ClearCurrentFrame();
         sync_ok = cache::WriteStateMeta("", "");
     } else if (state.has_group) {
-        sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
+        sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, state.group_name, state.content_count,
+                                        SyncReason::kUserActive, group_changed);
     } else {
         // 没选组:清掉 current_group_(scene 等下一次 ready 事件)
         ClearCurrentGroupLocked();
@@ -676,13 +779,16 @@ void SyncService::DoCycle(const std::string& direction) {
         e.u.sync.ok            = false;
         e.u.sync.group_changed = false;
         evt::Post(e, 0);
+        PostGroupSyncStatus(GroupSyncStatusMode::kSwitchFailed, "", "");
         return;
     }
 
     bool group_changed = false;
     bool sync_ok       = true;
     if (state.has_group) {
-        sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, group_changed);
+        PostGroupSyncStatus(GroupSyncStatusMode::kSwitchTarget, state.group_id, state.group_name);
+        sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, state.group_name, state.content_count,
+                                        SyncReason::kCycle, group_changed);
     } else {
         ClearCurrentGroupLocked();
         power_state::ClearCurrentFrame();
@@ -694,6 +800,8 @@ void SyncService::DoCycle(const std::string& direction) {
     e.u.sync.ok            = sync_ok;
     e.u.sync.group_changed = group_changed;
     evt::Post(e, 0);
+    if (!sync_ok)
+        PostGroupSyncStatus(GroupSyncStatusMode::kSwitchFailed, state.group_id, state.group_name);
 }
 
 void SyncService::Loop() {

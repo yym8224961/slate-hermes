@@ -220,8 +220,15 @@ export const NEWSNOW_DIRECT_SOURCES: readonly HotListSource[] = [
     label: '财联社',
     async fetch(signal) {
       const json = await fetchJson<ClsTelegraphResponse>(
-        `https://www.cls.cn/nodeapi/updateTelegraphList?${clsSearchParams()}`,
-        { signal }
+        `https://www.cls.cn/v1/roll/get_roll_list?${clsRollSearchParams()}`,
+        {
+          signal,
+          headers: {
+            Accept: 'application/json, text/plain, */*',
+            Referer: 'https://www.cls.cn/telegraph',
+            'User-Agent': DESKTOP_UA,
+          },
+        }
       );
       return withRanks((json.data?.roll_data ?? []).filter((item) => !item.is_ad).map(clsItem));
     },
@@ -447,21 +454,20 @@ export const NEWSNOW_DIRECT_SOURCES: readonly HotListSource[] = [
     async fetch(signal) {
       const html = await fetchText('https://sputniknews.cn/services/widget/lenta/', { signal });
       return withRanks(
-        htmlBlocks(
-          html,
-          /<div[^>]*class="[^"]*lenta__item[^"]*"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi
-        ).map((block) => {
-          const path = firstMatch(block, /<a[^>]+href="([^"]+)"/i);
-          return {
-            title:
-              firstMatch(
-                block,
-                /<span[^>]*class="[^"]*lenta__item-text[^"]*"[^>]*>([\s\S]*?)<\/span>/i
-              ) ?? '',
-            timestamp: normalizeTimestamp(Number(firstMatch(block, /data-unixtime="([^"]+)"/i))),
-            url: absoluteUrl('https://sputniknews.cn', path),
-          };
-        })
+        htmlBlocks(html, /<div[^>]*class="[^"]*lenta__item[^"]*"[^>]*>([\s\S]*?)<\/div>/gi).map(
+          (block) => {
+            const path = firstMatch(block, /<a[^>]+href="([^"]+)"/i);
+            return {
+              title:
+                firstMatch(
+                  block,
+                  /<span[^>]*class="[^"]*lenta__item-text[^"]*"[^>]*>([\s\S]*?)<\/span>/i
+                ) ?? '',
+              timestamp: normalizeTimestamp(Number(firstMatch(block, /data-unixtime="([^"]+)"/i))),
+              url: absoluteUrl('https://sputniknews.cn', path),
+            };
+          }
+        )
       );
     },
   }),
@@ -721,6 +727,69 @@ function clsSearchParams(): string {
   const sha1 = crypto.createHash('sha1').update(params.toString()).digest('hex');
   params.append('sign', crypto.createHash('md5').update(sha1).digest('hex'));
   return params.toString();
+}
+
+function clsRollSearchParams(): string {
+  const params: ClsSignParams = {
+    app: 'CailianpressWeb',
+    last_time: Math.floor(Date.now() / 1000),
+    os: 'web',
+    refresh_type: 1,
+    rn: 30,
+    sv: '8.7.9',
+  };
+  const query = new URLSearchParams();
+  for (const key of Object.keys(params).sort(compareClsParamKey)) {
+    query.append(key, String(params[key]));
+  }
+  query.append('sign', clsSign(params));
+  return query.toString();
+}
+
+type ClsSignValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly ClsSignValue[]
+  | { readonly [key: string]: ClsSignValue };
+type ClsSignParams = Record<string, ClsSignValue>;
+
+function clsSign(params: ClsSignParams): string {
+  const raw = Object.keys(params)
+    .sort(compareClsParamKey)
+    .map((key) => clsSerializeParam(key, params[key]))
+    .filter(Boolean)
+    .join('&');
+  const sha1 = crypto.createHash('sha1').update(raw).digest('hex');
+  return crypto.createHash('md5').update(sha1).digest('hex');
+}
+
+function clsSerializeParam(key: string, value: ClsSignValue): string {
+  if (value === null) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return `${key}=${String(value)}`;
+  }
+  if (Array.isArray(value)) {
+    return value.length
+      ? value
+          .map((item, index) => clsSerializeParam(`${key}[${index}]`, item))
+          .filter(Boolean)
+          .join('&')
+      : `${key}[]`;
+  }
+  const objectValue = value as { readonly [key: string]: ClsSignValue };
+  return Object.keys(objectValue)
+    .sort(compareClsParamKey)
+    .map((childKey) => clsSerializeParam(`${key}[${childKey}]`, objectValue[childKey]))
+    .filter(Boolean)
+    .join('&');
+}
+
+function compareClsParamKey(a: string, b: string): number {
+  const upperA = a.toUpperCase();
+  const upperB = b.toUpperCase();
+  return upperA > upperB ? 1 : upperA === upperB ? 0 : -1;
 }
 
 function parseFreebufNuxtPosts(html: string): Array<Omit<HotListItem, 'rank'>> {

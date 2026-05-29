@@ -146,7 +146,31 @@ describe('fetch helpers', () => {
     }
   });
 
-  it('rejects non-json content types for JSON responses', async () => {
+  it('parses JSON bodies from upstreams with non-standard content types', async () => {
+    globalThis.fetch = (async () => {
+      return new Response('{"ok":true}', {
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchJson<{ ok: boolean }>('https://example.invalid/json-text')).resolves.toEqual({
+      ok: true,
+    });
+  });
+
+  it('can reject non-json content types for JSON responses', async () => {
+    globalThis.fetch = (async () => {
+      return new Response('<html>ok</html>', {
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      fetchJson('https://example.invalid/not-json', { requireJsonContentType: true })
+    ).rejects.toThrow('Expected JSON response');
+  });
+
+  it('reports clear parse errors when relaxed content-type responses are not JSON', async () => {
     globalThis.fetch = (async () => {
       return new Response('<html>ok</html>', {
         headers: { 'Content-Type': 'text/html; charset=utf-8' },
@@ -154,7 +178,7 @@ describe('fetch helpers', () => {
     }) as unknown as typeof fetch;
 
     await expect(fetchJson('https://example.invalid/not-json')).rejects.toThrow(
-      'Expected JSON response'
+      'Invalid JSON response from https://example.invalid/not-json (content-type: text/html; charset=utf-8)'
     );
   });
 

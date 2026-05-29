@@ -2,10 +2,11 @@
 
 // LittleFS 缓存:挂在 /littlefs,目录布局:
 //   /littlefs/state.json                 {selected_group_id, last_etag}
-//   /littlefs/groups/{gid}/manifest.json {manifest_etag, content_count}
+//   /littlefs/groups/{gid}/manifest.json {group_id, group_name, manifest_etag, content_count, last_access_seq}
 //   /littlefs/groups/{gid}/frames/{idx}.img  15000 字节 1bpp
 //   /littlefs/groups/{gid}/frames/{idx}.pcm  16k mono raw PCM
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -23,13 +24,27 @@ bool        WriteCurrentFrameSeq(int seq);
 
 struct CachedGroupSummary {
     std::string gid;
+    std::string name;
     std::string manifest_etag;
     int         content_count = 0;
 };
 bool ReadCachedGroupSummary(CachedGroupSummary& out);
 
-bool WriteManifest(const std::string& gid, const std::string& manifest_etag, int content_count);
+struct ManifestMeta {
+    std::string gid;
+    std::string name;
+    std::string manifest_etag;
+    int         content_count   = 0;
+    uint32_t    last_access_seq = 0;
+};
+
+bool WriteManifest(const std::string& gid, const std::string& manifest_etag, int content_count,
+                   const std::string& name = "");
+bool ReadManifestMeta(const std::string& gid, ManifestMeta& out);
 bool ReadManifestContentCount(const std::string& gid, int& out);
+bool TouchGroup(const std::string& gid);
+bool PruneOldGroups(const std::string& current_gid, const std::string& target_gid, size_t min_free_bytes,
+                    int max_groups);
 
 bool FrameImageExists(const std::string& gid, int idx, const std::string& expected_etag);
 bool WriteFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag);

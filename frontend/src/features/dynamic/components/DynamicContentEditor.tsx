@@ -84,7 +84,17 @@ export function DynamicContentEditor({
 
   // 实时预览
   const preview = usePreviewDynamicContent(content.id);
-  const { livePreviewData } = useDynamicPreview({ type, config, frameName, preview });
+  const dashboardData = useMemo(
+    () => (type === 'dashboard' ? dashboardDataRecord(content.dynamic_data) : null),
+    [content.dynamic_data, type]
+  );
+  const { livePreviewData } = useDynamicPreview({
+    type,
+    config,
+    frameName,
+    dashboardData,
+    preview,
+  });
   const showParams = shouldRenderParams(type);
 
   const onSubmit = useCallback(async () => {
@@ -188,6 +198,8 @@ export function DynamicContentEditor({
                     setConfig(next);
                   }}
                   contentId={content.id}
+                  dashboardData={dashboardData ?? undefined}
+                  dashboardDataLabel="当前数据 JSON"
                 />
               </FormSection>
             )}
@@ -211,6 +223,12 @@ export function DynamicContentEditor({
       </div>
     </div>
   );
+}
+
+function dashboardDataRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function SavedOrLivePreview({

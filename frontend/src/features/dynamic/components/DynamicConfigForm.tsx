@@ -13,15 +13,28 @@ export function DynamicConfigForm({
   config,
   onChange,
   contentId,
+  dashboardData,
+  onDashboardDataChange,
+  dashboardDataLabel,
 }: {
   config: DynamicConfigT;
   onChange: (config: DynamicConfigT) => void;
   /** dashboard 用：展示 ingest URL（contentId 本身即 capability URL） */
   contentId?: string;
+  dashboardData?: Record<string, unknown>;
+  onDashboardDataChange?: (data: Record<string, unknown>) => void;
+  dashboardDataLabel?: string;
 }) {
   return (
     <DynamicConfigBoundary resetKey={`${config.type}:${contentId ?? ''}`}>
-      <DynamicConfigFields config={config} onChange={onChange} contentId={contentId} />
+      <DynamicConfigFields
+        config={config}
+        onChange={onChange}
+        contentId={contentId}
+        dashboardData={dashboardData}
+        onDashboardDataChange={onDashboardDataChange}
+        dashboardDataLabel={dashboardDataLabel}
+      />
     </DynamicConfigBoundary>
   );
 }
@@ -30,10 +43,16 @@ function DynamicConfigFields({
   config,
   onChange,
   contentId,
+  dashboardData,
+  onDashboardDataChange,
+  dashboardDataLabel,
 }: {
   config: DynamicConfigT;
   onChange: (config: DynamicConfigT) => void;
   contentId?: string;
+  dashboardData?: Record<string, unknown>;
+  onDashboardDataChange?: (data: Record<string, unknown>) => void;
+  dashboardDataLabel?: string;
 }) {
   switch (config.type) {
     case 'daily_calendar':
@@ -48,7 +67,16 @@ function DynamicConfigFields({
     case 'earthquake_report':
       return <DynamicRefreshSettings config={config} onChange={onChange} />;
     case 'dashboard':
-      return <DashboardConfigPanel config={config} onChange={onChange} contentId={contentId} />;
+      return (
+        <DashboardConfigPanel
+          config={config}
+          onChange={onChange}
+          contentId={contentId}
+          dashboardData={dashboardData ?? {}}
+          onDashboardDataChange={onDashboardDataChange}
+          dataLabel={dashboardDataLabel}
+        />
+      );
     case 'font_test':
       return <FontTestConfigPanel config={config} onChange={onChange} />;
     case 'hot_list':

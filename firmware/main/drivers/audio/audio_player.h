@@ -1,6 +1,6 @@
 #pragma once
 
-// I2S + ES8311 audio owner。相册使用异步播放接口；小智进入对话时通过
+// I2S + ES8311 audio owner。内容使用异步播放接口；小智进入对话时通过
 // BeginChat/EndChat 独占同一套 codec/I2S，避免两套业务各自初始化硬件。
 //
 // 服务端约定：16 kHz mono 16-bit raw PCM（.pcm 二进制）。
@@ -41,8 +41,8 @@ class AudioPlayer {
     // 0..100,默认 90。改 codec output volume 寄存器。
     void SetVolume(int v);
 
-    // 小智对话独占音频硬件。BeginChat 会停止相册播放，并把 codec 音量切到
-    // 小智音量；EndChat 恢复相册音量缓存。
+    // 小智对话独占音频硬件。BeginChat 会停止内容播放，并把 codec 音量切到
+    // 小智音量；EndChat 恢复内容音量缓存。
     bool BeginChat(int codec_volume);
     void EndChat(int album_codec_volume);
     void SetChatVolume(int codec_volume);

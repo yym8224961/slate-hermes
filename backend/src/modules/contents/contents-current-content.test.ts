@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'bun:test';
 import { DASHBOARD_CUSTOM_STARTER_TEMPLATE } from 'shared';
-import { DASHBOARD_CUSTOM_STARTER_TEST_DATA } from 'shared/dynamic/test-fixtures';
 import { computeETag } from '../../common/etag/etag.util';
 import { InternalError } from '../../common/errors';
 import { ContentsService } from './contents.service';
@@ -96,7 +95,6 @@ describe('ContentsService current content refresh', () => {
     const currentConfig = {
       type: 'dashboard',
       template: { kind: 'custom', template: DASHBOARD_CUSTOM_STARTER_TEMPLATE },
-      test_data: DASHBOARD_CUSTOM_STARTER_TEST_DATA,
       refresh_interval_sec: 600,
     } as const;
     const pushedData = { primary_label: '线上收入', primary_value: '999k' };
@@ -157,16 +155,18 @@ describe('ContentsService current content refresh', () => {
     expect(updateData[0]).not.toHaveProperty('dynamicData');
   });
 
-  it('reads dynamic content inside the per-content mutation queue', async () => {
+  it('does not reset dashboard data when dashboard template changes', async () => {
     const firstConfig = {
       type: 'dashboard',
       template: { kind: 'custom', template: DASHBOARD_CUSTOM_STARTER_TEMPLATE },
-      test_data: DASHBOARD_CUSTOM_STARTER_TEST_DATA,
       refresh_interval_sec: 600,
     } as const;
     const secondConfig = {
       ...firstConfig,
-      test_data: { ...DASHBOARD_CUSTOM_STARTER_TEST_DATA, primary_value: '999k' },
+      template: {
+        kind: 'custom',
+        template: { ...DASHBOARD_CUSTOM_STARTER_TEMPLATE, name: '线上看板' },
+      },
     };
     const snapshots: unknown[] = [firstConfig, secondConfig];
     const updateData: Record<string, unknown>[] = [];
@@ -221,7 +221,7 @@ describe('ContentsService current content refresh', () => {
       service.patchDynamic('content-1', 'user-1', { config: secondConfig }),
     ]);
 
-    expect(updateData[0]).toHaveProperty('dynamicData');
+    expect(updateData[0]).not.toHaveProperty('dynamicData');
     expect(updateData[1]).not.toHaveProperty('dynamicData');
   });
 
@@ -536,6 +536,7 @@ describe('ContentsService current content refresh', () => {
           type: 'dashboard',
           template: { kind: 'system', id: 'ai_usage_stats' },
         },
+        initial_data: { total_requests: 1 },
       });
       throw new Error('expected appendDynamic to fail');
     } catch (err) {

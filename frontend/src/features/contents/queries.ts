@@ -280,7 +280,7 @@ export function usePreviewDynamicContent(contentId: string | undefined) {
     }: {
       config: DynamicConfigT;
       frameName?: string | null;
-      data?: unknown;
+      data?: Record<string, unknown>;
       signal?: AbortSignal;
     }) => {
       const url = contentId
