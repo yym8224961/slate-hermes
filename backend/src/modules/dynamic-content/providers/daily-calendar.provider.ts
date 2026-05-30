@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Solar } from 'lunar-typescript';
 import { DailyCalendarConfig, type DailyCalendarConfigT } from 'shared';
+import { getDateTimeFormat } from '../../../common/intl';
 import { pickTraditionalFestival } from '../traditional-festivals';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { findNextSolarTerm } from '../calendar-data.service';
@@ -46,7 +47,7 @@ const WEEKDAY_CN = ['星期日', '星期一', '星期二', '星期三', '星期�
  * 用 Intl.DateTimeFormat 提取分量；非 v8 引擎也应当支持。
  */
 function dateInTz(now: Date, tz: string): { y: number; m: number; d: number; weekday: number } {
-  const fmt = new Intl.DateTimeFormat('en-US', {
+  const fmt = getDateTimeFormat('en-US', {
     timeZone: tz,
     year: 'numeric',
     month: '2-digit',

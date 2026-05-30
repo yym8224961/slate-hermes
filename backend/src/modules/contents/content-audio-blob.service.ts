@@ -4,9 +4,9 @@ import type { ContentAudioSource, ContentAudioStatus } from '@prisma/client';
 import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { lockGroupRow } from '../../common/db/row-locks';
-import { formatError } from '../../common/utils';
+import { formatError } from '../../common/error-format';
 import { GroupsService } from '../groups/groups.service';
-import { deleteAudioBlob, readAudioBlob } from '../audio/audio-blob-store';
+import { deleteContentAudioBlob, readContentAudioBlob } from '../audio/content-audio-blobs';
 
 @Injectable()
 export class ContentAudioBlobService {
@@ -20,7 +20,7 @@ export class ContentAudioBlobService {
 
   async delete(groupId: string, contentId: string, audioEtag: string | null): Promise<void> {
     try {
-      await deleteAudioBlob(this.blob, groupId, contentId, audioEtag);
+      await deleteContentAudioBlob(this.blob, groupId, contentId, audioEtag);
     } catch (err) {
       this.logger.warn(`delete audio blob failed content=${contentId}: ${formatError(err)}`);
       throw err;
@@ -28,7 +28,7 @@ export class ContentAudioBlobService {
   }
 
   async read(groupId: string, contentId: string, audioEtag: string | null): Promise<Buffer | null> {
-    return readAudioBlob(this.blob, groupId, contentId, audioEtag);
+    return readContentAudioBlob(this.blob, groupId, contentId, audioEtag);
   }
 
   async handleMissing(content: {

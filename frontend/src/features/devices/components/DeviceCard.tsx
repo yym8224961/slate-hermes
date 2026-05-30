@@ -1,28 +1,28 @@
 // 设备卡片：可拖拽排序 + 在线状态点 + 电量/信号 + 底部操作行。
 
-import { useCallback } from 'react';
+import { memo, useCallback } from 'react';
 import { Wifi, Frame, Trash2 } from 'lucide-react';
 import type { DeviceSummaryT, GroupSummaryT } from 'shared';
 import { DragHandle } from '@/components/ui/DragHandle';
 import { IconBlock } from '@/components/ui/IconBlock';
-import { DEVICE_ONLINE_TICK_MS, isOnlineAt, rssiLabel, useNow, useTimeAgo } from '@/lib/format';
+import { rssiLabel, useTimeAgo } from '@/lib/format';
+import { useDeviceOnline } from '@/features/devices/status';
 import { BatteryLevelIcon } from './BatteryLevelIcon';
-import { useUnbindDeviceWithConfirm } from './useUnbindDeviceWithConfirm';
+import { useUnbindDeviceWithConfirm } from '@/features/devices/hooks/useUnbindDeviceWithConfirm';
 import { cn } from '@/lib/cn';
-import { useSortableStyle } from '@/hooks/dnd';
+import { useSortableStyle } from '@/hooks/useSortableStyle';
 
-export function DeviceCard({
+export const DeviceCard = memo(function DeviceCard({
   device,
   groups,
   onOpen,
 }: {
   device: DeviceSummaryT;
-  groups: GroupSummaryT[];
-  onOpen: () => void;
+  groups: GroupSummaryT[] | undefined;
+  onOpen: (deviceId: string) => void;
 }) {
-  const now = useNow(DEVICE_ONLINE_TICK_MS);
-  const online = isOnlineAt(device, now);
-  const currentGroup = groups.find((g) => g.id === device.selected_group_id);
+  const online = useDeviceOnline(device.last_seen_at);
+  const currentGroup = groups?.find((g) => g.id === device.selected_group_id);
   const groupName = currentGroup?.name;
   const battery = device.battery_pct;
   const lowBattery = battery != null && battery < 20;
@@ -53,7 +53,7 @@ export function DeviceCard({
       data-hoverable="true"
     >
       <button
-        onClick={onOpen}
+        onClick={() => onOpen(device.id)}
         className="block w-full text-left px-5 pt-5 pb-4 sm:px-6 sm:pt-6 sm:pb-4 hover:bg-cream transition-colors"
       >
         <div className="flex items-start gap-3">
@@ -131,7 +131,7 @@ export function DeviceCard({
       </div>
     </div>
   );
-}
+});
 
 function LastSeenLabel({ lastSeenAt }: { lastSeenAt: string | null }) {
   const lastSeenAgo = useTimeAgo(lastSeenAt);

@@ -1,8 +1,8 @@
 import { useQuery } from '@tanstack/react-query';
 import { API_V1, api } from '@/lib/http';
-import { queryKeys } from '@/lib/query-keys';
+import { authKeys } from './query-keys';
 
-export const meQueryKey = queryKeys.me;
+export const meQueryKey = authKeys.me;
 
 export interface CurrentUser {
   id: string;

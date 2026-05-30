@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { AppError, RateLimitedError } from '../../common/errors';
-import { formatError } from '../../common/utils';
+import { formatError } from '../../common/error-format';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,7 +21,7 @@ export class AudioTranscodeError extends AppError {
   readonly code: string;
   readonly httpStatus = 400;
   constructor(message: string, code: string, detail?: unknown) {
-    super(message, detail === undefined ? { code } : { code, detail });
+    super(message, detail === undefined ? undefined : { detail });
     this.code = code;
   }
 }

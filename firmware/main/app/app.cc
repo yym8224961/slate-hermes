@@ -1,16 +1,14 @@
 #include "app.h"
 
 #include <esp_log.h>
-#include <esp_mac.h>
 #include <esp_pm.h>
 #include <esp_sleep.h>
-#include <esp_system.h>
-#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 #include <nvs_flash.h>
 #include <sdkconfig.h>
 
+#include <array>
 #include <atomic>
 #include <cstdio>
 #include <cstring>
@@ -35,203 +33,19 @@
 #include "event_bus.h"
 #include "frame_scene.h"
 #include "power_state.h"
-#include "sntp.h"
+#include "setup_flow.h"
 #include "sync_service.h"
+#include "system_restart.h"
+#include "time_utils.h"
 #include "wifi.h"
 #include "xiaozhi_chat_service.h"
 
 namespace {
-constexpr char kTag[]                  = "App";
-constexpr int  kSaveSecretRetryCount   = 3;
-constexpr int  kSaveSecretRetryDelayMs = 200;
+constexpr char kTag[] = "App";
 
-// 组合键 UP+DOWN 同时按下 = 全屏刷新（清残影）。仅依赖按下/释放瞬间事件维护
-// 「当前按住中」标志：两个键都处于按住中时立即触发 + 标记 consumed，本次按键
-// 周期内的 OnClick / OnLongPress 一律 skip,避免组合键又触发单按动作。
-// 下一次 OnPressDown 来时清 consumed,开新会话。
-constexpr uint8_t kComboUpHeld       = 1u << 0;
-constexpr uint8_t kComboDownHeld     = 1u << 1;
-constexpr uint8_t kComboUpConsumed   = 1u << 2;
-constexpr uint8_t kComboDownConsumed = 1u << 3;
-
-std::atomic<uint8_t> g_combo{0};
-
-void UpdateCombo(uint8_t set_bits, uint8_t clear_bits) {
-    uint8_t cur = g_combo.load(std::memory_order_acquire);
-    while (true) {
-        const uint8_t next = (cur | set_bits) & static_cast<uint8_t>(~clear_bits);
-        if (g_combo.compare_exchange_weak(cur, next, std::memory_order_acq_rel, std::memory_order_acquire))
-            return;
-    }
-}
-
-bool ComboBit(uint8_t bit) {
-    return (g_combo.load(std::memory_order_acquire) & bit) != 0;
-}
-
-size_t Utf8CharLen(unsigned char ch) {
-    if ((ch & 0x80) == 0)
-        return 1;
-    if ((ch & 0xE0) == 0xC0)
-        return 2;
-    if ((ch & 0xF0) == 0xE0)
-        return 3;
-    if ((ch & 0xF8) == 0xF0)
-        return 4;
-    return 1;
-}
-
-bool IsUtf8Continuation(unsigned char ch) {
-    return (ch & 0xC0) == 0x80;
-}
-
-void CopyUtf8Truncated(char* out, size_t cap, const std::string& value) {
-    if (cap == 0)
-        return;
-    size_t bytes = 0;
-    while (bytes < value.size()) {
-        const size_t len = Utf8CharLen(static_cast<unsigned char>(value[bytes]));
-        if (bytes + len > value.size() || bytes + len >= cap)
-            break;
-        bool valid = true;
-        for (size_t i = 1; i < len; ++i) {
-            if (!IsUtf8Continuation(static_cast<unsigned char>(value[bytes + i]))) {
-                valid = false;
-                break;
-            }
-        }
-        bytes += valid ? len : 1;
-    }
-    if (bytes > 0)
-        std::memcpy(out, value.data(), bytes);
-    out[bytes] = '\0';
-}
-
-void TryFireCombo() {
-    uint8_t cur = g_combo.load(std::memory_order_acquire);
-    while (true) {
-        const bool both_held = (cur & (kComboUpHeld | kComboDownHeld)) == (kComboUpHeld | kComboDownHeld);
-        const bool consumed =
-            (cur & (kComboUpConsumed | kComboDownConsumed)) == (kComboUpConsumed | kComboDownConsumed);
-        if (!both_held || consumed)
-            return;
-        const uint8_t next = cur | kComboUpConsumed | kComboDownConsumed;
-        if (g_combo.compare_exchange_weak(cur, next, std::memory_order_acq_rel, std::memory_order_acquire))
-            break;
-    }
-    if (auto* epd = Board::Get().epd())
-        epd->RequestUrgentFullRefresh();
-}
-
-std::string MacString() {
-    uint8_t mac[6] = {0};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    char buf[18];
-    std::snprintf(buf, sizeof(buf), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-    return buf;
-}
-
-// 各 boot 阶段 emit 给 splash 用,空 ssid/pair_code 传 nullptr。
-void EmitBootStage(BootStage stage, const char* ssid, const char* pair_code) {
-    UiEvent e{};
-    e.kind               = UiEventKind::kBootStage;
-    e.u.boot_stage.stage = stage;
-    if (ssid)
-        std::snprintf(e.u.boot_stage.ssid, sizeof(e.u.boot_stage.ssid), "%s", ssid);
-    else
-        e.u.boot_stage.ssid[0] = 0;
-    if (pair_code)
-        std::snprintf(e.u.boot_stage.pair_code, sizeof(e.u.boot_stage.pair_code), "%s", pair_code);
-    else
-        e.u.boot_stage.pair_code[0] = 0;
-    evt::Post(e);
-}
-
-void GracefulRestart() {
-    xiaozhi::ChatService::Get().SuspendForSleep();
-    SyncService::Get().Stop();
-    AudioPlayer::Get().Stop();
-    if (auto* epd = Board::Get().epd()) {
-        constexpr int kRestartEpdWaitMs = 8000;
-        int waited = 0;
-        while (epd->IsRefreshPending() && waited < kRestartEpdWaitMs) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-            waited += 50;
-        }
-    }
-    esp_restart();
-}
-
-// 联网 + 注册流程。c 是 in/out:首次 register 成功后会回填 device_id/device_secret,
-// 调用方据此判断是不是首次启动 (是 → 跳过 PostCachedGroupReadyIfAny,让 splash 显示
-// 「配对码」或「等待内容组」,而不是先闪一下旧 cache 的 FrameScene)。
-bool TryConnectAndSetup(cred::Credentials& c) {
-    EmitBootStage(BootStage::kWifiConnecting, c.wifi_ssid.c_str(), nullptr);
-    if (!Wifi::Get().Connect(c.wifi_ssid, c.wifi_pwd, 20000)) {
-        ESP_LOGW(kTag, "WiFi STA connect failed");
-        EmitBootStage(BootStage::kWifiFailed, nullptr, nullptr);
-        return false;
-    }
-
-    EmitBootStage(BootStage::kSntp, nullptr, nullptr);
-    sntp::Init();
-    api::Init(c.server_url, MacString(), c.device_secret);
-
-    // HTTPS 必须等系统时间对上才能校验证书。HTTP 这步没意义但也不亏。
-    // 上限 10s:超时则继续,Register 失败由 SyncService 后续 poll 接管重试。
-    constexpr int kSntpWaitMs = 10000;
-    int           waited      = 0;
-    while (!sntp::TimeSynced() && waited < kSntpWaitMs) {
-        vTaskDelay(pdMS_TO_TICKS(200));
-        waited += 200;
-    }
-    if (!sntp::TimeSynced()) {
-        ESP_LOGW(kTag, "SNTP not synced after %dms; HTTPS register may fail", kSntpWaitMs);
-    }
-
-    if (c.device_secret.empty()) {
-        // 首次启动 / 工厂重置后:NVS 没 secret,调 register 拿。
-        // 后端只允许新设备或无主设备注册；已绑定设备必须先在 Web 端解绑。
-        EmitBootStage(BootStage::kRegistering, nullptr, nullptr);
-        api::RegisterResult rr;
-        if (!api::Register(rr)) {
-            ESP_LOGW(kTag, "Register failed (server unreachable?)");
-            EmitBootStage(BootStage::kServerUnreachable, nullptr, nullptr);
-            return false;
-        }
-        // SaveSecret 是 NVS 单独 commit;短暂失败先重试,避免一次写盘抖动放大成重注册。
-        bool saved = false;
-        for (int attempt = 1; attempt <= kSaveSecretRetryCount; ++attempt) {
-            if (cred::SaveSecret(rr.id, rr.device_secret)) {
-                saved = true;
-                break;
-            }
-            ESP_LOGW(kTag, "SaveSecret failed attempt %d/%d", attempt, kSaveSecretRetryCount);
-            vTaskDelay(pdMS_TO_TICKS(kSaveSecretRetryDelayMs));
-        }
-        if (!saved) {
-            ESP_LOGE(kTag, "Fatal: SaveSecret failed, restarting");
-            GracefulRestart();
-        }
-        c.device_id     = rr.id;
-        c.device_secret = rr.device_secret;
-        api::SetSecret(rr.device_secret);
-        // splash 立即显示配对码 —— 用户看屏抄码是关键体验。bound 状态由后续 poll 决定。
-        EmitBootStage(BootStage::kAwaitingPair, nullptr, rr.pair_code.c_str());
-    } else {
-        // 不 emit kRegistering / kAwaitingPair,让 sync_service 第一轮 poll 拿到真实
-        // bound/group 状态后再决定 splash 显示什么(已绑且有内容组 → kSyncedGroupReady 切 FrameScene;
-        // 已绑无内容组 → kBound 切「等待内容组」;远程被踢 → kUnbound 切「配对码」)。
-    }
-    return true;
-}
-
-void PostWifiState(bool connected, int rssi) {
-    UiEvent e{};
-    e.kind             = UiEventKind::kWifiStateChanged;
-    e.u.wifi.connected = connected;
-    e.u.wifi.rssi      = rssi;
-    evt::Post(e);
+void PostChargeSnapshot(const ChargeStatus::Snapshot& snap, TickType_t timeout = pdMS_TO_TICKS(100)) {
+    evt::PostChargeChanged(static_cast<uint8_t>(snap.state), snap.power_present, snap.charging, snap.full,
+                           snap.no_battery, timeout);
 }
 
 bool PostCachedGroupReadyIfAny() {
@@ -239,14 +53,8 @@ bool PostCachedGroupReadyIfAny() {
     if (!cache::ReadCachedGroupSummary(summary))
         return false;
 
-    UiEvent e{};
-    e.kind = UiEventKind::kCachedGroupReady;
-    std::strncpy(e.u.group.gid, summary.gid.c_str(), sizeof(e.u.group.gid) - 1);
-    e.u.group.gid[sizeof(e.u.group.gid) - 1] = '\0';
-    CopyUtf8Truncated(e.u.group.name, sizeof(e.u.group.name), summary.name);
-    e.u.group.content_count   = summary.content_count;
-    e.u.group.content_changed = false;
-    evt::Post(e);
+    evt::PostGroupReady(UiEventKind::kCachedGroupReady, summary.gid, summary.name, summary.content_count,
+                        /*content_changed=*/false);
     return true;
 }
 
@@ -322,16 +130,84 @@ void App::PostWakeupKeyEvent(uint64_t ext1_mask) {
         btn = ButtonId::kEnter;
     else
         return;
-    UiEvent e{};
-    e.kind         = UiEventKind::kButtonShort;
-    e.u.button.btn = btn;
-    evt::Post(e);
+    evt::PostButton(UiEventKind::kButtonShort, btn);
 }
 
 void App::PromoteToFrameSceneFromCache() {
     if (!PostCachedGroupReadyIfAny()) {
         scene_stack_.Push(std::make_unique<BootSplashScene>());
     }
+}
+
+bool App::HandleSecretInvalid(const UiEvent& e) {
+    if (e.kind != UiEventKind::kSecretInvalid)
+        return false;
+    cred::ClearSecret();
+    system_restart::GracefulRestart(200);
+    while (true)
+        vTaskDelay(portMAX_DELAY);
+}
+
+bool App::HandleBackgroundRefreshDone(const UiEvent& e) {
+    if (e.kind != UiEventKind::kBgRefreshDone)
+        return false;
+    auto d = sleep_mgr_.TryEnterDeepSleep();
+    switch (d.outcome) {
+        case SleepManager::SleepOutcome::kSlept:
+            break;
+        case SleepManager::SleepOutcome::kPausedByCharge:
+            scene_stack_.Pop();
+            PromoteToFrameSceneFromCache();
+            SyncService::Get().TriggerNow();
+            break;
+        case SleepManager::SleepOutcome::kUnboundGrace:
+            scene_stack_.Pop();
+            scene_stack_.Push(std::make_unique<BootSplashScene>());
+            SyncService::Get().TriggerNow();
+            break;
+        case SleepManager::SleepOutcome::kDisabled:
+            ESP_LOGW(kTag, "Sleep disabled after background refresh; promote active");
+            scene_stack_.Pop();
+            PromoteToFrameSceneFromCache();
+            break;
+    }
+    return true;
+}
+
+bool App::HandleXiaozhiChannelClosed(const UiEvent& e) {
+    if (e.kind != UiEventKind::kXiaozhiChannelClosed)
+        return false;
+    xiaozhi::ChatService::Get().NotifyNetworkClosed(e.u.xiaozhi_channel.token);
+    return true;
+}
+
+bool App::HandleInitialGroupReady(const UiEvent& e) {
+    if ((e.kind != UiEventKind::kCachedGroupReady && e.kind != UiEventKind::kSyncedGroupReady) ||
+        !scene_stack_.Empty()) {
+        return false;
+    }
+    scene_stack_.Push(std::make_unique<FrameScene>(e.u.group.gid, e.u.group.content_count));
+    scene_stack_.ApplyPending();
+    return true;
+}
+
+bool App::HandleEnterDoubleClick(const UiEvent& e) {
+    if (e.kind != UiEventKind::kButtonDouble || e.u.button.btn != ButtonId::kEnter)
+        return false;
+    Scene* top = scene_stack_.Top();
+    if (top && top->IsSettings()) {
+        scene_stack_.Dispatch(e);
+        sleep_mgr_.OnEvent(e);
+        scene_stack_.ApplyPending();
+        return true;
+    }
+    if (!top || std::strcmp(top->Name(), "Xiaozhi") != 0) {
+        scene_stack_.Push(std::make_unique<ChatScene>());
+        scene_stack_.ApplyPending();
+        sleep_mgr_.OnEvent(e);
+        return true;
+    }
+    return false;
 }
 
 void App::UiLoopTask() {
@@ -349,64 +225,23 @@ void App::UiLoopTask() {
         UiEvent e;
         if (!evt::Wait(&e, pdMS_TO_TICKS(1000))) {
             // 1s 超时只是为了让 SleepManager 有机会做 Tick；不强制每秒做事。
-            sleep_mgr_.Tick(esp_timer_get_time() / 1000);
+            sleep_mgr_.Tick(time_utils::NowMs());
             continue;
         }
-        // 401 self-reset:把擦 NVS + 重启放到 ui_loop 主线程做,避免在 HTTP 回调
-        // 里直接 esp_restart 撕坏 socket 导致 mbedtls 内部 panic。
-        if (e.kind == UiEventKind::kSecretInvalid) {
-            cred::ClearSecret();
-            vTaskDelay(pdMS_TO_TICKS(200));
-            esp_restart();
-        }
-        if (e.kind == UiEventKind::kBgRefreshDone) {
-            auto d = sleep_mgr_.TryEnterDeepSleep();
-            switch (d.outcome) {
-                case SleepManager::SleepOutcome::kSlept:
-                    break;
-                case SleepManager::SleepOutcome::kPausedByCharge:
-                    scene_stack_.Pop();
-                    PromoteToFrameSceneFromCache();
-                    SyncService::Get().TriggerNow();
-                    break;
-                case SleepManager::SleepOutcome::kUnboundGrace:
-                    scene_stack_.Pop();
-                    scene_stack_.Push(std::make_unique<BootSplashScene>());
-                    SyncService::Get().TriggerNow();
-                    break;
-                case SleepManager::SleepOutcome::kDisabled:
-                    ESP_LOGW(kTag, "Sleep disabled after background refresh; promote active");
-                    scene_stack_.Pop();
-                    PromoteToFrameSceneFromCache();
-                    break;
-            }
-            continue;
-        }
-        if (e.kind == UiEventKind::kXiaozhiChannelClosed) {
-            xiaozhi::ChatService::Get().NotifyNetworkClosed(e.u.xiaozhi_channel.token);
-            continue;
-        }
-        if ((e.kind == UiEventKind::kCachedGroupReady || e.kind == UiEventKind::kSyncedGroupReady) &&
-            scene_stack_.Empty()) {
-            scene_stack_.Push(std::make_unique<FrameScene>(e.u.group.gid, e.u.group.content_count));
-            scene_stack_.ApplyPending();
-            continue;
-        }
-        if (e.kind == UiEventKind::kButtonDouble && e.u.button.btn == ButtonId::kEnter) {
-            Scene* top = scene_stack_.Top();
-            if (top && top->IsSettings()) {
-                scene_stack_.Dispatch(e);
-                sleep_mgr_.OnEvent(e);
-                scene_stack_.ApplyPending();
-                continue;
-            }
-            if (!top || std::strcmp(top->Name(), "Xiaozhi") != 0) {
-                scene_stack_.Push(std::make_unique<ChatScene>());
-                scene_stack_.ApplyPending();
-                sleep_mgr_.OnEvent(e);
-                continue;
+        using Handler                                           = bool (App::*)(const UiEvent&);
+        static constexpr std::array<Handler, 5> kSystemHandlers = {
+            &App::HandleSecretInvalid,     &App::HandleBackgroundRefreshDone, &App::HandleXiaozhiChannelClosed,
+            &App::HandleInitialGroupReady, &App::HandleEnterDoubleClick,
+        };
+        bool handled = false;
+        for (Handler handler : kSystemHandlers) {
+            if ((this->*handler)(e)) {
+                handled = true;
+                break;
             }
         }
+        if (handled)
+            continue;
         scene_stack_.Dispatch(e);
         sleep_mgr_.OnEvent(e);
         scene_stack_.ApplyPending();
@@ -415,50 +250,19 @@ void App::UiLoopTask() {
 }
 
 void App::AttachInputs() {
-    auto post_button = [](UiEventKind kind, ButtonId b) {
-        return [kind, b]() {
-            UiEvent e{};
-            e.kind         = kind;
-            e.u.button.btn = b;
-            evt::Post(e);
-        };
-    };
+    auto post_button = [](UiEventKind kind, ButtonId b) { return [kind, b]() { evt::PostButton(kind, b); }; };
 
     auto* board = &Board::Get();
 
-    // UP/DOWN 走组合键拦截: PressDown 维护 held + 检测组合; Click/LongPress
-    // 检查 consumed,若组合键已触发则 skip 单按动作。ENTER 不参与组合,直走。
-    board->up_btn()->OnPressDown([] {
-        UpdateCombo(kComboUpHeld, kComboUpConsumed);  // 新会话
-        TryFireCombo();
-    });
-    board->up_btn()->OnPressUp([] { UpdateCombo(0, kComboUpHeld); });
-    board->up_btn()->OnClick([cb = post_button(UiEventKind::kButtonShort, ButtonId::kUp)] {
-        if (ComboBit(kComboUpConsumed))
-            return;
-        cb();
-    });
-    board->up_btn()->OnLongPress([cb = post_button(UiEventKind::kButtonLong, ButtonId::kUp)] {
-        if (ComboBit(kComboUpConsumed))
-            return;
-        cb();
-    });
-
-    board->down_btn()->OnPressDown([] {
-        UpdateCombo(kComboDownHeld, kComboDownConsumed);
-        TryFireCombo();
-    });
-    board->down_btn()->OnPressUp([] { UpdateCombo(0, kComboDownHeld); });
-    board->down_btn()->OnClick([cb = post_button(UiEventKind::kButtonShort, ButtonId::kDown)] {
-        if (ComboBit(kComboDownConsumed))
-            return;
-        cb();
-    });
-    board->down_btn()->OnLongPress([cb = post_button(UiEventKind::kButtonLong, ButtonId::kDown)] {
-        if (ComboBit(kComboDownConsumed))
-            return;
-        cb();
-    });
+    combo_key_.Install(
+        board->up_btn(), board->down_btn(),
+        [] {
+            if (auto* epd = Board::Get().epd())
+                epd->RequestUrgentFullRefresh();
+        },
+        post_button(UiEventKind::kButtonShort, ButtonId::kUp), post_button(UiEventKind::kButtonLong, ButtonId::kUp),
+        post_button(UiEventKind::kButtonShort, ButtonId::kDown),
+        post_button(UiEventKind::kButtonLong, ButtonId::kDown));
 
     board->boot_btn()->OnClick(post_button(UiEventKind::kButtonShort, ButtonId::kEnter));
     board->boot_btn()->OnDoubleClick(post_button(UiEventKind::kButtonDouble, ButtonId::kEnter));
@@ -466,19 +270,10 @@ void App::AttachInputs() {
     board->boot_btn()->OnLongPress(post_button(UiEventKind::kButtonLong, ButtonId::kEnter));
 
     // 充电状态变化转发到 EventBus（HAL 不直接知道 EventBus 存在）
-    Board::Get().charge()->OnStateChanged([](const ChargeStatus::Snapshot& snap) {
-        UiEvent e{};
-        e.kind                = UiEventKind::kChargeChanged;
-        e.u.charge.state      = static_cast<uint8_t>(snap.state);
-        e.u.charge.present    = snap.power_present;
-        e.u.charge.charging   = snap.charging;
-        e.u.charge.full       = snap.full;
-        e.u.charge.no_battery = snap.no_battery;
-        evt::Post(e);
-    });
+    Board::Get().charge()->OnStateChanged([](const ChargeStatus::Snapshot& snap) { PostChargeSnapshot(snap); });
 
     // WiFi 断线转 EventBus（重连成功事件 wifi.cc 内部已处理；这里只接 disconnect）
-    Wifi::Get().OnDisconnected([](int /*reason*/) { PostWifiState(false, 0); });
+    Wifi::Get().OnDisconnected([](int /*reason*/) { evt::PostWifiState(false, 0); });
 }
 
 void App::StartTimeTick() {
@@ -489,44 +284,14 @@ bool App::InitWifiAndSync(cred::Credentials& creds) {
     Wifi::Get().Init();
 
     // poll 收 401 → emit kSecretInvalid;UiLoop 拦下来在主线程清 NVS + esp_restart。
-    api::SetUnauthorizedHandler([]() {
-        UiEvent e{};
-        e.kind = UiEventKind::kSecretInvalid;
-        evt::Post(e);
-    });
+    api::SetUnauthorizedHandler([]() { evt::PostSimple(UiEventKind::kSecretInvalid); });
 
-    if (TryConnectAndSetup(creds)) {
+    if (setup_flow::TryConnectAndSetup(creds)) {
         // 连上 → 状态栏立即显示 wifi 图标
-        PostWifiState(true, Wifi::Get().GetRssi());
+        evt::PostWifiState(true, Wifi::Get().GetRssi());
 
-        // 启动 SyncService（依赖注入）。首轮同步由 App 根据 boot_mode 显式 Trigger。
-        SyncDeps deps;
-        deps.read_battery  = [this](int* mv, int* pct) -> bool { return ReadBattery(mv, pct); };
-        deps.read_rssi     = []() -> int { return Wifi::Get().GetRssi(); };
-        deps.current_group = []() -> std::string {
-            std::string gid, etag;
-            if (!cache::ReadStateMeta(gid, etag))
-                return "";
-            return gid;
-        };
-        // 只有当前帧确实需要定时刷新时才上报 seq，避免静态帧/推送型 dashboard
-        // 在每次 poll 时触发后端 current-frame 动态刷新查询。
-        deps.current_content_seq = []() -> int {
-            return power_state::CurrentFrameNeedsTimerWake() ? power_state::GetCurrentFrameSeq() : -1;
-        };
-        deps.current_content_etag = []() -> std::string {
-            std::string gid;
-            std::string manifest_etag;
-            if (!cache::ReadStateMeta(gid, manifest_etag) || gid.empty())
-                return "";
-            cache::FrameMeta meta;
-            if (!cache::ReadFrameMeta(gid, power_state::GetCurrentFrameSeq(), meta))
-                return "";
-            return meta.content_etag;
-        };
-        deps.manifest_etag = []() -> std::string { return cache::ReadCurrentManifestEtag(); };
-        deps.wake_reason   = [this]() -> std::string { return decision_.wake_reason; };
-        SyncService::Get().Start(std::move(deps));
+        // 首轮同步由 App 根据 boot_mode 显式 Trigger。
+        SyncService::Get().Start(decision_.wake_reason);
         return true;
     } else {
         return false;
@@ -561,8 +326,7 @@ void App::StartPortal() {
         if (!success)
             return;
         portal_->Stop();
-        vTaskDelay(pdMS_TO_TICKS(500));
-        esp_restart();
+        system_restart::GracefulRestart(500);
     });
 
     portal_->Start();
@@ -573,15 +337,8 @@ void App::StartSleep() {
     // 内部已经在 Init 时把 snapshot 设到 kCharging,callback 不会因"未变化"而再触发。
     // 这里主动 Post 一次让 SleepManager 同步初始 paused_ 状态,免得"开机就充电"
     // 场景被误判为闲置 5min 后睡。
-    auto    snap = Board::Get().charge()->Get();
-    UiEvent e{};
-    e.kind                = UiEventKind::kChargeChanged;
-    e.u.charge.state      = static_cast<uint8_t>(snap.state);
-    e.u.charge.present    = snap.power_present;
-    e.u.charge.charging   = snap.charging;
-    e.u.charge.full       = snap.full;
-    e.u.charge.no_battery = snap.no_battery;
-    evt::Post(e);
+    auto snap = Board::Get().charge()->Get();
+    PostChargeSnapshot(snap);
 }
 
 void App::FinalizePm() {
@@ -629,9 +386,7 @@ void App::Init() {
                 SyncService::Get().TriggerWakeRefresh();
             } else {
                 ESP_LOGW(kTag, "Background refresh network setup failed -> deep sleep");
-                UiEvent e{};
-                e.kind = UiEventKind::kBgRefreshDone;
-                evt::Post(e, portMAX_DELAY);
+                evt::PostSimple(UiEventKind::kBgRefreshDone, portMAX_DELAY);
             }
             break;
         }

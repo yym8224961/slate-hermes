@@ -1,0 +1,127 @@
+import { useCallback, useMemo, useState } from 'react';
+import { DynamicConfig, type DynamicConfigT, type DynamicTypeT } from 'shared';
+import { usePreviewDynamicContent } from '@/features/contents/queries';
+import {
+  defaultConfig,
+  defaultDynamicFrameName,
+  effectiveDynamicFrameName,
+  effectiveDynamicStatusBarText,
+  frameNameForSyncedDynamicConfigChange,
+} from '@/features/dynamic/model/registry';
+import { dynamicConfigKey } from '@/features/dynamic/model/json';
+import { useDynamicPreview } from './useDynamicPreview';
+
+interface UseDynamicContentFormOptions {
+  contentId?: string;
+  initialType?: DynamicTypeT | null;
+  initialConfig?: DynamicConfigT | null;
+  initialFrameName?: string | null;
+  initialDashboardData?: Record<string, unknown> | null;
+  requireDashboardData?: boolean;
+}
+
+export function useDynamicContentForm({
+  contentId,
+  initialType = null,
+  initialConfig = null,
+  initialFrameName = null,
+  initialDashboardData = null,
+  requireDashboardData = false,
+}: UseDynamicContentFormOptions = {}) {
+  const [type, setType] = useState<DynamicTypeT | null>(initialType);
+  const [config, setConfig] = useState<DynamicConfigT | null>(initialConfig);
+  const [frameName, setFrameName] = useState(() =>
+    initialType && initialConfig
+      ? (initialFrameName ?? defaultDynamicFrameName(initialType, initialConfig))
+      : ''
+  );
+  const [dashboardData, setDashboardData] = useState<Record<string, unknown> | null>(
+    initialDashboardData
+  );
+  const preview = usePreviewDynamicContent(contentId);
+  const { livePreviewData, invalidatePreview } = useDynamicPreview({
+    type,
+    config,
+    frameName,
+    dashboardData,
+    preview,
+  });
+  const configKey = useMemo(() => (config ? dynamicConfigKey(config) : ''), [config]);
+  const hasDashboardData = dashboardData !== null && Object.keys(dashboardData).length > 0;
+  const dashboardDataSatisfied = !requireDashboardData || hasDashboardData;
+
+  const loadType = useCallback(
+    (nextType: DynamicTypeT, nextDashboardData: Record<string, unknown> | null = null) => {
+      invalidatePreview();
+      const nextConfig = defaultConfig(nextType);
+      setType(nextType);
+      setConfig(nextConfig);
+      setFrameName(defaultDynamicFrameName(nextType, nextConfig));
+      setDashboardData(nextDashboardData);
+    },
+    [invalidatePreview]
+  );
+
+  const reset = useCallback(() => {
+    invalidatePreview();
+    setType(null);
+    setConfig(null);
+    setFrameName('');
+    setDashboardData(null);
+  }, [invalidatePreview]);
+
+  const changeConfig = useCallback((next: DynamicConfigT) => {
+    setConfig((previous) => {
+      if (previous) {
+        const nextFrameName = frameNameForSyncedDynamicConfigChange(previous, next);
+        if (nextFrameName) setFrameName(nextFrameName);
+      }
+      return next;
+    });
+  }, []);
+
+  const submitConfig = useCallback(() => {
+    if (!type || !config) return { ok: false as const, error: 'config: 请选择动态类型' };
+    const parsed = DynamicConfig.safeParse(config);
+    if (!parsed.success) {
+      const first = parsed.error.issues[0];
+      return {
+        ok: false as const,
+        error: `${first?.path.join('.') || 'config'}: ${first?.message ?? '请检查'}`,
+      };
+    }
+    if (parsed.data.type === 'dashboard' && !dashboardDataSatisfied) {
+      return { ok: false as const, error: 'dashboard 初始数据不能为空' };
+    }
+    const parsedType = parsed.data.type;
+    return {
+      ok: true as const,
+      type: parsedType,
+      config: parsed.data,
+      frameName: effectiveDynamicFrameName(parsedType, parsed.data, frameName),
+      dashboardData: parsed.data.type === 'dashboard' ? (dashboardData ?? undefined) : undefined,
+    };
+  }, [config, dashboardData, dashboardDataSatisfied, frameName, type]);
+
+  return {
+    type,
+    setType,
+    config,
+    setConfig,
+    configKey,
+    frameName,
+    setFrameName,
+    dashboardData,
+    setDashboardData,
+    hasDashboardData,
+    canSubmit: !!(type && config && (type !== 'dashboard' || dashboardDataSatisfied)),
+    preview,
+    livePreviewData,
+    caption: effectiveDynamicStatusBarText(type, config, frameName),
+    invalidatePreview,
+    loadType,
+    reset,
+    changeConfig,
+    submitConfig,
+  };
+}

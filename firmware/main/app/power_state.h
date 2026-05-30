@@ -7,6 +7,14 @@
 //   - 避免每次 wake 都走完整 onboarding（cold boot 时数值为 0，按默认策略）
 //
 // 选 RTC slow RAM 而不是 NVS 的原因：写次数高（每次睡都更新）、不耐 flash 寿命。
+//
+// 当前帧调度状态机：
+//   - FrameScene / BgRefreshScene 展示某帧后调用 SetCurrentFrameFromMeta(seq, meta)，
+//     同时更新 RTC slow memory 与 LittleFS 中的 current_frame_seq。
+//   - SleepManager 睡前调用 ComputeNextWakeSec()；只有 meta.ttl_sec 有效的动态帧才配置
+//     RTC timer，静态帧只靠按键/插电唤醒后再同步。
+//   - Timer wake 的后台刷新路径先 RestoreCurrentFrameScheduleFromCache()，再只上报/刷新当前帧。
+//   - 组被清空或内容不可用时 ClearCurrentFrame() 把序号和动态调度都回到静态默认态。
 
 #include <cstddef>
 #include <cstdint>
@@ -14,10 +22,6 @@
 #include "cache.h"
 
 namespace power_state {
-
-constexpr int kStatusBarSnapshotWidth  = 400;
-constexpr int kStatusBarSnapshotHeight = 24;
-constexpr int kStatusBarSnapshotBytes  = kStatusBarSnapshotWidth * kStatusBarSnapshotHeight / 8;
 
 struct CurrentFrameSchedule {
     bool     dynamic         = false;

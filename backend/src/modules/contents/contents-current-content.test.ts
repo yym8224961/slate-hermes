@@ -2,39 +2,37 @@ import { describe, expect, it } from 'bun:test';
 import { DASHBOARD_CUSTOM_STARTER_TEMPLATE } from 'shared';
 import { computeETag } from '../../common/etag/etag.util';
 import { InternalError } from '../../common/errors';
+import { DynamicContentService } from '../dynamic-content/dynamic-content.service';
 import { ContentsService } from './contents.service';
+import { DeviceCurrentContentService } from './device-current-content.service';
 
 describe('ContentsService current content refresh', () => {
   it('runs dynamic mutations for the same content id serially after failures', async () => {
-    const service = new ContentsService(
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
+    const service = new DynamicContentService(
       {} as never,
       {} as never,
       {} as never,
       {} as never,
       {} as never
     );
-    const runDynamicMutation = (
+    const runMutation = (
       service as unknown as {
-        runDynamicMutation: <T>(contentId: string, fn: () => Promise<T>) => Promise<T>;
+        runMutation: <T>(contentId: string, fn: () => Promise<T>) => Promise<T>;
       }
-    ).runDynamicMutation.bind(service);
+    ).runMutation.bind(service);
     const events: string[] = [];
     let releaseFirst: (() => void) | undefined;
     const firstGate = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
 
-    const first = runDynamicMutation('content-1', async () => {
+    const first = runMutation('content-1', async () => {
       events.push('first:start');
       await firstGate;
       events.push('first:end');
       throw new Error('first failed');
     });
-    const second = runDynamicMutation('content-1', async () => {
+    const second = runMutation('content-1', async () => {
       events.push('second:start');
       return 'ok';
     });
@@ -50,7 +48,7 @@ describe('ContentsService current content refresh', () => {
 
   it('skips timer current-frame refresh after the device manifest changes', async () => {
     let renderCalls = 0;
-    const service = new ContentsService(
+    const service = new DeviceCurrentContentService(
       {
         device: {
           findUnique: async () => ({
@@ -64,19 +62,12 @@ describe('ContentsService current content refresh', () => {
           },
         },
       } as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
       {
         renderDynamicContent: async () => {
           renderCalls += 1;
           return { groupEtag: 'rendered-manifest' };
         },
-      } as never,
-      {} as never
+      } as never
     );
 
     const result = await service.refreshCurrentContentForDeviceIfDue({
@@ -85,6 +76,7 @@ describe('ContentsService current content refresh', () => {
       seq: 0,
       contentId: 'content-1',
       manifestEtag: 'old-manifest',
+      content: {} as never,
     });
 
     expect(result).toBeNull();
@@ -99,25 +91,20 @@ describe('ContentsService current content refresh', () => {
     } as const;
     const pushedData = { primary_label: '线上收入', primary_value: '999k' };
     const updateData: Record<string, unknown>[] = [];
-    let findCalls = 0;
 
-    const service = new ContentsService(
+    const service = new DynamicContentService(
       {
         content: {
           findUnique: async () => {
-            findCalls += 1;
-            if (findCalls === 1) {
-              return {
-                id: 'content-1',
-                groupId: 'group-1',
-                sortOrder: 0,
-                kind: 'dynamic',
-                dynamicType: 'dashboard',
-                dynamicConfig: currentConfig,
-                dynamicData: pushedData,
-              };
-            }
-            return { contentEtag: 'content-etag', audioEtag: null };
+            return {
+              id: 'content-1',
+              groupId: 'group-1',
+              sortOrder: 0,
+              kind: 'dynamic',
+              dynamicType: 'dashboard',
+              dynamicConfig: currentConfig,
+              dynamicData: pushedData,
+            };
           },
           update: async ({ data }: { data: Record<string, unknown> }) => {
             updateData.push(data);
@@ -130,22 +117,20 @@ describe('ContentsService current content refresh', () => {
         assertOwned: async () => undefined,
       } as never,
       {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
       {
         renderDynamicContent: async () => ({
           contentId: 'content-1',
           imageEtag: 'image-etag',
+          audioEtag: null,
           groupEtag: 'group-etag',
+          contentEtag: 'content-etag',
           renderedAt: new Date(),
           unchanged: false,
         }),
-      } as never,
-      {} as never
+      } as never
     );
 
-    await service.patchDynamic('content-1', 'user-1', {
+    await service.patch('content-1', 'user-1', {
       config: { ...currentConfig, refresh_interval_sec: 1800 },
     });
 
@@ -171,22 +156,19 @@ describe('ContentsService current content refresh', () => {
     const snapshots: unknown[] = [firstConfig, secondConfig];
     const updateData: Record<string, unknown>[] = [];
 
-    const service = new ContentsService(
+    const service = new DynamicContentService(
       {
         content: {
-          findUnique: async ({ select }: { select: Record<string, boolean> }) => {
-            if (select.dynamicConfig) {
-              const dynamicConfig = snapshots.shift();
-              return {
-                id: 'content-1',
-                groupId: 'group-1',
-                sortOrder: 0,
-                kind: 'dynamic',
-                dynamicType: 'dashboard',
-                dynamicConfig,
-              };
-            }
-            return { contentEtag: 'content-etag', audioEtag: null };
+          findUnique: async () => {
+            const dynamicConfig = snapshots.shift();
+            return {
+              id: 'content-1',
+              groupId: 'group-1',
+              sortOrder: 0,
+              kind: 'dynamic',
+              dynamicType: 'dashboard',
+              dynamicConfig,
+            };
           },
           update: async ({ data }: { data: Record<string, unknown> }) => {
             updateData.push(data);
@@ -199,9 +181,6 @@ describe('ContentsService current content refresh', () => {
         assertOwned: async () => undefined,
       } as never,
       {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
       {
         renderDynamicContent: async () => ({
           contentId: 'content-1',
@@ -212,13 +191,12 @@ describe('ContentsService current content refresh', () => {
           renderedAt: new Date(),
           unchanged: false,
         }),
-      } as never,
-      {} as never
+      } as never
     );
 
     await Promise.all([
-      service.patchDynamic('content-1', 'user-1', { config: secondConfig }),
-      service.patchDynamic('content-1', 'user-1', { config: secondConfig }),
+      service.patch('content-1', 'user-1', { config: secondConfig }),
+      service.patch('content-1', 'user-1', { config: secondConfig }),
     ]);
 
     expect(updateData[0]).not.toHaveProperty('dynamicData');
@@ -247,6 +225,11 @@ describe('ContentsService current content refresh', () => {
           fn({
             $queryRaw: async () => [{ id: 'group-1' }],
             content: {
+              findUnique: async () => ({
+                groupId: 'group-1',
+                kind: 'image',
+                audioEtag: null,
+              }),
               update: async () => ({
                 imageEtag: 'new-image',
                 audioEtag: null,
@@ -276,9 +259,8 @@ describe('ContentsService current content refresh', () => {
       } as never,
       {} as never,
       {} as never,
-      {} as never,
-      {} as never,
-      { read: async () => null, delete: async () => undefined } as never
+      { read: async () => null, delete: async () => undefined } as never,
+      deviceCurrentContentStub()
     );
 
     const response = await service.patchImage('content-1', 'user-1', {
@@ -316,6 +298,11 @@ describe('ContentsService current content refresh', () => {
           fn({
             $queryRaw: async () => [{ id: 'group-1' }],
             content: {
+              findUnique: async () => ({
+                groupId: 'group-1',
+                kind: 'image',
+                audioEtag,
+              }),
               update: async () => ({
                 imageEtag: 'image-etag',
                 audioEtag,
@@ -338,13 +325,13 @@ describe('ContentsService current content refresh', () => {
       } as never,
       {} as never,
       {} as never,
-      {} as never,
       {
         read: async () => audioBytes,
         delete: async (_gid: string, _contentId: string, etag: string | null) => {
           audioDeletes.push(etag);
         },
-      } as never
+      } as never,
+      deviceCurrentContentStub()
     );
 
     const response = await service.patchImage('content-1', 'user-1', {
@@ -379,6 +366,11 @@ describe('ContentsService current content refresh', () => {
           fn({
             $queryRaw: async () => [{ id: 'group-1' }],
             content: {
+              findUnique: async () => ({
+                groupId: 'group-1',
+                kind: 'image',
+                audioEtag: 'old-audio',
+              }),
               update: async () => ({
                 imageEtag: 'new-image',
                 audioEtag: null,
@@ -401,15 +393,14 @@ describe('ContentsService current content refresh', () => {
       } as never,
       {} as never,
       {} as never,
-      {} as never,
-      {} as never,
       {
         read: async () => null,
         delete: async (_gid: string, _contentId: string, etag: string | null) => {
           audioDeletes.push(etag);
           throw new Error('unlink failed');
         },
-      } as never
+      } as never,
+      deviceCurrentContentStub()
     );
 
     const response = await service.patchImage('content-1', 'user-1', {
@@ -453,10 +444,6 @@ describe('ContentsService current content refresh', () => {
             content: {
               update: async ({ data }: { data: { frameName: string } }) => {
                 calls.push(`update:${data.frameName}`);
-                return {};
-              },
-              findUnique: async () => {
-                calls.push('read-content-etag');
                 return { contentEtag: 'content-etag' };
               },
             },
@@ -475,8 +462,7 @@ describe('ContentsService current content refresh', () => {
       {} as never,
       {} as never,
       {} as never,
-      {} as never,
-      {} as never
+      deviceCurrentContentStub()
     );
 
     const response = await service.patchFrameName('content-1', 'user-1', '新标题');
@@ -486,12 +472,12 @@ describe('ContentsService current content refresh', () => {
       image_etag: 'image-etag',
       manifest_etag: 'group-etag',
     });
-    expect(calls).toEqual(['lock', 'update:新标题', 'recompute', 'read-content-etag']);
+    expect(calls).toEqual(['lock', 'update:新标题', 'recompute']);
   });
 
   it('reports both render and rollback errors when appendDynamic rollback fails', async () => {
     let transactionCalls = 0;
-    const service = new ContentsService(
+    const service = new DynamicContentService(
       {
         content: {
           findUnique: async () => ({ audioEtag: null }),
@@ -515,9 +501,6 @@ describe('ContentsService current content refresh', () => {
         assertOwned: async () => undefined,
         recomputeManifestEtag: async () => 'group-etag',
       } as never,
-      {} as never,
-      {} as never,
-      {} as never,
       {
         get: () => ({ provider: {} }),
       } as never,
@@ -525,12 +508,11 @@ describe('ContentsService current content refresh', () => {
         renderDynamicContent: async () => {
           throw new Error('render network timeout');
         },
-      } as never,
-      {} as never
+      } as never
     );
 
     try {
-      await service.appendDynamic('group-1', 'user-1', {
+      await service.append('group-1', 'user-1', {
         frame_name: null,
         config: {
           type: 'dashboard',
@@ -549,3 +531,7 @@ describe('ContentsService current content refresh', () => {
     }
   });
 });
+
+function deviceCurrentContentStub(): DeviceCurrentContentService {
+  return {} as unknown as DeviceCurrentContentService;
+}

@@ -53,7 +53,5 @@ void TimeTick::TickCb(void* arg) {
         return;
     }
 
-    UiEvent e{};
-    e.kind = UiEventKind::kMinuteTick;
-    evt::Post(e, 0);
+    evt::PostSimple(UiEventKind::kMinuteTick, 0);
 }

@@ -18,6 +18,7 @@ export interface ParsedContentUpload {
 const MODES = DITHER_MODES as readonly string[];
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 5 * 1024 * 1024;
+const DISALLOWED_IMAGE_MIME = new Set(['image/svg+xml']);
 
 @Injectable()
 export class MultipartParser {
@@ -39,10 +40,12 @@ export class MultipartParser {
     for await (const part of parts) {
       if (part.type === 'file') {
         if (part.fieldname === 'image') {
+          assertImageMime(part);
           const buf = await readLimitedFile(part, MAX_IMAGE_BYTES, '图片文件不能超过 10MB');
           result.hasImage = buf.length > 0;
           if (result.hasImage) result.imageBuf = buf;
         } else if (part.fieldname === 'audio') {
+          assertAudioMime(part);
           const buf = await readLimitedFile(part, MAX_AUDIO_BYTES, '音频文件不能超过 5MB');
           result.hasAudio = buf.length > 0;
           if (result.hasAudio) result.audioBuf = buf;
@@ -67,6 +70,35 @@ export class MultipartParser {
     }
     return result;
   }
+}
+
+function assertImageMime(part: MultipartFile): void {
+  const mime = normalizedMime(part);
+  if (mime.startsWith('image/') && !DISALLOWED_IMAGE_MIME.has(mime)) return;
+  part.file.resume();
+  throw new ValidationError('图片字段只支持常见图片 MIME 类型', {
+    code: 'invalid_file_type',
+    field: 'image',
+    content_type: part.mimetype,
+  });
+}
+
+function assertAudioMime(part: MultipartFile): void {
+  const mime = normalizedMime(part);
+  if (mime.startsWith('audio/')) return;
+  part.file.resume();
+  throw new ValidationError('音频字段只支持音频 MIME 类型', {
+    code: 'invalid_file_type',
+    field: 'audio',
+    content_type: part.mimetype,
+  });
+}
+
+function normalizedMime(part: MultipartFile): string {
+  return String(part.mimetype ?? '')
+    .split(';', 1)[0]!
+    .trim()
+    .toLowerCase();
 }
 
 async function readLimitedFile(

@@ -14,9 +14,9 @@ import { Select, SelectItem } from '@/components/ui/Select';
 import { JsonEditor } from './JsonEditor';
 import { DynamicRefreshSettings } from './RefreshSettings';
 import { DashboardPushPanel } from './DashboardPushPanel';
-import { parseDashboardTemplate, parseJsonRecord } from '@/lib/json';
+import { parseDashboardTemplate, parseJsonRecord } from '@/features/dynamic/model/json';
 import type { DynamicConfigChange } from '@/features/dynamic/types';
-import { useJsonDraftWithEcho } from './useJsonDraftWithEcho';
+import { useJsonDraftWithEcho } from '@/features/dynamic/hooks/useJsonDraftWithEcho';
 
 const CUSTOM_DASHBOARD_TEMPLATE_VALUE = 'custom';
 const DASHBOARD_SYSTEM_TEMPLATE_OPTIONS = Object.values(DASHBOARD_SYSTEM_TEMPLATES);

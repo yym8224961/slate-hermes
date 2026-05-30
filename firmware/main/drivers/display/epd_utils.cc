@@ -1,9 +1,67 @@
 #include "epd_utils.h"
 
 #include <algorithm>
+#include <array>
 #include <cstring>
 
 namespace epd {
+namespace {
+
+template <size_t N>
+constexpr std::array<uint16_t, N> MakeLumLut(uint16_t factor, uint16_t max_value, uint16_t rounding_bias) {
+    std::array<uint16_t, N> lut = {};
+    for (size_t i = 0; i < N; ++i) {
+        const uint16_t expanded = static_cast<uint16_t>((i * 255 + rounding_bias) / max_value);
+        lut[i] = static_cast<uint16_t>(factor * expanded);
+    }
+    return lut;
+}
+
+constexpr std::array<uint16_t, 32> kR5Lum = MakeLumLut<32>(77, 31, 15);
+constexpr std::array<uint16_t, 64> kG6Lum = MakeLumLut<64>(150, 63, 31);
+constexpr std::array<uint16_t, 32> kB5Lum = MakeLumLut<32>(29, 31, 15);
+
+constexpr uint16_t ExpandNowBit(uint8_t in) {
+    uint16_t out = 0;
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+        const uint8_t sb = 7 - bit;
+        out |= static_cast<uint16_t>((in >> sb) & 1) << (2 * sb);
+    }
+    return out;
+}
+
+constexpr uint16_t ExpandPrevBit(uint8_t in) {
+    uint16_t out = 0;
+    for (uint8_t bit = 0; bit < 8; ++bit) {
+        const uint8_t sb = 7 - bit;
+        out |= static_cast<uint16_t>((in >> sb) & 1) << (2 * sb + 1);
+    }
+    return out;
+}
+
+constexpr std::array<uint16_t, 256> MakePackNowLut() {
+    std::array<uint16_t, 256> lut = {};
+    for (size_t i = 0; i < lut.size(); ++i)
+        lut[i] = ExpandNowBit(static_cast<uint8_t>(i));
+    return lut;
+}
+
+constexpr std::array<uint16_t, 256> MakePackPrevLut() {
+    std::array<uint16_t, 256> lut = {};
+    for (size_t i = 0; i < lut.size(); ++i)
+        lut[i] = ExpandPrevBit(static_cast<uint8_t>(i));
+    return lut;
+}
+
+constexpr std::array<uint16_t, 256> kPackNowLut  = MakePackNowLut();
+constexpr std::array<uint16_t, 256> kPackPrevLut = MakePackPrevLut();
+
+void SplitPacked16(uint16_t value, uint8_t& out0, uint8_t& out1) {
+    out0 = static_cast<uint8_t>(value >> 8);
+    out1 = static_cast<uint8_t>(value & 0xFF);
+}
+
+}  // namespace
 
 int Area(const Rect& r) {
     return (r.w > 0 && r.h > 0) ? r.w * r.h : 0;
@@ -39,10 +97,8 @@ bool Rgb565IsWhite(uint16_t c, uint8_t threshold) {
     const uint8_t r5 = (c >> 11) & 0x1F;
     const uint8_t g6 = (c >> 5) & 0x3F;
     const uint8_t b5 = c & 0x1F;
-    const uint8_t r8 = (r5 * 255 + 15) / 31;
-    const uint8_t g8 = (g6 * 255 + 31) / 63;
-    const uint8_t b8 = (b5 * 255 + 15) / 31;
-    return ((77 * r8 + 150 * g8 + 29 * b8) >> 8) >= threshold;
+    const uint32_t lum = kR5Lum[r5] + kG6Lum[g6] + kB5Lum[b5];
+    return lum >= (static_cast<uint32_t>(threshold) << 8);
 }
 
 void SetPx1(uint8_t* fb, int width, int x, int y, bool white) {
@@ -137,17 +193,11 @@ void Copy1bppFrom(const uint8_t* fb, int fb_w, int fb_h, int x, int y, int w, in
 }
 
 void Pack1bppTo2683(uint8_t in, uint8_t& out0, uint8_t& out1) {
-    uint8_t b0 = 0;
-    uint8_t b1 = 0;
-    for (uint8_t i = 0; i < 8; ++i) {
-        const uint8_t bit = (in >> (7 - i)) & 1;
-        if (i < 4)
-            b0 |= bit << (8 - 2 * (i + 1));
-        else
-            b1 |= bit << (14 - 2 * i);
-    }
-    out0 = b0;
-    out1 = b1;
+    SplitPacked16(kPackNowLut[in], out0, out1);
+}
+
+void PackPartial1bppTo2683(uint8_t prev, uint8_t now, uint8_t& out0, uint8_t& out1) {
+    SplitPacked16(kPackPrevLut[prev] | kPackNowLut[now], out0, out1);
 }
 
 DiffResult Diff(const uint8_t* a, const uint8_t* b, size_t len) {

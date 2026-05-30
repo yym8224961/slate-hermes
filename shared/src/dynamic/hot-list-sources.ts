@@ -28,7 +28,6 @@ export const CurrentHotListSourceIdValues = [
   'smzdm',
   '36kr',
   'dongchedi',
-  'douban-movic',
   'github-trending',
   'hello-github',
   'netease',
@@ -181,7 +180,6 @@ export const HOT_LIST_SOURCES = [
   hotListSource('36kr', '36氪', T, '36氪热榜', '热榜'),
 
   hotListSource('dongchedi', '懂车帝', G),
-  hotListSource('douban-movic', '豆瓣电影', G, '豆瓣新片', '新片榜（Next）'),
   hotListSource('github-trending', 'GitHub', T, 'GitHub热门仓库', '热门仓库'),
   hotListSource('hello-github', 'HelloGitHub', T, 'HelloGitHub精选', '精选'),
   hotListSource('netease', '网易新闻', N, '网易热榜', '热榜（Next）'),

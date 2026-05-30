@@ -1,5 +1,6 @@
 // 内容组卡片：可拖拽排序 + 内容数展示 + 底部操作行。
 
+import { memo } from 'react';
 import { Link } from 'react-router-dom';
 import { Layers, Trash2 } from 'lucide-react';
 import type { GroupSummaryT } from 'shared';
@@ -7,15 +8,15 @@ import { DragHandle } from '@/components/ui/DragHandle';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { useSortableStyle } from '@/hooks/dnd';
+import { useSortableStyle } from '@/hooks/useSortableStyle';
 
-export function GroupCardSortable({
+export const GroupCardSortable = memo(function GroupCardSortable({
   group,
   onDelete,
   deleteDisabled,
 }: {
   group: GroupSummaryT;
-  onDelete: () => void;
+  onDelete: (group: GroupSummaryT) => void;
   deleteDisabled?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, style, isDragging } = useSortableStyle(group.id);
@@ -70,7 +71,7 @@ export function GroupCardSortable({
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            onDelete();
+            onDelete(group);
           }}
           aria-label="删除"
           title="删除整组"
@@ -81,4 +82,4 @@ export function GroupCardSortable({
       </div>
     </div>
   );
-}
+});

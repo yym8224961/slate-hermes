@@ -8,7 +8,9 @@ import {
   type HotListSourceCatalogEntry,
   type HotListSourceIdT,
 } from 'shared';
+import type { ContentsReadService } from '../src/modules/contents/contents-read.service';
 import type { ContentsService } from '../src/modules/contents/contents.service';
+import type { DynamicContentService } from '../src/modules/dynamic-content/dynamic-content.service';
 import {
   createGroupScriptServices,
   deleteAllContents,
@@ -17,7 +19,7 @@ import {
   resolveUser,
   userDisplay,
   type UserSelectorArgs,
-} from './lib/group-script';
+} from './helpers/bootstrap-app';
 
 interface Args extends UserSelectorArgs {
   groupName: string;
@@ -33,18 +35,25 @@ const hotListConfigs = buildHotListConfigs(args.refreshIntervalSec, selectedSour
 const services = await createGroupScriptServices();
 
 try {
-  const { prisma, groups, contents } = services;
+  const { prisma, groups, contents, contentReads, dynamicContent } = services;
   const user = await resolveUser(prisma, args);
   const group = await ensureGroup(groups, prisma, user.id, args.groupName);
 
   if (args.replace) {
-    await deleteAllContents(contents, group.id, user.id);
+    await deleteAllContents(contents, contentReads, group.id, user.id);
   } else {
-    await deleteDuplicateHotLists(contents, group.id, user.id, selectedSourceSet);
+    await deleteDuplicateHotLists(contents, contentReads, group.id, user.id, selectedSourceSet);
   }
 
-  const generated = await upsertHotListFrames(contents, group.id, user.id, hotListConfigs);
-  const finalRows = await contents.list(group.id, { userId: user.id });
+  const generated = await upsertHotListFrames(
+    contents,
+    contentReads,
+    dynamicContent,
+    group.id,
+    user.id,
+    hotListConfigs
+  );
+  const finalRows = await contentReads.list(group.id, { userId: user.id });
   const orderedIds = orderedContentIds(finalRows);
   const { manifest_etag } = await contents.reorder(group.id, user.id, orderedIds);
 
@@ -116,11 +125,12 @@ Options:
 
 async function deleteDuplicateHotLists(
   contents: ContentsService,
+  contentReads: ContentsReadService,
   groupId: string,
   userId: string,
   selectedSourceSet: ReadonlySet<HotListSourceIdT>
 ): Promise<void> {
-  const rows = await contents.list(groupId, { userId });
+  const rows = await contentReads.list(groupId, { userId });
   const seen = new Set<HotListSourceIdT>();
 
   for (const row of rows) {
@@ -136,11 +146,13 @@ async function deleteDuplicateHotLists(
 
 async function upsertHotListFrames(
   contents: ContentsService,
+  contentReads: ContentsReadService,
+  dynamicContent: DynamicContentService,
   groupId: string,
   userId: string,
   configs: Map<HotListSourceIdT, ReturnType<typeof HotListConfig.parse>>
 ): Promise<Array<{ sourceId: HotListSourceIdT; contentId: string }>> {
-  const rows = await contents.list(groupId, { userId });
+  const rows = await contentReads.list(groupId, { userId });
   const bySource = new Map<HotListSourceIdT, ContentDetailT>();
   for (const row of rows) {
     if (row.dynamic_type !== 'hot_list') continue;
@@ -155,7 +167,7 @@ async function upsertHotListFrames(
     const frameName = hotListSourceDisplayLabel(source);
     const existing = bySource.get(source.id);
     if (existing) {
-      await contents.patchDynamic(existing.id, userId, {
+      await dynamicContent.patch(existing.id, userId, {
         frame_name: frameName,
         config,
       });
@@ -163,7 +175,7 @@ async function upsertHotListFrames(
       continue;
     }
 
-    const created = await contents.appendDynamic(groupId, userId, {
+    const created = await dynamicContent.append(groupId, userId, {
       kind: 'dynamic',
       frame_name: frameName,
       config,

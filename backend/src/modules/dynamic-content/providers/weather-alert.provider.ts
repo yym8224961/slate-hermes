@@ -5,9 +5,13 @@ import {
   type WeatherAlertConfigT,
 } from 'shared';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
-import { stripHtml } from '../html-text';
+import { stripHtml } from '../../../common/html-text';
 import { fetchJson } from '../../../common/http/fetch';
-import { setBoundedCache } from '../../../common/utils';
+import {
+  CachedInflightFetcher,
+  DEFAULT_PROVIDER_CACHE_TTL_SEC,
+  DEFAULT_PROVIDER_FETCH_TIMEOUT_MS,
+} from './provider-cache';
 
 export interface WeatherAlertItem {
   id: string;
@@ -36,13 +40,6 @@ interface WeatherAlertResponse {
   };
 }
 
-interface CacheEntry {
-  data: WeatherAlertProviderData;
-  fetchedAt: number;
-}
-
-const DEFAULT_CACHE_TTL_SEC = 600;
-const FETCH_TIMEOUT_MS = 5000;
 const NMC_ALARM_API = 'https://www.nmc.cn/rest/findAlarm';
 const NMC_BASE_URL = 'https://www.nmc.cn';
 const MAX_CACHE_ENTRIES = 128;
@@ -53,8 +50,9 @@ export class WeatherAlertProvider implements DataProvider<
   WeatherAlertProviderData
 > {
   readonly type = 'weather_alert';
-  private readonly cache = new Map<string, CacheEntry>();
-  private readonly inflight = new Map<string, Promise<WeatherAlertProviderData>>();
+  private readonly fetcher = new CachedInflightFetcher<string, WeatherAlertProviderData>(
+    MAX_CACHE_ENTRIES
+  );
 
   validateConfig(raw: unknown): WeatherAlertConfigT {
     return WeatherAlertConfig.parse(raw);
@@ -67,22 +65,9 @@ export class WeatherAlertProvider implements DataProvider<
     const province = normalizeWeatherAlertProvince(config.province);
     const key = province || '全国';
     const now = ctx.now.getTime();
-    const ttlMs = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_SEC, 300) * 1000;
-    const existing = this.inflight.get(key);
-    if (existing) return existing;
-
-    const cached = this.cache.get(key);
-    if (cached && now - cached.fetchedAt < ttlMs) return cached.data;
-    if (cached) this.cache.delete(key);
-
-    const p = this.fetchFresh(province, ctx)
-      .then((data) => {
-        setBoundedCache(this.cache, key, { data, fetchedAt: now }, MAX_CACHE_ENTRIES);
-        return data;
-      })
-      .finally(() => this.inflight.delete(key));
-    this.inflight.set(key, p);
-    return p;
+    const ttlMs =
+      Math.max(config.refresh_interval_sec ?? DEFAULT_PROVIDER_CACHE_TTL_SEC, 300) * 1000;
+    return this.fetcher.getOrFetch(key, now, ttlMs, () => this.fetchFresh(province, ctx));
   }
 
   private async fetchFresh(
@@ -93,7 +78,7 @@ export class WeatherAlertProvider implements DataProvider<
       `${NMC_ALARM_API}?pageNo=1&pageSize=20&signaltype=&signallevel=&province=` +
       encodeURIComponent(province);
     const json = await fetchJson<WeatherAlertResponse>(url, {
-      timeoutMs: FETCH_TIMEOUT_MS,
+      timeoutMs: DEFAULT_PROVIDER_FETCH_TIMEOUT_MS,
       headers: { Referer: 'https://www.nmc.cn/publish/alarm.html' },
     });
     const rows = json.data?.page?.list ?? [];

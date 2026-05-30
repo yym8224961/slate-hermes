@@ -20,15 +20,15 @@ async function bootstrap(): Promise<void> {
 
   const config = app.get(AppConfig);
 
-  // Nest FastifyAdapter exposes Fastify's register API with a narrower plugin type than
-  // @fastify/* ESM dynamic imports provide, so the cast is limited to these registrations.
-  await app.register(import('@fastify/cookie') as never);
-  await app.register(import('@fastify/multipart') as never, {
+  const cookiePlugin = (await import('@fastify/cookie')).default;
+  const multipartPlugin = (await import('@fastify/multipart')).default;
+  await registerFastifyPlugin(app, cookiePlugin);
+  await registerFastifyPlugin(app, multipartPlugin, {
     limits: { fileSize: 32 * 1024 * 1024 },
   });
   // 注：@fastify/rate-limit 装了但不在这里 register —— Nest+Fastify 适配层不暴露
   // route-level Fastify config，全局 rate-limit 不便单独保护 ingest 端点。
-  // 改在 modules/contents/ingest-limit.guard.ts 实现按 contentId 维度限速。
+  // 改在 modules/contents/ingest-rate-limit.guard.ts 实现按 contentId 维度限速。
 
   app.setGlobalPrefix('api/v1', {
     exclude: [{ path: 'healthz', method: RequestMethod.GET }],
@@ -50,7 +50,7 @@ async function bootstrap(): Promise<void> {
       if (reply.statusCode !== 404) return payload;
       const path = (req.url.split('?')[0] ?? '') as string;
       if (path.startsWith('/api/') || path === '/healthz') return payload;
-      if (/\.[a-z0-9]+$/i.test(path)) return payload;
+      if (STATIC_ASSET_EXT_RE.test(path)) return payload;
       void reply.code(200).type('text/html; charset=utf-8');
       return indexHtml;
     });
@@ -64,3 +64,18 @@ bootstrap().catch((err: unknown) => {
   console.error('Backend bootstrap failed', err);
   process.exitCode = 1;
 });
+
+const STATIC_ASSET_EXT_RE =
+  /\.(?:avif|bmp|css|gif|ico|jpeg|jpg|js|json|map|mjs|otf|png|svg|ttf|txt|wasm|webp|woff|woff2|xml)$/i;
+
+interface FastifyPluginRegistrar {
+  register(plugin: unknown, opts?: unknown): Promise<unknown>;
+}
+
+function registerFastifyPlugin(
+  app: NestFastifyApplication,
+  plugin: unknown,
+  opts?: unknown
+): Promise<unknown> {
+  return (app as FastifyPluginRegistrar).register(plugin, opts);
+}

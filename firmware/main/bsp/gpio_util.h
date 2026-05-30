@@ -18,7 +18,7 @@ inline SemaphoreHandle_t GpioHoldMutex() {
 //
 // 多个 task 可能同时改 rail/PA pin；这里用全局短临界区避免三段式交错。
 inline void GpioWriteHold(gpio_num_t pin, int level) {
-    ScopedMutexLock lock(GpioHoldMutex(), portMAX_DELAY);
+    ScopedMutexLock lock(GpioHoldMutex());
     gpio_hold_dis(pin);
     gpio_set_level(pin, level);
     gpio_hold_en(pin);

@@ -1,38 +1,18 @@
 // 动态内容编辑器 —— 编辑动态内容配置。
 
-import { useCallback, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useMemo, type FormEvent } from 'react';
 import { Sparkles } from 'lucide-react';
-import {
-  DynamicConfig,
-  isAudioDynamicConfig,
-  type ContentDetailT,
-  type DynamicConfigT,
-  type DynamicTypeT,
-} from 'shared';
-import {
-  useContentImage,
-  usePreviewDynamicContent,
-  useUpdateDynamicContent,
-} from '@/features/contents/queries';
-import { useToast } from '@/components/feedback/Toast';
-import { Input } from '@/components/ui/Input';
+import type { ContentDetailT, DynamicConfigT, DynamicTypeT } from 'shared';
+import { useContentImage, useUpdateDynamicContent } from '@/features/contents/queries';
+import { useToast } from '@/components/feedback/useToast';
 import { FormActions } from '@/components/ui/FormActions';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { FormSection } from '@/components/ui/FormSection';
 import { getApiErrorMessage } from '@/lib/api-errors';
-import { DynamicConfigForm } from '@/features/dynamic/components/DynamicConfigForm';
-import { DynamicAudioSection } from '@/features/dynamic/components/config/DynamicAudioSection';
-import {
-  defaultFrameName,
-  effectiveFrameName,
-  effectiveStatusBarText,
-} from '@/features/contents/model/frame-name';
-import { TYPE_META, shouldRenderParams } from '@/features/contents/model/type-meta';
-import { useDynamicPreview } from '@/features/dynamic/hooks/useDynamicPreview';
+import { DYNAMIC_TYPE_META } from '@/features/dynamic/model/type-meta';
 import { useDynamicEditorBaselineSync } from '@/features/dynamic/hooks/useDynamicEditorBaselineSync';
 import { DynamicFramePreview } from '@/features/dynamic/components/preview/DynamicPreview';
-import { canonicalJsonKey } from '@/lib/json';
-import { frameNameForSyncedDynamicConfigChange } from '@/features/dynamic/model/frame-name-sync';
+import { useDynamicContentForm } from '@/features/dynamic/hooks/useDynamicContentForm';
+import { DynamicContentFormShell } from './DynamicContentFormShell';
 
 interface DynamicContentEditorProps {
   gid: string;
@@ -52,79 +32,71 @@ export function DynamicContentEditor({
   const update = useUpdateDynamicContent(gid);
   const submitting = update.isPending;
   const toast = useToast();
-
-  const [type, setType] = useState<DynamicTypeT>(initialType);
-  const [frameName, setFrameName] = useState(
-    () => content.frame_name ?? defaultFrameName(initialType, initialConfig)
+  const initialDashboardData = useMemo(
+    () => (initialType === 'dashboard' ? dashboardDataRecord(content.dynamic_data) : null),
+    [content.dynamic_data, initialType]
   );
-  const [config, setConfig] = useState<DynamicConfigT>(initialConfig);
-  const configKey = useMemo(() => canonicalJsonKey(config), [config]);
+  const form = useDynamicContentForm({
+    contentId: content.id,
+    initialType,
+    initialConfig,
+    initialFrameName: content.frame_name,
+    initialDashboardData,
+  });
   const { baseline, setBaseline } = useDynamicEditorBaselineSync({
     contentId: content.id,
     serverType: initialType,
     serverFrameName: content.frame_name,
     serverConfig: initialConfig,
-    type,
-    frameName,
-    configKey,
-    setType,
-    setFrameName,
-    setConfig,
+    type: form.type,
+    frameName: form.frameName,
+    configKey: form.configKey,
+    setType: form.setType,
+    setFrameName: form.setFrameName,
+    setConfig: form.setConfig,
   });
   const dirty = useMemo(
     () =>
-      type !== baseline.type ||
-      frameName !== baseline.frameName ||
-      configKey !== baseline.configKey,
-    [baseline.configKey, baseline.frameName, baseline.type, configKey, frameName, type]
+      form.type !== baseline.type ||
+      form.frameName !== baseline.frameName ||
+      form.configKey !== baseline.configKey,
+    [
+      baseline.configKey,
+      baseline.frameName,
+      baseline.type,
+      form.configKey,
+      form.frameName,
+      form.type,
+    ]
   );
 
   const savedPreviewEnabled = !!content.image_etag;
   const savedPreview = useContentImage(content.id, content.image_etag ?? null);
 
-  // 实时预览
-  const preview = usePreviewDynamicContent(content.id);
-  const dashboardData = useMemo(
-    () => (type === 'dashboard' ? dashboardDataRecord(content.dynamic_data) : null),
-    [content.dynamic_data, type]
-  );
-  const { livePreviewData } = useDynamicPreview({
-    type,
-    config,
-    frameName,
-    dashboardData,
-    preview,
-  });
-  const showParams = shouldRenderParams(type);
-
   const onSubmit = useCallback(async () => {
-    // 提交前用 shared 的 DynamicConfig zod 校验，避免后端 400 后才知道错。
-    // 失败时把第一个 issue 反馈给用户。
-    const parsed = DynamicConfig.safeParse(config);
-    if (!parsed.success) {
-      const first = parsed.error.issues[0];
-      const path = first?.path.join('.') || 'config';
-      toast.error('配置有误', `${path}: ${first?.message ?? '请检查'}`);
+    const parsed = form.submitConfig();
+    if (!parsed.ok) {
+      toast.error('配置有误', parsed.error);
       return;
     }
     try {
       await update.mutateAsync({
         contentId: content.id,
-        frameName: effectiveFrameName(type, parsed.data, frameName),
-        config: parsed.data,
+        frameName: parsed.frameName,
+        config: parsed.config,
       });
       setBaseline({
         contentId: content.id,
-        type,
-        frameName,
-        configKey,
+        type: parsed.type,
+        frameName: form.frameName,
+        configKey: form.configKey,
       });
       toast.success('已保存');
       onDone();
     } catch (err) {
       toast.error('保存失败', getApiErrorMessage(err));
     }
-  }, [config, configKey, content.id, frameName, onDone, setBaseline, toast, type, update]);
+  }, [content.id, form, onDone, setBaseline, toast, update]);
 
   const handleSubmit = useCallback(
     (event: FormEvent<HTMLFormElement>) => {
@@ -144,82 +116,45 @@ export function DynamicContentEditor({
       />
 
       <div className="mt-6 fade-up fade-up-1">
-        <form
+        <DynamicContentFormShell
+          type={form.type}
+          config={form.config}
+          frameName={form.frameName}
+          onFrameNameChange={form.setFrameName}
+          onConfigChange={form.changeConfig}
           onSubmit={handleSubmit}
-          className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr] gap-6 lg:gap-8"
-        >
-          {/* 预览 */}
-          <div className="order-2 lg:order-1">
-            <p className="font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] ml-0.5 mb-2">
-              设备预览
-            </p>
+          contentId={content.id}
+          dashboardData={form.dashboardData}
+          dashboardDataLabel="当前数据 JSON"
+          gridClassName="lg:grid-cols-[1.3fr_1fr]"
+          preview={
             <SavedOrLivePreview
               savedData={savedPreview.data}
               savedCacheKey={savedPreviewEnabled ? content.image_etag : null}
               savedPending={savedPreviewEnabled && savedPreview.isPending}
-              liveData={livePreviewData}
-              livePending={preview.isPending}
-              hasConfig={!!config}
-              caption={effectiveStatusBarText(type, config, frameName)}
+              liveData={form.livePreviewData}
+              livePending={form.preview.isPending}
+              hasConfig={!!form.config}
+              caption={form.caption}
             />
-          </div>
-
-          {/* 表单 */}
-          <div className="order-1 lg:order-2 lg:mt-7 space-y-6">
-            {/* 类型块 — 12px 等距：picker/chip · description · divider */}
+          }
+          header={
             <div className="space-y-3">
               <p className="font-sans text-[12px] text-stone leading-relaxed">
-                {TYPE_META[type].description}
+                {form.type ? DYNAMIC_TYPE_META[form.type].description : ''}
               </p>
               <div className="border-t border-line" />
             </div>
-
-            {/* 帧名称（仅外部数据）*/}
-            {type === 'dashboard' && (
-              <FormSection label="帧名称（选填，最多 64 字）">
-                <Input
-                  type="text"
-                  maxLength={64}
-                  value={frameName}
-                  onChange={(e) => setFrameName(e.target.value)}
-                  placeholder="如：AI 使用统计"
-                />
-              </FormSection>
-            )}
-
-            {/* 类型参数 */}
-            {showParams && (
-              <FormSection label="类型参数">
-                <DynamicConfigForm
-                  config={config}
-                  onChange={(next) => {
-                    const nextFrameName = frameNameForSyncedDynamicConfigChange(config, next);
-                    if (nextFrameName) setFrameName(nextFrameName);
-                    setConfig(next);
-                  }}
-                  contentId={content.id}
-                  dashboardData={dashboardData ?? undefined}
-                  dashboardDataLabel="当前数据 JSON"
-                />
-              </FormSection>
-            )}
-
-            {/* 音频 */}
-            {TYPE_META[type].supportsAudio && isAudioDynamicConfig(config) && (
-              <FormSection label="音频">
-                <DynamicAudioSection config={config} onChange={setConfig} />
-              </FormSection>
-            )}
-
-            {/* 操作按钮 */}
+          }
+          actions={
             <FormActions
               onCancel={onDone}
               submitLabel="保存"
               disabled={!dirty}
               submitting={submitting}
             />
-          </div>
-        </form>
+          }
+        />
       </div>
     </div>
   );

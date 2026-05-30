@@ -3,12 +3,13 @@ import type { GroupSummaryT } from 'shared';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { BlobService } from '../../infra/blob/blob.service';
-import { ForbiddenError, NotFoundError, ValidationError } from '../../common/errors';
+import { ForbiddenError, NotFoundError } from '../../common/errors';
 import { lockUserRow } from '../../common/db/row-locks';
 import { bulkSetGroupSortOrder } from '../../common/db/bulk-sort-order';
+import { validateOrderSet } from '../../common/db/order-validation';
 import type { PrismaClientLike } from '../../common/db/prisma-client-like';
 import { audioBlobContentId } from '../audio/audio-blob-id';
-import { computeGroupEtags } from './group-etag';
+import { computeGroupEtags, computeGroupManifestEtag } from './group-etag';
 
 interface GroupListEntry {
   id: string;
@@ -208,12 +209,7 @@ export class GroupsService {
     });
     if (!g) return emptyCycle();
 
-    const [beforeCount, totalCount] = await Promise.all([
-      this.prisma.group.count({
-        where: { ownerUserId: device.ownerUserId, sortOrder: { lt: g.sortOrder } },
-      }),
-      this.prisma.group.count({ where: { ownerUserId: device.ownerUserId } }),
-    ]);
+    const position = await this.ownerGroupPosition(device.ownerUserId, g.sortOrder);
     return {
       groupId: g.id,
       name: g.name,
@@ -221,15 +217,31 @@ export class GroupsService {
       manifestEtag: g.manifestEtag,
       sortOrder: g.sortOrder,
       contentCount: g._count.contents,
-      position: { current: beforeCount + 1, total: totalCount },
+      position,
     };
+  }
+
+  async ownerGroupPosition(
+    ownerUserId: string,
+    sortOrder: number,
+    client: PrismaClientLike = this.prisma
+  ): Promise<{ current: number; total: number }> {
+    const [beforeCount, totalCount] = await Promise.all([
+      client.group.count({
+        where: { ownerUserId, sortOrder: { lt: sortOrder } },
+      }),
+      client.group.count({ where: { ownerUserId } }),
+    ]);
+    return { current: beforeCount + 1, total: Math.max(totalCount, 1) };
   }
 
   // ── Web CRUD ──────────────────────────────────────────────
 
   async listForOwner(ownerUserId: string): Promise<GroupSummaryT[]> {
-    const groups = await this.queryOwnerGroups(ownerUserId);
-    const sizeMap = await this.aggregateBytes(groups.map((g) => g.id));
+    const [groups, sizeMap] = await Promise.all([
+      this.queryOwnerGroups(ownerUserId),
+      this.aggregateBytesForOwner(ownerUserId),
+    ]);
     return groups.map((g) => toSummary(g, sizeMap.get(g.id) ?? 0));
   }
 
@@ -357,24 +369,16 @@ export class GroupsService {
         select: { id: true, sortOrder: true },
       });
       const sortOrderById = new Map(owned.map((g) => [g.id, g.sortOrder]));
-      const orderSet = new Set(order);
-      if (
-        order.length !== sortOrderById.size ||
-        orderSet.size !== order.length ||
-        !order.every((id) => sortOrderById.has(id))
-      ) {
-        throw new ValidationError('排序列表须包含所有相册且不重复', {
-          code: 'order_mismatch',
-        });
-      }
+      validateOrderSet(sortOrderById.keys(), order, {
+        mismatchMessage: '排序列表须包含所有相册且不重复',
+        mismatchCode: 'order_mismatch',
+      });
       // manifestEtag 包含 group.sortOrder，所以只为位置真正变化的 group 重算；位置没动的跳过，
       // 避免 reorder 1 个 group 时把所有 group 的 manifest 都刷一遍（每次刷会扫该 group 全部 content）。
       const changed = order.filter((id, idx) => sortOrderById.get(id) !== idx);
       if (changed.length === 0) return;
       await bulkSetGroupSortOrder(tx, ownerUserId, order);
-      for (const groupId of changed) {
-        await this.recomputeManifestEtag(groupId, tx);
-      }
+      await this.recomputeManifestEtagsAfterGroupReorder(tx, ownerUserId, changed);
     });
   }
 
@@ -387,11 +391,16 @@ export class GroupsService {
       where: { groupId: { in: groupIds } },
       _sum: { imageSize: true, audioSize: true },
     });
-    const result = new Map<string, number>();
-    for (const row of rows) {
-      result.set(row.groupId, (row._sum.imageSize ?? 0) + (row._sum.audioSize ?? 0));
-    }
-    return result;
+    return sizeMapFromRows(rows);
+  }
+
+  private async aggregateBytesForOwner(ownerUserId: string): Promise<Map<string, number>> {
+    const rows = await this.prisma.content.groupBy({
+      by: ['groupId'],
+      where: { group: { ownerUserId } },
+      _sum: { imageSize: true, audioSize: true },
+    });
+    return sizeMapFromRows(rows);
   }
 
   async assertOwned(gid: string, ownerUserId: string): Promise<void> {
@@ -420,6 +429,31 @@ export class GroupsService {
         _count: { select: { contents: true } },
       },
     });
+  }
+
+  private async recomputeManifestEtagsAfterGroupReorder(
+    tx: Prisma.TransactionClient,
+    ownerUserId: string,
+    changedGroupIds: string[]
+  ): Promise<void> {
+    const groups = await tx.group.findMany({
+      where: { ownerUserId, id: { in: changedGroupIds } },
+      select: {
+        id: true,
+        name: true,
+        sortOrder: true,
+        structureEtag: true,
+        contents: {
+          orderBy: { sortOrder: 'asc' },
+          select: { id: true, contentEtag: true },
+        },
+      },
+    });
+    const manifestEtags = groups.map((group) => ({
+      id: group.id,
+      manifestEtag: computeGroupManifestEtag(group),
+    }));
+    await bulkSetGroupManifestEtags(tx, manifestEtags);
   }
 }
 
@@ -457,6 +491,19 @@ function toSummary(
   };
 }
 
+function sizeMapFromRows(
+  rows: Array<{
+    groupId: string;
+    _sum: { imageSize: number | null; audioSize: number | null };
+  }>
+): Map<string, number> {
+  const result = new Map<string, number>();
+  for (const row of rows) {
+    result.set(row.groupId, (row._sum.imageSize ?? 0) + (row._sum.audioSize ?? 0));
+  }
+  return result;
+}
+
 async function bulkSetContentEtags(
   client: PrismaClientLike,
   updates: Array<{ id: string; etag: string }>
@@ -468,6 +515,24 @@ async function bulkSetContentEtags(
     SET \`content_etag\` = CASE \`id\`
       ${Prisma.join(
         updates.map((update) => Prisma.sql`WHEN ${update.id} THEN ${update.etag}`),
+        ' '
+      )}
+    END
+    WHERE \`id\` IN (${ids})
+  `;
+}
+
+async function bulkSetGroupManifestEtags(
+  client: PrismaClientLike,
+  updates: Array<{ id: string; manifestEtag: string }>
+): Promise<void> {
+  if (updates.length === 0) return;
+  const ids = Prisma.join(updates.map((update) => update.id));
+  await client.$executeRaw`
+    UPDATE \`groups\`
+    SET \`manifest_etag\` = CASE \`id\`
+      ${Prisma.join(
+        updates.map((update) => Prisma.sql`WHEN ${update.id} THEN ${update.manifestEtag}`),
         ' '
       )}
     END

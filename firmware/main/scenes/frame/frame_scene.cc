@@ -16,39 +16,20 @@
 #include "status_bar.h"
 #include "sync_service.h"
 #include "theme.h"
+#include "utf8_utils.h"
 
 namespace {
 constexpr char kTag[] = "Frame";
-
-size_t Utf8CharLen(unsigned char ch) {
-    if ((ch & 0x80) == 0)
-        return 1;
-    if ((ch & 0xE0) == 0xC0)
-        return 2;
-    if ((ch & 0xF0) == 0xE0)
-        return 3;
-    if ((ch & 0xF8) == 0xF0)
-        return 4;
-    return 1;
-}
 
 std::string ShortGroupName(const char* raw) {
     constexpr size_t kMaxChars = 8;
     if (!raw || raw[0] == '\0')
         return "内容组";
     const std::string s(raw);
-    size_t            bytes = 0;
-    size_t            chars = 0;
-    while (bytes < s.size() && chars < kMaxChars) {
-        const size_t len = Utf8CharLen(static_cast<unsigned char>(s[bytes]));
-        if (bytes + len > s.size())
-            break;
-        bytes += len;
-        ++chars;
-    }
-    if (bytes >= s.size())
+    const std::string prefix = util::Utf8PrefixChars(s, kMaxChars);
+    if (prefix.size() >= s.size())
         return s;
-    return s.substr(0, bytes) + "…";
+    return prefix + "…";
 }
 
 std::string MarkedGroupName(const char* raw) {

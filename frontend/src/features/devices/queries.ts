@@ -6,11 +6,12 @@ import type {
   ReorderDevicesRequestT,
 } from 'shared';
 import { API_V1, api } from '@/lib/http';
-import { queryKeys } from '@/lib/query-keys';
+import { groupKeys } from '@/features/groups/query-keys';
+import { deviceKeys } from './query-keys';
 
 export function useDevices() {
   return useQuery({
-    queryKey: queryKeys.devices,
+    queryKey: deviceKeys.list,
     queryFn: async () => {
       const { data } = await api.get<DeviceSummaryT[]>(`${API_V1}/devices`);
       return data;
@@ -27,7 +28,7 @@ export function useClaimByPairCode() {
       const { data } = await api.post<DeviceSummaryT>(`${API_V1}/devices/claims`, body);
       return data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.devices }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: deviceKeys.list }),
   });
 }
 
@@ -37,7 +38,7 @@ export function useReorderDevices() {
     mutationFn: async (body: ReorderDevicesRequestT) => {
       await api.put(`${API_V1}/devices/order`, body);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.devices }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: deviceKeys.list }),
   });
 }
 
@@ -47,7 +48,7 @@ export function useUnbindDevice() {
     mutationFn: async (deviceId: string) => {
       await api.delete(`${API_V1}/devices/${deviceId}/binding`);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.devices }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: deviceKeys.list }),
   });
 }
 
@@ -58,8 +59,8 @@ export function usePatchDevice(deviceId: string) {
       await api.patch(`${API_V1}/devices/${deviceId}`, body);
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: queryKeys.devices });
-      qc.invalidateQueries({ queryKey: queryKeys.groups });
+      qc.invalidateQueries({ queryKey: deviceKeys.list });
+      qc.invalidateQueries({ queryKey: groupKeys.list });
     },
   });
 }

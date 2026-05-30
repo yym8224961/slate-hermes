@@ -49,7 +49,8 @@ export async function fetchJson<T>(url: string, opts: FetchOptions = {}): Promis
     throw new Error(
       `Invalid JSON response from ${redactUrlForMessage(url)}` +
         (contentType ? ` (content-type: ${contentType})` : '') +
-        `: ${detail}`
+        `: ${detail}`,
+      { cause: err }
     );
   }
 }

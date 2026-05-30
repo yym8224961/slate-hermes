@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, readdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { AppConfig } from '../../infra/config/app.config';
 
@@ -126,6 +126,16 @@ export class ImageRenderCacheService implements OnModuleInit, OnModuleDestroy {
           /* skip */
         }
       }
+      await rmdir(dir).catch((err: unknown) => {
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code !== 'ENOENT' && code !== 'ENOTEMPTY') {
+          this.logger.warn(
+            `image-render-cache gc failed to remove empty prefix ${prefix}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      });
     }
     this.logger.log(`image-render-cache gc removed ${removed} entries (older than ${maxAgeDays}d)`);
     return { removed };

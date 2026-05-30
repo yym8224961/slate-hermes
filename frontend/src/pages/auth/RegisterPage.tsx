@@ -2,14 +2,11 @@
 
 import { useState } from 'react';
 import { Navigate, Link, useLocation } from 'react-router-dom';
-import { ArrowRight } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
-import { Button } from '@/components/ui/Button';
-import { Spinner } from '@/components/ui/Spinner';
-import { AuthLayout } from '@/components/layout/AuthLayout';
-import { useAuth } from '@/features/auth/auth';
 import { redirectFromLocationState } from '@/features/auth/redirect';
+import { useAuth } from '@/features/auth/useAuth';
 import { useAuthForm } from '@/features/auth/useAuthForm';
+import { AuthFormLayout } from './AuthFormLayout';
 
 export function RegisterPage() {
   const { token, register } = useAuth();
@@ -58,79 +55,66 @@ export function RegisterPage() {
   }
 
   return (
-    <AuthLayout title="注册" subtitle="创建账号，开始管理墨笺与内容。">
-      <form onSubmit={onSubmit}>
-        <h2 className="font-serif text-[40px] font-bold leading-tight tracking-tight">注册</h2>
-
-        <div className="mt-10 space-y-7">
-          <Input
-            label="用户名"
-            type="text"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            autoFocus
-            required
-            autoComplete="username"
-            placeholder="字母、数字、下划线，3-32 位"
-            error={usernameError ?? undefined}
-          />
-          <Input
-            label="邮箱"
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-            autoComplete="email"
-            placeholder="you@example.com"
-            error={emailError ?? undefined}
-          />
-          <Input
-            label="密码"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            minLength={8}
-            autoComplete="new-password"
-            placeholder="请输入密码"
-            error={passwordError ?? undefined}
-          />
-          <Input
-            label="确认密码"
-            type="password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            required
-            minLength={8}
-            autoComplete="new-password"
-            placeholder="再次输入密码"
-            error={confirmError ?? undefined}
-          />
-        </div>
-
-        <div className="mt-10">
-          {authForm.error && (
-            <p className="mb-4 font-sans text-[13px] text-clay">{authForm.error}</p>
-          )}
-          <Button
-            type="submit"
-            fullWidth
-            size="lg"
-            disabled={authForm.loading}
-            iconRight={authForm.loading ? undefined : <ArrowRight size={16} />}
-          >
-            {authForm.loading ? <Spinner /> : '创建账号'}
-          </Button>
-        </div>
-
+    <AuthFormLayout
+      title="注册"
+      subtitle="创建账号，开始管理墨笺与内容。"
+      submitLabel="创建账号"
+      loading={authForm.loading}
+      error={authForm.error}
+      onSubmit={onSubmit}
+      footer={
         <p className="mt-7 text-center font-sans text-[13px] text-stone">
           已有账号？{' '}
           <Link to="/login" className="text-ink border-b border-ink">
             去登录
           </Link>
         </p>
-      </form>
-    </AuthLayout>
+      }
+    >
+      <Input
+        label="用户名"
+        type="text"
+        value={username}
+        onChange={(e) => setUsername(e.target.value)}
+        autoFocus
+        required
+        autoComplete="username"
+        placeholder="字母、数字、下划线，3-32 位"
+        error={usernameError ?? undefined}
+      />
+      <Input
+        label="邮箱"
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        required
+        autoComplete="email"
+        placeholder="you@example.com"
+        error={emailError ?? undefined}
+      />
+      <Input
+        label="密码"
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        required
+        minLength={8}
+        autoComplete="new-password"
+        placeholder="请输入密码"
+        error={passwordError ?? undefined}
+      />
+      <Input
+        label="确认密码"
+        type="password"
+        value={confirm}
+        onChange={(e) => setConfirm(e.target.value)}
+        required
+        minLength={8}
+        autoComplete="new-password"
+        placeholder="再次输入密码"
+        error={confirmError ?? undefined}
+      />
+    </AuthFormLayout>
   );
 }
 

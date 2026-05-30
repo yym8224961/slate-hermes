@@ -55,12 +55,21 @@ body {
 }
 * { box-sizing: border-box; }
 
-/* Mono Press: 0px 圆角全局覆写 ─────────────────────
-   留在 @layer 外保证优先级高于 Tailwind 的 @layer utilities。
-   排除 Radix UI 组件（下拉菜单、Select 弹层等）避免样式异常。 */
-*:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]):not([data-radix-dropdown-menu-content]):not([data-radix-tooltip-content]):not([data-radix-popover-content]),
-*:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]):not([data-radix-dropdown-menu-content]):not([data-radix-tooltip-content]):not([data-radix-popover-content])::before,
-*:not([data-radix-popper-content-wrapper]):not([data-radix-menu-content]):not([data-radix-select-content]):not([data-radix-dropdown-menu-content]):not([data-radix-tooltip-content]):not([data-radix-popover-content])::after {
+/* Mono Press: 0px 圆角只作用在本应用明确拥有的基础控件和边框工具类上。
+   避免未来新增 Radix/第三方浮层时被全局 * 静默覆写。 */
+:where(
+  button,
+  input,
+  textarea,
+  select,
+  .craft-card,
+  .border,
+  .border-2,
+  .border-t,
+  .border-r,
+  .border-b,
+  .border-l
+) {
   border-radius: 0;
 }
 

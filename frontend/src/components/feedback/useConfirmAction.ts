@@ -1,7 +1,7 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import { getApiErrorMessage } from '@/lib/api-errors';
-import { useConfirm, type ConfirmOptions } from './Confirm';
-import { useToast } from './Toast';
+import { useConfirm, type ConfirmOptions } from './useConfirm';
+import { useToast } from './useToast';
 
 interface MutationCallbacks {
   onSuccess?: () => void;

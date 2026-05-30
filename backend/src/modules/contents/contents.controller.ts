@@ -22,10 +22,11 @@ import {
 } from '../../common/decorators/current-device.decorator';
 import { JsonBody } from '../../common/decorators/json-body.decorator';
 import { Public } from '../../common/decorators/public.decorator';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { JwtOrDeviceAuthGuard } from '../../common/guards/jwt-or-device-auth.guard';
 import { etagMatches, respondWithEtag } from '../../common/etag/etag.util';
 import { ContentsService } from './contents.service';
+import { ContentsReadService } from './contents-read.service';
+import { DynamicContentService } from '../dynamic-content/dynamic-content.service';
 import { MultipartParser } from './multipart.parser';
 import { ReorderContentsDto } from './dto/reorder-contents.dto';
 import { CreateDynamicContentDto } from './dto/create-dynamic-content.dto';
@@ -38,6 +39,8 @@ import { PatchContentUnionDto } from './dto/patch-content-union.dto';
 export class ContentsController {
   constructor(
     private readonly contents: ContentsService,
+    private readonly reads: ContentsReadService,
+    private readonly dynamicContent: DynamicContentService,
     private readonly multipart: MultipartParser
   ) {}
 
@@ -51,10 +54,7 @@ export class ContentsController {
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply
   ): Promise<void> {
-    const m = await this.contents.manifest(groupId, {
-      userId: user?.userId,
-      deviceId: device?.deviceId,
-    });
+    const m = await this.reads.manifest(groupId, authScope(user, device));
     const ifNoneMatch = req.headers['if-none-match'];
     const headerEtag = `"${m.manifestEtag}"`;
     if (typeof ifNoneMatch === 'string' && etagMatches(ifNoneMatch, m.manifestEtag)) {
@@ -84,10 +84,7 @@ export class ContentsController {
     @CurrentUser() user: WebUserContext | undefined,
     @CurrentDevice() device: DeviceContext | undefined
   ): Promise<ContentDetailT[]> {
-    return this.contents.list(groupId, {
-      userId: user?.userId,
-      deviceId: device?.deviceId,
-    });
+    return this.reads.list(groupId, authScope(user, device));
   }
 
   @Post('groups/:groupId/contents')
@@ -108,7 +105,7 @@ export class ContentsController {
     if (!body) {
       throw new ValidationError('仅支持 multipart/form-data 或 application/json');
     }
-    return this.contents.appendDynamic(groupId, user.userId, body);
+    return this.dynamicContent.append(groupId, user.userId, body);
   }
 
   @Put('groups/:groupId/contents/order')
@@ -128,10 +125,7 @@ export class ContentsController {
     @CurrentUser() user: WebUserContext | undefined,
     @CurrentDevice() device: DeviceContext | undefined
   ): Promise<ContentDetailT> {
-    return this.contents.get(contentId, {
-      userId: user?.userId,
-      deviceId: device?.deviceId,
-    });
+    return this.reads.get(contentId, authScope(user, device));
   }
 
   @Public()
@@ -144,10 +138,7 @@ export class ContentsController {
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply
   ): Promise<void> {
-    const r = await this.contents.readImage(contentId, {
-      userId: user?.userId,
-      deviceId: device?.deviceId,
-    });
+    const r = await this.reads.readImage(contentId, authScope(user, device));
     respondWithEtag(req, reply, r.etag, r.data, 'application/octet-stream');
   }
 
@@ -161,10 +152,7 @@ export class ContentsController {
     @Req() req: FastifyRequest,
     @Res() reply: FastifyReply
   ): Promise<void> {
-    const r = await this.contents.readAudio(contentId, {
-      userId: user?.userId,
-      deviceId: device?.deviceId,
-    });
+    const r = await this.reads.readAudio(contentId, authScope(user, device));
     respondWithEtag(req, reply, r.etag, r.data, 'application/octet-stream');
   }
 
@@ -174,21 +162,32 @@ export class ContentsController {
     @CurrentUser() user: WebUserContext,
     @Headers('content-type') ct: string,
     @JsonBody(PatchContentUnionDto) body: PatchContentUnionDto | undefined,
-    @Req() req: FastifyRequest
+    @Req() req: FastifyRequest,
+    @Res({ passthrough: true }) reply: FastifyReply
   ): Promise<ContentMutationResponseT> {
     if (ct?.startsWith('multipart/form-data')) {
+      const signal = abortSignalForReply(reply);
       const parsed = await this.multipart.parseContentUpload(req);
-      return this.contents.patchImage(contentId, user.userId, parsed);
+      return this.contents.patchImage(contentId, user.userId, parsed, signal);
     }
     if (!body) {
       throw new ValidationError('仅支持 multipart/form-data 或 application/json');
     }
     if (body.config !== undefined) {
-      return this.contents.patchDynamic(contentId, user.userId, {
+      return this.dynamicContent.patch(contentId, user.userId, {
         config: body.config,
         frame_name: body.frame_name,
       });
     }
+    if (body.frame_name === undefined) {
+      throw new ValidationError('没有可更新的字段', { code: 'nothing_to_patch' });
+    }
+    const dynamicPatch = await this.dynamicContent.patchFrameNameIfDynamic(
+      contentId,
+      user.userId,
+      body.frame_name
+    );
+    if (dynamicPatch) return dynamicPatch;
     return this.contents.patchFrameName(contentId, user.userId, body.frame_name);
   }
 
@@ -219,12 +218,11 @@ export class ContentsController {
   }
 
   @Post('contents/preview')
-  @UseGuards(JwtAuthGuard)
   async previewDynamicDirect(
     @Body() body: PreviewDynamicContentDto,
     @Res() reply: FastifyReply
   ): Promise<void> {
-    const data = await this.contents.previewDynamicDirect(body);
+    const data = await this.dynamicContent.previewDirect(body);
     void reply.header('Cache-Control', 'no-store').type('application/octet-stream').send(data);
   }
 
@@ -235,7 +233,7 @@ export class ContentsController {
     @Body() body: PreviewDynamicContentDto,
     @Res() reply: FastifyReply
   ): Promise<void> {
-    const data = await this.contents.previewDynamic(contentId, user.userId, {
+    const data = await this.dynamicContent.preview(contentId, user.userId, {
       config: body.config,
       frame_name: body.frame_name,
       data: body.data,
@@ -250,4 +248,14 @@ function abortSignalForReply(reply: FastifyReply): AbortSignal {
     if (!reply.raw.writableEnded) controller.abort();
   });
   return controller.signal;
+}
+
+function authScope(
+  user: WebUserContext | undefined,
+  device: DeviceContext | undefined
+): { userId?: string; deviceId?: string } {
+  return {
+    userId: user?.userId,
+    deviceId: device?.deviceId,
+  };
 }

@@ -1,12 +1,11 @@
 // Mono Press 音频 dropzone — 虚线框，0 圆角。
 
+import { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Music, Trash2 } from 'lucide-react';
 import { useDeleteContentAudio } from '@/features/contents/queries';
-import { useConfirm } from '@/components/feedback/Confirm';
-import { useToast } from '@/components/feedback/Toast';
+import { useConfirmAction } from '@/components/feedback/useConfirmAction';
 import { cn } from '@/lib/cn';
-import { getApiErrorMessage } from '@/lib/api-errors';
 import { formatBytes } from '@/lib/format';
 
 interface AudioDropzoneProps {
@@ -29,9 +28,25 @@ export function AudioDropzone({
   disabled,
   hideLabel,
 }: AudioDropzoneProps) {
-  const delAudio = useDeleteContentAudio(gid);
-  const confirm = useConfirm();
-  const toast = useToast();
+  const { mutate: deleteAudioMutate, isPending: deleteAudioPending } = useDeleteContentAudio(gid);
+  const deleteAudioWithConfirm = useConfirmAction<string>({
+    isPending: deleteAudioPending,
+    getConfirmOptions: useCallback(
+      () => ({
+        title: '删除这一帧的音频？',
+        description: '图保留，只移除音频文件。',
+        destructive: true,
+        confirmText: '删除音频',
+      }),
+      []
+    ),
+    run: useCallback(
+      (contentId, callbacks) => deleteAudioMutate(contentId, callbacks),
+      [deleteAudioMutate]
+    ),
+    successToast: '音频已删除',
+    errorToast: '删除失败',
+  });
 
   const dz = useDropzone({
     onDrop: (files) => onPick(files[0] ?? null),
@@ -45,21 +60,9 @@ export function AudioDropzone({
   const deleteAudio =
     hasExistingAudio && editingContentId != null ? (
       <DeleteAudioButton
-        isPending={delAudio.isPending}
+        isPending={deleteAudioPending}
         label={hideLabel ? '删除已有音频' : '删除'}
-        onDelete={async () => {
-          const ok = await confirm({
-            title: '删除这一帧的音频？',
-            description: '图保留，只移除音频文件。',
-            destructive: true,
-            confirmText: '删除音频',
-          });
-          if (!ok) return;
-          delAudio.mutate(editingContentId, {
-            onSuccess: () => toast.success('音频已删除'),
-            onError: (err) => toast.error('删除失败', getApiErrorMessage(err)),
-          });
-        }}
+        onDelete={() => deleteAudioWithConfirm(editingContentId)}
       />
     ) : null;
 

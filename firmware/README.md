@@ -476,7 +476,7 @@ firmware/tools/gen_zfull_fonts.sh
 
 - HTTP base URL 接受 `http://` 和 `https://`；authenticated HTTP 会打印警告。
 - HTTPS 需要 SNTP 时间同步，否则证书校验可能失败。
-- `/api/v1` 前缀写死在 `protocol/api_client.cc`，要与 shared/backend 保持一致。
+- `/api/v1` 前缀写死在 `sync/api_client.cc`，要与 shared/backend 保持一致。
 - EPD BUSY 是低忙高闲，调试新屏或新板时不要按 SSD1683 datasheet 默认极性判断。
 - AVDD_3V3 关闭后 I2C 上拉消失，任何 I2C 操作都会失败。
 - deep sleep 前 GPIO17 必须切 RTC GPIO hold 高，否则会整机断电，按键唤不醒。

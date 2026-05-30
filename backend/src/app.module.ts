@@ -4,6 +4,7 @@ import { ConfigModule } from './infra/config/config.module';
 import { LoggerModule } from './infra/logger/logger.module';
 import { PrismaModule } from './infra/prisma/prisma.module';
 import { BlobModule } from './infra/blob/blob.module';
+import { InfraAuthModule } from './infra/auth/infra-auth.module';
 import { HealthModule } from './modules/health/health.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
@@ -26,6 +27,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
     LoggerModule,
     PrismaModule,
     BlobModule,
+    InfraAuthModule,
     GroupsModule,
     ImageRendererModule,
     AudioModule,

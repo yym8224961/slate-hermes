@@ -4,32 +4,30 @@ import { ImageRendererModule } from '../image-renderer/image-renderer.module';
 import { AudioModule } from '../audio/audio.module';
 import { TtsModule } from '../tts/tts.module';
 import { DynamicContentModule } from '../dynamic-content/dynamic-content.module';
-import { AuthModule } from '../auth/auth.module';
-import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { ContentsController } from './contents.controller';
-import { ContentDataController } from './content-data.controller';
+import { DashboardIngestController } from './dashboard-ingest.controller';
+import { ContentsReadService } from './contents-read.service';
 import { ContentsService } from './contents.service';
-import { IngestLimitGuard } from './ingest-limit.guard';
+import { IngestPayloadSizeGuard } from './ingest-payload-size.guard';
+import { IngestPayloadSizePipe } from './ingest-payload-size.pipe';
+import { IngestRateLimitGuard } from './ingest-rate-limit.guard';
 import { ContentAudioBlobService } from './content-audio-blob.service';
+import { DeviceCurrentContentService } from './device-current-content.service';
 import { MultipartParser } from './multipart.parser';
 
 @Module({
-  imports: [
-    GroupsModule,
-    ImageRendererModule,
-    AudioModule,
-    TtsModule,
-    DynamicContentModule,
-    AuthModule,
-  ],
-  controllers: [ContentsController, ContentDataController],
+  imports: [GroupsModule, ImageRendererModule, AudioModule, TtsModule, DynamicContentModule],
+  controllers: [ContentsController, DashboardIngestController],
   providers: [
     ContentsService,
+    ContentsReadService,
     MultipartParser,
-    IngestLimitGuard,
+    IngestPayloadSizeGuard,
+    IngestPayloadSizePipe,
+    IngestRateLimitGuard,
     ContentAudioBlobService,
-    JwtAuthGuard,
+    DeviceCurrentContentService,
   ],
-  exports: [ContentsService],
+  exports: [ContentsService, ContentsReadService, DeviceCurrentContentService],
 })
 export class ContentsModule {}

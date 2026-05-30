@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import { ConflictError, ValidationError } from '../../common/errors';
-import { prismaUniqueTargetIncludes } from '../../common/utils';
+import { prismaUniqueTargetIncludes } from '../../common/db/prisma-utils';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 
 const PASSWORD_HASH_COST = 12;

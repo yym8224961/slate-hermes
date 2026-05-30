@@ -2,14 +2,11 @@
 
 import { useState } from 'react';
 import { Navigate, Link, useLocation } from 'react-router-dom';
-import { ArrowRight } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
-import { Button } from '@/components/ui/Button';
-import { Spinner } from '@/components/ui/Spinner';
-import { AuthLayout } from '@/components/layout/AuthLayout';
-import { useAuth } from '@/features/auth/auth';
 import { redirectFromLocationState } from '@/features/auth/redirect';
+import { useAuth } from '@/features/auth/useAuth';
 import { useAuthForm } from '@/features/auth/useAuthForm';
+import { AuthFormLayout } from './AuthFormLayout';
 
 export function LoginPage() {
   const { token, login } = useAuth();
@@ -30,54 +27,41 @@ export function LoginPage() {
   }
 
   return (
-    <AuthLayout title="登录" subtitle="登录后管理墨笺与内容。">
-      <form onSubmit={onSubmit}>
-        <h2 className="font-serif text-[40px] font-bold leading-tight tracking-tight">登录</h2>
-
-        <div className="mt-10 space-y-7">
-          <Input
-            label="账号或邮箱"
-            type="text"
-            value={identifier}
-            onChange={(e) => setIdentifier(e.target.value)}
-            autoFocus
-            required
-            autoComplete="username"
-            placeholder="用户名或邮箱"
-          />
-          <Input
-            label="密码"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-            autoComplete="current-password"
-            placeholder="请输入密码"
-          />
-        </div>
-
-        <div className="mt-10">
-          {authForm.error && (
-            <p className="mb-4 font-sans text-[13px] text-clay">{authForm.error}</p>
-          )}
-          <Button
-            type="submit"
-            fullWidth
-            size="lg"
-            disabled={authForm.loading}
-            iconRight={authForm.loading ? undefined : <ArrowRight size={16} />}
-          >
-            {authForm.loading ? <Spinner /> : '进入'}
-          </Button>
-        </div>
-
+    <AuthFormLayout
+      title="登录"
+      subtitle="登录后管理墨笺与内容。"
+      submitLabel="进入"
+      loading={authForm.loading}
+      error={authForm.error}
+      onSubmit={onSubmit}
+      footer={
         <p className="mt-7 text-center font-sans text-[13px] text-stone">
           还没有账号？{' '}
           <Link to="/register" className="text-ink border-b border-ink">
             立即注册
           </Link>
         </p>
-      </form>
-    </AuthLayout>
+      }
+    >
+      <Input
+        label="账号或邮箱"
+        type="text"
+        value={identifier}
+        onChange={(e) => setIdentifier(e.target.value)}
+        autoFocus
+        required
+        autoComplete="username"
+        placeholder="用户名或邮箱"
+      />
+      <Input
+        label="密码"
+        type="password"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        required
+        autoComplete="current-password"
+        placeholder="请输入密码"
+      />
+    </AuthFormLayout>
   );
 }

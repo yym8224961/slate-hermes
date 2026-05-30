@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 import { Prisma } from '@prisma/client';
+import type { ContentSummaryT } from 'shared';
 import type { PrismaService } from '../../infra/prisma/prisma.service';
+import type { DeviceSecretAuthCacheService } from '../../infra/auth/device-secret-auth-cache.service';
 import { ConflictError, ForbiddenError, NotFoundError } from '../../common/errors';
-import type { GroupsService } from '../groups/groups.service';
-import { DevicesService } from './devices.service';
+import type { CycleResult, GroupsService } from '../groups/groups.service';
+import type { DeviceCurrentContentService } from '../contents/device-current-content.service';
+import type { PairCodeService } from './pair-code.service';
+import { DevicesService, type DevicePollSnapshot, type TelemetryInput } from './devices.service';
 
 interface DeviceRecord {
   id: string;
@@ -101,7 +105,13 @@ function createService(record?: DeviceRecord): {
     $transaction: async <T>(fn: (tx: typeof txApi) => Promise<T>) => fn(txApi),
   };
   return {
-    service: new DevicesService(prisma as unknown as PrismaService, {} as GroupsService),
+    service: new DevicesService(
+      prisma as unknown as PrismaService,
+      {} as GroupsService,
+      { invalidateHash: () => undefined } as unknown as DeviceSecretAuthCacheService,
+      currentContentStub(),
+      pairCodeStub()
+    ),
     updates,
     creates,
     getRecord: () => current,
@@ -118,6 +128,142 @@ function device(overrides: Partial<DeviceRecord> = {}): DeviceRecord {
     selectedGroupId: 'group-1',
     lastRegisteredAt: null,
     ...overrides,
+  };
+}
+
+interface PollFrame {
+  deviceId: string;
+  groupId: string;
+  seq: number;
+  contentId: string;
+  manifestEtag: string;
+  content: unknown;
+}
+
+function contentSummary(overrides: Partial<ContentSummaryT> = {}): ContentSummaryT {
+  return {
+    id: 'content-2',
+    seq: 2,
+    content_etag: 'content-etag-2',
+    frame_name: null,
+    device_status_bar_text: 'Frame 2',
+    image_etag: 'image-etag-2',
+    audio_etag: null,
+    image_size: 123,
+    audio_size: null,
+    audio_status: 'none',
+    audio_source: null,
+    audio_voice: null,
+    kind: 'image',
+    dynamic_type: null,
+    next_wake_sec: null,
+    ...overrides,
+  };
+}
+
+function pollDevice(overrides: Partial<DevicePollSnapshot> = {}): DevicePollSnapshot {
+  return {
+    id: 'device-1',
+    mac: 'AA:BB:CC:DD:EE:FF',
+    name: null,
+    ownerUserId: 'user-1',
+    selectedGroupId: 'group-1',
+    pairCode: 'ABC234',
+    selectedGroup: { manifestEtag: 'manifest-1' },
+    ...overrides,
+  };
+}
+
+function pollGroup(overrides: Partial<CycleResult> = {}): CycleResult {
+  return {
+    groupId: 'group-1',
+    name: 'Group',
+    structureEtag: 'structure-1',
+    manifestEtag: 'manifest-1',
+    sortOrder: 0,
+    contentCount: 3,
+    position: { current: 1, total: 1 },
+    ...overrides,
+  };
+}
+
+function pollFrame(overrides: Partial<PollFrame> = {}): PollFrame {
+  return {
+    deviceId: 'device-1',
+    groupId: 'group-1',
+    seq: 2,
+    contentId: 'content-2',
+    manifestEtag: 'manifest-1',
+    content: {},
+    ...overrides,
+  };
+}
+
+function createPollService(
+  opts: {
+    device?: DevicePollSnapshot;
+    group?: CycleResult;
+    currentFrame?: PollFrame | null;
+    refreshedFrame?: PollFrame | null;
+    currentContent?: ContentSummaryT | null;
+  } = {}
+): {
+  service: DevicesService;
+  calls: {
+    telemetryUpdates: unknown[];
+    resolved: Array<{ device: DevicePollSnapshot; telemetry: TelemetryInput | undefined }>;
+    refreshed: Array<{ frame: PollFrame | null; device: DevicePollSnapshot }>;
+    currentContent: unknown[];
+  };
+} {
+  const deviceSnapshot = opts.device ?? pollDevice();
+  const groupSnapshot = opts.group ?? pollGroup();
+  const calls = {
+    telemetryUpdates: [] as unknown[],
+    resolved: [] as Array<{ device: DevicePollSnapshot; telemetry: TelemetryInput | undefined }>,
+    refreshed: [] as Array<{ frame: PollFrame | null; device: DevicePollSnapshot }>,
+    currentContent: [] as unknown[],
+  };
+  const prisma = {
+    device: {
+      update: async (args: unknown) => {
+        calls.telemetryUpdates.push(args);
+        return deviceSnapshot;
+      },
+    },
+  };
+  const groups = {
+    describeDeviceGroupSnapshot: async () => groupSnapshot,
+  };
+  const currentContent = {
+    resolveCurrentContentRequest: async (
+      device: DevicePollSnapshot,
+      telemetry: TelemetryInput | undefined
+    ) => {
+      calls.resolved.push({ device, telemetry });
+      return opts.currentFrame === undefined ? pollFrame() : opts.currentFrame;
+    },
+    refreshCurrentContentForDeviceIfDue: async (
+      frame: PollFrame | null,
+      device: DevicePollSnapshot
+    ) => {
+      calls.refreshed.push({ frame, device });
+      return opts.refreshedFrame === undefined ? frame : opts.refreshedFrame;
+    },
+    currentContentForDevice: (frame: unknown) => {
+      calls.currentContent.push(frame);
+      return opts.currentContent === undefined ? contentSummary() : opts.currentContent;
+    },
+  };
+  return {
+    service: new DevicesService(
+      prisma as unknown as PrismaService,
+      groups as unknown as GroupsService,
+      { invalidateHash: () => undefined } as unknown as DeviceSecretAuthCacheService,
+      currentContent as unknown as DeviceCurrentContentService,
+      pairCodeStub()
+    ),
+    calls,
   };
 }
 
@@ -174,9 +320,9 @@ describe('DevicesService.registerOrReset', () => {
     expect(getRecord()?.selectedGroupId).toBeNull();
   });
 
-  it('finds and normalizes an existing device stored with legacy MAC formatting', async () => {
+  it('normalizes raw MAC input before looking up an existing device', async () => {
     const { service, updates, getRecord } = createService(
-      device({ mac: 'aa-bb-cc-dd-ee-ff', lastRegisteredAt: new Date(Date.now() - 61_000) })
+      device({ mac: 'AA:BB:CC:DD:EE:FF', lastRegisteredAt: new Date(Date.now() - 61_000) })
     );
 
     const result = await service.registerOrReset('aa-bb-cc-dd-ee-ff');
@@ -187,6 +333,61 @@ describe('DevicesService.registerOrReset', () => {
     expect(updates[0]!.where).toEqual({ id: 'device-1' });
     expect(updates[0]!.data.mac).toBe('AA:BB:CC:DD:EE:FF');
     expect(getRecord()?.mac).toBe('AA:BB:CC:DD:EE:FF');
+  });
+});
+
+describe('DevicesService.poll', () => {
+  it('returns current_content for a non-timer poll when the current manifest still matches', async () => {
+    const currentContent = contentSummary({ id: 'content-2', seq: 2 });
+    const { service, calls } = createPollService({ currentContent });
+    const telemetry: TelemetryInput = {
+      wake_reason: 'button',
+      current_group: 'group-1',
+      current_content_seq: 2,
+      manifest_etag: 'manifest-1',
+    };
+
+    const state = await service.poll('device-1', telemetry);
+
+    expect(calls.resolved).toHaveLength(1);
+    expect(calls.resolved[0]!.telemetry).toEqual(telemetry);
+    expect(calls.refreshed).toHaveLength(0);
+    expect(calls.currentContent).toHaveLength(1);
+    expect(state.current_content).toEqual(currentContent);
+  });
+
+  it('returns null current_content when the selected group manifest no longer matches', async () => {
+    const { service, calls } = createPollService({
+      group: pollGroup({ manifestEtag: 'manifest-2' }),
+      currentFrame: pollFrame({ manifestEtag: 'manifest-1' }),
+    });
+
+    const state = await service.poll('device-1', {
+      wake_reason: 'button',
+      current_group: 'group-1',
+      current_content_seq: 2,
+      manifest_etag: 'manifest-1',
+    });
+
+    expect(calls.currentContent).toHaveLength(0);
+    expect(state.current_content).toBeNull();
+  });
+
+  it('refreshes the current dynamic content before returning timer poll state', async () => {
+    const currentFrame = pollFrame({ contentId: 'content-before' });
+    const refreshedFrame = pollFrame({ contentId: 'content-after' });
+    const { service, calls } = createPollService({ currentFrame, refreshedFrame });
+
+    const state = await service.poll('device-1', {
+      wake_reason: 'timer',
+      current_group: 'group-1',
+      current_content_seq: 2,
+      manifest_etag: 'manifest-1',
+    });
+
+    expect(calls.refreshed).toEqual([{ frame: currentFrame, device: pollDevice() }]);
+    expect(calls.currentContent).toEqual([refreshedFrame]);
+    expect(state.current_content?.id).toBe('content-2');
   });
 });
 
@@ -261,11 +462,24 @@ function createClaimService(
   return {
     service: new DevicesService(
       prisma as unknown as PrismaService,
-      groups as unknown as GroupsService
+      groups as unknown as GroupsService,
+      { invalidateHash: () => undefined } as unknown as DeviceSecretAuthCacheService,
+      currentContentStub(),
+      pairCodeStub()
     ),
     updates,
     getRecord: () => current,
   };
+}
+
+function pairCodeStub(code = 'NEW234'): PairCodeService {
+  return {
+    generateUniquePairCode: async () => code,
+  } as unknown as PairCodeService;
+}
+
+function currentContentStub(): DeviceCurrentContentService {
+  return {} as unknown as DeviceCurrentContentService;
 }
 
 describe('DevicesService.claimByPairCode', () => {

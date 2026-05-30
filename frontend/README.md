@@ -163,7 +163,7 @@ queries: {
 
 约定：
 
-- query key 集中在 `src/lib/query-keys.ts`。
+- query key 按 feature 拆分在 `features/*/query-keys.ts`。
 - 每个 feature 的接口 hooks 放在 `features/*/queries.ts`。
 - mutation 成功后 invalidate 相关 group/device/content query。
 - 图片和音频 binary query key 带 etag，`staleTime: Infinity`，etag 不变就不重拉。

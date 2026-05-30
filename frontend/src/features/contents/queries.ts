@@ -1,3 +1,4 @@
+import { useCallback } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   ContentDetailT,
@@ -9,23 +10,23 @@ import type {
   ReorderContentsRequestT,
 } from 'shared';
 import { API_V1, api } from '@/lib/http';
-import { queryKeys } from '@/lib/query-keys';
-
-const contentKeys = queryKeys.contents;
+import { groupKeys } from '@/features/groups/query-keys';
+import { contentKeys } from './query-keys';
 const AUDIO_GENERATING_REFETCH_INTERVAL_MS = 2500;
 
-function audioGenerationRefetchInterval(query: { state: { data?: ContentDetailT[] } }) {
-  const rows = query.state.data;
-  return rows?.some((row) => row.audio_status === 'pending' || row.audio_status === 'generating')
-    ? AUDIO_GENERATING_REFETCH_INTERVAL_MS
-    : false;
+type AudioStatusRow = Pick<ContentDetailT, 'audio_status'>;
+type AudioStatusQueryData = AudioStatusRow | AudioStatusRow[];
+
+function audioGenerationRefetchInterval(query: { state: { data?: AudioStatusQueryData } }) {
+  const data = query.state.data;
+  const hasGeneratingAudio = Array.isArray(data)
+    ? data.some(isGeneratingAudio)
+    : isGeneratingAudio(data);
+  return hasGeneratingAudio ? AUDIO_GENERATING_REFETCH_INTERVAL_MS : false;
 }
 
-function contentAudioGenerationRefetchInterval(query: { state: { data?: ContentDetailT } }) {
-  const row = query.state.data;
-  return row?.audio_status === 'pending' || row?.audio_status === 'generating'
-    ? AUDIO_GENERATING_REFETCH_INTERVAL_MS
-    : false;
+function isGeneratingAudio(row: AudioStatusRow | undefined): boolean {
+  return row?.audio_status === 'pending' || row?.audio_status === 'generating';
 }
 
 function invalidateGroupContent(
@@ -34,13 +35,18 @@ function invalidateGroupContent(
   contentId?: string
 ) {
   void qc.invalidateQueries({ queryKey: contentKeys.group(gid) });
-  void qc.invalidateQueries({ queryKey: queryKeys.groups });
-  void qc.invalidateQueries({ queryKey: queryKeys.group(gid) });
+  void qc.invalidateQueries({ queryKey: groupKeys.list });
+  void qc.invalidateQueries({ queryKey: groupKeys.detail(gid) });
   if (contentId) {
     void qc.invalidateQueries({ queryKey: contentKeys.detail(contentId) });
     qc.removeQueries({ queryKey: contentKeys.image(contentId) });
     qc.removeQueries({ queryKey: contentKeys.audio(contentId) });
   }
+}
+
+function useInvalidateGroupContent(gid: string) {
+  const qc = useQueryClient();
+  return useCallback((contentId?: string) => invalidateGroupContent(qc, gid, contentId), [gid, qc]);
 }
 
 export function useGroupContents(gid: string | undefined) {
@@ -63,12 +69,12 @@ export function useContentDetail(contentId: string | undefined) {
       return data;
     },
     enabled: !!contentId,
-    refetchInterval: contentAudioGenerationRefetchInterval,
+    refetchInterval: audioGenerationRefetchInterval,
   });
 }
 
 export function useCreateImageContent(gid: string) {
-  const qc = useQueryClient();
+  const invalidate = useInvalidateGroupContent(gid);
   return useMutation({
     mutationFn: async (form: FormData) => {
       const { data } = await api.post<ContentMutationResponseT>(
@@ -81,13 +87,13 @@ export function useCreateImageContent(gid: string) {
       return data;
     },
     onSuccess: (data) => {
-      invalidateGroupContent(qc, gid, data.id);
+      invalidate(data.id);
     },
   });
 }
 
 export function useUpdateImageContent(gid: string) {
-  const qc = useQueryClient();
+  const invalidate = useInvalidateGroupContent(gid);
   return useMutation({
     mutationFn: async ({ contentId, form }: { contentId: string; form: FormData }) => {
       const { data } = await api.patch<ContentMutationResponseT>(
@@ -98,20 +104,20 @@ export function useUpdateImageContent(gid: string) {
       return data;
     },
     onSuccess: (data) => {
-      invalidateGroupContent(qc, gid, data.id);
+      invalidate(data.id);
     },
   });
 }
 
 export function useDeleteContent(gid: string) {
-  const qc = useQueryClient();
+  const invalidate = useInvalidateGroupContent(gid);
   return useMutation({
     mutationFn: async (contentId: string) => {
       await api.delete(`${API_V1}/contents/${contentId}`);
       return contentId;
     },
     onSuccess: (_data, contentId) => {
-      invalidateGroupContent(qc, gid, contentId);
+      invalidate(contentId);
     },
   });
 }
@@ -145,19 +151,19 @@ export function useContentAudio(contentId: string, etag: string | null, enabled 
 }
 
 export function useDeleteContentAudio(gid: string) {
-  const qc = useQueryClient();
+  const invalidate = useInvalidateGroupContent(gid);
   return useMutation({
     mutationFn: async (contentId: string) => {
       await api.delete(`${API_V1}/contents/${contentId}/audio`);
     },
     onSuccess: (_data, contentId) => {
-      invalidateGroupContent(qc, gid, contentId);
+      invalidate(contentId);
     },
   });
 }
 
 export function useGenerateContentTts(gid: string) {
-  const qc = useQueryClient();
+  const invalidate = useInvalidateGroupContent(gid);
   return useMutation({
     mutationFn: async ({
       contentId,
@@ -173,13 +179,14 @@ export function useGenerateContentTts(gid: string) {
       return data;
     },
     onSuccess: (data) => {
-      invalidateGroupContent(qc, gid, data.id);
+      invalidate(data.id);
     },
   });
 }
 
 export function useReorderContents(gid: string) {
   const qc = useQueryClient();
+  const invalidate = useInvalidateGroupContent(gid);
   const groupKey = contentKeys.group(gid);
   return useMutation({
     mutationFn: async (body: ReorderContentsRequestT) => {
@@ -206,13 +213,13 @@ export function useReorderContents(gid: string) {
     },
     // 后端 reorder 会重算 manifest_etag，所以 groups 缓存也要 invalidate。
     onSettled: () => {
-      invalidateGroupContent(qc, gid);
+      invalidate();
     },
   });
 }
 
 export function useCreateDynamicContent(gid: string) {
-  const qc = useQueryClient();
+  const invalidate = useInvalidateGroupContent(gid);
   return useMutation({
     mutationFn: async (body: CreateDynamicContentRequestT) => {
       const { data } = await api.post<ContentMutationResponseT>(
@@ -225,13 +232,13 @@ export function useCreateDynamicContent(gid: string) {
       return data;
     },
     onSuccess: (data) => {
-      invalidateGroupContent(qc, gid, data.id);
+      invalidate(data.id);
     },
   });
 }
 
 export function useUpdateDynamicContent(gid: string) {
-  const qc = useQueryClient();
+  const invalidate = useInvalidateGroupContent(gid);
   return useMutation({
     mutationFn: async ({
       contentId,
@@ -252,20 +259,20 @@ export function useUpdateDynamicContent(gid: string) {
       return data;
     },
     onSuccess: (data) => {
-      invalidateGroupContent(qc, gid, data.id);
+      invalidate(data.id);
     },
   });
 }
 
 export function useRefreshDynamicContent(gid: string) {
-  const qc = useQueryClient();
+  const invalidate = useInvalidateGroupContent(gid);
   return useMutation({
     mutationFn: async (contentId: string) => {
       const { data } = await api.post<IngestResponseT>(`${API_V1}/contents/${contentId}/refresh`);
       return data;
     },
     onSuccess: (_data, contentId) => {
-      invalidateGroupContent(qc, gid, contentId);
+      invalidate(contentId);
     },
   });
 }

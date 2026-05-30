@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { cn } from '@/lib/cn';
 
 export interface SegmentOption<V extends string> {
@@ -20,6 +20,10 @@ export function SegmentToggle<V extends string>({
   className,
 }: SegmentToggleProps<V>) {
   const buttonRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  useEffect(() => {
+    buttonRefs.current.length = options.length;
+  }, [options.length]);
 
   function focusOption(index: number) {
     const next = options[index];

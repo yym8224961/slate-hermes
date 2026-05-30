@@ -3,19 +3,11 @@
 #include <button_gpio.h>
 #include <esp_log.h>
 
+#include <utility>
+
 namespace {
 constexpr char kTag[] = "Button";
 }
-
-#if CONFIG_SOC_ADC_SUPPORTED
-AdcButton::AdcButton(const button_adc_config_t& adc_config) : Button(nullptr) {
-    button_config_t btn_config = {
-        .long_press_time  = 2000,
-        .short_press_time = 0,
-    };
-    ESP_ERROR_CHECK(iot_button_new_adc_device(&btn_config, &adc_config, &button_handle_));
-}
-#endif
 
 Button::Button(button_handle_t button_handle) : button_handle_(button_handle) {
 }
@@ -62,84 +54,40 @@ bool Button::RegisterCallback(button_event_t event, button_event_args_t* args, b
     return true;
 }
 
-void Button::OnPressDown(std::function<void()> callback) {
+void Button::RegisterSimpleEvent(button_event_t event, std::function<void()>& storage, bool& registered,
+                                 std::function<void()> callback) {
     if (button_handle_ == nullptr) {
         return;
     }
-    on_press_down_ = callback;
+    storage = std::move(callback);
     RegisterCallback(
-        BUTTON_PRESS_DOWN, nullptr,
+        event, nullptr,
         [](void* handle, void* usr_data) {
-            Button* button = static_cast<Button*>(usr_data);
-            if (button->on_press_down_) {
-                button->on_press_down_();
-            }
+            auto* cb = static_cast<std::function<void()>*>(usr_data);
+            if (*cb)
+                (*cb)();
         },
-        this, press_down_registered_);
+        &storage, registered);
+}
+
+void Button::OnPressDown(std::function<void()> callback) {
+    RegisterSimpleEvent(BUTTON_PRESS_DOWN, on_press_down_, press_down_registered_, std::move(callback));
 }
 
 void Button::OnPressUp(std::function<void()> callback) {
-    if (button_handle_ == nullptr) {
-        return;
-    }
-    on_press_up_ = callback;
-    RegisterCallback(
-        BUTTON_PRESS_UP, nullptr,
-        [](void* handle, void* usr_data) {
-            Button* button = static_cast<Button*>(usr_data);
-            if (button->on_press_up_) {
-                button->on_press_up_();
-            }
-        },
-        this, press_up_registered_);
+    RegisterSimpleEvent(BUTTON_PRESS_UP, on_press_up_, press_up_registered_, std::move(callback));
 }
 
 void Button::OnLongPress(std::function<void()> callback) {
-    if (button_handle_ == nullptr) {
-        return;
-    }
-    on_long_press_ = callback;
-    RegisterCallback(
-        BUTTON_LONG_PRESS_START, nullptr,
-        [](void* handle, void* usr_data) {
-            Button* button = static_cast<Button*>(usr_data);
-            if (button->on_long_press_) {
-                button->on_long_press_();
-            }
-        },
-        this, long_press_registered_);
+    RegisterSimpleEvent(BUTTON_LONG_PRESS_START, on_long_press_, long_press_registered_, std::move(callback));
 }
 
 void Button::OnClick(std::function<void()> callback) {
-    if (button_handle_ == nullptr) {
-        return;
-    }
-    on_click_ = callback;
-    RegisterCallback(
-        BUTTON_SINGLE_CLICK, nullptr,
-        [](void* handle, void* usr_data) {
-            Button* button = static_cast<Button*>(usr_data);
-            if (button->on_click_) {
-                button->on_click_();
-            }
-        },
-        this, click_registered_);
+    RegisterSimpleEvent(BUTTON_SINGLE_CLICK, on_click_, click_registered_, std::move(callback));
 }
 
 void Button::OnDoubleClick(std::function<void()> callback) {
-    if (button_handle_ == nullptr) {
-        return;
-    }
-    on_double_click_ = callback;
-    RegisterCallback(
-        BUTTON_DOUBLE_CLICK, nullptr,
-        [](void* handle, void* usr_data) {
-            Button* button = static_cast<Button*>(usr_data);
-            if (button->on_double_click_) {
-                button->on_double_click_();
-            }
-        },
-        this, double_click_registered_);
+    RegisterSimpleEvent(BUTTON_DOUBLE_CLICK, on_double_click_, double_click_registered_, std::move(callback));
 }
 
 void Button::OnMultipleClick(std::function<void()> callback, uint8_t click_count) {

@@ -14,15 +14,19 @@
 #include <cstdio>
 #include <cstring>
 
+#include "cache_staging.h"
 #include "config.h"
 #include "frame_view.h"
 #include "scoped_mutex_lock.h"
 
 namespace {
-constexpr char kTag[]           = "Cache";
-constexpr char kRoot[]          = "/littlefs";
-constexpr long kMaxReadBytes    = AUDIO_MAX_PCM_BYTES;
-constexpr long kFrameImageBytes = FrameView::kRawBytes;
+constexpr char kTag[]                = "Cache";
+constexpr char kRoot[]               = "/littlefs";
+constexpr long kMaxAudioReadBytes    = AUDIO_MAX_PCM_BYTES;
+constexpr long kMaxStateJsonBytes    = 4 * 1024;
+constexpr long kMaxManifestJsonBytes = 64 * 1024;
+constexpr long kMaxFrameMetaBytes    = 2 * 1024;
+constexpr long kFrameImageBytes      = FrameView::kRawBytes;
 }  // namespace
 
 namespace {
@@ -63,14 +67,14 @@ bool WriteAll(const std::string& path, const void* data, size_t len) {
     return true;
 }
 
-bool ReadAll(const std::string& path, std::vector<uint8_t>& out) {
+bool ReadAll(const std::string& path, std::vector<uint8_t>& out, long max_read_bytes) {
     struct stat st;
     if (stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
         return false;
     const off_t len = st.st_size;
     if (len < 0)
         return false;
-    if (len > kMaxReadBytes) {
+    if (len > max_read_bytes) {
         ESP_LOGW(kTag, "Read %s refused: %ld B exceeds limit", path.c_str(), len);
         return false;
     }
@@ -85,7 +89,7 @@ bool ReadAll(const std::string& path, std::vector<uint8_t>& out) {
 
 std::string SafePathComponent(const std::string& raw) {
     static constexpr char kHex[] = "0123456789ABCDEF";
-    std::string out;
+    std::string           out;
     out.reserve(raw.size() * 3);
     for (unsigned char ch : raw) {
         if (std::isalnum(ch) || ch == '-' || ch == '_')
@@ -137,13 +141,37 @@ struct StateJson {
     }
 };
 
+struct StateCache {
+    bool        loaded = false;
+    bool        exists = false;
+    std::string selected_group_id;
+    std::string last_etag;
+    int         current_frame_seq = 0;
+    uint32_t    cache_access_seq  = 0;
+};
+
+StateCache& StateCacheUnlocked() {
+    static StateCache s_cache;
+    return s_cache;
+}
+
 StateJson ReadStateJsonUnlocked() {
-    StateJson state;
+    StateJson            state;
     std::vector<uint8_t> buf;
-    if (!ReadAll(StatePath(), buf))
+    if (!ReadAll(StatePath(), buf, kMaxStateJsonBytes))
         return state;
     state.root = cJSON_ParseWithLength(reinterpret_cast<const char*>(buf.data()), buf.size());
     return state;
+}
+
+void ResetStateCacheUnlocked() {
+    auto& cache             = StateCacheUnlocked();
+    cache.loaded            = false;
+    cache.exists            = false;
+    cache.selected_group_id = "";
+    cache.last_etag         = "";
+    cache.current_frame_seq = 0;
+    cache.cache_access_seq  = 0;
 }
 
 std::string JsonStringField(cJSON* root, const char* key) {
@@ -186,6 +214,39 @@ bool WriteStateJsonUnlocked(const std::string& selected_group_id, const std::str
     cJSON_Delete(root);
     return ok;
 }
+
+bool LoadStateCacheUnlocked() {
+    auto& cache = StateCacheUnlocked();
+    if (cache.loaded)
+        return cache.exists;
+
+    StateJson state = ReadStateJsonUnlocked();
+    cache.loaded    = true;
+    if (!state.root) {
+        cache.exists            = false;
+        cache.selected_group_id = "";
+        cache.last_etag         = "";
+        cache.current_frame_seq = 0;
+        cache.cache_access_seq  = 0;
+        return false;
+    }
+
+    cache.exists            = true;
+    cache.selected_group_id = JsonStringField(state.root, "selected_group_id");
+    cache.last_etag         = JsonStringField(state.root, "last_etag");
+    cache.current_frame_seq = JsonNonNegativeIntField(state.root, "current_frame_seq", 0);
+    cache.cache_access_seq  = JsonUint32Field(state.root, "cache_access_seq", 0);
+    return true;
+}
+
+bool PersistStateCacheUnlocked() {
+    auto& cache  = StateCacheUnlocked();
+    cache.loaded = true;
+    cache.exists = true;
+    return WriteStateJsonUnlocked(cache.selected_group_id, cache.last_etag, cache.current_frame_seq,
+                                  cache.cache_access_seq);
+}
+
 std::string FramesDir(const std::string& gid) {
     return GroupDir(gid) + "/frames";
 }
@@ -207,34 +268,12 @@ std::string StageImagePath(const std::string& gid, int idx) {
 std::string StageAudioPath(const std::string& gid, int idx) {
     return StageDir(gid) + "/" + std::to_string(idx) + ".pcm";
 }
-std::string StageEtagPath(const std::string& gid, int idx, const char* ext) {
-    return StageDir(gid) + "/" + std::to_string(idx) + "." + ext + ".etag";
-}
-
-bool MatchEtag(const std::string& path, const std::string& expected) {
-    if (expected.empty())
+bool RemoveTreeInternal(const std::string& path, int depth) {
+    constexpr int kMaxRemoveTreeDepth = 16;
+    if (depth > kMaxRemoveTreeDepth) {
+        ESP_LOGW(kTag, "RemoveTree refused: depth>%d at %s", kMaxRemoveTreeDepth, path.c_str());
         return false;
-    FILE* f = fopen(path.c_str(), "rb");
-    if (!f)
-        return false;
-    char   buf[256];
-    size_t n        = fread(buf, 1, sizeof(buf), f);
-    bool   read_err = ferror(f) != 0;
-    bool   too_long = false;
-    if (!read_err && n == sizeof(buf)) {
-        too_long = fgetc(f) != EOF;
     }
-    fclose(f);
-    if (read_err || too_long)
-        return false;
-    return expected.size() == n && std::memcmp(expected.data(), buf, n) == 0;
-}
-
-bool WriteEtag(const std::string& path, const std::string& etag) {
-    return WriteAll(path, etag.data(), etag.size());
-}
-
-bool RemoveTree(const std::string& path) {
     DIR* dir = opendir(path.c_str());
     if (!dir) {
         return errno == ENOENT;
@@ -250,7 +289,7 @@ bool RemoveTree(const std::string& path) {
             continue;
         }
         if (S_ISDIR(st.st_mode)) {
-            ok = RemoveTree(child) && ok;
+            ok = RemoveTreeInternal(child, depth + 1) && ok;
         } else if (unlink(child.c_str()) != 0 && errno != ENOENT) {
             ESP_LOGW(kTag, "Unlink %s failed: %d", child.c_str(), errno);
             ok = false;
@@ -264,16 +303,13 @@ bool RemoveTree(const std::string& path) {
     return ok;
 }
 
+bool RemoveTree(const std::string& path) {
+    return RemoveTreeInternal(path, 0);
+}
+
 bool PathExists(const std::string& path) {
     struct stat st;
     return stat(path.c_str(), &st) == 0;
-}
-
-bool RenameReplace(const std::string& from, const std::string& to) {
-    if (rename(from.c_str(), to.c_str()) == 0)
-        return true;
-    ESP_LOGW(kTag, "Rename %s -> %s failed: %d", from.c_str(), to.c_str(), errno);
-    return false;
 }
 
 bool RemoveIfExists(const std::string& path) {
@@ -281,69 +317,6 @@ bool RemoveIfExists(const std::string& path) {
         return true;
     ESP_LOGW(kTag, "Unlink %s failed: %d", path.c_str(), errno);
     return false;
-}
-
-struct StagedSwap {
-    std::string staged;
-    std::string target;
-    std::string backup;
-    bool        had_target = false;
-    bool        installed  = false;
-};
-
-void RollbackStagedSwaps(std::vector<StagedSwap>& swaps) {
-    for (auto it = swaps.rbegin(); it != swaps.rend(); ++it) {
-        if (it->installed) {
-            if (rename(it->target.c_str(), it->staged.c_str()) != 0 && errno != ENOENT) {
-                ESP_LOGW(kTag, "Rollback move %s -> %s failed: %d", it->target.c_str(), it->staged.c_str(), errno);
-                RemoveIfExists(it->target);
-            }
-            it->installed = false;
-        }
-        if (it->had_target) {
-            if (rename(it->backup.c_str(), it->target.c_str()) != 0) {
-                ESP_LOGE(kTag, "Rollback restore %s -> %s failed: %d", it->backup.c_str(), it->target.c_str(), errno);
-            }
-            it->had_target = false;
-        } else {
-            RemoveIfExists(it->backup);
-        }
-    }
-}
-
-bool CommitStagedSwaps(std::vector<StagedSwap>& swaps) {
-    for (auto& swap : swaps) {
-        if (!RemoveIfExists(swap.backup)) {
-            RollbackStagedSwaps(swaps);
-            return false;
-        }
-        if (PathExists(swap.target)) {
-            if (!RenameReplace(swap.target, swap.backup)) {
-                RollbackStagedSwaps(swaps);
-                return false;
-            }
-            swap.had_target = true;
-        }
-        if (!RenameReplace(swap.staged, swap.target)) {
-            if (swap.had_target) {
-                if (RenameReplace(swap.backup, swap.target)) {
-                    swap.had_target = false;
-                } else {
-                    ESP_LOGE(kTag, "Restore %s after failed stage install failed", swap.target.c_str());
-                }
-            }
-            RollbackStagedSwaps(swaps);
-            return false;
-        }
-        swap.installed = true;
-    }
-    for (auto& swap : swaps) {
-        if (swap.had_target)
-            RemoveIfExists(swap.backup);
-        swap.had_target = false;
-        swap.installed  = false;
-    }
-    return true;
 }
 
 }  // namespace
@@ -393,6 +366,11 @@ bool FormatAll() {
         ESP_LOGE(kTag, "Littlefs remount after format failed: %s", esp_err_to_name(err));
         return false;
     }
+    {
+        ScopedMutexLock lock(StateMutex());
+        if (lock.locked())
+            ResetStateCacheUnlocked();
+    }
     DirEnsure(std::string(kRoot) + "/groups");
     return true;
 }
@@ -401,11 +379,11 @@ bool ReadStateMeta(std::string& selected_group_id, std::string& last_etag) {
     ScopedMutexLock lock(StateMutex());
     if (!lock.locked())
         return false;
-    StateJson state = ReadStateJsonUnlocked();
-    if (!state.root)
+    if (!LoadStateCacheUnlocked())
         return false;
-    selected_group_id = JsonStringField(state.root, "selected_group_id");
-    last_etag         = JsonStringField(state.root, "last_etag");
+    const auto& cache = StateCacheUnlocked();
+    selected_group_id = cache.selected_group_id;
+    last_etag         = cache.last_etag;
     return true;
 }
 
@@ -413,20 +391,20 @@ bool WriteStateMeta(const std::string& selected_group_id, const std::string& eta
     ScopedMutexLock lock(StateMutex());
     if (!lock.locked())
         return false;
-    StateJson state             = ReadStateJsonUnlocked();
-    int       current_frame_seq = state.root ? JsonNonNegativeIntField(state.root, "current_frame_seq", 0) : 0;
-    uint32_t  cache_access_seq  = state.root ? JsonUint32Field(state.root, "cache_access_seq", 0) : 0;
-    return WriteStateJsonUnlocked(selected_group_id, etag, current_frame_seq, cache_access_seq);
+    LoadStateCacheUnlocked();
+    auto& cache             = StateCacheUnlocked();
+    cache.selected_group_id = selected_group_id;
+    cache.last_etag         = etag;
+    return PersistStateCacheUnlocked();
 }
 
 std::string ReadCurrentManifestEtag() {
     ScopedMutexLock lock(StateMutex());
     if (!lock.locked())
         return "";
-    StateJson state = ReadStateJsonUnlocked();
-    if (!state.root)
+    if (!LoadStateCacheUnlocked())
         return "";
-    return JsonStringField(state.root, "last_etag");
+    return StateCacheUnlocked().last_etag;
 }
 
 bool ReadCurrentFrameSeq(int& out) {
@@ -434,13 +412,9 @@ bool ReadCurrentFrameSeq(int& out) {
     ScopedMutexLock lock(StateMutex());
     if (!lock.locked())
         return false;
-    StateJson state = ReadStateJsonUnlocked();
-    if (!state.root)
+    if (!LoadStateCacheUnlocked())
         return false;
-    cJSON* seq = cJSON_GetObjectItemCaseSensitive(state.root, "current_frame_seq");
-    if (!cJSON_IsNumber(seq) || seq->valueint < 0)
-        return false;
-    out = seq->valueint;
+    out = StateCacheUnlocked().current_frame_seq;
     return true;
 }
 
@@ -448,11 +422,10 @@ bool WriteCurrentFrameSeq(int seq) {
     ScopedMutexLock lock(StateMutex());
     if (!lock.locked())
         return false;
-    StateJson   state = ReadStateJsonUnlocked();
-    std::string gid   = state.root ? JsonStringField(state.root, "selected_group_id") : "";
-    std::string etag  = state.root ? JsonStringField(state.root, "last_etag") : "";
-    uint32_t    cache_access_seq = state.root ? JsonUint32Field(state.root, "cache_access_seq", 0) : 0;
-    return WriteStateJsonUnlocked(gid, etag, seq, cache_access_seq);
+    LoadStateCacheUnlocked();
+    auto& cache             = StateCacheUnlocked();
+    cache.current_frame_seq = seq < 0 ? 0 : seq;
+    return PersistStateCacheUnlocked();
 }
 
 bool ReadCachedGroupSummary(CachedGroupSummary& out) {
@@ -464,9 +437,9 @@ bool ReadCachedGroupSummary(CachedGroupSummary& out) {
         out = {};
         return false;
     }
-    out.name           = meta.name;
-    out.manifest_etag  = meta.manifest_etag;
-    out.content_count  = meta.content_count;
+    out.name          = meta.name;
+    out.manifest_etag = meta.manifest_etag;
+    out.content_count = meta.content_count;
     return true;
 }
 
@@ -478,7 +451,7 @@ std::string ManifestPath(const std::string& gid) {
 bool ReadManifestMetaFile(const std::string& path, ManifestMeta& out) {
     out = {};
     std::vector<uint8_t> buf;
-    if (!ReadAll(path, buf))
+    if (!ReadAll(path, buf, kMaxManifestJsonBytes))
         return false;
     cJSON* root = cJSON_ParseWithLength(reinterpret_cast<const char*>(buf.data()), buf.size());
     if (!root)
@@ -540,13 +513,11 @@ bool TouchGroup(const std::string& gid) {
         ScopedMutexLock lock(StateMutex());
         if (!lock.locked())
             return false;
-        StateJson   state             = ReadStateJsonUnlocked();
-        std::string selected_group_id = state.root ? JsonStringField(state.root, "selected_group_id") : "";
-        std::string etag              = state.root ? JsonStringField(state.root, "last_etag") : "";
-        int         current_frame_seq = state.root ? JsonNonNegativeIntField(state.root, "current_frame_seq", 0) : 0;
-        const uint32_t current_seq    = state.root ? JsonUint32Field(state.root, "cache_access_seq", 0) : 0;
-        next_seq                      = current_seq == UINT32_MAX ? UINT32_MAX : current_seq + 1;
-        if (!WriteStateJsonUnlocked(selected_group_id, etag, current_frame_seq, next_seq))
+        LoadStateCacheUnlocked();
+        auto& cache            = StateCacheUnlocked();
+        next_seq               = cache.cache_access_seq == UINT32_MAX ? UINT32_MAX : cache.cache_access_seq + 1;
+        cache.cache_access_seq = next_seq;
+        if (!PersistStateCacheUnlocked())
             return false;
     }
 
@@ -632,15 +603,19 @@ bool PruneOldGroups(const std::string& current_gid, const std::string& target_gi
 }
 
 bool FrameImageExists(const std::string& gid, int idx, const std::string& expected_etag) {
+    if (expected_etag.empty())
+        return false;
     struct stat st;
     if (stat(ImagePath(gid, idx).c_str(), &st) != 0)
         return false;
     if (st.st_size != kFrameImageBytes)
         return false;
-    return MatchEtag(EtagPath(gid, idx, "img"), expected_etag);
+    FrameMeta meta;
+    return ReadFrameMeta(gid, idx, meta) && meta.image_etag == expected_etag;
 }
 
 bool WriteFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag) {
+    (void)etag;
     if (bytes.size() != kFrameImageBytes) {
         ESP_LOGW(kTag, "Refuse frame image idx=%d: %u B, expected %u B", idx, static_cast<unsigned>(bytes.size()),
                  static_cast<unsigned>(kFrameImageBytes));
@@ -650,30 +625,36 @@ bool WriteFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>
     DirEnsure(FramesDir(gid));
     if (!WriteAll(ImagePath(gid, idx), bytes.data(), bytes.size()))
         return false;
-    return WriteEtag(EtagPath(gid, idx, "img"), etag);
+    RemoveIfExists(EtagPath(gid, idx, "img"));
+    return true;
 }
 
 bool ReadFrameImage(const std::string& gid, int idx, std::vector<uint8_t>& out) {
-    return ReadAll(ImagePath(gid, idx), out);
+    return ReadAll(ImagePath(gid, idx), out, kFrameImageBytes);
 }
 
 bool FrameAudioExists(const std::string& gid, int idx, const std::string& expected_etag) {
+    if (expected_etag.empty())
+        return false;
     struct stat st;
     if (stat(AudioPath(gid, idx).c_str(), &st) != 0)
         return false;
-    return MatchEtag(EtagPath(gid, idx, "pcm"), expected_etag);
+    FrameMeta meta;
+    return ReadFrameMeta(gid, idx, meta) && meta.audio_etag == expected_etag;
 }
 
 bool WriteFrameAudio(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag) {
+    (void)etag;
     DirEnsure(GroupDir(gid));
     DirEnsure(FramesDir(gid));
     if (!WriteAll(AudioPath(gid, idx), bytes.data(), bytes.size()))
         return false;
-    return WriteEtag(EtagPath(gid, idx, "pcm"), etag);
+    RemoveIfExists(EtagPath(gid, idx, "pcm"));
+    return true;
 }
 
 bool ReadFrameAudio(const std::string& gid, int idx, std::vector<uint8_t>& out) {
-    return ReadAll(AudioPath(gid, idx), out);
+    return ReadAll(AudioPath(gid, idx), out, kMaxAudioReadBytes);
 }
 
 namespace {
@@ -706,6 +687,49 @@ bool WriteFrameMetaFile(const std::string& path, const FrameMeta& meta) {
     cJSON_free(s);
     return ok;
 }
+
+bool ReadFrameMetaFile(const std::string& path, FrameMeta& out) {
+    out = {};
+    std::vector<uint8_t> buf;
+    if (!ReadAll(path, buf, kMaxFrameMetaBytes) || buf.empty())
+        return false;
+    cJSON* root = cJSON_ParseWithLength(reinterpret_cast<const char*>(buf.data()), buf.size());
+    if (!root)
+        return false;
+    cJSON* cap        = cJSON_GetObjectItemCaseSensitive(root, "status_bar_text");
+    cJSON* etag       = cJSON_GetObjectItemCaseSensitive(root, "content_etag");
+    cJSON* image_etag = cJSON_GetObjectItemCaseSensitive(root, "image_etag");
+    cJSON* audio_etag = cJSON_GetObjectItemCaseSensitive(root, "audio_etag");
+    cJSON* ttl        = cJSON_GetObjectItemCaseSensitive(root, "ttl_sec");
+    if (cJSON_IsString(cap) && cap->valuestring)
+        out.status_bar_text = cap->valuestring;
+    if (cJSON_IsString(etag) && etag->valuestring)
+        out.content_etag = etag->valuestring;
+    if (cJSON_IsString(image_etag) && image_etag->valuestring)
+        out.image_etag = image_etag->valuestring;
+    if (cJSON_IsString(audio_etag) && audio_etag->valuestring)
+        out.audio_etag = audio_etag->valuestring;
+    if (cJSON_IsNumber(ttl)) {
+        const double v = ttl->valuedouble;
+        if (v >= 0.0 && v <= static_cast<double>(UINT32_MAX)) {
+            out.has_ttl = true;
+            out.ttl_sec = static_cast<uint32_t>(v);
+        }
+    }
+    cJSON_Delete(root);
+    return true;
+}
+
+bool UpdateStagedFrameEtag(const std::string& gid, int idx, const std::string& image_etag,
+                           const std::string& audio_etag) {
+    FrameMeta meta;
+    ReadFrameMetaFile(StageMetaPath(gid, idx), meta);
+    if (!image_etag.empty())
+        meta.image_etag = image_etag;
+    if (!audio_etag.empty())
+        meta.audio_etag = audio_etag;
+    return WriteFrameMetaFile(StageMetaPath(gid, idx), meta);
+}
 }  // namespace
 
 void DeleteFrameAudio(const std::string& gid, int idx) {
@@ -727,36 +751,7 @@ bool WriteFrameMeta(const std::string& gid, int idx, const FrameMeta& meta) {
 }
 
 bool ReadFrameMeta(const std::string& gid, int idx, FrameMeta& out) {
-    out = {};
-    std::vector<uint8_t> buf;
-    if (!ReadAll(MetaPath(gid, idx), buf) || buf.empty())
-        return false;
-    cJSON* root = cJSON_ParseWithLength(reinterpret_cast<const char*>(buf.data()), buf.size());
-    if (!root)
-        return false;
-    cJSON* cap        = cJSON_GetObjectItemCaseSensitive(root, "status_bar_text");
-    cJSON* etag       = cJSON_GetObjectItemCaseSensitive(root, "content_etag");
-    cJSON* image_etag = cJSON_GetObjectItemCaseSensitive(root, "image_etag");
-    cJSON* audio_etag = cJSON_GetObjectItemCaseSensitive(root, "audio_etag");
-    cJSON* ttl        = cJSON_GetObjectItemCaseSensitive(root, "ttl_sec");
-    if (cJSON_IsString(cap) && cap->valuestring)
-        out.status_bar_text = cap->valuestring;
-    if (cJSON_IsString(etag) && etag->valuestring)
-        out.content_etag = etag->valuestring;
-    if (cJSON_IsString(image_etag) && image_etag->valuestring)
-        out.image_etag = image_etag->valuestring;
-    if (cJSON_IsString(audio_etag) && audio_etag->valuestring)
-        out.audio_etag = audio_etag->valuestring;
-    if (cJSON_IsNumber(ttl)) {
-        // NaN / 负数 / 越界值直接 cast 到 uint32_t 是 UB；显式范围校验后再 cast。
-        const double v = ttl->valuedouble;
-        if (v >= 0.0 && v <= static_cast<double>(UINT32_MAX)) {
-            out.has_ttl = true;
-            out.ttl_sec = static_cast<uint32_t>(v);
-        }
-    }
-    cJSON_Delete(root);
-    return true;
+    return ReadFrameMetaFile(MetaPath(gid, idx), out);
 }
 
 bool BeginFrameStage(const std::string& gid) {
@@ -775,10 +770,13 @@ void CleanupFrameStage(const std::string& gid) {
 }
 
 bool StagedFrameImageExists(const std::string& gid, int idx, const std::string& expected_etag) {
+    if (expected_etag.empty())
+        return false;
     struct stat st;
-    if (stat(StageImagePath(gid, idx).c_str(), &st) == 0 && st.st_size == kFrameImageBytes &&
-        MatchEtag(StageEtagPath(gid, idx, "img"), expected_etag)) {
-        return true;
+    if (stat(StageImagePath(gid, idx).c_str(), &st) == 0 && st.st_size == kFrameImageBytes) {
+        FrameMeta meta;
+        if (ReadFrameMetaFile(StageMetaPath(gid, idx), meta) && meta.image_etag == expected_etag)
+            return true;
     }
     return FrameImageExists(gid, idx, expected_etag);
 }
@@ -793,13 +791,18 @@ bool WriteStagedFrameImage(const std::string& gid, int idx, const std::vector<ui
     DirEnsure(StageDir(gid));
     if (!WriteAll(StageImagePath(gid, idx), bytes.data(), bytes.size()))
         return false;
-    return WriteEtag(StageEtagPath(gid, idx, "img"), etag);
+    RemoveIfExists(StageDir(gid) + "/" + std::to_string(idx) + ".img.etag");
+    return UpdateStagedFrameEtag(gid, idx, etag, "");
 }
 
 bool StagedFrameAudioExists(const std::string& gid, int idx, const std::string& expected_etag) {
+    if (expected_etag.empty())
+        return false;
     struct stat st;
-    if (stat(StageAudioPath(gid, idx).c_str(), &st) == 0 && MatchEtag(StageEtagPath(gid, idx, "pcm"), expected_etag)) {
-        return true;
+    if (stat(StageAudioPath(gid, idx).c_str(), &st) == 0) {
+        FrameMeta meta;
+        if (ReadFrameMetaFile(StageMetaPath(gid, idx), meta) && meta.audio_etag == expected_etag)
+            return true;
     }
     return FrameAudioExists(gid, idx, expected_etag);
 }
@@ -809,7 +812,8 @@ bool WriteStagedFrameAudio(const std::string& gid, int idx, const std::vector<ui
     DirEnsure(StageDir(gid));
     if (!WriteAll(StageAudioPath(gid, idx), bytes.data(), bytes.size()))
         return false;
-    return WriteEtag(StageEtagPath(gid, idx, "pcm"), etag);
+    RemoveIfExists(StageDir(gid) + "/" + std::to_string(idx) + ".pcm.etag");
+    return UpdateStagedFrameEtag(gid, idx, "", etag);
 }
 
 bool WriteStagedFrameMeta(const std::string& gid, int idx, const FrameMeta& meta) {
@@ -817,22 +821,20 @@ bool WriteStagedFrameMeta(const std::string& gid, int idx, const FrameMeta& meta
     return WriteFrameMetaFile(StageMetaPath(gid, idx), meta);
 }
 
-bool CommitStagedFrame(const std::string& gid, int idx, const std::string& image_etag,
-                       const std::string& audio_etag) {
+bool CommitStagedFrame(const std::string& gid, int idx, const std::string& image_etag, const std::string& audio_etag) {
     DirEnsure(GroupDir(gid));
     DirEnsure(FramesDir(gid));
 
-    const std::string staged_image      = StageImagePath(gid, idx);
-    const std::string staged_image_etag = StageEtagPath(gid, idx, "img");
-    const std::string staged_meta       = StageMetaPath(gid, idx);
-    const std::string staged_audio      = StageAudioPath(gid, idx);
-    const std::string staged_audio_etag = StageEtagPath(gid, idx, "pcm");
-    if (!PathExists(staged_meta)) {
+    const std::string staged_image = StageImagePath(gid, idx);
+    const std::string staged_meta  = StageMetaPath(gid, idx);
+    const std::string staged_audio = StageAudioPath(gid, idx);
+    FrameMeta         staged_frame_meta;
+    if (!ReadFrameMetaFile(staged_meta, staged_frame_meta)) {
         ESP_LOGW(kTag, "Missing staged meta for idx=%d", idx);
         return false;
     }
-    if (PathExists(staged_image) && !PathExists(staged_image_etag)) {
-        ESP_LOGW(kTag, "Missing staged image etag for idx=%d", idx);
+    if (staged_frame_meta.image_etag != image_etag) {
+        ESP_LOGW(kTag, "Staged image etag mismatch for idx=%d", idx);
         return false;
     }
     if (!PathExists(staged_image) && !FrameImageExists(gid, idx, image_etag)) {
@@ -840,8 +842,8 @@ bool CommitStagedFrame(const std::string& gid, int idx, const std::string& image
         return false;
     }
     if (!audio_etag.empty()) {
-        if (PathExists(staged_audio) && !PathExists(staged_audio_etag)) {
-            ESP_LOGW(kTag, "Missing staged audio etag for idx=%d", idx);
+        if (staged_frame_meta.audio_etag != audio_etag) {
+            ESP_LOGW(kTag, "Staged audio etag mismatch for idx=%d", idx);
             return false;
         }
         if (!PathExists(staged_audio) && !FrameAudioExists(gid, idx, audio_etag)) {
@@ -850,20 +852,23 @@ bool CommitStagedFrame(const std::string& gid, int idx, const std::string& image
         }
     }
 
-    std::vector<StagedSwap> swaps;
+    std::vector<staging::Swap> swaps;
     if (PathExists(staged_image)) {
         swaps.push_back({staged_image, ImagePath(gid, idx), ImagePath(gid, idx) + ".bak"});
-        swaps.push_back({staged_image_etag, EtagPath(gid, idx, "img"), EtagPath(gid, idx, "img") + ".bak"});
     }
     if (!audio_etag.empty() && PathExists(staged_audio)) {
         swaps.push_back({staged_audio, AudioPath(gid, idx), AudioPath(gid, idx) + ".bak"});
-        swaps.push_back({staged_audio_etag, EtagPath(gid, idx, "pcm"), EtagPath(gid, idx, "pcm") + ".bak"});
     }
     // Metadata is installed last so the old metadata remains authoritative until
-    // the image/audio payloads and etags are in place.
+    // the image/audio payloads are in place.
     swaps.push_back({staged_meta, MetaPath(gid, idx), MetaPath(gid, idx) + ".bak"});
 
-    return CommitStagedSwaps(swaps);
+    const bool ok = staging::CommitSwaps(swaps);
+    if (ok) {
+        RemoveIfExists(EtagPath(gid, idx, "img"));
+        RemoveIfExists(EtagPath(gid, idx, "pcm"));
+    }
+    return ok;
 }
 
 }  // namespace cache

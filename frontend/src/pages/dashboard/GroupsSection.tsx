@@ -4,15 +4,15 @@ import type { GroupSummaryT } from 'shared';
 import { useCreateGroup, useDeleteGroup, useReorderGroups } from '@/features/groups/queries';
 import { CreateGroupDialog } from '@/features/groups/components/CreateGroupDialog';
 import { GroupCardSortable } from '@/features/groups/components/GroupCard';
-import { useConfirm } from '@/components/feedback/Confirm';
-import { useToast } from '@/components/feedback/Toast';
+import { useConfirmAction } from '@/components/feedback/useConfirmAction';
+import { useToast } from '@/components/feedback/useToast';
 import { Section } from '@/components/layout/Section';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Spinner } from '@/components/ui/Spinner';
 import { SortableGrid } from '@/components/ui/SortableGrid';
 import { getApiErrorMessage } from '@/lib/api-errors';
-import { useDndOrder } from '@/hooks/dnd';
+import { useDndOrder } from '@/hooks/useDndOrder';
 
 interface GroupsSectionProps {
   groups: GroupSummaryT[] | undefined;
@@ -24,10 +24,33 @@ export const GroupsSection = memo(function GroupsSection({
   isPending,
 }: GroupsSectionProps) {
   const create = useCreateGroup();
-  const del = useDeleteGroup();
+  const { mutate: deleteGroupMutate, isPending: deletePending } = useDeleteGroup();
   const reorder = useReorderGroups();
   const toast = useToast();
-  const confirm = useConfirm();
+  const deleteGroup = useConfirmAction<GroupSummaryT>({
+    isPending: deletePending,
+    getConfirmOptions: useCallback(
+      (group) => ({
+        title: `删除「${group.name}」？`,
+        description: `这一组连同 ${group.content_count} 项内容的图片与音频会全部删除，不可逆。`,
+        destructive: true,
+        confirmText: '删除整组',
+      }),
+      []
+    ),
+    run: useCallback(
+      (group, callbacks) => deleteGroupMutate(group.id, callbacks),
+      [deleteGroupMutate]
+    ),
+    successToast: '已删除',
+    errorToast: '删除失败',
+  });
+  const renderGroup = useCallback(
+    (group: GroupSummaryT) => (
+      <GroupCardSortable group={group} deleteDisabled={deletePending} onDelete={deleteGroup} />
+    ),
+    [deleteGroup, deletePending]
+  );
 
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -70,26 +93,7 @@ export const GroupsSection = memo(function GroupsSection({
           onDragEnd={onDragEnd}
           getKey={(group) => group.id}
           className="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fade-up fade-up-2"
-          renderItem={(group) => (
-            <GroupCardSortable
-              group={group}
-              deleteDisabled={del.isPending}
-              onDelete={async () => {
-                if (del.isPending) return;
-                const ok = await confirm({
-                  title: `删除「${group.name}」？`,
-                  description: `这一组连同 ${group.content_count} 项内容的图片与音频会全部删除，不可逆。`,
-                  destructive: true,
-                  confirmText: '删除整组',
-                });
-                if (!ok) return;
-                del.mutate(group.id, {
-                  onSuccess: () => toast.success('已删除'),
-                  onError: (err) => toast.error('删除失败', getApiErrorMessage(err)),
-                });
-              }}
-            />
-          )}
+          renderItem={renderGroup}
         />
       ) : (
         <EmptyState

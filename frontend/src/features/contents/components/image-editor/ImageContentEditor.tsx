@@ -14,12 +14,12 @@ import {
   useGenerateContentTts,
   useUpdateImageContent,
 } from '@/features/contents/queries';
-import { useToast } from '@/components/feedback/Toast';
+import { useToast } from '@/components/feedback/useToast';
 import { FormActions } from '@/components/ui/FormActions';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TYPE_META } from '@/features/contents/model/type-meta';
 import { getApiErrorMessage } from '@/lib/api-errors';
-import { useImageContentForm } from './useImageContentForm';
+import { useImageContentForm } from '@/features/contents/hooks/useImageContentForm';
 import { ImageFormBody } from './ImageFormBody';
 
 interface ImageContentEditorProps {
@@ -35,23 +35,23 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
   const toast = useToast();
   const form = useImageContentForm(content);
 
-  const existingImg = useContentImage(content.id, !form.imageFile ? content.image_etag : null);
-  const canSubmit = form.canEdit;
+  const existingImg = useContentImage(content.id, !form.image.file ? content.image_etag : null);
+  const canSubmit = form.form.canEdit;
 
   async function submitContent() {
     try {
-      const fd = await form.buildFormData();
-      if (form.hasImagePatch) {
+      const fd = await form.form.buildFormData();
+      if (form.form.hasImagePatch) {
         await updateImageContent.mutateAsync({ contentId: content.id, form: fd });
       }
-      if (form.wantsTts) {
+      if (form.audio.wantsTts) {
         try {
           await generateTts.mutateAsync({
             contentId: content.id,
-            body: { text: form.trimmedTtsText, voice: form.ttsVoice },
+            body: { text: form.audio.trimmedTtsText, voice: form.audio.ttsVoice },
           });
         } catch (err) {
-          const title = form.hasImagePatch ? '图片/名称已保存，TTS 生成失败' : 'TTS 生成失败';
+          const title = form.form.hasImagePatch ? '图片/名称已保存，TTS 生成失败' : 'TTS 生成失败';
           toast.error(title, `${getApiErrorMessage(err)}。可调整 TTS 文案后重新保存。`);
           return;
         }
@@ -84,7 +84,7 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
             form={form}
             isEdit
             existingImage={existingImg.data}
-            existingImagePending={existingImg.isPending && !form.imageFile}
+            existingImagePending={existingImg.isPending && !form.image.file}
             hasExistingAudio={!!content.audio_etag}
             editingContentId={content.id}
             audioStatus={content.audio_status}

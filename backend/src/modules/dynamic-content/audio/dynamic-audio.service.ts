@@ -10,9 +10,10 @@ import { BlobService } from '../../../infra/blob/blob.service';
 import { AppConfig } from '../../../infra/config/app.config';
 import { PrismaService } from '../../../infra/prisma/prisma.service';
 import { computeETag } from '../../../common/etag/etag.util';
-import { formatError, recordValue, shortRegionName, valueText } from '../../../common/utils';
+import { formatError } from '../../../common/error-format';
+import { recordValue, valueText } from '../../../common/value-utils';
 import { audioBlobContentId } from '../../audio/audio-blob-id';
-import { deleteAudioBlob, readAudioBlob } from '../../audio/audio-blob-store';
+import { deleteContentAudioBlob, readContentAudioBlob } from '../../audio/content-audio-blobs';
 import { GroupsService } from '../../groups/groups.service';
 import { TtsService } from '../../tts/tts.service';
 import {
@@ -22,6 +23,7 @@ import {
 } from '../history-today.data';
 import { cnMonthDay, datePartsInTz, timezoneFromConfig } from '../timezone';
 import { claimLeaseJobs } from '../lease-claim';
+import { shortRegionName } from '../weather-region';
 
 type TtsVoiceValue = (typeof TTS_VOICES)[number];
 
@@ -100,7 +102,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
       content.audioStatus === 'ready' &&
       content.audioVoice === voice &&
       content.audioText === text &&
-      (await this.readAudioBlob(content.groupId, content.id, previousAudioEtag))
+      (await readContentAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag))
     ) {
       return false;
     }
@@ -128,7 +130,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
       },
     });
     if (updated.count !== 1) return false;
-    await deleteAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag);
+    await deleteContentAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag);
     return true;
   }
 
@@ -284,7 +286,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
       select: { audioEtag: true },
     });
     if (row?.audioEtag === etag) return;
-    await deleteAudioBlob(this.blob, groupId, contentId, etag);
+    await deleteContentAudioBlob(this.blob, groupId, contentId, etag);
   }
 
   private async markFailedOrRetry(
@@ -361,16 +363,8 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
         audioAttempts: 0,
       },
     });
-    await deleteAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag);
+    await deleteContentAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag);
     return true;
-  }
-
-  private async readAudioBlob(
-    groupId: string,
-    contentId: string,
-    audioEtag: string
-  ): Promise<Buffer | null> {
-    return readAudioBlob(this.blob, groupId, contentId, audioEtag);
   }
 
   private scheduleTick(delayMs: number): void {

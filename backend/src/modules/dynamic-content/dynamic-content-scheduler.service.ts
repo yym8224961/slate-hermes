@@ -1,7 +1,8 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { AppConfig } from '../../infra/config/app.config';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { formatError } from '../../common/utils';
+import { formatError } from '../../common/error-format';
+import { WorkerLoop } from '../../common/worker-loop';
 import { DynamicContentRendererService } from './dynamic-content-renderer.service';
 import { claimLeaseJobs } from './lease-claim';
 
@@ -22,74 +23,58 @@ interface RefreshJob {
 @Injectable()
 export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DynamicContentSchedulerService.name);
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private running = false;
-  private stopped = false;
+  private readonly loop: WorkerLoop;
 
   constructor(
     private readonly config: AppConfig,
     private readonly prisma: PrismaService,
     private readonly renderer: DynamicContentRendererService
-  ) {}
+  ) {
+    this.loop = new WorkerLoop({
+      run: () => this.runBatch(),
+      onError: (err) => {
+        this.logger.warn(
+          `dynamic refresh scheduler tick failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      },
+      fallbackDelayMs: WORKER_INTERVAL_MS,
+    });
+  }
 
   onModuleInit(): void {
     if (!this.config.backgroundWorkers) return;
-    if (this.timer) return;
-    this.stopped = false;
-    this.schedule(0);
+    this.loop.start(0);
   }
 
   onModuleDestroy(): void {
-    this.stopped = true;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
+    this.loop.stop();
   }
 
   async tick(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    try {
-      const jobs = await this.claimDueJobs(WORKER_BATCH_SIZE);
-      await Promise.all(
-        jobs.map((job) =>
-          this.renderDue(job.id, job.dynamicType).catch(async (err: unknown) => {
-            this.logger.warn(
-              `dynamic refresh job failed content=${job.id}: ${
-                err instanceof Error ? err.message : String(err)
-              }`
-            );
-            await this.markRetry(job, err).catch((retryErr: unknown) => {
-              this.logger.error(
-                `dynamic refresh retry mark failed content=${job.id}: ${formatError(retryErr)}`
-              );
-            });
-          })
-        )
-      );
-      const delayMs =
-        jobs.length >= WORKER_BATCH_SIZE ? 0 : await this.nextDelayMs(jobs.length > 0);
-      this.schedule(delayMs);
-    } catch (err) {
-      this.logger.warn(
-        `dynamic refresh scheduler tick failed: ${err instanceof Error ? err.message : String(err)}`
-      );
-      this.schedule(WORKER_INTERVAL_MS);
-    } finally {
-      this.running = false;
-    }
+    await this.loop.tick();
   }
 
-  private schedule(delayMs: number): void {
-    if (this.stopped) return;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = setTimeout(
-      () => {
-        this.timer = null;
-        void this.tick();
-      },
-      Math.max(delayMs, 0)
+  private async runBatch(): Promise<number> {
+    const jobs = await this.claimDueJobs(WORKER_BATCH_SIZE);
+    await Promise.all(
+      jobs.map((job) =>
+        this.renderDue(job.id, job.dynamicType).catch(async (err: unknown) => {
+          this.logger.warn(
+            `dynamic refresh job failed content=${job.id}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+          await this.markRetry(job, err).catch((retryErr: unknown) => {
+            this.logger.error(
+              `dynamic refresh retry mark failed content=${job.id}: ${formatError(retryErr)}`
+            );
+          });
+        })
+      )
     );
-    this.timer.unref?.();
+    return jobs.length >= WORKER_BATCH_SIZE ? 0 : this.nextDelayMs(jobs.length > 0);
   }
 
   private async claimDueJobs(limit: number): Promise<RefreshJob[]> {

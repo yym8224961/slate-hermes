@@ -111,6 +111,7 @@ export class AiService {
 
   private async requestJson(input: { system: string; user: string }): Promise<string | null> {
     const url = `${this.config.aiBaseUrl!.replace(/\/+$/, '')}/chat/completions`;
+    let body: string;
     try {
       const resp = await fetchWithTimeout(url, {
         method: 'POST',
@@ -131,19 +132,37 @@ export class AiService {
       });
       if (!resp.ok) {
         const detail = await resp.text().catch(() => '');
-        throw new Error(`AI HTTP ${resp.status}${detail ? `: ${detail.slice(0, 240)}` : ''}`);
+        throw new AiResponseError(
+          `AI HTTP ${resp.status}${detail ? `: ${detail.slice(0, 240)}` : ''}`
+        );
       }
-      const body = await readResponseText(resp, MAX_AI_RESPONSE_BYTES);
-      const content = parseChatCompletionContent(body);
-      if (!content) {
-        throw new Error(`AI 响应无有效内容: ${body.slice(0, 240)}`);
-      }
-      return content;
+      body = await readResponseText(resp, MAX_AI_RESPONSE_BYTES);
     } catch (err) {
+      if (!isRecoverableAiRequestError(err)) throw err;
       this.logger.warn(`AI request failed: ${err instanceof Error ? err.message : String(err)}`);
       return null;
     }
+
+    const content = parseChatCompletionContent(body);
+    if (!content) {
+      this.logger.warn(`AI request failed: AI 响应无有效内容: ${body.slice(0, 240)}`);
+      return null;
+    }
+    return content;
   }
+}
+
+class AiResponseError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AiResponseError';
+  }
+}
+
+function isRecoverableAiRequestError(err: unknown): boolean {
+  if (err instanceof AiResponseError) return true;
+  if (!(err instanceof Error)) return true;
+  return err.name === 'AbortError' || err.name === 'TimeoutError' || err instanceof TypeError;
 }
 
 async function readResponseText(resp: Response, maxBytes: number): Promise<string> {
@@ -158,7 +177,7 @@ async function readResponseText(resp: Response, maxBytes: number): Promise<strin
       bytes += value.byteLength;
       if (bytes > maxBytes) {
         await reader.cancel().catch(() => {});
-        throw new Error(`AI 响应超过 ${maxBytes} bytes`);
+        throw new AiResponseError(`AI 响应超过 ${maxBytes} bytes`);
       }
       chunks.push(value);
     }

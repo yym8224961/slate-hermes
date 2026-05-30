@@ -7,7 +7,7 @@ import { ValidationError } from '../errors';
 @Injectable()
 export class ZodValidationPipe implements PipeTransform {
   transform(value: unknown, metadata: ArgumentMetadata): unknown {
-    const schema = (metadata.metatype as unknown as { schema?: ZodType })?.schema;
+    const schema = dtoSchema(metadata.metatype);
     if (!schema) return value;
     try {
       return schema.parse(value);
@@ -18,4 +18,16 @@ export class ZodValidationPipe implements PipeTransform {
       throw err;
     }
   }
+}
+
+function dtoSchema(metatype: unknown): ZodType | undefined {
+  if (!hasSchemaProperty(metatype)) return undefined;
+  return metatype.schema instanceof ZodType ? metatype.schema : undefined;
+}
+
+function hasSchemaProperty(value: unknown): value is { schema?: unknown } {
+  return (
+    (typeof value === 'function' || (typeof value === 'object' && value !== null)) &&
+    'schema' in value
+  );
 }

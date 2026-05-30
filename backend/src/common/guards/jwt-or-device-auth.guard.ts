@@ -1,19 +1,18 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import { PrismaService } from '../../infra/prisma/prisma.service';
 import { AuthError } from '../errors';
 import { CURRENT_USER_KEY, type WebUserContext } from '../decorators/current-user.decorator';
 import { CURRENT_DEVICE_KEY, type DeviceContext } from '../decorators/current-device.decorator';
 import { readDeviceSecret } from './device-auth.guard';
-import { JwtTokenService } from '../../modules/auth/jwt-token.service';
-import { extractWebToken } from '../auth/http-token';
-import { authenticateDeviceSecret } from '../auth/device-secret-auth-cache';
+import { JwtTokenService } from '../../infra/auth/jwt-token.service';
+import { DeviceSecretAuthCacheService } from '../../infra/auth/device-secret-auth-cache.service';
+import { extractWebToken } from './http-token';
 
 @Injectable()
 export class JwtOrDeviceAuthGuard implements CanActivate {
   constructor(
     private readonly tokens: JwtTokenService,
-    private readonly prisma: PrismaService
+    private readonly deviceSecrets: DeviceSecretAuthCacheService
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -41,7 +40,7 @@ export class JwtOrDeviceAuthGuard implements CanActivate {
   ): Promise<boolean> {
     const secret = readDeviceSecret(req);
     if (!secret) return false;
-    const d = await authenticateDeviceSecret(this.prisma, secret);
+    const d = await this.deviceSecrets.authenticate(secret);
     if (!d) return false;
     req[CURRENT_DEVICE_KEY] = d;
     return true;

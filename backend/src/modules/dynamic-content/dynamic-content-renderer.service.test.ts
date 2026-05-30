@@ -3,7 +3,7 @@ import { FRAME_BYTES } from 'shared';
 import type { PrismaService } from '../../infra/prisma/prisma.service';
 import type { BlobService } from '../../infra/blob/blob.service';
 import type { GroupsService } from '../groups/groups.service';
-import type { DynamicFrameRendererService } from '../frame-renderer/dynamic-frame-renderer.service';
+import type { DynamicFrameRendererService } from './rendering/dynamic-frame-renderer.service';
 import type { DynamicAudioService } from './audio/dynamic-audio.service';
 import type { DynamicContentRegistry } from './dynamic-content-registry';
 import { DynamicContentRendererService } from './dynamic-content-renderer.service';

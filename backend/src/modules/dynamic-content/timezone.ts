@@ -1,3 +1,5 @@
+import { getDateTimeFormat } from '../../common/intl';
+
 export function timezoneFromConfig(config: unknown): string {
   if (config && typeof config === 'object' && !Array.isArray(config)) {
     const tz = (config as Record<string, unknown>).tz;
@@ -10,7 +12,7 @@ export function datePartsInTz(
   date: Date,
   timeZone: string
 ): { year: number; month: number; day: number } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
+  const parts = getDateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
     month: '2-digit',
@@ -126,7 +128,7 @@ function offsetsAround(utcMs: number, timeZone: string): Set<number> {
 }
 
 function dateTimePartsInTz(date: Date, timeZone: string): Required<WallTimeParts> {
-  const parts = new Intl.DateTimeFormat('en-CA', {
+  const parts = getDateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
     month: '2-digit',

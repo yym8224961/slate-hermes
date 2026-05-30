@@ -1,6 +1,5 @@
 #pragma once
 
-#include <button_adc.h>
 #include <button_gpio.h>
 #include <button_types.h>
 #include <driver/gpio.h>
@@ -27,6 +26,8 @@ class Button {
 
     bool RegisterCallback(button_event_t event, button_event_args_t* args, button_cb_t cb, void* user_data,
                           bool& registered);
+    void RegisterSimpleEvent(button_event_t event, std::function<void()>& storage, bool& registered,
+                             std::function<void()> callback);
 
     std::function<void()> on_press_down_;
     std::function<void()> on_press_up_;
@@ -42,17 +43,4 @@ class Button {
     bool    double_click_registered_   = false;
     bool    multiple_click_registered_ = false;
     uint8_t multiple_click_count_      = 0;
-};
-
-#if CONFIG_SOC_ADC_SUPPORTED
-class AdcButton : public Button {
-   public:
-    AdcButton(const button_adc_config_t& adc_config);
-};
-#endif
-
-class PowerSaveButton : public Button {
-   public:
-    PowerSaveButton(gpio_num_t gpio_num) : Button(gpio_num, false, 0, 0, true) {
-    }
 };

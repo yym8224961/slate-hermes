@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { API_V1, api } from '@/lib/http';
-import { queryKeys } from '@/lib/query-keys';
+import { dynamicKeys } from './query-keys';
 
 export interface WeatherCityResult {
   id: string;
@@ -12,7 +12,7 @@ export interface WeatherCityResult {
 export function useWeatherCitySearch(query: string, enabled: boolean) {
   const q = query.trim();
   return useQuery({
-    queryKey: queryKeys.dynamic.weatherCities(q),
+    queryKey: dynamicKeys.weatherCities(q),
     queryFn: async () => {
       const { data } = await api.get<WeatherCityResult[]>(`${API_V1}/dynamic/weather/cities`, {
         params: { q },

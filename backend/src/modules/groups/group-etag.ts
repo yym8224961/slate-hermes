@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ContentKind, Prisma } from '@prisma/client';
-import { deviceStatusBarText } from '../contents/content-status-bar';
+import { deviceStatusBarText } from '../contents/content-display-name';
 
 export interface GroupEtagContentRow {
   id: string;
@@ -25,6 +25,13 @@ export interface GroupEtagInput {
   name: string;
   sortOrder: number;
   contents: GroupEtagContentRow[];
+}
+
+export interface GroupManifestEtagInput {
+  name: string;
+  sortOrder: number;
+  structureEtag: string;
+  contents: Array<{ id: string; contentEtag: string }>;
 }
 
 export interface ComputedGroupEtags {
@@ -80,15 +87,24 @@ export function computeGroupEtags(group: GroupEtagInput): ComputedGroupEtags {
       [content.id, content.sortOrder, content.kind, content.dynamicType].join(':')
     ),
   ]);
-  const manifestEtag = hashParts([
+  const manifestEtag = computeGroupManifestEtag({
+    name: group.name,
+    sortOrder: group.sortOrder,
+    structureEtag,
+    contents: contentEtags.map((content) => ({ id: content.id, contentEtag: content.etag })),
+  });
+
+  return { structureEtag, manifestEtag, contentEtags };
+}
+
+export function computeGroupManifestEtag(group: GroupManifestEtagInput): string {
+  return hashParts([
     'manifest',
     group.name,
     group.sortOrder,
-    structureEtag,
-    ...contentEtags.map((content) => `${content.id}:${content.etag}`),
+    group.structureEtag,
+    ...group.contents.map((content) => `${content.id}:${content.contentEtag}`),
   ]);
-
-  return { structureEtag, manifestEtag, contentEtags };
 }
 
 function hashParts(parts: Array<string | number>): string {

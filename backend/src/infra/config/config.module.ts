@@ -16,7 +16,7 @@ import { AppConfig } from './app.config';
           for (const issue of parsed.error.issues) {
             console.error(`  ${issue.path.join('.')}: ${issue.message}`);
           }
-          process.exit(1);
+          throw parsed.error;
         }
         return parsed.data;
       },

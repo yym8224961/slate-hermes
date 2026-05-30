@@ -7,7 +7,7 @@ import { DitherControls } from './DitherControls';
 import { ImageAudioBlock } from './ImageAudioBlock';
 import { ImageDropzone } from './ImageDropzone';
 import { PreviewCanvas } from './PreviewCanvas';
-import type { useImageContentForm } from './useImageContentForm';
+import type { useImageContentForm } from '@/features/contents/hooks/useImageContentForm';
 
 interface ImageFormBodyProps {
   gid: string;
@@ -53,16 +53,16 @@ export function ImageFormBody({
           预览 · 1bpp · {FRAME_WIDTH}×{FRAME_HEIGHT}
         </p>
         <PreviewCanvas
-          canvasRef={form.previewRef}
-          imageFile={form.imageFile}
+          canvasRef={form.image.previewRef}
+          imageFile={form.image.file}
           existingImage={existingImage}
           existingImagePending={existingImagePending}
-          threshold={form.threshold}
-          mode={form.mode}
-          scale={form.scale}
-          offset={form.offset}
-          onOffsetChange={form.setOffset}
-          statusCaption={form.frameName.trim() || null}
+          threshold={form.dither.threshold}
+          mode={form.dither.mode}
+          scale={form.crop.scale}
+          offset={form.crop.offset}
+          onOffsetChange={form.crop.setOffset}
+          statusCaption={form.form.frameName.trim() || null}
           showSafeArea={showSafeArea}
         />
       </div>
@@ -74,8 +74,8 @@ export function ImageFormBody({
           <Input
             type="text"
             maxLength={64}
-            value={form.frameName}
-            onChange={(event) => form.setFrameName(event.target.value)}
+            value={form.form.frameName}
+            onChange={(event) => form.form.setFrameName(event.target.value)}
             placeholder={frameNamePlaceholder}
             autoFocus={frameNameAutoFocus}
           />
@@ -83,17 +83,17 @@ export function ImageFormBody({
 
         <FormSection label="类型参数" hint={isEdit ? '不传图片则保留原图。' : undefined}>
           <div className="space-y-4">
-            <ImageDropzone isEdit={isEdit} imageFile={form.imageFile} onPick={form.onImagePick} />
+            <ImageDropzone isEdit={isEdit} imageFile={form.image.file} onPick={form.image.onPick} />
             <DitherControls
-              mode={form.mode}
-              onModeChange={form.setMode}
-              threshold={form.threshold}
-              onThresholdChange={form.setThreshold}
-              disabled={isEdit && !form.imageFile}
-              hasImage={!!form.imageFile}
-              scale={form.scale}
-              onScaleChange={form.setScale}
-              onResetCrop={form.resetCrop}
+              mode={form.dither.mode}
+              onModeChange={form.dither.setMode}
+              threshold={form.dither.threshold}
+              onThresholdChange={form.dither.setThreshold}
+              disabled={isEdit && !form.image.file}
+              hasImage={!!form.image.file}
+              scale={form.crop.scale}
+              onScaleChange={form.crop.setScale}
+              onResetCrop={form.crop.reset}
             />
           </div>
         </FormSection>
@@ -101,14 +101,14 @@ export function ImageFormBody({
         <FormSection label="音频">
           <ImageAudioBlock
             gid={gid}
-            mode={form.audioMode}
-            onModeChange={form.setAudioMode}
-            audioFile={form.audioFile}
-            onAudioFileChange={form.setAudioFile}
-            ttsText={form.ttsText}
-            onTtsTextChange={form.setTtsText}
-            ttsVoice={form.ttsVoice}
-            onTtsVoiceChange={form.setTtsVoice}
+            mode={form.audio.mode}
+            onModeChange={form.audio.setMode}
+            audioFile={form.audio.file}
+            onAudioFileChange={form.audio.setFile}
+            ttsText={form.audio.ttsText}
+            onTtsTextChange={form.audio.setTtsText}
+            ttsVoice={form.audio.ttsVoice}
+            onTtsVoiceChange={form.audio.setTtsVoice}
             hasExistingAudio={hasExistingAudio}
             editingContentId={editingContentId}
             audioStatus={audioStatus}

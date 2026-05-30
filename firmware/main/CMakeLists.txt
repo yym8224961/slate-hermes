@@ -3,11 +3,15 @@ set(SOURCES
 
     "app/app.cc"
     "app/boot_mode.cc"
+    "app/combo_key.cc"
     "app/event_bus.cc"
     "app/power_state.cc"
     "app/scene.cc"
     "app/scene_stack.cc"
+    "app/shutdown_subsystems.cc"
+    "app/setup_flow.cc"
     "app/sleep_manager.cc"
+    "app/system_restart.cc"
     "app/time_tick.cc"
 
     "bsp/board.cc"
@@ -15,10 +19,11 @@ set(SOURCES
 
     "drivers/input/button.cc"
     "drivers/power/charge_status.cc"
-    "drivers/bus/i2c_power_hook.cc"
     "drivers/bus/i2c_device.cc"
     "drivers/bus/i2c_bus_lock.cc"
     "drivers/display/epd_ssd1683.cc"
+    "drivers/display/epd_ssd1683_commands.cc"
+    "drivers/display/epd_ssd1683_spi.cc"
     "drivers/display/epd_utils.cc"
     "drivers/audio/audio_player.cc"
     "drivers/audio/volume_store.cc"
@@ -29,22 +34,28 @@ set(SOURCES
     "network/sntp.cc"
     "network/dns_hijack.cc"
 
-    "protocol/api_client.cc"
-    "protocol/sync_service.cc"
+    "sync/api_client.cc"
+    "sync/sync_service.cc"
 
-    "chat/xiaozhi_audio_service.cc"
-    "chat/xiaozhi_chat_service.cc"
-    "chat/xiaozhi_config_client.cc"
-    "chat/xiaozhi_mqtt_protocol.cc"
-    "chat/xiaozhi_protocol.cc"
-    "chat/xiaozhi_settings.cc"
-    "chat/xiaozhi_websocket_protocol.cc"
+    "chat/config/xiaozhi_config_client.cc"
+    "chat/config/xiaozhi_settings.cc"
+    "chat/mcp/mcp_dispatcher.cc"
+    "chat/mcp/mcp_tools.cc"
+    "chat/protocol/audio_stream_packet.cc"
+    "chat/protocol/xiaozhi_mqtt_protocol.cc"
+    "chat/protocol/xiaozhi_protocol.cc"
+    "chat/protocol/xiaozhi_websocket_protocol.cc"
+    "chat/service/xiaozhi_audio_service.cc"
+    "chat/service/xiaozhi_chat_service.cc"
+    "chat/service/xiaozhi_message_handler.cc"
 
     "scenes/boot/boot_splash_scene.cc"
     "scenes/bg_refresh/bg_refresh_scene.cc"
     "scenes/chat/chat_scene.cc"
     "scenes/frame/frame_scene.cc"
     "scenes/settings/settings_scene.cc"
+    "scenes/settings/settings_page_base.cc"
+    "scenes/settings/confirm_action_page.cc"
     "scenes/settings/volume_page.cc"
     "scenes/settings/device_info_page.cc"
     "scenes/settings/restart_device_page.cc"
@@ -55,6 +66,7 @@ set(SOURCES
     "ui/menu_list.cc"
 
     "storage/cache.cc"
+    "storage/cache_staging.cc"
     "storage/nvs_store.cc"
 
     "generated/fonts/zfull_16.c"
@@ -65,9 +77,15 @@ set(SOURCES
 
 set(INCLUDE_DIRS
     "."
+)
+
+set(PRIVATE_INCLUDE_DIRS
     "app"
     "bsp"
-    "chat"
+    "chat/config"
+    "chat/mcp"
+    "chat/protocol"
+    "chat/service"
     "drivers"
     "drivers/audio"
     "drivers/bus"
@@ -77,7 +95,7 @@ set(INCLUDE_DIRS
     "generated"
     "generated/fonts"
     "network"
-    "protocol"
+    "sync"
     "scenes/boot"
     "scenes/bg_refresh"
     "scenes/chat"
@@ -91,6 +109,7 @@ set(INCLUDE_DIRS
 idf_component_register(
     SRCS ${SOURCES}
     INCLUDE_DIRS ${INCLUDE_DIRS}
+    PRIV_INCLUDE_DIRS ${PRIVATE_INCLUDE_DIRS}
     PRIV_REQUIRES
         78__esp-ml307
         espressif__esp_audio_codec

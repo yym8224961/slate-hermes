@@ -70,3 +70,19 @@ export function bulkSetContentSortOrder(
 ): Promise<void> {
   return bulkSetSortOrder(tx, 'contents', 'group_id', groupId, order);
 }
+
+export async function compactContentSortOrders(
+  tx: Prisma.TransactionClient,
+  groupId: string
+): Promise<void> {
+  const rows = await tx.content.findMany({
+    where: { groupId },
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    select: { id: true },
+  });
+  await bulkSetContentSortOrder(
+    tx,
+    groupId,
+    rows.map((row) => row.id)
+  );
+}

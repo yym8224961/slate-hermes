@@ -6,7 +6,7 @@
 import { DynamicContentEditor } from '@/features/dynamic/components/DynamicContentEditor';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Button } from '@/components/ui/Button';
-import { ContentEditorPageLayout } from './ContentEditorPageLayout';
+import { ContentEditorPageLayout } from '@/features/contents/components/ContentEditorPageLayout';
 
 export function DynamicContentEditorPage() {
   return (

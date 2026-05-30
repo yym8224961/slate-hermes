@@ -1,10 +1,18 @@
 import { Injectable } from '@nestjs/common';
 import { WeatherConfig, type WeatherConfigT } from 'shared';
+import { z } from 'zod';
 import { AppConfig } from '../../../infra/config/app.config';
 import { fetchJson as fetchJsonWithTimeout } from '../../../common/http/fetch';
-import { setBoundedCache } from '../../../common/utils';
+import { getDateTimeFormat } from '../../../common/intl';
+import { setBoundedCache } from '../../../common/cache-utils';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { datePartsInTz } from '../timezone';
+import {
+  CachedInflightFetcher,
+  DEFAULT_PROVIDER_CACHE_TTL_SEC,
+  DEFAULT_PROVIDER_FETCH_TIMEOUT_MS,
+  isRecentTimestamp,
+} from './provider-cache';
 
 export interface WeatherForecastDay {
   label: string;
@@ -26,11 +34,6 @@ export interface WeatherProviderData {
   obsTime: string;
   updatedAt: string;
   fc: WeatherForecastDay[];
-}
-
-interface CacheEntry {
-  data: WeatherProviderData;
-  fetchedAt: number;
 }
 
 interface LookupCacheEntry {
@@ -85,10 +88,8 @@ export interface WeatherCitySearchResult {
   adm2: string;
 }
 
-const DEFAULT_CACHE_TTL_SEC = 600;
 const LOOKUP_CACHE_TTL_MS = 86_400_000;
 const CITY_SEARCH_CACHE_TTL_MS = 3_600_000;
-const FETCH_TIMEOUT_MS = 5000;
 const FC_LABELS = ['今日', '明日', '后天'];
 const MAX_CACHE_ENTRIES = 128;
 const MAX_LOOKUP_CACHE_ENTRIES = 256;
@@ -97,7 +98,9 @@ const MAX_CITY_SEARCH_CACHE_ENTRIES = 128;
 @Injectable()
 export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProviderData> {
   readonly type = 'weather';
-  private readonly cache = new Map<string, CacheEntry>();
+  private readonly fetcher = new CachedInflightFetcher<string, WeatherProviderData>(
+    MAX_CACHE_ENTRIES
+  );
   private readonly lookupCache = new Map<string, LookupCacheEntry>();
   private readonly lookupInflight = new Map<string, Promise<string>>();
   private readonly citySearchCache = new Map<
@@ -105,7 +108,6 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
     { data: WeatherCitySearchResult[]; fetchedAt: number }
   >();
   private readonly citySearchInflight = new Map<string, Promise<WeatherCitySearchResult[]>>();
-  private readonly inflight = new Map<string, Promise<WeatherProviderData>>();
 
   constructor(private readonly config: AppConfig) {}
 
@@ -161,23 +163,10 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
   ): Promise<WeatherProviderData> {
     const key = this.cacheKey(config);
     const now = ctx.now.getTime();
-    const ttlSec = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_SEC, 300);
-    const ttlMs = ttlSec * 1000;
-    const existing = this.inflight.get(key);
-    if (existing) return existing;
-
-    const cached = this.cache.get(key);
-    if (cached && now - cached.fetchedAt < ttlMs) return cached.data;
-    if (cached) this.cache.delete(key);
-
-    const p = this.fetchFromQWeather(config, ctx)
-      .then((data) => {
-        setBoundedCache(this.cache, key, { data, fetchedAt: now }, MAX_CACHE_ENTRIES);
-        return data;
-      })
-      .finally(() => this.inflight.delete(key));
-    this.inflight.set(key, p);
-    return p;
+    const ttlSec = Math.max(config.refresh_interval_sec ?? DEFAULT_PROVIDER_CACHE_TTL_SEC, 300);
+    return this.fetcher.getOrFetch(key, now, ttlSec * 1000, () =>
+      this.fetchFromQWeather(config, ctx)
+    );
   }
 
   private async fetchFromQWeather(
@@ -330,8 +319,9 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
     lastData: unknown,
     now: Date
   ): WeatherProviderData | null {
-    if (!lastData || typeof lastData !== 'object' || Array.isArray(lastData)) return null;
-    const data = lastData as Partial<WeatherProviderData>;
+    const parsed = WeatherProviderDataFallback.safeParse(lastData);
+    if (!parsed.success) return null;
+    const data = parsed.data;
     if (!data.summary && data.tempC === undefined) return null;
     if (!isRecentTimestamp(data.updatedAt, now, reusableWeatherAgeMs(config))) return null;
     return {
@@ -350,23 +340,39 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
 }
 
 function reusableWeatherAgeMs(config: WeatherConfigT): number {
-  const ttlSec = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_SEC, 300);
+  const ttlSec = Math.max(config.refresh_interval_sec ?? DEFAULT_PROVIDER_CACHE_TTL_SEC, 300);
   return Math.min(Math.max(ttlSec * 3, 900), 43_200) * 1000;
-}
-
-function isRecentTimestamp(value: unknown, now: Date, maxAgeMs: number): boolean {
-  if (typeof value !== 'string') return false;
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) && now.getTime() - timestamp <= maxAgeMs;
 }
 
 async function fetchJson<T>(url: string, apiKey: string): Promise<T> {
   return fetchJsonWithTimeout<T>(url, {
-    timeoutMs: FETCH_TIMEOUT_MS,
+    timeoutMs: DEFAULT_PROVIDER_FETCH_TIMEOUT_MS,
     headers: { 'X-QW-Api-Key': apiKey },
     userAgent: null,
   });
 }
+
+const WeatherForecastDayFallback = z.object({
+  label: z.string(),
+  val: z.string(),
+  text: z.string(),
+  tempMin: z.union([z.number(), z.string()]),
+  tempMax: z.union([z.number(), z.string()]),
+  code: z.number(),
+});
+
+const WeatherProviderDataFallback = z.object({
+  tempC: z.union([z.number(), z.string()]).optional(),
+  feelsLikeC: z.union([z.number(), z.string()]).optional(),
+  humidity: z.union([z.number(), z.string()]).optional(),
+  pressure: z.union([z.number(), z.string()]).optional(),
+  windDisplay: z.string().optional(),
+  summary: z.string().optional(),
+  code: z.number().optional(),
+  obsTime: z.string().optional(),
+  updatedAt: z.string().optional(),
+  fc: z.array(WeatherForecastDayFallback).optional(),
+});
 
 function toDisplayNumber(value: unknown): number | string {
   if (typeof value === 'number' && Number.isFinite(value)) return Math.round(value);
@@ -389,7 +395,7 @@ export function forecastLabel(value: unknown, timeZone: string, now: Date): stri
   const date = new Date(Date.UTC(year, month - 1, day, 12, 0, 0));
   if (Number.isNaN(date.getTime())) return value.slice(5);
   try {
-    return new Intl.DateTimeFormat('zh-CN', {
+    return getDateTimeFormat('zh-CN', {
       timeZone,
       month: 'numeric',
       day: 'numeric',

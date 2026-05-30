@@ -2,6 +2,7 @@
 
 #include <driver/gpio.h>
 
+#include "config.h"
 #include "gpio_util.h"
 
 namespace {
@@ -53,3 +54,7 @@ void BoardPowerBsp::PowerAudioOn()  { GpioWriteHold(audioPowerPin_, 1); }
 void BoardPowerBsp::PowerAudioOff() { GpioWriteHold(audioPowerPin_, 0); }
 void BoardPowerBsp::VbatPowerOn()   { GpioWriteHold(vbatPowerPin_, 1); }
 void BoardPowerBsp::VbatPowerOff()  { GpioWriteHold(vbatPowerPin_, 0); }
+
+extern "C" void BoardI2cForcePowerOn() {
+    GpioWriteHold(AUDIO_PWR_PIN, AUDIO_PWR_FORCE_LEVEL);
+}

@@ -3,7 +3,7 @@
 
 import { useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ContentCreateEditor } from '@/features/contents/create/ContentCreateEditor';
+import { ContentCreateEditor } from '@/features/contents/components/create/ContentCreateEditor';
 import { EmptyState } from '@/components/ui/EmptyState';
 
 export function ContentNewPage() {

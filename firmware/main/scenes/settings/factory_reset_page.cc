@@ -1,87 +1,33 @@
 #include "factory_reset_page.h"
 
 #include <esp_log.h>
-#include <esp_system.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
 
 #include "cache.h"
 #include "cred_store.h"
-#include "epd_ssd1683.h"
-#include "event_bus.h"
 #include "nvs_schema.h"
 #include "nvs_store.h"
-#include "scene_stack.h"
-#include "theme.h"
+#include "system_restart.h"
 #include "xiaozhi_settings.h"
 
 namespace {
 constexpr char kTag[] = "FactoryReset";
 }
 
-FactoryResetPage::FactoryResetPage()  = default;
+FactoryResetPage::FactoryResetPage()
+    : ConfirmActionPage("FactoryReset", "恢复出厂",
+                        "确认要恢复出厂吗？\n\n"
+                        "Wi-Fi 配置、设备绑定\n"
+                        "小智配置及内容缓存\n"
+                        "将全部清除\n"
+                        "重启后进入配网模式",
+                        [](SceneContext&) {
+                            ESP_LOGW(kTag, "Long Enter -> factory reset: clear NVS + format littlefs + reboot");
+                            cred::Clear();
+                            nvs_store::EraseNamespace(nvs_schema::kAudio);
+                            xiaozhi::settings::ClearAll();
+                            cache::FormatAll();
+                            system_restart::GracefulRestart(200);
+                        }) {
+}
+
 FactoryResetPage::~FactoryResetPage() = default;
-
-void FactoryResetPage::OnEnter(SceneContext& ctx) {
-    if (!ctx.epd->Lock(2000))
-        return;
-
-    root_ = CreateFullscreenRoot();
-
-    status_bar_ = std::make_unique<StatusBar>(root_);
-    status_bar_->SetCaption("恢复出厂");
-    RefreshStatusBarFromSensors(ctx, *status_bar_);
-
-    auto* warn = lv_label_create(root_);
-    lv_obj_set_style_text_font(warn, &Zfull_16, 0);
-    lv_obj_set_style_text_color(warn, lv_color_black(), 0);
-    lv_obj_set_style_text_align(warn, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_style_text_line_space(warn, 8, 0);
-    lv_obj_set_width(warn, LV_HOR_RES - 64);
-    lv_label_set_long_mode(warn, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(warn,
-                      "确认要恢复出厂吗？\n\n"
-                      "Wi-Fi 配置、设备绑定\n"
-                      "小智配置及内容缓存\n"
-                      "将全部清除\n"
-                      "重启后进入配网模式");
-    lv_obj_align(warn, LV_ALIGN_CENTER, 0, -8);
-
-    auto* hint = lv_label_create(root_);
-    lv_obj_set_style_text_font(hint, &Zfull_16, 0);
-    lv_obj_set_style_text_color(hint, lv_color_black(), 0);
-    lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(hint, "按确认 返回   长按确认 执行");
-    lv_obj_align(hint, LV_ALIGN_BOTTOM_MID, 0, -16);
-
-    lv_refr_now(NULL);
-    ctx.epd->Unlock();
-    // OnEnter 走 partial:UI ↔ UI 切换 diff 小,EPD 看 diff>=30% 兜底升 full。
-    ctx.epd->RequestUrgentPartialRefresh();
-}
-
-void FactoryResetPage::OnExit(SceneContext& ctx) {
-    DestroyRoot(ctx, root_, [this]() { status_bar_.reset(); });
-}
-
-void FactoryResetPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
-    if (!root_)
-        return;
-    // 跟其他子页一致:短按确认 = 返回,长按确认 = 执行(危险动作)。
-    // UP/DOWN 短按忽略(防误触)。
-    if (e.kind == UiEventKind::kButtonShort && e.u.button.btn == ButtonId::kEnter) {
-        ctx.stack->RequestPop();
-        return;
-    }
-    if (e.kind == UiEventKind::kButtonLong && e.u.button.btn == ButtonId::kEnter) {
-        ESP_LOGW(kTag, "Long Enter -> factory reset: clear NVS + format littlefs + reboot");
-        // 顺序: NVS 清干净后 format LittleFS。两步任一失败都继续 esp_restart,
-        // 防止用户卡在 settings 不知所措;下次启动 App::Init 会按 boot_mode 决定下一步。
-        cred::Clear();
-        nvs_store::EraseNamespace(nvs_schema::kAudio);
-        xiaozhi::settings::ClearAll();
-        cache::FormatAll();
-        vTaskDelay(pdMS_TO_TICKS(200));
-        esp_restart();
-    }
-}

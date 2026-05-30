@@ -13,6 +13,7 @@
 
 #include "cache.h"
 #include "epd_ssd1683.h"
+#include "epd_utils.h"
 #include "event_bus.h"
 #include "frame_view.h"
 #include "power_state.h"
@@ -24,9 +25,7 @@ constexpr char kTag[] = "BgRefresh";
 constexpr int  kBpr   = FrameView::kWidth / 8;
 
 void PostBgRefreshDone() {
-    UiEvent e{};
-    e.kind = UiEventKind::kBgRefreshDone;
-    evt::Post(e);
+    evt::PostSimple(UiEventKind::kBgRefreshDone);
 }
 
 void PostBgRefreshDoneOnce(const std::shared_ptr<std::atomic<bool>>& done_posted) {
@@ -97,7 +96,7 @@ bool BgRefreshScene::SeedPreviousFrame(SceneContext& ctx) {
     if (!ctx.epd)
         return false;
 
-    std::array<uint8_t, power_state::kStatusBarSnapshotBytes> status_bar{};
+    std::array<uint8_t, epd::kStatusBarSnapshotBytes> status_bar{};
     const bool status_ok = power_state::LoadStatusBarSnapshot(status_bar.data(), status_bar.size());
     if (!status_ok) {
         ESP_LOGW(kTag, "No RTC status bar snapshot; partial seed unavailable");
@@ -131,8 +130,8 @@ bool BgRefreshScene::SeedPreviousFrame(SceneContext& ctx) {
 
     const int y = theme::kStatusBarHeight;
     const int h = FrameView::kHeight - y;
-    ctx.epd->SeedPreviousRaw1bpp(0, 0, power_state::kStatusBarSnapshotWidth, power_state::kStatusBarSnapshotHeight,
-                                 status_bar.data(), status_bar.size());
+    ctx.epd->SeedPreviousRaw1bpp(0, 0, epd::kStatusBarSnapshotWidth, epd::kStatusBarSnapshotHeight, status_bar.data(),
+                                 status_bar.size());
     ctx.epd->SeedPreviousRaw1bpp(0, y, FrameView::kWidth, h, raw.data() + y * kBpr, h * kBpr);
     return true;
 }

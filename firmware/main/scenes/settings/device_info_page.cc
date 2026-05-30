@@ -3,13 +3,14 @@
 #include <esp_heap_caps.h>
 #include <esp_littlefs.h>
 #include <esp_log.h>
-#include <esp_mac.h>
 #include <sdkconfig.h>
-#include <cstdio>
+#include <cstring>
+#include <string>
 
 #include "cred_store.h"
 #include "epd_ssd1683.h"
 #include "event_bus.h"
+#include "mac_utils.h"
 #include "scene_stack.h"
 #include "theme.h"
 #include "wifi.h"
@@ -195,10 +196,9 @@ void DeviceInfoPage::LoadStaticInfo() {
     wifi_ssid_  = std::move(c.wifi_ssid);
     server_url_ = std::move(c.server_url);
 
-    uint8_t mac[6] = {0};
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    std::snprintf(mac_str_, sizeof(mac_str_), "%02X:%02X:%02X:%02X:%02X:%02X", mac[0], mac[1], mac[2], mac[3], mac[4],
-                  mac[5]);
+    const std::string mac = util::WifiStaMacString(util::MacStringCase::kUpper);
+    std::strncpy(mac_str_, mac.c_str(), sizeof(mac_str_) - 1);
+    mac_str_[sizeof(mac_str_) - 1] = '\0';
 }
 
 bool DeviceInfoPage::Refresh(SceneContext& ctx) {

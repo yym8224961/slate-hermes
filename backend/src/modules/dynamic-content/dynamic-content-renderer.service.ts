@@ -3,11 +3,12 @@ import { Prisma } from '@prisma/client';
 import { FRAME_BYTES } from 'shared';
 import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { toPrismaInputJson } from '../../common/db/prisma-json';
 import { computeETag } from '../../common/etag/etag.util';
 import { NotFoundError, ValidationError } from '../../common/errors';
-import { formatError } from '../../common/utils';
+import { formatError } from '../../common/error-format';
 import { GroupsService } from '../groups/groups.service';
-import { DynamicFrameRendererService } from '../frame-renderer/dynamic-frame-renderer.service';
+import { DynamicFrameRendererService } from './rendering/dynamic-frame-renderer.service';
 import { DynamicContentRegistry } from './dynamic-content-registry';
 import { DynamicAudioService } from './audio/dynamic-audio.service';
 import { cnMonthDay, nextLocalMidnight, timezoneFromConfig } from './timezone';
@@ -77,21 +78,33 @@ export class DynamicContentRendererService {
     const previous = this.tails.get(contentId) ?? Promise.resolve();
     const task = canDedupe
       ? previous.then(() => this.doRender(contentId, opts))
-      : previous.catch(() => undefined).then(() => this.doRender(contentId, opts));
+      : previous
+          .catch((err: unknown) => {
+            this.logger.warn(
+              `previous dynamic render failed content=${contentId}: ${formatError(err)}`
+            );
+          })
+          .then(() => this.doRender(contentId, opts));
     this.tails.set(contentId, task);
-    void task
-      .finally(() => {
+    void task.then(
+      () => {
         if (this.tails.get(contentId) === task) this.tails.delete(contentId);
-      })
-      .catch(() => undefined);
+      },
+      () => {
+        if (this.tails.get(contentId) === task) this.tails.delete(contentId);
+      }
+    );
 
     if (canDedupe) {
       this.inflight.set(contentId, task);
-      void task
-        .finally(() => {
+      void task.then(
+        () => {
           if (this.inflight.get(contentId) === task) this.inflight.delete(contentId);
-        })
-        .catch(() => undefined);
+        },
+        () => {
+          if (this.inflight.get(contentId) === task) this.inflight.delete(contentId);
+        }
+      );
     }
     return task;
   }
@@ -253,7 +266,7 @@ export class DynamicContentRendererService {
       await this.prisma.content.update({
         where: { id: contentId },
         data: {
-          dynamicData: data == null ? Prisma.JsonNull : (data as Prisma.InputJsonValue),
+          dynamicData: data == null ? Prisma.JsonNull : toPrismaInputJson(data),
           dynamicLastRunAt: now,
           dynamicNextRunAt: nextRunAt,
           dynamicRefreshDueAt: refreshDueAt,
@@ -283,7 +296,7 @@ export class DynamicContentRendererService {
         data: {
           imageEtag,
           imageSize: rendered.byteLength,
-          dynamicData: data == null ? Prisma.JsonNull : (data as Prisma.InputJsonValue),
+          dynamicData: data == null ? Prisma.JsonNull : toPrismaInputJson(data),
           dynamicLastRunAt: now,
           dynamicNextRunAt: nextRunAt,
           dynamicRefreshDueAt: refreshDueAt,
@@ -294,7 +307,13 @@ export class DynamicContentRendererService {
       });
     } catch (err) {
       if (previousImage) await this.blob.write(content.groupId, content.id, 'image', previousImage);
-      else await this.blob.delete(content.groupId, content.id, 'image').catch(() => {});
+      else {
+        await this.blob.delete(content.groupId, content.id, 'image').catch((deleteErr: unknown) => {
+          this.logger.warn(
+            `delete failed dynamic image after DB update rollback content=${contentId}: ${formatError(deleteErr)}`
+          );
+        });
+      }
       throw err;
     }
     const audioSync = await this.syncDynamicAudioBestEffort(contentId, now);

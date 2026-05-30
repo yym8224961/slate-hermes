@@ -1,4 +1,3 @@
-/* eslint-disable react-refresh/only-export-components */
 // 全局 confirm：替代浏览器 window.confirm，用 Radix Dialog 风格化。
 //
 // 用法：
@@ -9,33 +8,16 @@
 //
 // 在 App 根挂 <ConfirmProvider /> 一次。
 
-import {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useState,
-  useRef,
-  type ReactNode,
-} from 'react';
+import { useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { IconBlock } from '@/components/ui/IconBlock';
-import { cn } from '@/lib/cn';
-
-export interface ConfirmOptions {
-  title: string;
-  description?: string;
-  confirmText?: string;
-  cancelText?: string;
-  destructive?: boolean;
-}
+import { dialogContentConfirmCls, dialogOverlayConfirmCls } from '@/lib/styles';
+import { ConfirmCtx, type ConfirmOptions } from './confirm-context';
 
 type Resolve = (ok: boolean) => void;
 type ConfirmRequest = ConfirmOptions & { resolve: Resolve };
-
-const ConfirmCtx = createContext<((opts: ConfirmOptions) => Promise<boolean>) | null>(null);
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [active, setActive] = useState<ConfirmRequest | null>(null);
@@ -132,19 +114,3 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     </ConfirmCtx.Provider>
   );
 }
-
-export function useConfirm() {
-  const ctx = useContext(ConfirmCtx);
-  if (!ctx) throw new Error('useConfirm outside ConfirmProvider');
-  return ctx;
-}
-
-const dialogContentConfirmCls = cn(
-  'fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2',
-  'w-[calc(100vw-2rem)] max-w-md',
-  'bg-paper border-2 border-ink',
-  'shadow-dialog',
-  'z-[60] p-6'
-);
-
-const dialogOverlayConfirmCls = 'fixed inset-0 bg-ink/20 z-50';

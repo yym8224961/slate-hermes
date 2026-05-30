@@ -1,4 +1,3 @@
-/* eslint-disable react-refresh/only-export-components */
 // 全局 toast — Radix Toast 风格化。两种语调：
 //   info（默认）：奶米底 + 砖红边
 //   error：     砖红底 + 白字
@@ -9,10 +8,11 @@
 //
 // 在 app 根挂 <ToastProvider /> 一次。
 
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
 import * as RT from '@radix-ui/react-toast';
 import { CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { ToastCtx, type ToastApi } from './toast-context';
 
 type Tone = 'success' | 'error' | 'info';
 
@@ -23,13 +23,6 @@ interface ToastItem {
   hint?: string;
 }
 
-interface ToastApi {
-  success: (msg: string, hint?: string) => void;
-  error: (msg: string, hint?: string) => void;
-  info: (msg: string, hint?: string) => void;
-}
-
-const ToastCtx = createContext<ToastApi | null>(null);
 const MAX_TOASTS = 4;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
@@ -37,6 +30,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 
   const push = useCallback((tone: Tone, message: string, hint?: string) => {
     setItems((p) => [...p, { id: createToastId(), tone, message, hint }].slice(-MAX_TOASTS));
+  }, []);
+  const closeToast = useCallback((id: string) => {
+    setItems((p) => p.filter((item) => item.id !== id));
   }, []);
 
   const api = useMemo<ToastApi>(
@@ -53,11 +49,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <RT.Provider swipeDirection="right" duration={4000}>
         {children}
         {items.map((it) => (
-          <ToastBody
-            key={it.id}
-            item={it}
-            onClose={() => setItems((p) => p.filter((x) => x.id !== it.id))}
-          />
+          <ToastBody key={it.id} item={it} onClose={closeToast} />
         ))}
         <RT.Viewport className="fixed bottom-5 right-5 sm:bottom-7 sm:right-7 z-[100] flex flex-col gap-2.5 w-[min(380px,calc(100vw-2rem))] outline-none" />
       </RT.Provider>
@@ -65,7 +57,13 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
-function ToastBody({ item, onClose }: { item: ToastItem; onClose: () => void }) {
+const ToastBody = memo(function ToastBody({
+  item,
+  onClose,
+}: {
+  item: ToastItem;
+  onClose: (id: string) => void;
+}) {
   const Icon = item.tone === 'success' ? CheckCircle2 : item.tone === 'error' ? AlertCircle : Info;
 
   const tone =
@@ -77,7 +75,7 @@ function ToastBody({ item, onClose }: { item: ToastItem; onClose: () => void }) 
   return (
     <RT.Root
       onOpenChange={(o) => {
-        if (!o) onClose();
+        if (!o) onClose(item.id);
       }}
       className={cn(
         'group flex items-start gap-3 px-4 py-3 border-2 shadow-md',
@@ -99,13 +97,7 @@ function ToastBody({ item, onClose }: { item: ToastItem; onClose: () => void }) 
       </div>
     </RT.Root>
   );
-}
-
-export function useToast(): ToastApi {
-  const ctx = useContext(ToastCtx);
-  if (!ctx) throw new Error('useToast outside ToastProvider');
-  return ctx;
-}
+});
 
 function createToastId(): string {
   return (

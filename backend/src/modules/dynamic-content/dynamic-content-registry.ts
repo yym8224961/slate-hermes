@@ -10,7 +10,7 @@ import { WeatherAlertProvider } from './providers/weather-alert.provider';
 import { EarthquakeReportProvider } from './providers/earthquake-report.provider';
 import { DashboardProvider } from './providers/dashboard.provider';
 import { FontTestProvider } from './providers/font-test.provider';
-import { HotListProvider } from './providers/hot-list.provider';
+import { HotListProvider } from '../hot-list/hot-list.provider';
 import dailyCalendarDefinition from './definitions/daily-calendar.json' with { type: 'json' };
 import monthCalendarDefinition from './definitions/month-calendar.json' with { type: 'json' };
 import weatherDefinition from './definitions/weather.json' with { type: 'json' };

@@ -7,6 +7,9 @@
 
 #include <cstring>
 
+#include "epd_utils.h"
+#include "scoped_mutex_lock.h"
+
 namespace power_state {
 namespace {
 
@@ -20,34 +23,16 @@ RTC_DATA_ATTR bool     s_frame_dynamic         = false;
 RTC_DATA_ATTR uint32_t s_frame_server_sync_sec = 0;
 RTC_DATA_ATTR int      s_current_frame_seq     = 0;
 
-constexpr uint32_t     kStatusBarSnapshotMagic                        = 0x53544231u;  // "STB1"
-RTC_DATA_ATTR uint32_t s_status_bar_magic                             = 0;
-RTC_DATA_ATTR uint32_t s_status_bar_hash                              = 0;
-RTC_DATA_ATTR uint8_t  s_status_bar_snapshot[kStatusBarSnapshotBytes] = {};
+constexpr uint32_t     kStatusBarSnapshotMagic                             = 0x53544231u;  // "STB1"
+RTC_DATA_ATTR uint32_t s_status_bar_magic                                  = 0;
+RTC_DATA_ATTR uint32_t s_status_bar_hash                                   = 0;
+RTC_DATA_ATTR uint8_t  s_status_bar_snapshot[epd::kStatusBarSnapshotBytes] = {};
 
 SemaphoreHandle_t StateMutex() {
     static StaticSemaphore_t s_mutex_buf;
     static SemaphoreHandle_t s_mutex = xSemaphoreCreateMutexStatic(&s_mutex_buf);
     return s_mutex;
 }
-
-class StateLock {
-   public:
-    StateLock() : mutex_(StateMutex()) {
-        if (mutex_)
-            xSemaphoreTake(mutex_, portMAX_DELAY);
-    }
-    ~StateLock() {
-        if (mutex_)
-            xSemaphoreGive(mutex_);
-    }
-
-    StateLock(const StateLock&)            = delete;
-    StateLock& operator=(const StateLock&) = delete;
-
-   private:
-    SemaphoreHandle_t mutex_ = nullptr;
-};
 
 uint32_t NormalizeDynamicWakeSec(uint32_t sec) {
     return sec < kMinWakeIntervalSec ? kMinWakeIntervalSec : sec;
@@ -67,7 +52,7 @@ uint32_t HashBytes(const uint8_t* data, size_t len) {
 void Init(bool cold_boot) {
     if (!cold_boot)
         return;
-    StateLock lock;
+    ScopedMutexLock lock(StateMutex());
     s_frame_dynamic         = false;
     s_frame_server_sync_sec = 0;
     s_current_frame_seq     = 0;
@@ -78,26 +63,26 @@ void Init(bool cold_boot) {
 
 CurrentFrameSchedule GetCurrentFrameSchedule() {
     CurrentFrameSchedule schedule;
-    StateLock            lock;
+    ScopedMutexLock      lock(StateMutex());
     schedule.dynamic         = s_frame_dynamic;
     schedule.server_sync_sec = s_frame_server_sync_sec;
     return schedule;
 }
 
 void SetCurrentFrameSchedule(const CurrentFrameSchedule& schedule) {
-    StateLock lock;
+    ScopedMutexLock lock(StateMutex());
     s_frame_dynamic         = schedule.dynamic;
     s_frame_server_sync_sec = schedule.dynamic ? NormalizeDynamicWakeSec(schedule.server_sync_sec) : 0;
 }
 
 int GetCurrentFrameSeq() {
-    StateLock lock;
-    const int seq = s_current_frame_seq;
+    ScopedMutexLock lock(StateMutex());
+    const int       seq = s_current_frame_seq;
     return seq < 0 ? 0 : seq;
 }
 
 void SetCurrentFrameSeq(int seq) {
-    StateLock lock;
+    ScopedMutexLock lock(StateMutex());
     s_current_frame_seq = seq < 0 ? 0 : seq;
 }
 
@@ -147,15 +132,15 @@ bool RestoreCurrentFrameScheduleFromCache() {
 }
 
 bool CurrentFrameNeedsTimerWake() {
-    StateLock  lock;
-    const bool needs_wake = s_frame_dynamic && s_frame_server_sync_sec > 0;
+    ScopedMutexLock lock(StateMutex());
+    const bool      needs_wake = s_frame_dynamic && s_frame_server_sync_sec > 0;
     return needs_wake;
 }
 
 uint32_t ComputeNextWakeSec() {
-    StateLock      lock;
-    const bool     dynamic         = s_frame_dynamic;
-    const uint32_t server_sync_sec = s_frame_server_sync_sec;
+    ScopedMutexLock lock(StateMutex());
+    const bool      dynamic         = s_frame_dynamic;
+    const uint32_t  server_sync_sec = s_frame_server_sync_sec;
 
     if (!dynamic) {
         return 0;
@@ -165,13 +150,13 @@ uint32_t ComputeNextWakeSec() {
 }
 
 bool SaveStatusBarSnapshot(const uint8_t* data, size_t len) {
-    if (!data || len != kStatusBarSnapshotBytes)
+    if (!data || len != epd::kStatusBarSnapshotBytes)
         return false;
-    const uint32_t hash = HashBytes(data, len);
-    StateLock      lock;
+    const uint32_t  hash = HashBytes(data, len);
+    ScopedMutexLock lock(StateMutex());
     // magic 是提交标记:先清无效,写完 snapshot/hash 后再恢复,Load 只接受完整快照。
     s_status_bar_magic = 0;
-    std::memcpy(s_status_bar_snapshot, data, kStatusBarSnapshotBytes);
+    std::memcpy(s_status_bar_snapshot, data, epd::kStatusBarSnapshotBytes);
     s_status_bar_hash  = hash;
     s_status_bar_magic = kStatusBarSnapshotMagic;
     ESP_LOGD(kTag, "Saved status bar snapshot hash=%08lx", static_cast<unsigned long>(hash));
@@ -179,16 +164,16 @@ bool SaveStatusBarSnapshot(const uint8_t* data, size_t len) {
 }
 
 bool LoadStatusBarSnapshot(uint8_t* out, size_t len) {
-    if (!out || len != kStatusBarSnapshotBytes)
+    if (!out || len != epd::kStatusBarSnapshotBytes)
         return false;
     uint32_t magic = 0;
     uint32_t hash  = 0;
     {
-        StateLock lock;
+        ScopedMutexLock lock(StateMutex());
         magic = s_status_bar_magic;
         hash  = s_status_bar_hash;
         if (magic == kStatusBarSnapshotMagic) {
-            std::memcpy(out, s_status_bar_snapshot, kStatusBarSnapshotBytes);
+            std::memcpy(out, s_status_bar_snapshot, epd::kStatusBarSnapshotBytes);
         }
     }
     if (magic != kStatusBarSnapshotMagic)
@@ -197,7 +182,7 @@ bool LoadStatusBarSnapshot(uint8_t* out, size_t len) {
 }
 
 void ClearStatusBarSnapshot() {
-    StateLock lock;
+    ScopedMutexLock lock(StateMutex());
     s_status_bar_magic = 0;
     s_status_bar_hash  = 0;
 }

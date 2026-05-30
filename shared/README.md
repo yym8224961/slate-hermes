@@ -222,7 +222,7 @@ dashboard 数据推送 schema：
 - `hostloc` -> `nodeseek`
 - `bilibili-hot-video` -> `bilibili`
 
-后端实际 fetcher registry 在 `backend/src/modules/dynamic-content/hot-list/`，shared 只维护配置和 UI catalog。
+后端实际 fetcher registry 在 `backend/src/modules/hot-list/`，shared 只维护配置和 UI catalog。
 
 ## 字体测试
 

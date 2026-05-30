@@ -39,23 +39,17 @@ VolumePage::VolumePage(Target target) : target_(target) {
 VolumePage::~VolumePage() = default;
 
 void VolumePage::OnEnter(SceneContext& ctx) {
-    if (!ctx.epd->Lock(2000))
+    if (!EnterSettingsScaffold(ctx, Caption()))
         return;
 
-    root_ = CreateFullscreenRoot();
-
-    status_bar_ = std::make_unique<StatusBar>(root_);
-    status_bar_->SetCaption(Caption());
-    RefreshStatusBarFromSensors(ctx, *status_bar_);
-
     // 数值 "6 / 10",大写字号靠居中视觉强调
-    value_label_ = lv_label_create(root_);
+    value_label_ = lv_label_create(RootObj());
     lv_obj_set_style_text_font(value_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(value_label_, lv_color_black(), 0);
     lv_obj_align(value_label_, LV_ALIGN_CENTER, 0, -32);
 
     // 进度条:黑色 1px 边框 + 内部填充。线条简洁、EPD 1bpp 锐利。
-    bar_track_ = lv_obj_create(root_);
+    bar_track_ = lv_obj_create(RootObj());
     lv_obj_set_size(bar_track_, kBarWidth, kBarHeight);
     lv_obj_align(bar_track_, LV_ALIGN_CENTER, 0, 4);
     lv_obj_set_style_bg_color(bar_track_, lv_color_white(), 0);
@@ -76,21 +70,13 @@ void VolumePage::OnEnter(SceneContext& ctx) {
     lv_obj_set_style_pad_all(bar_fill_, 0, 0);
     lv_obj_clear_flag(bar_fill_, LV_OBJ_FLAG_SCROLLABLE);
 
-    hint_label_ = lv_label_create(root_);
-    lv_obj_set_style_text_font(hint_label_, &Zfull_16, 0);
-    lv_obj_set_style_text_color(hint_label_, lv_color_black(), 0);
-    lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(hint_label_, target_ == Target::kAlbum ? "上/下 调节   按确认 返回   长按确认 试听"
+    hint_label_ = CreateBottomHint(target_ == Target::kAlbum ? "上/下 调节   按确认 返回   长按确认 试听"
                                                              : "上/下 调节   按确认 返回");
-    lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -16);
 
     level_ = (target_ == Target::kAlbum) ? vol::GetAlbum() : vol::GetXiaozhi();
     RedrawValue();
 
-    lv_refr_now(NULL);
-    ctx.epd->Unlock();
-    // OnEnter 走 partial:UI ↔ UI 切换 diff 小,EPD 看 diff>=30% 兜底升 full。
-    ctx.epd->RequestUrgentPartialRefresh();
+    FinishSettingsScaffoldEnter(ctx);
 }
 
 void VolumePage::OnExit(SceneContext& ctx) {
@@ -98,8 +84,7 @@ void VolumePage::OnExit(SceneContext& ctx) {
         SaveLevel();
         dirty_ = false;
     }
-    DestroyRoot(ctx, root_, [this]() {
-        status_bar_.reset();
+    ExitSettingsScaffold(ctx, [this]() {
         bar_track_   = nullptr;
         bar_fill_    = nullptr;
         value_label_ = nullptr;
@@ -108,7 +93,7 @@ void VolumePage::OnExit(SceneContext& ctx) {
 }
 
 void VolumePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
-    if (!root_)
+    if (!RootObj())
         return;
     switch (e.kind) {
         case UiEventKind::kButtonShort:

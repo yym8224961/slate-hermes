@@ -1,22 +1,12 @@
 import type { ContentAudioSource, ContentAudioStatus, ContentKind, Prisma } from '@prisma/client';
 import {
   DynamicConfig,
-  TTS_VOICES,
   TtsVoice,
   type ContentDetailT,
   type ContentSummaryT,
   type DynamicTypeT,
 } from 'shared';
-import {
-  dashboardStatusBarText,
-  deviceStatusBarText,
-  fontTestStatusBarText,
-  hotListStatusBarText,
-  weatherAlertStatusBarText,
-  weatherStatusBarText,
-} from './content-status-bar';
-
-type TtsVoiceValue = (typeof TTS_VOICES)[number];
+import { deviceStatusBarText } from './content-display-name';
 
 export interface ContentRow {
   id: string;
@@ -45,6 +35,7 @@ export interface ContentRow {
 }
 
 export function contentToSummary(row: ContentRow): ContentSummaryT {
+  const voice = TtsVoice.safeParse(row.audioVoice);
   return {
     id: row.id,
     seq: row.sortOrder,
@@ -57,13 +48,26 @@ export function contentToSummary(row: ContentRow): ContentSummaryT {
     audio_size: row.audioSize,
     audio_status: row.audioStatus,
     audio_source: row.audioSource,
-    audio_voice: TtsVoice.safeParse(row.audioVoice).success
-      ? (row.audioVoice as TtsVoiceValue)
-      : null,
-    kind: row.kind === 'dynamic' ? 'dynamic' : 'image',
+    audio_voice: voice.success ? voice.data : null,
+    kind: contentKind(row.kind),
     dynamic_type: (row.dynamicType as DynamicTypeT | null) ?? null,
     next_wake_sec: nextWakeSec(row.dynamicNextRunAt ?? null),
   };
+}
+
+function contentKind(kind: ContentKind): ContentSummaryT['kind'] {
+  switch (kind) {
+    case 'image':
+      return 'image';
+    case 'dynamic':
+      return 'dynamic';
+    default:
+      return assertNever(kind);
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unsupported content kind: ${String(value)}`);
 }
 
 export function contentToDetail(
@@ -86,34 +90,6 @@ export function contentToDetail(
     audio_error: row.audioLastError ?? null,
     audio_updated_at: row.audioUpdatedAt?.toISOString() ?? null,
   };
-}
-
-export function defaultDynamicFrameName(
-  dynamicType: string | null,
-  config?: unknown
-): string | null {
-  switch (dynamicType) {
-    case 'daily_calendar':
-      return '日历';
-    case 'month_calendar':
-      return '月历';
-    case 'history_today':
-      return '历史上的今天';
-    case 'weather_alert':
-      return weatherAlertStatusBarText(config);
-    case 'earthquake_report':
-      return '地震速报';
-    case 'weather':
-      return weatherStatusBarText(config);
-    case 'dashboard':
-      return dashboardStatusBarText(config);
-    case 'font_test':
-      return fontTestStatusBarText(config);
-    case 'hot_list':
-      return hotListStatusBarText(config);
-    default:
-      return null;
-  }
 }
 
 function nextWakeSec(nextRunAt: Date | null): number | null {

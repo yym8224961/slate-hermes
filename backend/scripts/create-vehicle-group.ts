@@ -7,6 +7,7 @@ import sharp from 'sharp';
 import { FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
 import type { ContentDetailT, DitherMode, TtsVoiceT } from 'shared';
 import { API_DEFAULT_DITHER_MODE, DITHER_MODES, DEFAULT_TTS_VOICE, isTtsVoice } from 'shared';
+import type { ContentsReadService } from '../src/modules/contents/contents-read.service';
 import type { ContentsService } from '../src/modules/contents/contents.service';
 import type { ParsedContentUpload } from '../src/modules/contents/multipart.parser';
 import {
@@ -17,7 +18,7 @@ import {
   resolveUser,
   userDisplay,
   type UserSelectorArgs,
-} from './lib/group-script';
+} from './helpers/bootstrap-app';
 
 interface Args extends UserSelectorArgs {
   groupName: string;
@@ -64,18 +65,18 @@ const args = parseArgs(process.argv.slice(2));
 const services = await createGroupScriptServices();
 
 try {
-  const { prisma, groups, contents } = services;
+  const { prisma, groups, contents, contentReads } = services;
   const user = await resolveUser(prisma, args);
   const group = await ensureGroup(groups, prisma, user.id, args.groupName);
 
   if (args.replace) {
-    await deleteAllContents(contents, group.id, user.id);
+    await deleteAllContents(contents, contentReads, group.id, user.id);
   } else {
-    await deleteDuplicateVehicleFrames(contents, group.id, user.id);
+    await deleteDuplicateVehicleFrames(contents, contentReads, group.id, user.id);
   }
 
-  const generated = await upsertVehicleFrames(contents, group.id, user.id, args);
-  const finalRows = await contents.list(group.id, { userId: user.id });
+  const generated = await upsertVehicleFrames(contents, contentReads, group.id, user.id, args);
+  const finalRows = await contentReads.list(group.id, { userId: user.id });
   const orderedIds = orderedContentIds(finalRows);
   const { manifest_etag } = await contents.reorder(group.id, user.id, orderedIds);
 
@@ -171,10 +172,11 @@ Options:
 
 async function deleteDuplicateVehicleFrames(
   contents: ContentsService,
+  contentReads: ContentsReadService,
   groupId: string,
   userId: string
 ): Promise<void> {
-  const rows = await contents.list(groupId, { userId });
+  const rows = await contentReads.list(groupId, { userId });
   const seen = new Set<string>();
   const valid = new Set(VEHICLES.map((vehicle) => vehicle.name));
 
@@ -191,11 +193,12 @@ async function deleteDuplicateVehicleFrames(
 
 async function upsertVehicleFrames(
   contents: ContentsService,
+  contentReads: ContentsReadService,
   groupId: string,
   userId: string,
   args: Args
 ): Promise<Array<{ name: string; contentId: string }>> {
-  const rows = await contents.list(groupId, { userId });
+  const rows = await contentReads.list(groupId, { userId });
   const byName = new Map<string, ContentDetailT>();
   for (const row of rows) {
     if (row.kind === 'image' && row.frame_name) byName.set(row.frame_name, row);

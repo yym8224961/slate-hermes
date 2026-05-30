@@ -66,7 +66,7 @@ export function ProvinceSearch({
       results={results}
       open={open}
       onOpenChange={setOpen}
-      getKey={(region) => region.label}
+      getKey={regionKey}
       onSelect={(region) => {
         onSelect(region.value);
         setQuery(region.label);
@@ -87,6 +87,10 @@ function regionLabel(value: string): string {
   const normalized = normalizeWeatherAlertProvince(value);
   if (!normalized) return '全国';
   return WEATHER_ALERT_REGIONS.find((region) => region.value === normalized)?.label ?? value;
+}
+
+function regionKey(region: (typeof WEATHER_ALERT_REGIONS)[number]): string {
+  return region.label;
 }
 
 function regionValueFromInput(value: string): string {

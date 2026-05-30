@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { DynamicConfig, type DynamicConfigT } from 'shared';
+import { DynamicConfig, type DynamicConfigT, type DynamicTypeT } from 'shared';
 import type { UseMutationResult } from '@tanstack/react-query';
-import type { AllContentType } from '@/features/contents/model/type-meta';
-import { effectiveFrameName } from '@/features/contents/model/frame-name';
+import { effectiveDynamicFrameName } from '@/features/dynamic/model/registry';
+
+type PreviewContentType = DynamicTypeT | 'image';
 
 type PreviewMutation = UseMutationResult<
   ArrayBuffer,
@@ -23,7 +24,7 @@ export function useDynamicPreview({
   preview,
   debounceMs = 800,
 }: {
-  type: AllContentType | null;
+  type: PreviewContentType | null;
   config: DynamicConfigT | null;
   frameName: string;
   dashboardData?: Record<string, unknown> | null;
@@ -59,7 +60,7 @@ export function useDynamicPreview({
       previewMutate(
         {
           config: parsed.data,
-          frameName: effectiveFrameName(type, parsed.data, frameName),
+          frameName: effectiveDynamicFrameName(type, parsed.data, frameName),
           data: parsed.data.type === 'dashboard' ? (dashboardData ?? undefined) : undefined,
           signal: controller.signal,
         },

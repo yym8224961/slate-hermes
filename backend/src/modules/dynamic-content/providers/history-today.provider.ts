@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { HistoryTodayConfig, type HistoryTodayConfigT } from 'shared';
 import { AiService } from '../../ai/ai.service';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
-import { stripHtml } from '../html-text';
+import { stripHtml } from '../../../common/html-text';
 import {
   normalizeHistoryYear,
   parseHistoryTodayData,
@@ -10,14 +10,13 @@ import {
 } from '../history-today.data';
 import { datePartsInTz } from '../timezone';
 import { fetchJson } from '../../../common/http/fetch';
-import { setBoundedCache } from '../../../common/utils';
+import { setBoundedCache } from '../../../common/cache-utils';
+import { CachedInflightFetcher, DEFAULT_PROVIDER_FETCH_TIMEOUT_MS } from './provider-cache';
 
-const FETCH_TIMEOUT_MS = 5000;
 const CACHE_TTL_MS = 86_400_000;
 const RAW_LANG = 'zh-cn';
 const MAX_RAW_CACHE_ENTRIES = 64;
 const MAX_AI_CACHE_ENTRIES = 256;
-const MAX_INFLIGHT_ENTRIES = 256;
 
 /**
  * 历史上的今天。
@@ -38,11 +37,9 @@ export class HistoryTodayProvider implements DataProvider<
     string,
     { events: HistoryTodayRawEvent[]; fetchedAt: number }
   >();
-  private readonly aiCache = new Map<
-    string,
-    { data: HistoryTodayProviderData; fetchedAt: number }
-  >();
-  private readonly inflight = new Map<string, Promise<HistoryTodayProviderData>>();
+  private readonly resultFetcher = new CachedInflightFetcher<string, HistoryTodayProviderData>(
+    MAX_AI_CACHE_ENTRIES
+  );
 
   constructor(private readonly ai: AiService) {}
 
@@ -62,23 +59,9 @@ export class HistoryTodayProvider implements DataProvider<
     const rawKey = `${mmdd(month, day)}:${RAW_LANG}`;
     const aiKey = `${rawKey}:${this.ai.modelKey()}:${this.ai.historyTodayPromptVersion()}`;
     const nowMs = ctx.now.getTime();
-    const cached = this.aiCache.get(aiKey);
-    if (cached && nowMs - cached.fetchedAt < CACHE_TTL_MS) return cached.data;
-    if (cached) this.aiCache.delete(aiKey);
-
-    const existing = this.inflight.get(aiKey);
-    if (existing) return existing;
-
-    const p = this.fetchOptimized(month, day, rawKey, nowMs)
-      .then((data) => {
-        setBoundedCache(this.aiCache, aiKey, { data, fetchedAt: nowMs }, MAX_AI_CACHE_ENTRIES);
-        return data;
-      })
-      .finally(() => {
-        if (this.inflight.get(aiKey) === p) this.inflight.delete(aiKey);
-      });
-    this.setInflight(aiKey, p);
-    return p;
+    return this.resultFetcher.getOrFetch(aiKey, nowMs, CACHE_TTL_MS, () =>
+      this.fetchOptimized(month, day, rawKey, nowMs)
+    );
   }
 
   private async fetchBaiduBaike(
@@ -90,39 +73,27 @@ export class HistoryTodayProvider implements DataProvider<
     const day = String(parts.day).padStart(2, '0');
     const key = `baidu:${month}-${day}`;
     const nowMs = ctx.now.getTime();
-    const cached = this.aiCache.get(key);
-    if (cached && nowMs - cached.fetchedAt < CACHE_TTL_MS) return cached.data;
-    if (cached) this.aiCache.delete(key);
-
-    const existing = this.inflight.get(key);
-    if (existing) return existing;
 
     const url = `https://baike.baidu.com/cms/home/eventsOnHistory/${month}.json`;
-    const task = fetchJson<BaiduHistoryResponse>(`${url}?_=${nowMs}`, {
-      timeoutMs: FETCH_TIMEOUT_MS,
-    })
-      .then((json) => {
-        const rawItems = json[month]?.[`${month}${day}`] ?? [];
-        const data = parseHistoryTodayData({
-          dateLabel: `${parts.month}月${parts.day}日`,
-          items: rawItems
-            .map((item) => ({
-              year: normalizeHistoryYear(textOrEmpty(item.year)),
-              display: normalizeDisplay(stripHtml(textOrEmpty(item.title || item.desc))),
-            }))
-            .filter((item): item is { year: string; display: string } => {
-              return !!item.year && !!item.display;
-            }),
-        });
-        if (!data) throw new Error('baidu history empty');
-        setBoundedCache(this.aiCache, key, { data, fetchedAt: nowMs }, MAX_AI_CACHE_ENTRIES);
-        return data;
-      })
-      .finally(() => {
-        if (this.inflight.get(key) === task) this.inflight.delete(key);
+    return this.resultFetcher.getOrFetch(key, nowMs, CACHE_TTL_MS, async () => {
+      const json = await fetchJson<BaiduHistoryResponse>(`${url}?_=${nowMs}`, {
+        timeoutMs: DEFAULT_PROVIDER_FETCH_TIMEOUT_MS,
       });
-    this.setInflight(key, task);
-    return task;
+      const rawItems = json[month]?.[`${month}${day}`] ?? [];
+      const data = parseHistoryTodayData({
+        dateLabel: `${parts.month}月${parts.day}日`,
+        items: rawItems
+          .map((item) => ({
+            year: normalizeHistoryYear(textOrEmpty(item.year)),
+            display: normalizeDisplay(stripHtml(textOrEmpty(item.title || item.desc))),
+          }))
+          .filter((item): item is { year: string; display: string } => {
+            return !!item.year && !!item.display;
+          }),
+      });
+      if (!data) throw new Error('baidu history empty');
+      return data;
+    });
   }
 
   private async fetchOptimized(
@@ -156,10 +127,6 @@ export class HistoryTodayProvider implements DataProvider<
     return normalized;
   }
 
-  private setInflight(key: string, task: Promise<HistoryTodayProviderData>): void {
-    setBoundedCache(this.inflight, key, task, MAX_INFLIGHT_ENTRIES);
-  }
-
   private async fetchRawEvents(month: number, day: number): Promise<HistoryTodayRawEvent[]> {
     const url = `https://zh.wikipedia.org/api/rest_v1/feed/onthisday/events/${month}/${day}?variant=zh-cn`;
     const json = await fetchJson<{
@@ -168,7 +135,7 @@ export class HistoryTodayProvider implements DataProvider<
         text?: string;
         pages?: Array<{ title?: string; description?: string; extract?: string }>;
       }>;
-    }>(url, { timeoutMs: FETCH_TIMEOUT_MS, userAgent: null });
+    }>(url, { timeoutMs: DEFAULT_PROVIDER_FETCH_TIMEOUT_MS, userAgent: null });
     const evs = json.events ?? [];
     return evs
       .filter(

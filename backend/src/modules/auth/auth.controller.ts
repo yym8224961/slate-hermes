@@ -30,7 +30,7 @@ export class AuthController {
   @Delete('sessions/current')
   @HttpCode(204)
   logout(): void {
-    // JWT 无服务端状态，撤销留待后续（Redis denylist）；此处仅占位
+    // JWT 无服务端状态，撤销留待后续（Redis denylist）；此处仅占位。
   }
 
   @Get('users/current')

@@ -3,26 +3,23 @@ import { randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { MacAddress, type DeviceStateT, type DeviceSummaryT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import {
-  ConflictError,
-  ForbiddenError,
-  InternalError,
-  NotFoundError,
-  ValidationError,
-} from '../../common/errors';
+import { ConflictError, ForbiddenError, InternalError, NotFoundError } from '../../common/errors';
 import { lockUserRow } from '../../common/db/row-locks';
 import { bulkSetDeviceSortOrder } from '../../common/db/bulk-sort-order';
+import { validateOrderSet } from '../../common/db/order-validation';
 import type { PrismaClientLike } from '../../common/db/prisma-client-like';
-import { prismaUniqueTargetIncludes } from '../../common/utils';
+import { prismaUniqueTargetIncludes } from '../../common/db/prisma-utils';
 import {
+  DeviceSecretAuthCacheService,
   hashDeviceSecret,
-  invalidateDeviceSecretHash,
-} from '../../common/auth/device-secret-auth-cache';
+} from '../../infra/auth/device-secret-auth-cache.service';
 import {
   GroupsService,
   type CycleResult,
   type DeviceGroupSnapshot,
 } from '../groups/groups.service';
+import { DeviceCurrentContentService } from '../contents/device-current-content.service';
+import { PairCodeService } from './pair-code.service';
 
 export interface TelemetryInput {
   battery_pct?: number;
@@ -33,22 +30,6 @@ export interface TelemetryInput {
   current_content_seq?: number;
   current_content_etag?: string;
   manifest_etag?: string;
-}
-
-// toSummary 只需要 admin 端要展示的字段，pairCode/secretHash 不在其中。
-// 用结构子集而非 Prisma `Device` 类型，让 toSummary 既能吃 findMany 全字段返回，
-// 也能吃 select 投影后的对象。
-interface DeviceRow {
-  id: string;
-  mac: string;
-  name: string | null;
-  selectedGroupId: string | null;
-  lastSeenAt: Date | null;
-  batteryPct: number | null;
-  rssiDbm: number | null;
-  fwVersion: string | null;
-  ownerUserId: string | null;
-  sortOrder: number;
 }
 
 export interface DevicePollSnapshot extends DeviceGroupSnapshot {
@@ -74,17 +55,15 @@ const DEVICE_SUMMARY_SELECT = {
   sortOrder: true,
 } as const satisfies Prisma.DeviceSelect;
 
+// toSummary 只需要 admin 端要展示的字段，pairCode/secretHash 不在其中。
+type DeviceRow = Prisma.DeviceGetPayload<{ select: typeof DEVICE_SUMMARY_SELECT }>;
+
 const DEVICE_CLAIM_SELECT = {
   ...DEVICE_SUMMARY_SELECT,
   pairCode: true,
 } as const satisfies Prisma.DeviceSelect;
 
-// 配对码字母表去掉视觉易混的 0/O/1/I/L，降低用户对屏抄码出错率。
-const PAIR_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
-const PAIR_CODE_RANDOM_LIMIT =
-  Math.floor(256 / PAIR_CODE_ALPHABET.length) * PAIR_CODE_ALPHABET.length;
 const REGISTER_RESET_THROTTLE_MS = 60_000;
-const PAIR_CODE_MAX_RANDOM_CHUNKS = 32;
 
 interface RegisterResetOutcome {
   deviceId: string;
@@ -108,7 +87,10 @@ export class DevicesService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly groups: GroupsService
+    private readonly groups: GroupsService,
+    private readonly deviceSecrets: DeviceSecretAuthCacheService,
+    private readonly currentContent: DeviceCurrentContentService,
+    private readonly pairCodes: PairCodeService
   ) {}
 
   // ── 注册 / telemetry ────────────────────────────────────────
@@ -138,7 +120,7 @@ export class DevicesService {
 
     // 预检：节流命中时直接拒绝，避免白白消耗熵 + 一次 pair_code 唯一性查询。
     // 事务内持 device 行锁后还会复检一次，保证并发 reset 不会绕过节流。
-    const preExisting = await this.findRegisterDeviceByMac(this.prisma, normalizedMac, mac);
+    const preExisting = await this.findRegisterDeviceByMac(this.prisma, normalizedMac);
     if (preExisting?.lastRegisteredAt) {
       const elapsedMs = now.getTime() - preExisting.lastRegisteredAt.getTime();
       if (elapsedMs < REGISTER_RESET_THROTTLE_MS) {
@@ -149,14 +131,12 @@ export class DevicesService {
     const outcome = await this.prisma
       .$transaction(
         async (tx): Promise<RegisterResetOutcome & { secret: string; pairCode: string }> => {
-          for (const candidate of macLookupCandidates(normalizedMac, mac)) {
-            await lockDeviceMacRow(tx, candidate);
-          }
-          const current = await this.findRegisterDeviceByMac(tx, normalizedMac, mac);
+          await lockDeviceMacRow(tx, normalizedMac);
+          const current = await this.findRegisterDeviceByMac(tx, normalizedMac);
           if (!current) {
             const secret = generateSecret();
             const secretHash = hashDeviceSecret(secret);
-            const pairCode = await this.generateUniquePairCode(tx);
+            const pairCode = await this.pairCodes.generateUniquePairCode(tx);
             const created = await tx.device.create({
               data: { mac: normalizedMac, secretHash, pairCode, lastRegisteredAt: now },
               select: { id: true },
@@ -180,7 +160,7 @@ export class DevicesService {
           }
           const secret = generateSecret();
           const secretHash = hashDeviceSecret(secret);
-          const pairCode = await this.generateUniquePairCode(tx);
+          const pairCode = await this.pairCodes.generateUniquePairCode(tx);
           await tx.device.update({
             where: { id: current.id },
             data: {
@@ -230,7 +210,7 @@ export class DevicesService {
         `device re-registered (was unowned): mac=${normalizedMac} id=${outcome.deviceId}`
       );
     }
-    invalidateDeviceSecretHash(outcome.previousSecretHash);
+    this.deviceSecrets.invalidateHash(outcome.previousSecretHash);
 
     return {
       deviceId: outcome.deviceId,
@@ -273,6 +253,27 @@ export class DevicesService {
   }
 
   // ── poll/cycle 共用：build 当前 DeviceState ────────────────
+
+  async poll(deviceId: string, telemetry: TelemetryInput | undefined): Promise<DeviceStateT> {
+    const device = await this.recordTelemetry(deviceId, telemetry);
+    const currentFrame = await this.currentContent.resolveCurrentContentRequest(device, telemetry);
+    const resolvedCurrentFrame =
+      telemetry?.wake_reason === 'timer'
+        ? await this.currentContent.refreshCurrentContentForDeviceIfDue(currentFrame, device)
+        : currentFrame;
+    const state = await this.buildState(deviceId, { device });
+    if (
+      state.group &&
+      resolvedCurrentFrame &&
+      state.group.id === resolvedCurrentFrame.groupId &&
+      state.group.manifest_etag === resolvedCurrentFrame.manifestEtag
+    ) {
+      state.current_content = this.currentContent.currentContentForDevice(resolvedCurrentFrame);
+    } else {
+      state.current_content = null;
+    }
+    return state;
+  }
 
   async buildState(
     deviceId: string,
@@ -391,7 +392,7 @@ export class DevicesService {
 
         await lockUserRow(tx, ownerUserId);
         const sortOrder = await this.nextDeviceSortOrder(ownerUserId, tx);
-        const newPairCode = await this.generateUniquePairCode(tx);
+        const newPairCode = await this.pairCodes.generateUniquePairCode(tx);
         const ownerGroups = await this.groups.listOwnerGroups(ownerUserId, tx);
         const selectedGroupId = ownerGroups[0]?.id ?? null;
 
@@ -449,7 +450,7 @@ export class DevicesService {
       // secret 不轮换：让设备 poll 看到 owner=null 自然 emit kUnbound 切回 splash 显示新码，
       // 不强制 401 重启，体验更顺。攻击者拿过 secret 还能继续看 unowned 状态，但要 claim
       // 仍需在用户之前用新 pair_code，并且自己得有 Web 账号。
-      const newPairCode = await this.generateUniquePairCode(tx);
+      const newPairCode = await this.pairCodes.generateUniquePairCode(tx);
       await tx.device.update({
         where: { id: deviceId },
         data: {
@@ -469,22 +470,18 @@ export class DevicesService {
         where: { ownerUserId },
         select: { id: true },
       });
-      const ownedSet = new Set(owned.map((d) => d.id));
-      const orderSet = new Set(order);
-      if (orderSet.size !== order.length) {
-        throw new ValidationError('排序列表不能包含重复设备', { code: 'order_duplicate' });
-      }
-      const unknownIds = order.filter((id) => !ownedSet.has(id));
-      if (unknownIds.length > 0) {
-        throw new ValidationError('排序列表包含不属于当前用户的设备', {
-          code: 'order_unknown_device',
-        });
-      }
-      if (order.length !== ownedSet.size) {
-        throw new ValidationError('排序列表须包含所有设备', {
-          code: 'order_missing_device',
-        });
-      }
+      validateOrderSet(
+        owned.map((d) => d.id),
+        order,
+        {
+          duplicateMessage: '排序列表不能包含重复设备',
+          duplicateCode: 'order_duplicate',
+          unknownMessage: '排序列表包含不属于当前用户的设备',
+          unknownCode: 'order_unknown_device',
+          missingMessage: '排序列表须包含所有设备',
+          missingCode: 'order_missing_device',
+        }
+      );
       await bulkSetDeviceSortOrder(tx, ownerUserId, order);
     });
   }
@@ -516,8 +513,7 @@ export class DevicesService {
 
   private async findRegisterDeviceByMac(
     client: PrismaClientLike,
-    normalizedMac: string,
-    rawMac: string
+    normalizedMac: string
   ): Promise<ExistingRegisterDevice | null> {
     const select = {
       id: true,
@@ -526,28 +522,7 @@ export class DevicesService {
       lastRegisteredAt: true,
       secretHash: true,
     } as const satisfies Prisma.DeviceSelect;
-    for (const candidate of macLookupCandidates(normalizedMac, rawMac)) {
-      const row = await client.device.findUnique({ where: { mac: candidate }, select });
-      if (row) return row;
-    }
-    return null;
-  }
-
-  // 6 位字母表：A-Z 去 I/L/O + 2-9。PAIR_CODE_ALPHABET.length^6 ≈ 8.8 亿，撞概率极低，
-  // 但仍按 unique 约束最多重试 8 次以兜底。
-  private async generateUniquePairCode(client: PrismaClientLike = this.prisma): Promise<string> {
-    const batchSize = 8;
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const candidates = uniquePairCodeBatch(batchSize);
-      const existing = (await client.device.findMany({
-        where: { pairCode: { in: candidates } },
-        select: { pairCode: true },
-      })) as Array<{ pairCode: string }>;
-      const existingCodes = new Set(existing.map((device) => device.pairCode));
-      const available = candidates.find((code) => !existingCodes.has(code));
-      if (available) return available;
-    }
-    throw new ConflictError('配对码生成冲突，请重试', { code: 'pair_code_generation_failed' });
+    return client.device.findUnique({ where: { mac: normalizedMac }, select });
   }
 }
 
@@ -569,35 +544,6 @@ export function toSummary(d: DeviceRow): DeviceSummaryT {
 // secret = 32B 随机熵 hex 编码（64 字符），设备 NVS 持久化，DB 只存 sha256(secret) 比对。
 function generateSecret(): string {
   return randomBytes(32).toString('hex');
-}
-
-function generatePairCode(): string {
-  let code = '';
-  for (let attempts = 0; attempts < PAIR_CODE_MAX_RANDOM_CHUNKS && code.length < 6; attempts++) {
-    for (const byte of randomBytes(8)) {
-      if (byte >= PAIR_CODE_RANDOM_LIMIT) continue;
-      code += PAIR_CODE_ALPHABET[byte % PAIR_CODE_ALPHABET.length];
-      if (code.length === 6) break;
-    }
-  }
-  if (code.length !== 6) {
-    throw new InternalError('配对码生成失败', { code: 'pair_code_entropy_unavailable' });
-  }
-  return code;
-}
-
-function uniquePairCodeBatch(size: number): string[] {
-  const codes = new Set<string>();
-  while (codes.size < size) codes.add(generatePairCode());
-  return [...codes];
-}
-
-function macLookupCandidates(normalizedMac: string, rawMac: string): string[] {
-  const noSep = normalizedMac.replace(/:/g, '');
-  const hyphenUpper = normalizedMac.replace(/:/g, '-');
-  const colonLower = normalizedMac.toLowerCase();
-  const hyphenLower = hyphenUpper.toLowerCase();
-  return [...new Set([normalizedMac, rawMac, colonLower, hyphenUpper, hyphenLower, noSep])];
 }
 
 function throttleError(elapsedMs: number): ConflictError {

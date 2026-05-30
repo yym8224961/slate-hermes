@@ -1,6 +1,6 @@
 import type { Logger } from '@nestjs/common';
 import { BlobService, type BlobKind } from '../../infra/blob/blob.service';
-import { formatError } from '../../common/utils';
+import { formatError } from '../../common/error-format';
 
 interface BlobRollbackOperation {
   groupId: string;
@@ -51,7 +51,7 @@ export class BlobRollbackPlan {
   }
 }
 
-export async function restoreBlob(
+async function restoreBlob(
   blob: BlobService,
   groupId: string,
   contentId: string,

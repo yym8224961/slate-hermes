@@ -1,17 +1,16 @@
 #include "scene_stack.h"
 
-#include <esp_timer.h>
-
 #include <utility>
 
 #include "esp_log.h"
 #include "event_bus.h"
+#include "time_utils.h"
 
 namespace {
 constexpr char kTag[] = "SceneStack";
 
-constexpr int     kRootRetryMinDelayMs = 500;
-constexpr int     kRootRetryMaxDelayMs = 8000;
+constexpr int     kRootRetryMinDelayMs        = 500;
+constexpr int     kRootRetryMaxDelayMs        = 8000;
 constexpr uint8_t kRootRetryAttemptCounterMax = 0xFF;
 
 int RootRetryDelayMs(uint8_t retry_count) {
@@ -101,7 +100,7 @@ void SceneStack::Dispatch(const UiEvent& e) {
     if (!top)
         return;
     if (top->RequiresRoot() && !top->Root()) {
-        const int64_t now_ms = esp_timer_get_time() / 1000;
+        const int64_t now_ms = time_utils::NowMs();
         if (top != root_retry_scene_) {
             root_retry_scene_   = top;
             next_root_retry_ms_ = 0;

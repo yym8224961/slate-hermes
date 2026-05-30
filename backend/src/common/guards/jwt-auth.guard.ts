@@ -4,8 +4,8 @@ import type { FastifyRequest } from 'fastify';
 import { AuthError } from '../errors';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
 import { CURRENT_USER_KEY, type WebUserContext } from '../decorators/current-user.decorator';
-import { JwtTokenService } from '../../modules/auth/jwt-token.service';
-import { extractWebToken } from '../auth/http-token';
+import { JwtTokenService } from '../../infra/auth/jwt-token.service';
+import { extractWebToken } from './http-token';
 
 @Injectable()
 export class JwtAuthGuard implements CanActivate {

@@ -4,7 +4,7 @@ import { realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { AppConfig } from '../config/app.config';
-import { formatError } from '../../common/utils';
+import { formatError } from '../../common/error-format';
 import { ValidationError } from '../../common/errors';
 
 export type BlobKind = 'image' | 'audio';
@@ -16,10 +16,19 @@ const MAX_BLOB_BYTES: Record<BlobKind, number> = {
   audio: 5 * 1024 * 1024,
 };
 
+interface BlobQueueTask {
+  run(): Promise<void>;
+}
+
+interface BlobQueueEntry {
+  running: boolean;
+  pending: BlobQueueTask[];
+}
+
 @Injectable()
 export class BlobService implements OnModuleInit {
   private readonly logger = new Logger(BlobService.name);
-  private readonly writeTails = new Map<string, Promise<unknown>>();
+  private readonly writeQueues = new Map<string, BlobQueueEntry>();
   private blobRoot: string | null = null;
 
   constructor(private readonly config: AppConfig) {}
@@ -69,7 +78,9 @@ export class BlobService implements OnModuleInit {
       await writeFile(tmp, data);
       await rename(tmp, p);
     } catch (err) {
-      await unlink(tmp).catch(() => {});
+      await unlink(tmp).catch((cleanupErr: unknown) => {
+        this.logger.warn(`清理 blob 临时文件失败 path=${tmp}: ${formatError(cleanupErr)}`);
+      });
       throw err;
     }
     return { path: p, size: data.byteLength };
@@ -103,23 +114,52 @@ export class BlobService implements OnModuleInit {
   }
 
   private runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const previous = this.writeTails.get(key) ?? Promise.resolve();
-    // Blob writes/deletes are mutexed per key. A failed previous operation must not poison
-    // later independent mutations; callers still receive their own operation's result.
-    const task = previous.then(fn, () => fn());
-    this.writeTails.set(key, task);
-    void task
-      .finally(() => {
-        if (this.writeTails.get(key) === task) this.writeTails.delete(key);
-      })
-      .catch(() => undefined);
-    return task;
+    const entry = this.queueEntry(key);
+    return new Promise<T>((resolve, reject) => {
+      entry.pending.push({
+        run: async () => {
+          try {
+            resolve(await fn());
+          } catch (err) {
+            reject(err);
+          }
+        },
+      });
+      if (!entry.running) void this.drainQueue(key, entry);
+    });
+  }
+
+  private queueEntry(key: string): BlobQueueEntry {
+    let entry = this.writeQueues.get(key);
+    if (!entry) {
+      entry = { running: false, pending: [] };
+      this.writeQueues.set(key, entry);
+    }
+    return entry;
+  }
+
+  private async drainQueue(key: string, entry: BlobQueueEntry): Promise<void> {
+    if (entry.running) return;
+    entry.running = true;
+    try {
+      while (entry.pending.length > 0) {
+        const task = entry.pending.shift();
+        if (task) await task.run();
+      }
+    } finally {
+      entry.running = false;
+      if (entry.pending.length === 0) {
+        this.writeQueues.delete(key);
+      } else {
+        void this.drainQueue(key, entry);
+      }
+    }
   }
 
   private async cleanupStaleTmpFiles(): Promise<void> {
     const root = this.blobRoot ?? resolve(this.config.blobDir);
     const cutoff = Date.now() - TMP_MAX_AGE_MS;
-    await cleanupTmpFilesUnder(root, cutoff);
+    await cleanupTmpFilesUnder(root, cutoff, this.logger);
   }
 }
 
@@ -143,7 +183,7 @@ function assertBlobSize(kind: BlobKind, size: number): void {
   }
 }
 
-async function cleanupTmpFilesUnder(dir: string, cutoff: number): Promise<void> {
+async function cleanupTmpFilesUnder(dir: string, cutoff: number, logger: Logger): Promise<void> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -152,19 +192,39 @@ async function cleanupTmpFilesUnder(dir: string, cutoff: number): Promise<void> 
     throw err;
   }
 
-  await Promise.all(
-    entries.map(async (entry) => {
-      const path = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await cleanupTmpFilesUnder(path, cutoff);
-        return;
+  await eachLimit(entries, 16, async (entry) => {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      await cleanupTmpFilesUnder(path, cutoff, logger);
+      return;
+    }
+    if (!entry.isFile() || !entry.name.endsWith('.tmp')) return;
+    const info = await stat(path).catch((err: unknown) => {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.warn(`读取 blob 临时文件状态失败 path=${path}: ${formatError(err)}`);
       }
-      if (!entry.isFile() || !entry.name.endsWith('.tmp')) return;
-      const info = await stat(path).catch(() => null);
-      if (!info || info.mtimeMs > cutoff) return;
-      await unlink(path).catch((err: unknown) => {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-      });
-    })
-  );
+      return null;
+    });
+    if (!info || info.mtimeMs > cutoff) return;
+    await unlink(path).catch((err: unknown) => {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        logger.warn(`删除过期 blob 临时文件失败 path=${path}: ${formatError(err)}`);
+      }
+    });
+  });
+}
+
+async function eachLimit<T>(
+  items: readonly T[],
+  limit: number,
+  fn: (item: T) => Promise<void>
+): Promise<void> {
+  let next = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const item = items[next++];
+      if (item !== undefined) await fn(item);
+    }
+  });
+  await Promise.all(workers);
 }

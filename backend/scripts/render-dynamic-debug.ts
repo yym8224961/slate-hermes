@@ -17,7 +17,8 @@ import {
 import {
   DynamicFrameRendererService,
   type DynamicRenderContext,
-} from '../src/modules/frame-renderer/dynamic-frame-renderer.service';
+} from '../src/modules/dynamic-content/rendering/dynamic-frame-renderer.service';
+import { DynamicFrameFontService } from '../src/modules/dynamic-content/rendering/dynamic-frame-font.service';
 import { CalendarDataService } from '../src/modules/dynamic-content/calendar-data.service';
 import { DailyCalendarProvider } from '../src/modules/dynamic-content/providers/daily-calendar.provider';
 
@@ -27,7 +28,7 @@ const tz = 'Asia/Shanghai';
 
 await mkdir(outDir, { recursive: true });
 
-const renderer = new DynamicFrameRendererService();
+const renderer = new DynamicFrameRendererService(new DynamicFrameFontService());
 const calendar = new CalendarDataService();
 const daily = new DailyCalendarProvider();
 

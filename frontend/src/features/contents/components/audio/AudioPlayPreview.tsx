@@ -4,7 +4,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { Loader2, Pause, Play } from 'lucide-react';
 import { useContentAudio } from '@/features/contents/queries';
-import { useToast } from '@/components/feedback/Toast';
+import { useToast } from '@/components/feedback/useToast';
 import { cn } from '@/lib/cn';
 import { CONTENT_AUDIO_SAMPLE_RATE, resumeSharedAudioContext } from './sharedAudioContext';
 

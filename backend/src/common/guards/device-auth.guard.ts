@@ -1,14 +1,13 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import { PrismaService } from '../../infra/prisma/prisma.service';
+import { DeviceSecretAuthCacheService } from '../../infra/auth/device-secret-auth-cache.service';
 import { AuthError } from '../errors';
 import { CURRENT_DEVICE_KEY, type DeviceContext } from '../decorators/current-device.decorator';
-import { extractBearerToken } from '../auth/http-token';
-import { authenticateDeviceSecret } from '../auth/device-secret-auth-cache';
+import { extractBearerToken } from './http-token';
 
 @Injectable()
 export class DeviceAuthGuard implements CanActivate {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(private readonly deviceSecrets: DeviceSecretAuthCacheService) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx
@@ -18,7 +17,7 @@ export class DeviceAuthGuard implements CanActivate {
     if (!secret) {
       throw new AuthError('设备认证失败');
     }
-    const device = await authenticateDeviceSecret(this.prisma, secret);
+    const device = await this.deviceSecrets.authenticate(secret);
     if (!device) {
       throw new AuthError('设备认证失败');
     }

@@ -1,12 +1,6 @@
 import type { DynamicConfigT } from 'shared';
-import { WeatherConfigPanel } from './config/WeatherConfig';
-import { WeatherAlertConfigPanel } from './config/WeatherAlertConfig';
-import { HistoryTodayConfigPanel } from './config/HistoryTodayConfig';
-import { HotListConfigPanel } from './config/HotListConfig';
-import { DashboardConfigPanel } from './config/DashboardConfig';
-import { FontTestConfigPanel } from './config/FontTestConfig';
-import { DynamicRefreshSettings } from './config/RefreshSettings';
 import { DynamicConfigBoundary } from './DynamicConfigBoundary';
+import { DynamicConfigPanel } from '@/features/dynamic/model/config-panels';
 
 // 按动态类型渲染不同的配置字段集合。
 export function DynamicConfigForm({
@@ -27,7 +21,7 @@ export function DynamicConfigForm({
 }) {
   return (
     <DynamicConfigBoundary resetKey={`${config.type}:${contentId ?? ''}`}>
-      <DynamicConfigFields
+      <DynamicConfigPanel
         config={config}
         onChange={onChange}
         contentId={contentId}
@@ -36,62 +30,5 @@ export function DynamicConfigForm({
         dashboardDataLabel={dashboardDataLabel}
       />
     </DynamicConfigBoundary>
-  );
-}
-
-function DynamicConfigFields({
-  config,
-  onChange,
-  contentId,
-  dashboardData,
-  onDashboardDataChange,
-  dashboardDataLabel,
-}: {
-  config: DynamicConfigT;
-  onChange: (config: DynamicConfigT) => void;
-  contentId?: string;
-  dashboardData?: Record<string, unknown>;
-  onDashboardDataChange?: (data: Record<string, unknown>) => void;
-  dashboardDataLabel?: string;
-}) {
-  switch (config.type) {
-    case 'daily_calendar':
-    case 'month_calendar':
-      return null;
-    case 'history_today':
-      return <HistoryTodayConfigPanel config={config} onChange={onChange} />;
-    case 'weather':
-      return <WeatherConfigPanel config={config} onChange={onChange} />;
-    case 'weather_alert':
-      return <WeatherAlertConfigPanel config={config} onChange={onChange} />;
-    case 'earthquake_report':
-      return <DynamicRefreshSettings config={config} onChange={onChange} />;
-    case 'dashboard':
-      return (
-        <DashboardConfigPanel
-          config={config}
-          onChange={onChange}
-          contentId={contentId}
-          dashboardData={dashboardData ?? {}}
-          onDashboardDataChange={onDashboardDataChange}
-          dataLabel={dashboardDataLabel}
-        />
-      );
-    case 'font_test':
-      return <FontTestConfigPanel config={config} onChange={onChange} />;
-    case 'hot_list':
-      return <HotListConfigPanel config={config} onChange={onChange} />;
-    default:
-      return <UnsupportedConfigNotice config={config} />;
-  }
-}
-
-function UnsupportedConfigNotice({ config }: { config: unknown }) {
-  const type =
-    config && typeof config === 'object' && 'type' in config
-      ? String((config as { type?: unknown }).type)
-      : 'unknown';
-  return (
-    <p className="font-sans text-[12px] leading-relaxed text-clay">暂不支持此动态类型：{type}</p>
   );
 }

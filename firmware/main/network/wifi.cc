@@ -15,6 +15,8 @@
 #include <cstring>
 #include <utility>
 
+#include "time_utils.h"
+
 namespace {
 constexpr char kTag[] = "Wifi";
 
@@ -56,6 +58,11 @@ bool FillStaConfig(wifi_config_t& wc, const std::string& ssid, const std::string
     if (password.size() >= sizeof(wc.sta.password)) {
         if (reason)
             *reason = "Wi-Fi 密码过长";
+        return false;
+    }
+    if (!password.empty() && password.size() < 8) {
+        if (reason)
+            *reason = "Wi-Fi 密码至少 8 位；开放网络请留空";
         return false;
     }
     std::memcpy(wc.sta.ssid, ssid.data(), ssid.size());
@@ -204,7 +211,7 @@ void Wifi::Init() {
     if (!s_event_group)
         s_event_group = xEventGroupCreate();
     configASSERT(s_event_group != nullptr);
-    inited_       = true;
+    inited_ = true;
 }
 
 // ─── STA 模式生命周期 ──────────────────────────────────────────────
@@ -301,8 +308,8 @@ bool Wifi::Connect(const std::string& ssid, const std::string& password, int tim
 
     wifi_config_t wc = {};
     if (!FillStaConfig(wc, ssid, password, nullptr)) {
-        ESP_LOGW(kTag, "Connect: invalid Wi-Fi credentials ssid_len=%u password_len=%u", static_cast<unsigned>(ssid.size()),
-                 static_cast<unsigned>(password.size()));
+        ESP_LOGW(kTag, "Connect: invalid Wi-Fi credentials ssid_len=%u password_len=%u",
+                 static_cast<unsigned>(ssid.size()), static_cast<unsigned>(password.size()));
         return false;
     }
     // 空密码兼容,密码非空 wifi 自动升 WPA2
@@ -407,11 +414,11 @@ bool Wifi::TryConnect(const std::string& ssid, const std::string& password, int 
     constexpr int kMaxAttempts         = 3;
     constexpr int kPerAttemptTimeoutMs = 8000;
     const int     total_budget         = std::max(timeout_ms, kPerAttemptTimeoutMs);
-    const int64_t deadline_ms          = (esp_timer_get_time() / 1000) + total_budget;
+    const int64_t deadline_ms          = time_utils::NowMs() + total_budget;
 
     int last_reason = 0;
     for (int attempt = 1; attempt <= kMaxAttempts; ++attempt) {
-        const int64_t now_ms      = esp_timer_get_time() / 1000;
+        const int64_t now_ms      = time_utils::NowMs();
         const int     budget_left = static_cast<int>(deadline_ms - now_ms);
         if (budget_left <= 0)
             break;

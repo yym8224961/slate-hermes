@@ -12,15 +12,14 @@ import { Spinner } from '@/components/ui/Spinner';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SortableGrid } from '@/components/ui/SortableGrid';
-import { ImageContentCard } from '@/features/contents/components/cards/ImageContentCard';
-import { DynamicContentCard } from '@/features/contents/components/cards/DynamicContentCard';
+import { ContentCard } from '@/features/contents/components/cards/ContentCard';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { InlineRename } from '@/components/ui/InlineRename';
-import { useToast } from '@/components/feedback/Toast';
-import { getApiErrorMessage } from '@/lib/api-errors';
 import { useInlineRename } from '@/hooks/useInlineRename';
+import { useToast } from '@/components/feedback/useToast';
+import { getApiErrorMessage } from '@/lib/api-errors';
 import { formatBytes } from '@/lib/format';
-import { useDndOrder } from '@/hooks/dnd';
+import { useDndOrder } from '@/hooks/useDndOrder';
 
 export function GroupDetailPage() {
   const { gid } = useParams();
@@ -74,6 +73,26 @@ function GroupDetailContent({
         }
       )
   );
+  const openCreate = useCallback(() => {
+    navigate(`/groups/${gid}/contents/new`);
+  }, [gid, navigate]);
+  const openEdit = useCallback(
+    (content: ContentDetailT) => {
+      if (content.kind === 'dynamic') {
+        navigate(`/groups/${gid}/contents/dynamic/${content.id}/edit`);
+      } else {
+        navigate(`/groups/${gid}/contents/image/${content.id}/edit`);
+      }
+    },
+    [gid, navigate]
+  );
+  const goBack = useCallback(() => {
+    navigate('/');
+  }, [navigate]);
+  const renderContent = useCallback(
+    (content: ContentDetailT) => <ContentCard gid={gid} content={content} onEdit={openEdit} />,
+    [gid, openEdit]
+  );
 
   if (groupQuery.isPending) {
     return (
@@ -98,27 +117,9 @@ function GroupDetailContent({
     );
   }
 
-  const KindIcon = Layers;
-
-  function openCreate() {
-    navigate(`/groups/${gid}/contents/new`);
-  }
-  function openEdit(f: ContentDetailT) {
-    if (f.kind === 'dynamic') {
-      navigate(`/groups/${gid}/contents/dynamic/${f.id}/edit`);
-    } else {
-      navigate(`/groups/${gid}/contents/image/${f.id}/edit`);
-    }
-  }
-
   return (
     <div>
-      <GroupHeader
-        group={group}
-        KindIcon={KindIcon}
-        onBack={() => navigate('/')}
-        onAdd={openCreate}
-      />
+      <GroupHeader group={group} onBack={goBack} onAdd={openCreate} />
       <div className="mt-6 fade-up fade-up-1">
         {contents.isPending ? (
           <Spinner label="加载中" />
@@ -132,13 +133,7 @@ function GroupDetailContent({
             onDragEnd={onDragEnd}
             getKey={(content) => content.id}
             className="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4"
-            renderItem={(content) =>
-              content.kind === 'dynamic' ? (
-                <DynamicContentCard gid={gid} content={content} onEdit={() => openEdit(content)} />
-              ) : (
-                <ImageContentCard gid={gid} content={content} onEdit={() => openEdit(content)} />
-              )
-            }
+            renderItem={renderContent}
           />
         ) : (
           <EmptyState
@@ -159,12 +154,10 @@ function GroupDetailContent({
 // ───── 组标题 + inline 改名 + 新建内容 ───────────────────────────
 function GroupHeader({
   group,
-  KindIcon,
   onBack,
   onAdd,
 }: {
   group: GroupSummaryT;
-  KindIcon: typeof Layers;
   onBack: () => void;
   onAdd: () => void;
 }) {
@@ -188,7 +181,7 @@ function GroupHeader({
     <PageHeader
       backLabel="总览"
       onBack={onBack}
-      icon={<KindIcon size={24} />}
+      icon={<Layers size={24} />}
       title={group.name}
       titleContent={
         <InlineRename

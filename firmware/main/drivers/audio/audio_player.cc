@@ -12,9 +12,8 @@
 #include "i2c_bus_lock.h"
 #include "volume_store.h"
 
-// Board::Init 已经在 InitPower 阶段把 GPIO42（AVDD_3V3 rail）拉高 + hold_en，
-// 所以这里不再直调 BoardI2cForcePowerOn。i2c_device.cc 仍然在异常路径上调
-// BoardI2cForcePowerOn 自救，hook 保留在 drivers/bus/i2c_power_hook.cc。
+// Board::Init 已经在 InitPower 阶段把 GPIO42（AVDD_3V3 rail）拉高 + hold_en。
+// i2c_device.cc 仍然在异常路径上调 BoardI2cForcePowerOn 自救，实现放在 board_power.cc。
 
 namespace {
 constexpr char kTag[] = "Audio";

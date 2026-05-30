@@ -1,8 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import { EarthquakeReportConfig, type EarthquakeReportConfigT } from 'shared';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
-import { stripHtml } from '../html-text';
+import { stripHtml } from '../../../common/html-text';
 import { fetchText } from '../../../common/http/fetch';
+import {
+  CachedInflightFetcher,
+  DEFAULT_PROVIDER_CACHE_TTL_SEC,
+  DEFAULT_PROVIDER_FETCH_TIMEOUT_MS,
+} from './provider-cache';
 
 export interface EarthquakeReportItem {
   id: string;
@@ -22,14 +27,8 @@ export interface EarthquakeReportProviderData {
   items: EarthquakeReportItem[];
 }
 
-interface CacheEntry {
-  data: EarthquakeReportProviderData;
-  fetchedAt: number;
-}
-
-const DEFAULT_CACHE_TTL_SEC = 600;
-const FETCH_TIMEOUT_MS = 5000;
-const SOURCE_URL = 'https://data.earthquake.cn/datashare/report.shtml?PAGEID=earthquake_subao';
+const DEFAULT_SOURCE_URL =
+  'https://data.earthquake.cn/datashare/report.shtml?PAGEID=earthquake_subao';
 
 @Injectable()
 export class EarthquakeReportProvider implements DataProvider<
@@ -37,8 +36,7 @@ export class EarthquakeReportProvider implements DataProvider<
   EarthquakeReportProviderData
 > {
   readonly type = 'earthquake_report';
-  private cache: CacheEntry | null = null;
-  private inflight: Promise<EarthquakeReportProviderData> | null = null;
+  private readonly fetcher = new CachedInflightFetcher<string, EarthquakeReportProviderData>(1);
 
   validateConfig(raw: unknown): EarthquakeReportConfigT {
     return EarthquakeReportConfig.parse(raw);
@@ -49,26 +47,14 @@ export class EarthquakeReportProvider implements DataProvider<
     ctx: DynamicContentFetchCtx
   ): Promise<EarthquakeReportProviderData> {
     const now = ctx.now.getTime();
-    const ttlMs = Math.max(config.refresh_interval_sec ?? DEFAULT_CACHE_TTL_SEC, 300) * 1000;
-    if (this.inflight) return this.inflight;
-
-    if (this.cache && now - this.cache.fetchedAt < ttlMs) return this.cache.data;
-    if (this.cache) this.cache = null;
-
-    const p = this.fetchFresh(ctx)
-      .then((data) => {
-        this.cache = { data, fetchedAt: now };
-        return data;
-      })
-      .finally(() => {
-        this.inflight = null;
-      });
-    this.inflight = p;
-    return p;
+    const ttlMs =
+      Math.max(config.refresh_interval_sec ?? DEFAULT_PROVIDER_CACHE_TTL_SEC, 300) * 1000;
+    return this.fetcher.getOrFetch('earthquake-report', now, ttlMs, () => this.fetchFresh(ctx));
   }
 
   private async fetchFresh(ctx: DynamicContentFetchCtx): Promise<EarthquakeReportProviderData> {
-    const html = await fetchText(SOURCE_URL, { timeoutMs: FETCH_TIMEOUT_MS });
+    const sourceUrl = earthquakeReportSourceUrl();
+    const html = await fetchText(sourceUrl, { timeoutMs: DEFAULT_PROVIDER_FETCH_TIMEOUT_MS });
     const items = parseEarthquakeSubaoRows(html).slice(0, 20);
     if (items.length === 0 && !hasExpectedEarthquakeMarkup(html)) {
       throw new Error('地震速报页面结构已变化，无法解析列表');
@@ -76,10 +62,14 @@ export class EarthquakeReportProvider implements DataProvider<
     return {
       title: '中国地震台网速报',
       updatedAt: ctx.now.toISOString(),
-      sourceUrl: SOURCE_URL,
+      sourceUrl,
       items,
     };
   }
+}
+
+function earthquakeReportSourceUrl(): string {
+  return process.env.EARTHQUAKE_REPORT_SOURCE_URL?.trim() || DEFAULT_SOURCE_URL;
 }
 
 function hasExpectedEarthquakeMarkup(html: string): boolean {

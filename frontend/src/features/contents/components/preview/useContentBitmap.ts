@@ -1,10 +1,9 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
-import { clearCanvas, decodeBppImage, isValidBppLength } from '@/lib/image';
+import { clearCanvas, decodeBppImage, isValidBppLength } from '@/lib/frame/bpp';
 
 // 400x300 RGBA ImageData 约 480KB；默认保留约 8MB，换取列表滚动/返回时少解码。
 const MAX_CACHE_BYTES = 8 * 1024 * 1024;
 
-/** LRU cache: Map 按插入顺序迭代，get 时将条目移到末尾以更新访问顺序 */
 const imageDataCache = new Map<string, ImageData>();
 let imageDataCacheBytes = 0;
 
@@ -20,14 +19,12 @@ if (import.meta.hot) {
 function getCachedImageData(etag: string): ImageData | undefined {
   const entry = imageDataCache.get(etag);
   if (entry === undefined) return undefined;
-  // 将命中的条目移到末尾，使其成为最近使用
   imageDataCache.delete(etag);
   imageDataCache.set(etag, entry);
   return entry;
 }
 
 function rememberImageData(etag: string, data: ImageData): void {
-  // 若 etag 已存在，先删除再插入以更新顺序
   const existing = imageDataCache.get(etag);
   if (existing) {
     imageDataCache.delete(etag);
@@ -37,10 +34,9 @@ function rememberImageData(etag: string, data: ImageData): void {
   if (dataBytes > MAX_CACHE_BYTES) return;
   imageDataCache.set(etag, data);
   imageDataCacheBytes += dataBytes;
-  // 超出字节上限时批量驱逐最旧的条目。
   while (imageDataCacheBytes > MAX_CACHE_BYTES) {
     const lruKey = imageDataCache.keys().next().value;
-    if (lruKey === undefined) break;
+    if (lruKey === undefined) return;
     const lru = imageDataCache.get(lruKey);
     imageDataCache.delete(lruKey);
     if (lru) imageDataCacheBytes -= imageDataByteLength(lru);

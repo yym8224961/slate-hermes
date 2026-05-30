@@ -1,4 +1,4 @@
-const TOKEN_KEY = 'slate_jwt';
+export const AUTH_TOKEN_STORAGE_KEY = 'slate_jwt';
 
 let unauthorizedHandler: (() => void) | null = null;
 let unauthorizedNotified = false;
@@ -9,11 +9,11 @@ interface ClearAuthTokenOptions {
 }
 
 function getAuthToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
 }
 
 function clearAuthToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
 }
 
 function resetUnauthorizedState(): void {
@@ -65,7 +65,7 @@ export const tokenStorage = {
   get: getAuthToken,
   set: (v: string) => {
     resetUnauthorizedState();
-    localStorage.setItem(TOKEN_KEY, v);
+    localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, v);
   },
   clear: (options?: ClearAuthTokenOptions) => {
     if (options?.resetUnauthorized !== false) resetUnauthorizedState();

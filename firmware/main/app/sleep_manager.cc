@@ -3,21 +3,21 @@
 #include <driver/rtc_io.h>
 #include <esp_log.h>
 #include <esp_sleep.h>
-#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
 #include <array>
 
-#include "audio_player.h"
 #include "board.h"
 #include "charge_status.h"
 #include "config.h"
 #include "epd_ssd1683.h"
+#include "epd_utils.h"
 #include "event_bus.h"
 #include "gpio_util.h"
 #include "power_state.h"
-#include "sync_service.h"
+#include "shutdown_subsystems.h"
+#include "time_utils.h"
 #include "xiaozhi_chat_service.h"
 
 namespace {
@@ -33,6 +33,8 @@ constexpr uint32_t kBatteryMask      = 0x7FUL << kBatteryShift;
 constexpr uint32_t kUnboundSinceMask = (1UL << kBatteryShift) - 1;
 constexpr int      kMaxPackedBattery = 100;
 constexpr int      kMinPackedBattery = 0;
+static_assert(kMaxPackedBattery <= static_cast<int>(kBatteryMask >> kBatteryShift),
+              "Packed battery field cannot represent kMaxPackedBattery");
 
 int ClampBatteryPct(int pct) {
     if (pct < kMinPackedBattery)
@@ -122,9 +124,9 @@ void LockVbatPowerHigh() {
 void SaveStatusBarSnapshot(EpdSsd1683* epd) {
     if (!epd)
         return;
-    std::array<uint8_t, power_state::kStatusBarSnapshotBytes> snapshot{};
-    if (!epd->ReadPreviousRaw1bpp(0, 0, power_state::kStatusBarSnapshotWidth, power_state::kStatusBarSnapshotHeight,
-                                  snapshot.data(), snapshot.size())) {
+    std::array<uint8_t, epd::kStatusBarSnapshotBytes> snapshot{};
+    if (!epd->ReadPreviousRaw1bpp(0, 0, epd::kStatusBarSnapshotWidth, epd::kStatusBarSnapshotHeight, snapshot.data(),
+                                  snapshot.size())) {
         ESP_LOGW(kTag, "Status bar snapshot skipped: previous buffer not synced");
         power_state::ClearStatusBarSnapshot();
         return;
@@ -138,7 +140,7 @@ void SleepManager::Init(Policy p) {
     idle_timeout_min_ = p.idle_timeout_min;
     unbound_grace_ms_ = p.unbound_grace_ms;
     low_battery_pct_  = p.low_battery_pct;
-    last_active_ms_.store(esp_timer_get_time() / 1000);
+    last_active_ms_.store(time_utils::NowMs());
     unbound_state_.store(PackUnboundState(false, kMaxPackedBattery, 0), std::memory_order_release);
     enabled_.store(!p.disabled);
 }
@@ -152,12 +154,12 @@ void SleepManager::OnEvent(const UiEvent& e) {
         case UiEventKind::kButtonShort:
         case UiEventKind::kButtonLong:
         case UiEventKind::kButtonDouble:
-            last_active_ms_.store(esp_timer_get_time() / 1000);
+            last_active_ms_.store(time_utils::NowMs());
             break;
         case UiEventKind::kChargeChanged:
             paused_.store(e.u.charge.present);
             if (e.u.charge.present) {
-                last_active_ms_.store(esp_timer_get_time() / 1000);
+                last_active_ms_.store(time_utils::NowMs());
             }
             break;
         case UiEventKind::kBound:
@@ -166,7 +168,7 @@ void SleepManager::OnEvent(const UiEvent& e) {
             break;
         case UiEventKind::kUnbound:
             // 仅首次进入 unbound 时记录起始 ts,重复事件不重置(否则 2h 兜底永不触发)。
-            if (MarkUnboundIfNeeded(unbound_state_, esp_timer_get_time() / 1000)) {
+            if (MarkUnboundIfNeeded(unbound_state_, time_utils::NowMs())) {
                 ESP_LOGW(kTag, "Unbound -> deep sleep blocked for up to %lld h",
                          (long long)(kUnboundGraceMs / (60 * 60 * 1000)));
             }
@@ -222,7 +224,7 @@ SleepManager::SleepDecision SleepManager::TryEnterDeepSleep() {
     if (!enabled_.load()) {
         return {SleepOutcome::kDisabled, next_sec};
     }
-    const int64_t now_ms = esp_timer_get_time() / 1000;
+    const int64_t now_ms = time_utils::NowMs();
     if (InUnboundGrace(now_ms)) {
         return {SleepOutcome::kUnboundGrace, next_sec};
     }
@@ -236,20 +238,13 @@ SleepManager::SleepDecision SleepManager::TryEnterDeepSleep() {
     }
     ESP_LOGW(kTag, "EnterDeepSleep: shutting down peripherals");
 
-    // 1) 停后台 task,避免在 rail 关闭后还有 I²C / 网络写操作。
-    //    Stop 是异步信号 task 自然退出,不等(esp_deep_sleep_start 强制中断)。
-    xiaozhi::ChatService::Get().SuspendForSleep();
-    SyncService::Get().Stop();
-    AudioPlayer::Get().Stop();
+    // 1) 停后台 task,避免在 rail 关闭后还有 I²C / 网络写操作，并等待已有 EPD 刷新完成。
+    const bool epd_ready = app::ShutdownSubsystems(kEpdFlushTimeoutMs);
 
-    // 2) 只等待已有 EPD 刷新完成，不主动制造一轮全刷。墨水屏内容本来可保留；
+    // 2) 不主动制造一轮全刷。墨水屏内容本来可保留；
     //    静态帧 idle 进睡眠时如果这里再全刷一次，会白白耗电。
     if (auto* epd = Board::Get().epd()) {
-        const TickType_t deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kEpdFlushTimeoutMs);
-        while (epd->IsRefreshPending() && xTaskGetTickCount() < deadline) {
-            vTaskDelay(pdMS_TO_TICKS(50));
-        }
-        if (epd->IsRefreshPending()) {
+        if (!epd_ready) {
             ESP_LOGW(kTag, "EPD still pending after %dms; skip status bar snapshot", kEpdFlushTimeoutMs);
             power_state::ClearStatusBarSnapshot();
         } else {

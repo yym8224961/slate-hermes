@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { SearchDropdown } from '@/components/ui/SearchDropdown';
-import type { City } from '@/lib/cities';
+import type { City } from '@/data/cities';
 import { useWeatherCitySearch, type WeatherCityResult } from '@/features/dynamic/queries';
+import { useCities } from '@/features/dynamic/hooks/useCities';
 
 type CityResult = { source: 'remote'; city: WeatherCityResult } | { source: 'local'; city: City };
 
@@ -15,17 +16,12 @@ export function CitySearch({
   const [query, setQuery] = useState(value);
   const [open, setOpen] = useState(false);
   const [dirty, setDirty] = useState(false);
-  const [cities, setCities] = useState<City[] | null>(null);
   const trimmedQuery = query.trim();
   const citySearch = useWeatherCitySearch(trimmedQuery, dirty);
   const shouldUseLocalFallback =
     citySearch.isError ||
     (!citySearch.isFetching && (!citySearch.data || citySearch.data.length === 0));
-
-  const loadCities = useCallback(() => {
-    if (cities) return;
-    void import('@/lib/cities').then((module) => setCities(module.CITIES));
-  }, [cities]);
+  const { cities, loadCities } = useCities();
 
   useEffect(() => {
     setQuery(value);
@@ -77,7 +73,7 @@ export function CitySearch({
       results={results}
       open={open}
       onOpenChange={setOpen}
-      getKey={(result) => cityResultKey(result)}
+      getKey={cityResultKey}
       onSelect={(result) => {
         const city = cityResultValue(result);
         onSelect({ locationId: city.locationId, label: city.label });

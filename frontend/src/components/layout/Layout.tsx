@@ -3,7 +3,7 @@
 import { Link, Outlet } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { LogOut } from 'lucide-react';
-import { useAuth } from '@/features/auth/auth';
+import { useAuth } from '@/features/auth/useAuth';
 import { IconBlock } from '@/components/ui/IconBlock';
 
 export function Layout() {

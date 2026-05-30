@@ -10,7 +10,7 @@ import { useCallback, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { MonitorSmartphone, Cpu } from 'lucide-react';
 import { useDevices, useReorderDevices } from '@/features/devices/queries';
-import { useAuth } from '@/features/auth/auth';
+import { useAuth } from '@/features/auth/useAuth';
 import { useGroups } from '@/features/groups/queries';
 import { Section } from '@/components/layout/Section';
 import { Spinner } from '@/components/ui/Spinner';
@@ -21,12 +21,10 @@ import { DeviceModal } from '@/features/devices/components/DeviceModal';
 import { AddDeviceDialog } from '@/features/devices/components/AddDeviceDialog';
 import { DeviceCard } from '@/features/devices/components/DeviceCard';
 import { GroupsSection } from './GroupsSection';
-import { useToast } from '@/components/feedback/Toast';
+import { useToast } from '@/components/feedback/useToast';
 import { getApiErrorMessage } from '@/lib/api-errors';
-import { useDndOrder } from '@/hooks/dnd';
-import type { GroupSummaryT } from 'shared';
-
-const EMPTY_GROUPS: GroupSummaryT[] = [];
+import { useDndOrder } from '@/hooks/useDndOrder';
+import type { DeviceSummaryT } from 'shared';
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -36,6 +34,18 @@ export function DashboardPage() {
   const { did } = useParams();
 
   const openDevice = devices.data?.find((d) => d.id === did);
+  const openDeviceById = useCallback(
+    (deviceId: string) => {
+      navigate(`/devices/${deviceId}`);
+    },
+    [navigate]
+  );
+  const renderDevice = useCallback(
+    (device: DeviceSummaryT) => (
+      <DeviceCard device={device} groups={groups.data} onOpen={openDeviceById} />
+    ),
+    [groups.data, openDeviceById]
+  );
 
   function closeDeviceModal() {
     navigate('/', { replace: true });
@@ -94,13 +104,7 @@ export function DashboardPage() {
             onDragEnd={dnd.onDragEnd}
             getKey={(device) => device.id}
             className="grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 fade-up fade-up-1"
-            renderItem={(device) => (
-              <DeviceCard
-                device={device}
-                groups={groups.data ?? EMPTY_GROUPS}
-                onOpen={() => navigate(`/devices/${device.id}`)}
-              />
-            )}
+            renderItem={renderDevice}
           />
         ) : (
           <EmptyState

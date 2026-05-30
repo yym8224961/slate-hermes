@@ -31,6 +31,9 @@ const dialogContentFrameCls = cn(
 // Dialog 弹层内容
 export const dialogContentCls = cn(dialogContentFrameCls, 'max-w-md z-50 p-7');
 
+// Dialog 弹层内容（确认框）。确认框可能从其它 dialog 内触发，需要高一档 z-index。
+export const dialogContentConfirmCls = cn(dialogContentFrameCls, 'max-w-md z-[60] p-6');
+
 // Dialog 弹层内容（宽版）。
 export const dialogContentWideCls = cn(
   dialogContentFrameCls,
@@ -41,3 +44,6 @@ export const dialogContentWideCls = cn(
 
 // Dialog 遮罩
 export const dialogOverlayCls = 'fixed inset-0 bg-ink/20 z-40';
+
+// Dialog 遮罩（确认框）。
+export const dialogOverlayConfirmCls = 'fixed inset-0 bg-ink/20 z-50';

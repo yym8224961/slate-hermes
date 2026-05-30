@@ -1,3 +1,5 @@
+import { evictOldestMapEntry, setBoundedCache } from '../cache-utils';
+
 interface Bucket {
   windowStartMs: number;
   count: number;
@@ -36,7 +38,7 @@ export class FixedWindowRateLimiter {
         this.evictOldest();
       }
       bucket = { windowStartMs: now, count: 0, lastSeenMs: now };
-      this.buckets.set(key, bucket);
+      setBoundedCache(this.buckets, key, bucket, this.opts.maxBuckets);
     }
 
     bucket.lastSeenMs = now;
@@ -103,12 +105,10 @@ export class FixedWindowRateLimiter {
   }
 
   private touch(key: string, bucket: Bucket): void {
-    this.buckets.delete(key);
-    this.buckets.set(key, bucket);
+    setBoundedCache(this.buckets, key, bucket, this.opts.maxBuckets);
   }
 
   private evictOldest(): void {
-    const oldestKey = this.buckets.keys().next().value as string | undefined;
-    if (oldestKey !== undefined) this.buckets.delete(oldestKey);
+    evictOldestMapEntry(this.buckets);
   }
 }

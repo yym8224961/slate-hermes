@@ -6,11 +6,12 @@ import type {
   UpdateGroupRequestT,
 } from 'shared';
 import { API_V1, api } from '@/lib/http';
-import { queryKeys } from '@/lib/query-keys';
+import { deviceKeys } from '@/features/devices/query-keys';
+import { groupKeys } from './query-keys';
 
 export function useGroups() {
   return useQuery({
-    queryKey: queryKeys.groups,
+    queryKey: groupKeys.list,
     queryFn: async () => {
       const { data } = await api.get<GroupSummaryT[]>(`${API_V1}/groups`);
       return data;
@@ -21,7 +22,7 @@ export function useGroups() {
 
 export function useGroup(gid: string | undefined) {
   return useQuery({
-    queryKey: queryKeys.group(gid),
+    queryKey: groupKeys.detail(gid),
     queryFn: async () => {
       const { data } = await api.get<GroupSummaryT>(`${API_V1}/groups/${gid}`);
       return data;
@@ -38,7 +39,7 @@ export function useCreateGroup() {
       const { data } = await api.post<GroupSummaryT>(`${API_V1}/groups`, body);
       return data;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.groups }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: groupKeys.list }),
   });
 }
 
@@ -50,8 +51,8 @@ export function useUpdateGroup(gid: string) {
       return data;
     },
     onSuccess: (updated) => {
-      qc.setQueryData(queryKeys.group(updated.id), updated);
-      qc.setQueryData<GroupSummaryT[]>(queryKeys.groups, (groups) => {
+      qc.setQueryData(groupKeys.detail(updated.id), updated);
+      qc.setQueryData<GroupSummaryT[]>(groupKeys.list, (groups) => {
         if (!groups) return groups;
         return groups.map((group) => (group.id === updated.id ? updated : group));
       });
@@ -65,7 +66,7 @@ export function useReorderGroups() {
     mutationFn: async (body: ReorderGroupsRequestT) => {
       await api.put(`${API_V1}/groups/order`, body);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.groups }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: groupKeys.list }),
   });
 }
 
@@ -76,9 +77,9 @@ export function useDeleteGroup() {
       await api.delete(`${API_V1}/groups/${gid}`);
     },
     onSuccess: (_data, gid) => {
-      qc.removeQueries({ queryKey: queryKeys.group(gid) });
-      qc.invalidateQueries({ queryKey: queryKeys.groups });
-      qc.invalidateQueries({ queryKey: queryKeys.devices });
+      qc.removeQueries({ queryKey: groupKeys.detail(gid) });
+      qc.invalidateQueries({ queryKey: groupKeys.list });
+      qc.invalidateQueries({ queryKey: deviceKeys.list });
     },
   });
 }

@@ -8,7 +8,7 @@ import {
 
 interface DynamicEditorState {
   baseline: DynamicEditorBaseline;
-  type: DynamicTypeT;
+  type: DynamicTypeT | null;
   frameName: string;
   configKey: string;
 }
@@ -29,7 +29,7 @@ export function useDynamicEditorBaselineSync({
   serverType: DynamicTypeT;
   serverFrameName: string | null;
   serverConfig: DynamicConfigT;
-  type: DynamicTypeT;
+  type: DynamicTypeT | null;
   frameName: string;
   configKey: string;
   setType: (type: DynamicTypeT) => void;
@@ -75,6 +75,10 @@ export function useDynamicEditorBaselineSync({
       currentFrameName === serverBaseline.frameName &&
       currentConfigKey === serverBaseline.configKey;
 
+    // State transition model:
+    // 1. clean editor + new server baseline -> replace baseline and editor state.
+    // 2. dirty editor + different server baseline -> move the baseline only, preserving local edits.
+    // 3. dirty editor already matches server -> fall through and cleanly converge editor + baseline.
     if (hasLocalEdits && !localMatchesServer) {
       if (!isSameDynamicEditorBaseline(currentBaseline, serverBaseline)) {
         setBaseline(serverBaseline);

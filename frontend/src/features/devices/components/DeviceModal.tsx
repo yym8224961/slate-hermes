@@ -14,18 +14,19 @@ import { X, Wifi, Unlink, Radio } from 'lucide-react';
 import type { DeviceSummaryT, GroupSummaryT } from 'shared';
 import { usePatchDevice } from '@/features/devices/queries';
 import { useGroups } from '@/features/groups/queries';
-import { useToast } from '@/components/feedback/Toast';
+import { useToast } from '@/components/feedback/useToast';
 import { Button } from '@/components/ui/Button';
 import { InlineRename } from '@/components/ui/InlineRename';
+import { useInlineRename } from '@/hooks/useInlineRename';
 import { Spinner } from '@/components/ui/Spinner';
 import { Select, SelectItem, SelectSeparator } from '@/components/ui/Select';
-import { DEVICE_ONLINE_TICK_MS, isOnlineAt, rssiLabel, useNow, useTimeAgo } from '@/lib/format';
+import { rssiLabel, useTimeAgo } from '@/lib/format';
+import { useDeviceOnline } from '@/features/devices/status';
 import { BatteryLevelIcon } from './BatteryLevelIcon';
-import { useUnbindDeviceWithConfirm } from './useUnbindDeviceWithConfirm';
+import { useUnbindDeviceWithConfirm } from '@/features/devices/hooks/useUnbindDeviceWithConfirm';
 import { dialogContentWideCls, dialogOverlayCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
 import { getApiErrorMessage } from '@/lib/api-errors';
-import { useInlineRename } from '@/hooks/useInlineRename';
 
 interface DeviceModalProps {
   open: boolean;
@@ -60,8 +61,7 @@ export function DeviceModal({ open, onOpenChange, device }: DeviceModalProps) {
     }
   });
 
-  const now = useNow(DEVICE_ONLINE_TICK_MS);
-  const online = isOnlineAt(device, now);
+  const online = useDeviceOnline(device.last_seen_at);
   const battery = device.battery_pct;
   const lastSeenAgo = useTimeAgo(device.last_seen_at);
 

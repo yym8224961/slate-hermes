@@ -12,8 +12,21 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <string>
 #include <type_traits>
+
+namespace evt {
+namespace limits {
+inline constexpr size_t kGroupIdBytes         = 32;
+inline constexpr size_t kGroupSyncNameBytes   = 48;
+inline constexpr size_t kGroupNameBytes       = 64;
+inline constexpr size_t kWifiSsidBytes        = 33;
+inline constexpr size_t kPairCodeBytes        = 8;
+inline constexpr int    kMaxGroupContentCount = 100;
+}  // namespace limits
+}  // namespace evt
 
 enum class UiEventKind : uint8_t {
     kButtonShort,       // u.button.btn
@@ -103,15 +116,15 @@ struct UiEvent {
             uint8_t total;
         } progress;
         struct {
-            char                gid[32];
-            char                name[48];
+            char                gid[evt::limits::kGroupIdBytes];
+            char                name[evt::limits::kGroupSyncNameBytes];
             GroupSyncStatusMode mode;
             uint8_t             current;
             uint8_t             total;
         } group_sync;
         struct {
-            char gid[32];
-            char name[64];  // 当前组名（UTF-8），用于状态栏 / boot splash 文案
+            char gid[evt::limits::kGroupIdBytes];
+            char name[evt::limits::kGroupNameBytes];  // 当前组名（UTF-8），用于状态栏 / boot splash 文案
             int  content_count;
             // true = 本轮 sync 真下载了新 frame(内容变化);false = fast-path/304,只是确认状态。
             // FrameScene 用它决定是否触发 EPD full refresh,避免 30s 心跳每轮都闪屏。
@@ -119,11 +132,11 @@ struct UiEvent {
         } group;
         struct {
             BootStage stage;
-            char      ssid[33];      // kWifiConnecting 时设 STA SSID
-            char      pair_code[8];  // kAwaitingPair 时设 6 位 + nul
+            char      ssid[evt::limits::kWifiSsidBytes];       // kWifiConnecting 时设 STA SSID
+            char      pair_code[evt::limits::kPairCodeBytes];  // kAwaitingPair 时设 6 位 + nul
         } boot_stage;
         struct {
-            char pair_code[8];
+            char pair_code[evt::limits::kPairCodeBytes];
         } unbound;
         struct {
             uint32_t token;
@@ -147,5 +160,23 @@ void Init();
 bool Post(const UiEvent& e, TickType_t timeout = pdMS_TO_TICKS(100));
 bool PostFromIsr(const UiEvent& e, BaseType_t* hpw);
 bool Wait(UiEvent* out, TickType_t timeout);
+
+bool PostSimple(UiEventKind kind, TickType_t timeout = pdMS_TO_TICKS(100));
+bool PostButton(UiEventKind kind, ButtonId btn, TickType_t timeout = pdMS_TO_TICKS(100));
+bool PostChargeChanged(uint8_t state, bool present, bool charging, bool full, bool no_battery,
+                       TickType_t timeout = pdMS_TO_TICKS(100));
+bool PostBatteryUpdated(int mv, int pct, TickType_t timeout = 0);
+bool PostWifiState(bool connected, int rssi, TickType_t timeout = pdMS_TO_TICKS(100));
+bool PostBootStage(BootStage stage, const char* ssid = nullptr, const char* pair_code = nullptr,
+                   TickType_t timeout = pdMS_TO_TICKS(100));
+bool PostGroupReady(UiEventKind kind, const std::string& gid, const std::string& name, int content_count,
+                    bool content_changed, TickType_t timeout = pdMS_TO_TICKS(100));
+bool PostGroupSyncStatus(GroupSyncStatusMode mode, const std::string& gid, const std::string& name, uint8_t current = 0,
+                         uint8_t total = 0, TickType_t timeout = 0);
+bool PostSyncProgress(uint8_t current, uint8_t total, TickType_t timeout = 0);
+bool PostSyncStarted(TickType_t timeout = 0);
+bool PostSyncFinished(bool ok, bool group_changed, TickType_t timeout = 0);
+bool PostUnbound(const std::string& pair_code, TickType_t timeout = 0);
+bool PostXiaozhiChannelClosed(uint32_t token, TickType_t timeout = pdMS_TO_TICKS(100));
 
 }  // namespace evt

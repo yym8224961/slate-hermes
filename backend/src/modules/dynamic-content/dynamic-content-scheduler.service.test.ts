@@ -39,10 +39,11 @@ describe('DynamicContentSchedulerService', () => {
     );
 
     service.onModuleInit();
-    expect((service as unknown as { timer: unknown }).timer).not.toBeNull();
+    const loop = (service as unknown as { loop: { timer: unknown } }).loop;
+    expect(loop.timer).not.toBeNull();
 
     service.onModuleDestroy();
-    expect((service as unknown as { timer: unknown }).timer).toBeNull();
+    expect(loop.timer).toBeNull();
   });
 
   it('logs retry marker failures instead of swallowing them inside a job catch', async () => {

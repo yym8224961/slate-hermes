@@ -8,7 +8,6 @@ import {
 } from '../../common/decorators/current-device.decorator';
 import { DevicesService } from './devices.service';
 import { GroupsService } from '../groups/groups.service';
-import { ContentsService } from '../contents/contents.service';
 import { RegisterDeviceDto } from './dto/register-device.dto';
 import { PollDto } from './dto/poll.dto';
 import { SelectGroupByDeviceDto } from './dto/select-group.dto';
@@ -18,8 +17,7 @@ import { DeviceRegisterRateLimitGuard } from './device-register-rate-limit.guard
 export class DevicesProtocolController {
   constructor(
     private readonly devices: DevicesService,
-    private readonly groups: GroupsService,
-    private readonly contents: ContentsService
+    private readonly groups: GroupsService
   ) {}
 
   // ── register / reset（无鉴权）────────────────────────────
@@ -45,26 +43,7 @@ export class DevicesProtocolController {
   @UseGuards(DeviceAuthGuard)
   @Post('devices/current/poll')
   async poll(@CurrentDevice() dev: DeviceContext, @Body() body: PollDto): Promise<DeviceStateT> {
-    const device = await this.devices.recordTelemetry(dev.deviceId, body.telemetry);
-    const telemetry = body.telemetry;
-    const currentFrame = await this.contents.resolveCurrentContentRequest(device, telemetry);
-    let resolvedCurrentFrame = currentFrame;
-    const shouldRefreshCurrentFrame = telemetry?.wake_reason === 'timer';
-    if (shouldRefreshCurrentFrame) {
-      resolvedCurrentFrame = await this.contents.refreshCurrentContentForDeviceIfDue(currentFrame);
-    }
-    const state = await this.devices.buildState(dev.deviceId, { device });
-    if (
-      state.group &&
-      resolvedCurrentFrame &&
-      state.group.id === resolvedCurrentFrame.groupId &&
-      state.group.manifest_etag === resolvedCurrentFrame.manifestEtag
-    ) {
-      state.current_content = await this.contents.currentContentForDevice(resolvedCurrentFrame);
-    } else {
-      state.current_content = null;
-    }
-    return state;
+    return this.devices.poll(dev.deviceId, body.telemetry);
   }
 
   @Public()

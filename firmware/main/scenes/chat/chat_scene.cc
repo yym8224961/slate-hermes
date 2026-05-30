@@ -13,6 +13,7 @@
 #include "scene_stack.h"
 #include "settings_scene.h"
 #include "theme.h"
+#include "utf8_utils.h"
 #include "xiaozhi_chat_service.h"
 
 namespace {
@@ -27,172 +28,8 @@ int StandbyContentCenterY() {
     return theme::kStatusBarHeight + (LV_VER_RES - theme::kStatusBarHeight - kStandbyBottomHintReserve) / 2;
 }
 
-std::string TrimForScreen(const std::string& text, size_t max_len) {
-    if (max_len == 0 || text.empty())
-        return "";
-
-    size_t pos   = 0;
-    size_t count = 0;
-    while (pos < text.size() && count < max_len) {
-        const auto ch   = static_cast<unsigned char>(text[pos]);
-        size_t     step = 1;
-        if ((ch & 0x80) == 0) {
-            step = 1;
-        } else if ((ch & 0xE0) == 0xC0) {
-            step = 2;
-        } else if ((ch & 0xF0) == 0xE0) {
-            step = 3;
-        } else if ((ch & 0xF8) == 0xF0) {
-            step = 4;
-        }
-        if (pos + step > text.size())
-            break;
-        bool valid = true;
-        for (size_t i = 1; i < step; ++i) {
-            const auto cont = static_cast<unsigned char>(text[pos + i]);
-            if ((cont & 0xC0) != 0x80) {
-                valid = false;
-                break;
-            }
-        }
-        if (!valid)
-            step = 1;
-        pos += step;
-        ++count;
-    }
-
-    if (pos >= text.size())
-        return text;
-    return text.substr(0, pos) + "...";
-}
-
-bool DecodeUtf8Codepoint(const std::string& text, size_t pos, uint32_t& cp, size_t& step) {
-    if (pos >= text.size())
-        return false;
-
-    const auto ch = static_cast<unsigned char>(text[pos]);
-    if ((ch & 0x80) == 0) {
-        cp   = ch;
-        step = 1;
-        return true;
-    }
-
-    uint32_t value = 0;
-    if ((ch & 0xE0) == 0xC0) {
-        value = ch & 0x1F;
-        step  = 2;
-    } else if ((ch & 0xF0) == 0xE0) {
-        value = ch & 0x0F;
-        step  = 3;
-    } else if ((ch & 0xF8) == 0xF0) {
-        value = ch & 0x07;
-        step  = 4;
-    } else {
-        step = 1;
-        return false;
-    }
-
-    if (pos + step > text.size()) {
-        step = 1;
-        return false;
-    }
-    for (size_t i = 1; i < step; ++i) {
-        const auto cont = static_cast<unsigned char>(text[pos + i]);
-        if ((cont & 0xC0) != 0x80) {
-            step = 1;
-            return false;
-        }
-        value = (value << 6) | (cont & 0x3F);
-    }
-
-    if ((step == 2 && value < 0x80) || (step == 3 && value < 0x800) || (step == 4 && value < 0x10000) ||
-        value > 0x10FFFF || (value >= 0xD800 && value <= 0xDFFF)) {
-        step = 1;
-        return false;
-    }
-
-    cp = value;
-    return true;
-}
-
-bool IsSupportedEmojiLikeCodepoint(uint32_t cp) {
-    switch (cp) {
-        case 0x2600:   // ☀
-        case 0x2601:   // ☁
-        case 0x2602:   // ☂
-        case 0x2603:   // ☃
-        case 0x26A1:   // ⚡
-        case 0x2744:   // ❄
-        case 0x279C:   // ➜
-        case 0x279D:   // ➝
-        case 0x279E:   // ➞
-        case 0x27A4:   // ➤
-            // 仅放行 zfull_16 字体实际包含的 BMP 符号。U+1Fxxx 高位 emoji 字体无字形
-            // （gen_zfull_fonts.sh 明确排除），如需显示需另走 image/font 路径。
-            return true;
-        default:
-            return false;
-    }
-}
-
-bool IsUnsupportedDisplayCodepoint(uint32_t cp) {
-    if (cp == 0xFFFD)
-        return true;
-    if (cp >= 0xFE00 && cp <= 0xFE0F)
-        return true;
-    if (cp >= 0xE0100 && cp <= 0xE01EF)
-        return true;
-    if (cp == 0x200D || (cp >= 0x200B && cp <= 0x200F))
-        return true;
-    if (cp >= 0x2600 && cp <= 0x27BF)
-        return !IsSupportedEmojiLikeCodepoint(cp);
-    if (cp >= 0x1F000)  // 高位 emoji 字体无字形，一律过滤
-        return true;
-    return false;
-}
-
-std::string SanitizeForScreen(const std::string& text) {
-    std::string out;
-    out.reserve(text.size());
-    bool previous_space = false;
-
-    for (size_t pos = 0; pos < text.size();) {
-        uint32_t cp   = 0;
-        size_t   step = 1;
-        if (!DecodeUtf8Codepoint(text, pos, cp, step)) {
-            pos += step;
-            continue;
-        }
-
-        if (cp == '\r') {
-            pos += step;
-            continue;
-        }
-        if (cp == '\n' || cp == '\t' || cp == 0x00A0) {
-            if (!previous_space && !out.empty()) {
-                out.push_back(' ');
-                previous_space = true;
-            }
-            pos += step;
-            continue;
-        }
-        if (cp < 0x20 || cp == 0x7F || IsUnsupportedDisplayCodepoint(cp)) {
-            pos += step;
-            continue;
-        }
-
-        out.append(text, pos, step);
-        previous_space = false;
-        pos += step;
-    }
-
-    while (!out.empty() && out.back() == ' ')
-        out.pop_back();
-    return out;
-}
-
 std::string DisplayText(const std::string& text) {
-    return TrimForScreen(SanitizeForScreen(text), 120);
+    return util::TrimForScreen(util::SanitizeForScreen(text), 120);
 }
 
 std::string MessagesKey(const xiaozhi::ChatSnapshot& snap) {
@@ -200,7 +37,7 @@ std::string MessagesKey(const xiaozhi::ChatSnapshot& snap) {
     for (const auto& msg : snap.messages) {
         key += msg.role;
         key.push_back('\x1F');
-        key += SanitizeForScreen(msg.text);
+        key += util::SanitizeForScreen(msg.text);
         key.push_back('\x1E');
     }
     return key;
@@ -486,7 +323,7 @@ void ChatScene::RenderContent() {
 
     if (snap.alert_active) {
         const std::string title   = DisplayText(snap.alert_status.empty() ? "小智提醒" : snap.alert_status);
-        const std::string message = TrimForScreen(SanitizeForScreen(snap.alert_message), 72);
+        const std::string message = util::TrimForScreen(util::SanitizeForScreen(snap.alert_message), 72);
         RenderSystemMessage(title + (message.empty() ? "" : "\n\n" + message), false, "");
     } else {
         switch (snap.state) {
@@ -514,7 +351,7 @@ void ChatScene::RenderContent() {
                 RenderChatMessages(snap);
                 break;
             case xiaozhi::ChatState::kError:
-                RenderSystemMessage("小智暂不可用\n\n" + TrimForScreen(SanitizeForScreen(snap.error), 72), false, "");
+                RenderSystemMessage("小智暂不可用\n\n" + util::TrimForScreen(util::SanitizeForScreen(snap.error), 72), false, "");
                 break;
         }
     }
