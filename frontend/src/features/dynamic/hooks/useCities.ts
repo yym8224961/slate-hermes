@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { City } from '@/data/cities';
+import type { City } from '@/features/dynamic/data/cities';
 
 let citiesPromise: Promise<City[]> | null = null;
 
 function fetchCities(): Promise<City[]> {
-  citiesPromise ??= import('@/data/cities').then((module) => module.CITIES);
+  citiesPromise ??= import('@/features/dynamic/data/cities').then((module) => module.CITIES);
   return citiesPromise;
 }
 

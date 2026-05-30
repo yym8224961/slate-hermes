@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Params } from 'nestjs-pino';
 import { AppConfig } from '../config/app.config';
-import { safeRequestId } from '../../common/request-id';
+import { safeRequestId } from '../../common/http/request-id';
 
 export function buildLoggerParams(config: AppConfig): Params {
   const prettyTransport = config.isProd
@@ -20,7 +20,6 @@ export function buildLoggerParams(config: AppConfig): Params {
     pinoHttp: {
       level: config.logLevel,
       genReqId: (req) => safeRequestId(req.headers['x-request-id']) ?? randomUUID(),
-      customProps: (req) => ({ method: req.method, url: req.url }),
       serializers: {
         req: (req) => ({ id: req.id, method: req.method, url: req.url }),
         res: (res) => ({ statusCode: res.statusCode }),

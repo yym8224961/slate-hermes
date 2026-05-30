@@ -4,7 +4,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 
-#include "scoped_mutex_lock.h"
+#include "utils/scoped_mutex_lock.h"
 
 inline SemaphoreHandle_t GpioHoldMutex() {
     static StaticSemaphore_t s_mutex_buf;

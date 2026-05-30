@@ -16,37 +16,40 @@ import { ConflictError, InternalError, NotFoundError, ValidationError } from '..
 import { toPrismaInputJson } from '../../common/db/prisma-json';
 import { lockGroupRow } from '../../common/db/row-locks';
 import { compactContentSortOrders } from '../../common/db/bulk-sort-order';
-import { formatError } from '../../common/error-format';
+import { nextContentSortOrder } from '../../common/db/sort-order';
+import { formatError } from '../../common/utils/error-format';
+import { KeyedPromiseQueue } from '../../common/worker/keyed-promise-queue';
 import { GroupsService } from '../groups/groups.service';
 import { deleteContentAudioBlob } from '../audio/content-audio-blobs';
 import { DynamicContentRegistry } from './dynamic-content-registry';
 import { DynamicContentRendererService } from './dynamic-content-renderer.service';
-import { WeatherProvider, type WeatherCitySearchResult } from './providers/weather.provider';
-import { defaultDynamicFrameName } from '../contents/content-display-name';
-import { toContentMutationResponse } from '../contents/content-mutation-response';
+import { defaultDynamicFrameName } from './status-text/dynamic-content-status-text';
+import { toContentMutationResponse } from '../../common/api/content-mutation-response';
 
 const DYNAMIC_MUTATION_TAIL_TTL_MS = 5 * 60_000;
 
 @Injectable()
 export class DynamicContentService {
   private readonly logger = new Logger(DynamicContentService.name);
-  private readonly mutationTails = new Map<string, Promise<unknown>>();
+  private readonly mutationQueue = new KeyedPromiseQueue({
+    ttlMs: DYNAMIC_MUTATION_TAIL_TTL_MS,
+    onPreviousError: (contentId, err) => {
+      this.logger.warn(
+        `previous dynamic mutation failed content=${contentId}: ${formatError(err)}`
+      );
+    },
+    onExpired: (contentId) => {
+      this.logger.warn(`dynamic mutation lock expired content=${contentId}`);
+    },
+  });
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly blob: BlobService,
     private readonly groups: GroupsService,
     private readonly registry: DynamicContentRegistry,
-    private readonly renderer: DynamicContentRendererService,
-    private readonly weather: WeatherProvider
+    private readonly renderer: DynamicContentRendererService
   ) {}
-
-  searchWeatherCities(query: string | undefined): Promise<WeatherCitySearchResult[]> {
-    const q = query?.trim() ?? '';
-    if (q.length < 1) return Promise.resolve([]);
-    if (q.length > 32) throw new ValidationError('城市搜索关键词最多 32 个字符');
-    return this.weather.searchCities(q, 8);
-  }
 
   async previewDirect(raw: {
     config: unknown;
@@ -128,11 +131,7 @@ export class DynamicContentService {
     try {
       const seq = await this.prisma.$transaction(async (tx) => {
         await lockGroupRow(tx, gid);
-        const maxSeq = await tx.content.aggregate({
-          where: { groupId: gid },
-          _max: { sortOrder: true },
-        });
-        const nextSeq = (maxSeq._max.sortOrder ?? -1) + 1;
+        const nextSeq = await nextContentSortOrder(tx, gid);
         await tx.content.create({
           data: {
             id: contentId,
@@ -349,37 +348,7 @@ export class DynamicContentService {
   }
 
   private runMutation<T>(contentId: string, fn: () => Promise<T>): Promise<T> {
-    const previous = this.mutationTails.get(contentId);
-    const task = previous
-      ? previous
-          .catch((err: unknown) => {
-            this.logger.warn(
-              `previous dynamic mutation failed content=${contentId}: ${formatError(err)}`
-            );
-          })
-          .then(fn)
-      : Promise.resolve().then(fn);
-    this.mutationTails.set(contentId, task);
-    const cleanupTimer = setTimeout(() => {
-      if (this.mutationTails.get(contentId) === task) {
-        this.mutationTails.delete(contentId);
-        this.logger.warn(`dynamic mutation lock expired content=${contentId}`);
-      }
-    }, DYNAMIC_MUTATION_TAIL_TTL_MS);
-    cleanupTimer.unref?.();
-    void task
-      .finally(() => {
-        clearTimeout(cleanupTimer);
-        if (this.mutationTails.get(contentId) === task) {
-          this.mutationTails.delete(contentId);
-        }
-      })
-      .catch((err: unknown) => {
-        this.logger.warn(
-          `清理动态内容 mutation 队列失败 content=${contentId}: ${formatError(err)}`
-        );
-      });
-    return task;
+    return this.mutationQueue.run(contentId, fn, { continueAfterFailure: true });
   }
 
   private async rollbackCreation(contentId: string, gid: string, err: unknown): Promise<void> {

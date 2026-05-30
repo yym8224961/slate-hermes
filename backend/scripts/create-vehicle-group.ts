@@ -9,7 +9,7 @@ import type { ContentDetailT, DitherMode, TtsVoiceT } from 'shared';
 import { API_DEFAULT_DITHER_MODE, DITHER_MODES, DEFAULT_TTS_VOICE, isTtsVoice } from 'shared';
 import type { ContentsReadService } from '../src/modules/contents/contents-read.service';
 import type { ContentsService } from '../src/modules/contents/contents.service';
-import type { ParsedContentUpload } from '../src/modules/contents/multipart.parser';
+import type { ParsedContentUpload } from '../src/modules/contents/multipart-parser';
 import {
   createGroupScriptServices,
   deleteAllContents,

@@ -1,4 +1,4 @@
-#include "chat_scene.h"
+#include "scenes/chat/chat_scene.h"
 
 #include <esp_log.h>
 
@@ -8,13 +8,13 @@
 #include <memory>
 #include <string>
 
-#include "epd_ssd1683.h"
-#include "event_bus.h"
-#include "scene_stack.h"
-#include "settings_scene.h"
-#include "theme.h"
-#include "utf8_utils.h"
-#include "xiaozhi_chat_service.h"
+#include "drivers/display/epd_ssd1683.h"
+#include "events/event_bus.h"
+#include "scenes/core/scene_stack.h"
+#include "scenes/settings/settings_scene.h"
+#include "ui/theme.h"
+#include "utils/utf8_utils.h"
+#include "xiaozhi/service/chat_service.h"
 
 namespace {
 constexpr char kTag[]                    = "ChatScene";
@@ -156,6 +156,39 @@ void ChatScene::OnEnter(SceneContext& ctx) {
         return;
     }
 
+    CreateLayout();
+    RefreshStatusBarFromSensors(ctx, *status_bar_);
+    EnsureServiceStarted(ctx);
+    if (service_entered_) {
+        RenderContent();
+    }
+
+    lv_refr_now(NULL);
+    ctx.epd->Unlock();
+    ctx.epd->RequestUrgentFullRefresh();
+}
+
+void ChatScene::OnExit(SceneContext& ctx) {
+    DestroyRoot(ctx, root_, [this]() {
+        status_bar_.reset();
+        standby_icon_label_     = nullptr;
+        standby_body_label_     = nullptr;
+        system_label_           = nullptr;
+        code_label_             = nullptr;
+        chat_area_              = nullptr;
+        chat_content_           = nullptr;
+        chat_empty_label_       = nullptr;
+        hint_label_             = nullptr;
+        rendered_message_count_ = 0;
+        rendered_messages_key_.clear();
+    });
+    if (service_entered_) {
+        xiaozhi::ChatService::Get().LeaveMode();
+        service_entered_ = false;
+    }
+}
+
+void ChatScene::CreateLayout() {
     root_ = CreateFullscreenRoot();
 
     status_bar_ = std::make_unique<StatusBar>(root_);
@@ -226,36 +259,6 @@ void ChatScene::OnEnter(SceneContext& ctx) {
     lv_label_set_long_mode(hint_label_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(hint_label_, LV_HOR_RES - 16);
     lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -10);
-
-    RefreshStatusBarFromSensors(ctx, *status_bar_);
-    EnsureServiceStarted(ctx);
-    if (service_entered_) {
-        RenderContent();
-    }
-
-    lv_refr_now(NULL);
-    ctx.epd->Unlock();
-    ctx.epd->RequestUrgentFullRefresh();
-}
-
-void ChatScene::OnExit(SceneContext& ctx) {
-    DestroyRoot(ctx, root_, [this]() {
-        status_bar_.reset();
-        standby_icon_label_     = nullptr;
-        standby_body_label_     = nullptr;
-        system_label_           = nullptr;
-        code_label_             = nullptr;
-        chat_area_              = nullptr;
-        chat_content_           = nullptr;
-        chat_empty_label_       = nullptr;
-        hint_label_             = nullptr;
-        rendered_message_count_ = 0;
-        rendered_messages_key_.clear();
-    });
-    if (service_entered_) {
-        xiaozhi::ChatService::Get().LeaveMode();
-        service_entered_ = false;
-    }
 }
 
 void ChatScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
@@ -445,7 +448,7 @@ void ChatScene::AppendChatBubble(const std::string& role, const std::string& tex
     lv_obj_set_style_text_font(label, &Zfull_16, 0);
     lv_obj_set_style_text_color(label, lv_color_black(), 0);
     lv_obj_set_style_text_line_space(label, 4, 0);
-    LayoutBubble(bubble, label, display_text, user);
+    LayoutBubble(bubble, label, display_text);
     lv_obj_set_height(row, lv_obj_get_height(bubble) + 2);
 
     if (system)
@@ -458,7 +461,7 @@ void ChatScene::AppendChatBubble(const std::string& role, const std::string& tex
     lv_obj_scroll_to_view_recursive(row, LV_ANIM_OFF);
 }
 
-void ChatScene::LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::string& text, bool user) {
+void ChatScene::LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::string& text) {
     lv_label_set_text(label, text.c_str());
     lv_obj_set_width(label, LV_SIZE_CONTENT);
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
@@ -478,8 +481,6 @@ void ChatScene::LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::strin
     lv_obj_set_width(bubble, text_w + 18);
     lv_obj_set_height(bubble, LV_SIZE_CONTENT);
     lv_obj_update_layout(bubble);
-
-    (void)user;
 }
 
 void ChatScene::UpdateStatusBarTitle(const xiaozhi::ChatSnapshot& snap) {

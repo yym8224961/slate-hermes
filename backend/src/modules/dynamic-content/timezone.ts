@@ -1,4 +1,4 @@
-import { getDateTimeFormat } from '../../common/intl';
+import { getDateTimeFormat } from '../../common/utils/intl';
 
 export function timezoneFromConfig(config: unknown): string {
   if (config && typeof config === 'object' && !Array.isArray(config)) {

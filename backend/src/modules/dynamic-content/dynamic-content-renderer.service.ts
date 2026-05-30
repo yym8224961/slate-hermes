@@ -6,13 +6,19 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { toPrismaInputJson } from '../../common/db/prisma-json';
 import { computeETag } from '../../common/etag/etag.util';
 import { NotFoundError, ValidationError } from '../../common/errors';
-import { formatError } from '../../common/error-format';
+import { formatError } from '../../common/utils/error-format';
+import { KeyedPromiseQueue } from '../../common/worker/keyed-promise-queue';
 import { GroupsService } from '../groups/groups.service';
 import { DynamicFrameRendererService } from './rendering/dynamic-frame-renderer.service';
 import { DynamicContentRegistry } from './dynamic-content-registry';
 import { DynamicAudioService } from './audio/dynamic-audio.service';
-import { cnMonthDay, nextLocalMidnight, timezoneFromConfig } from './timezone';
-import { parseHistoryTodayData } from './history-today.data';
+import { nextLocalMidnight, timezoneFromConfig } from './timezone';
+import {
+  canReuseDynamicData,
+  isCalendarLikeDynamicType,
+  isRefreshIntervalDynamicType,
+  refreshIntervalSec,
+} from './dynamic-type-policy';
 
 const REFRESH_LEAD_MS = 90_000;
 const MIN_REFRESH_DUE_DELAY_MS = 10_000;
@@ -56,7 +62,11 @@ export interface RenderDynamicContentResult {
 export class DynamicContentRendererService {
   private readonly logger = new Logger(DynamicContentRendererService.name);
   private readonly inflight = new Map<string, Promise<RenderDynamicContentResult>>();
-  private readonly tails = new Map<string, Promise<RenderDynamicContentResult>>();
+  private readonly renderQueue = new KeyedPromiseQueue<RenderDynamicContentResult>({
+    onPreviousError: (contentId, err) => {
+      this.logger.warn(`previous dynamic render failed content=${contentId}: ${formatError(err)}`);
+    },
+  });
 
   constructor(
     private readonly prisma: PrismaService,
@@ -75,25 +85,11 @@ export class DynamicContentRendererService {
     const existing = canDedupe ? this.inflight.get(contentId) : undefined;
     if (existing) return existing;
 
-    const previous = this.tails.get(contentId) ?? Promise.resolve();
     const task = canDedupe
-      ? previous.then(() => this.doRender(contentId, opts))
-      : previous
-          .catch((err: unknown) => {
-            this.logger.warn(
-              `previous dynamic render failed content=${contentId}: ${formatError(err)}`
-            );
-          })
-          .then(() => this.doRender(contentId, opts));
-    this.tails.set(contentId, task);
-    void task.then(
-      () => {
-        if (this.tails.get(contentId) === task) this.tails.delete(contentId);
-      },
-      () => {
-        if (this.tails.get(contentId) === task) this.tails.delete(contentId);
-      }
-    );
+      ? this.renderQueue.run(contentId, () => this.doRender(contentId, opts))
+      : this.renderQueue.run(contentId, () => this.doRender(contentId, opts), {
+          continueAfterFailure: true,
+        });
 
     if (canDedupe) {
       this.inflight.set(contentId, task);
@@ -395,11 +391,7 @@ export class DynamicContentRendererService {
       const configured = refreshIntervalSec(config);
       if (configured !== null) return new Date(now.getTime() + configured * 1000);
     }
-    if (
-      dynamicType === 'daily_calendar' ||
-      dynamicType === 'month_calendar' ||
-      dynamicType === 'history_today'
-    ) {
+    if (isCalendarLikeDynamicType(dynamicType)) {
       const midnight = nextLocalMidnight(now, timezoneFromConfig(config));
       return new Date(midnight.getTime() + CALENDAR_WAKE_LAG_MS);
     }
@@ -430,34 +422,6 @@ function contentEtagFromGroupEtags(
   return contentEtags.find((content) => content.id === contentId)?.etag ?? fallback;
 }
 
-function canReuseDynamicData(
-  dynamicType: string,
-  dynamicData: Prisma.JsonValue | null,
-  imageSize: number,
-  config: unknown,
-  now: Date,
-  lastRunAt?: Date | null
-): boolean {
-  if (!dynamicData || imageSize === 0) return false;
-  if (dynamicType === 'history_today') return isSameHistoryTodayData(dynamicData, config, now);
-  if (dynamicType === 'dashboard' || dynamicType === 'font_test') return true;
-  if (dynamicType === 'daily_calendar' || dynamicType === 'month_calendar') return false;
-  const lastFreshAt = timestampFromDynamicData(dynamicData) ?? lastRunAt?.getTime() ?? null;
-  if (lastFreshAt === null || !Number.isFinite(lastFreshAt)) return false;
-  return now.getTime() - lastFreshAt <= maxReusableDynamicDataAgeMs(dynamicType, config);
-}
-
-function isSameHistoryTodayData(
-  dynamicData: Prisma.JsonValue,
-  config: unknown,
-  now: Date
-): boolean {
-  const parsed = parseHistoryTodayData(dynamicData);
-  if (!parsed) return false;
-  const expected = cnMonthDay(now, timezoneFromConfig(config));
-  return parsed.dateLabel.replace(/\s+/g, '') === expected;
-}
-
 function normalizeRenderData(data: unknown): Record<string, unknown> | null {
   if (data === null || data === undefined) return null;
   if (typeof data !== 'object' || Array.isArray(data)) {
@@ -466,52 +430,4 @@ function normalizeRenderData(data: unknown): Record<string, unknown> | null {
     });
   }
   return data as Record<string, unknown>;
-}
-
-function isCalendarLikeDynamicType(dynamicType: string): boolean {
-  return (
-    dynamicType === 'daily_calendar' ||
-    dynamicType === 'month_calendar' ||
-    dynamicType === 'history_today'
-  );
-}
-
-function isRefreshIntervalDynamicType(dynamicType: string): boolean {
-  return (
-    dynamicType === 'hot_list' ||
-    dynamicType === 'weather_alert' ||
-    dynamicType === 'earthquake_report' ||
-    dynamicType === 'dashboard'
-  );
-}
-
-function maxReusableDynamicDataAgeMs(dynamicType: string, config: unknown): number {
-  const configured = refreshIntervalSec(config) ?? 600;
-  const ageSec = Math.max(configured * 3, 900);
-  const capSec =
-    dynamicType === 'weather'
-      ? 43_200
-      : dynamicType === 'hot_list' ||
-          dynamicType === 'weather_alert' ||
-          dynamicType === 'earthquake_report'
-        ? 3_600
-        : 1_800;
-  return Math.min(ageSec, capSec) * 1000;
-}
-
-function timestampFromDynamicData(dynamicData: Prisma.JsonValue): number | null {
-  if (!dynamicData || typeof dynamicData !== 'object' || Array.isArray(dynamicData)) return null;
-  const value = (dynamicData as Record<string, Prisma.JsonValue>).updatedAt;
-  if (typeof value !== 'string') return null;
-  const timestamp = Date.parse(value);
-  return Number.isNaN(timestamp) ? null : timestamp;
-}
-
-function refreshIntervalSec(config: unknown): number | null {
-  if (!config || typeof config !== 'object' || Array.isArray(config)) return null;
-  const record = config as Record<string, unknown>;
-  const raw = record.refresh_interval_sec;
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
-  const min = record.type === 'dashboard' ? 60 : 300;
-  return Math.max(Math.floor(raw), min);
 }

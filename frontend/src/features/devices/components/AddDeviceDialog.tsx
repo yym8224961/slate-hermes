@@ -8,9 +8,9 @@
 import { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { ArrowRight, KeyRound } from 'lucide-react';
-import { useClaimByPairCode } from '@/features/devices/queries';
-import { useToast } from '@/components/feedback/useToast';
-import { isValidPairCode, normalizePairCode } from '@/features/devices/model/device-input';
+import { useClaimByPairCode } from '@/features/devices/query/device-queries';
+import { useToast } from '@/components/feedback/Toast';
+import { isValidPairCode, normalizePairCode } from '@/features/devices/lib/pair-code';
 import { getApiErrorMessage, getApiErrorStatus } from '@/lib/api-errors';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';

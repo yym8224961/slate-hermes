@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import type { ContentKind } from '@prisma/client';
 import type { ContentSummaryT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { formatError } from '../../common/error-format';
+import { formatError } from '../../common/utils/error-format';
 import { DynamicContentRendererService } from '../dynamic-content/dynamic-content-renderer.service';
 import type { DevicePollSnapshot } from '../devices/devices.service';
 import { contentToSummary } from './content-presenter';

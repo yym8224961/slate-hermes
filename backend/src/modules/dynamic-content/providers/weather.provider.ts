@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { WeatherConfig, type WeatherConfigT } from 'shared';
 import { z } from 'zod';
-import { AppConfig } from '../../../infra/config/app.config';
 import { fetchJson as fetchJsonWithTimeout } from '../../../common/http/fetch';
-import { getDateTimeFormat } from '../../../common/intl';
-import { setBoundedCache } from '../../../common/cache-utils';
+import { getDateTimeFormat } from '../../../common/utils/intl';
+import { setBoundedCache } from '../../../common/utils/cache-utils';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { datePartsInTz } from '../timezone';
 import {
@@ -13,6 +12,7 @@ import {
   DEFAULT_PROVIDER_FETCH_TIMEOUT_MS,
   isRecentTimestamp,
 } from './provider-cache';
+import { QweatherConfig } from './qweather.config';
 
 export interface WeatherForecastDay {
   label: string;
@@ -109,7 +109,7 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
   >();
   private readonly citySearchInflight = new Map<string, Promise<WeatherCitySearchResult[]>>();
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(private readonly config: QweatherConfig) {}
 
   validateConfig(raw: unknown): WeatherConfigT {
     return WeatherConfig.parse(raw);
@@ -122,9 +122,9 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
   ): Promise<WeatherCitySearchResult[]> {
     const normalizedQuery = query.trim();
     if (!normalizedQuery) return [];
-    const apiKey = this.config.qweatherApiKey;
+    const apiKey = this.config.apiKey;
     if (!apiKey) throw new Error('QWEATHER_API_KEY 未配置');
-    if (!this.config.qweatherApiHost) {
+    if (!this.config.apiHost) {
       throw new Error('QWEATHER_API_HOST 未配置，请在和风天气控制台-设置中复制你的 API Host');
     }
 
@@ -137,7 +137,7 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
     const existing = this.citySearchInflight.get(key);
     if (existing) return existing;
 
-    const host = this.config.qweatherApiHost.replace(/\/+$/, '');
+    const host = this.config.apiHost.replace(/\/+$/, '');
     const p = this.fetchCitySearch(host, apiKey, normalizedQuery, safeLimit)
       .then((data) => {
         setBoundedCache(
@@ -173,19 +173,19 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
     config: WeatherConfigT,
     ctx: DynamicContentFetchCtx
   ): Promise<WeatherProviderData> {
-    const apiKey = this.config.qweatherApiKey;
+    const apiKey = this.config.apiKey;
     if (!apiKey) {
       const fallback = this.fallbackFromLastData(config, ctx.lastData, ctx.now);
       if (fallback) return fallback;
       throw new Error('QWEATHER_API_KEY 未配置');
     }
-    if (!this.config.qweatherApiHost) {
+    if (!this.config.apiHost) {
       const fallback = this.fallbackFromLastData(config, ctx.lastData, ctx.now);
       if (fallback) return fallback;
       throw new Error('QWEATHER_API_HOST 未配置，请在和风天气控制台-设置中复制你的 API Host');
     }
 
-    const host = this.config.qweatherApiHost.replace(/\/+$/, '');
+    const host = this.config.apiHost.replace(/\/+$/, '');
     const locationId = await this.resolveLocationId(
       host,
       apiKey,

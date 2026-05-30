@@ -6,14 +6,14 @@
 import { DynamicContentEditor } from '@/features/dynamic/components/DynamicContentEditor';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Button } from '@/components/ui/Button';
-import { ContentEditorPageLayout } from '@/features/contents/components/ContentEditorPageLayout';
+import { ContentEditorPageLayout } from './ContentEditorPageLayout';
 
 export function DynamicContentEditorPage() {
   return (
     <ContentEditorPageLayout
       missingContentHint="请从内容列表进入动态内容编辑页。"
       notFoundTitle="动态内容不存在或已删除"
-      findContent={(content, contentId) => content.id === contentId && content.kind === 'dynamic'}
+      findContent={(content) => content.kind === 'dynamic'}
       renderEditor={({ gid, content, onDone }) => {
         if (!content.dynamic_type || !content.dynamic_config) {
           return (

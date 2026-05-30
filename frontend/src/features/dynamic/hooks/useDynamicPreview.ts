@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DynamicConfig, type DynamicConfigT, type DynamicTypeT } from 'shared';
 import type { UseMutationResult } from '@tanstack/react-query';
-import { effectiveDynamicFrameName } from '@/features/dynamic/model/registry';
+import { effectiveDynamicFrameName } from '@/features/dynamic/model/frame-name';
 
 type PreviewContentType = DynamicTypeT | 'image';
 

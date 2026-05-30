@@ -2,8 +2,8 @@ import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nes
 import { Observable } from 'rxjs';
 import { randomUUID } from 'node:crypto';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { requestContext } from '../request-context';
-import { safeRequestId } from '../request-id';
+import { requestContext } from '../http/request-context';
+import { safeRequestId } from '../http/request-id';
 
 @Injectable()
 export class RequestIdInterceptor implements NestInterceptor {

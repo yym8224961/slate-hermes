@@ -10,26 +10,39 @@ import { ConflictError, NotFoundError, ValidationError } from '../../common/erro
 import { lockGroupRow } from '../../common/db/row-locks';
 import { bulkSetContentSortOrder, compactContentSortOrders } from '../../common/db/bulk-sort-order';
 import { validateOrderSet } from '../../common/db/order-validation';
-import { formatError } from '../../common/error-format';
+import { nextContentSortOrder } from '../../common/db/sort-order';
+import { formatError } from '../../common/utils/error-format';
 import { AudioService } from '../audio/audio.service';
 import { audioBlobContentId } from '../audio/audio-blob-id';
 import { TtsService } from '../tts/tts.service';
 import { GroupsService } from '../groups/groups.service';
 import { ImageRendererService } from '../image-renderer/image-renderer.service';
 import { ContentAudioBlobService } from './content-audio-blob.service';
-import { toContentMutationResponse } from './content-mutation-response';
-import {
-  DeviceCurrentContentService,
-  type CurrentContentRequest,
-} from './device-current-content.service';
+import { toContentMutationResponse } from '../../common/api/content-mutation-response';
 import {
   pendingTtsAudioFields,
   readyUploadedAudioFields,
   resetAudioFields,
 } from './content-audio-fields';
-import type { ParsedContentUpload } from './multipart.parser';
-import type { DevicePollSnapshot } from '../devices/devices.service';
+import type { ParsedContentUpload } from './multipart-parser';
 import { BlobRollbackPlan } from './blob-rollback';
+
+interface RenderedImageUpload {
+  bytes: Buffer;
+  etag: string;
+  size: number;
+}
+
+interface RenderedAudioUpload {
+  bytes: Buffer;
+  etag: string;
+  size: number;
+}
+
+interface RenderedUpload {
+  image: RenderedImageUpload | null;
+  audio: RenderedAudioUpload | null;
+}
 
 @Injectable()
 export class ContentsService {
@@ -42,55 +55,8 @@ export class ContentsService {
     private readonly imageRenderer: ImageRendererService,
     private readonly audio: AudioService,
     private readonly tts: TtsService,
-    private readonly audioBlobs: ContentAudioBlobService,
-    private readonly deviceCurrentContent: DeviceCurrentContentService
+    private readonly audioBlobs: ContentAudioBlobService
   ) {}
-
-  async resolveCurrentContentRequest(
-    deviceOrId: string,
-    telemetry:
-      | {
-          current_group?: string | null;
-          current_content_seq?: number;
-          manifest_etag?: string;
-        }
-      | undefined
-  ): Promise<CurrentContentRequest | null>;
-  async resolveCurrentContentRequest(
-    deviceOrId: DevicePollSnapshot,
-    telemetry:
-      | {
-          current_group?: string | null;
-          current_content_seq?: number;
-          manifest_etag?: string;
-        }
-      | undefined
-  ): Promise<CurrentContentRequest | null>;
-  async resolveCurrentContentRequest(
-    deviceOrId: string | DevicePollSnapshot,
-    telemetry:
-      | {
-          current_group?: string | null;
-          current_content_seq?: number;
-          manifest_etag?: string;
-        }
-      | undefined
-  ): Promise<CurrentContentRequest | null> {
-    return typeof deviceOrId === 'string'
-      ? this.deviceCurrentContent.resolveCurrentContentRequest(deviceOrId, telemetry)
-      : this.deviceCurrentContent.resolveCurrentContentRequest(deviceOrId, telemetry);
-  }
-
-  currentContentForDevice(request: CurrentContentRequest) {
-    return this.deviceCurrentContent.currentContentForDevice(request);
-  }
-
-  async refreshCurrentContentForDeviceIfDue(
-    request: CurrentContentRequest | null,
-    deviceSnapshot?: DevicePollSnapshot
-  ): Promise<CurrentContentRequest | null> {
-    return this.deviceCurrentContent.refreshCurrentContentForDeviceIfDue(request, deviceSnapshot);
-  }
 
   async appendImage(
     gid: string,
@@ -264,11 +230,7 @@ export class ContentsService {
         await this.blob.write(gid, audioBlobContentId(contentId, audio.etag), 'audio', audio.bytes);
       }
       mutation = await this.withGroupMutation(gid, async (tx) => {
-        const maxSeq = await tx.content.aggregate({
-          where: { groupId: gid },
-          _max: { sortOrder: true },
-        });
-        const nextSeq = (maxSeq._max.sortOrder ?? -1) + 1;
+        const nextSeq = await nextContentSortOrder(tx, gid);
         const created = await tx.content.create({
           data: {
             id: contentId,
@@ -318,7 +280,6 @@ export class ContentsService {
     const rollback = new BlobRollbackPlan(this.blob, this.logger);
     let dbUpdated = false;
     let previousAudioEtagForCleanup: string | null = null;
-    let shouldCleanupPreviousAudio = false;
     try {
       const { updated, groupEtag } = await this.withGroupMutation(gid, async (tx) => {
         const current = await tx.content.findUnique({
@@ -328,46 +289,24 @@ export class ContentsService {
         if (!current || current.groupId !== gid) throw new NotFoundError('内容不存在');
         if (current.kind !== 'image') throw new ValidationError('动态内容请使用 JSON 更新');
 
-        const data: Prisma.ContentUpdateInput = { ...baseData };
-        if (image) {
-          const previousImageBytes = await this.blob.read(gid, contentId, 'image');
-          rollback.restorePrevious(gid, contentId, 'image', previousImageBytes);
-          await this.blob.write(gid, contentId, 'image', image.bytes);
-          data.imageEtag = image.etag;
-          data.imageSize = image.size;
-          if (!audio && current.audioEtag) {
-            Object.assign(data, resetAudioFields());
-          }
-        }
-        if (audio) {
-          if (audio.etag !== current.audioEtag) {
-            rollback.deleteCreated(gid, audioBlobContentId(contentId, audio.etag), 'audio');
-          }
-          await this.blob.write(
-            gid,
-            audioBlobContentId(contentId, audio.etag),
-            'audio',
-            audio.bytes
-          );
-          Object.assign(data, readyUploadedAudioFields(audio.etag, audio.size));
-        }
+        const prepared = await this.prepareImageUpdate({
+          gid,
+          contentId,
+          baseData,
+          currentAudioEtag: current.audioEtag,
+          upload: { image, audio },
+          rollback,
+        });
         const updated = await tx.content.update({
           where: { id: contentId },
-          data,
+          data: prepared.data,
           select: { imageEtag: true, audioEtag: true, contentEtag: true },
         });
-        previousAudioEtagForCleanup = current.audioEtag;
-        shouldCleanupPreviousAudio = Boolean(
-          current.audioEtag &&
-          (audio || (image && !audio)) &&
-          current.audioEtag !== updated.audioEtag
-        );
+        previousAudioEtagForCleanup = prepared.previousAudioEtagForCleanup;
         return { updated };
       });
       dbUpdated = true;
-      if (shouldCleanupPreviousAudio) {
-        await this.cleanupAudioBlobAfterCommit(gid, contentId, previousAudioEtagForCleanup);
-      }
+      await this.cleanupAudioBlobAfterCommit(gid, contentId, previousAudioEtagForCleanup);
       return toContentMutationResponse(
         contentId,
         seq,
@@ -384,14 +323,55 @@ export class ContentsService {
     }
   }
 
+  private async prepareImageUpdate(input: {
+    gid: string;
+    contentId: string;
+    baseData: Prisma.ContentUpdateInput;
+    currentAudioEtag: string | null;
+    upload: RenderedUpload;
+    rollback: BlobRollbackPlan;
+  }): Promise<{
+    data: Prisma.ContentUpdateInput;
+    previousAudioEtagForCleanup: string | null;
+  }> {
+    const { gid, contentId, currentAudioEtag, upload, rollback } = input;
+    const data: Prisma.ContentUpdateInput = { ...input.baseData };
+    if (upload.image) {
+      const previousImageBytes = await this.blob.read(gid, contentId, 'image');
+      rollback.restorePrevious(gid, contentId, 'image', previousImageBytes);
+      await this.blob.write(gid, contentId, 'image', upload.image.bytes);
+      data.imageEtag = upload.image.etag;
+      data.imageSize = upload.image.size;
+      if (!upload.audio && currentAudioEtag) {
+        Object.assign(data, resetAudioFields());
+      }
+    }
+    if (upload.audio) {
+      if (upload.audio.etag !== currentAudioEtag) {
+        rollback.deleteCreated(gid, audioBlobContentId(contentId, upload.audio.etag), 'audio');
+      }
+      await this.blob.write(
+        gid,
+        audioBlobContentId(contentId, upload.audio.etag),
+        'audio',
+        upload.audio.bytes
+      );
+      Object.assign(data, readyUploadedAudioFields(upload.audio.etag, upload.audio.size));
+    }
+    const nextAudioEtag =
+      upload.audio?.etag ?? (upload.image && currentAudioEtag ? null : currentAudioEtag);
+    return {
+      data,
+      previousAudioEtagForCleanup:
+        currentAudioEtag && currentAudioEtag !== nextAudioEtag ? currentAudioEtag : null,
+    };
+  }
+
   private async renderUpload(
     parsed: ParsedContentUpload,
     signal?: AbortSignal
-  ): Promise<{
-    image: { bytes: Buffer; etag: string; size: number } | null;
-    audio: { bytes: Buffer; etag: string; size: number } | null;
-  }> {
-    let image: { bytes: Buffer; etag: string; size: number } | null = null;
+  ): Promise<RenderedUpload> {
+    let image: RenderedImageUpload | null = null;
     if (parsed.hasImage && parsed.imageBuf) {
       const sourceEtag = computeETag(parsed.imageBuf);
       const rendered = await this.imageRenderer.renderTo1bpp(parsed.imageBuf, {
@@ -407,7 +387,7 @@ export class ContentsService {
       };
     }
 
-    let audio: { bytes: Buffer; etag: string; size: number } | null = null;
+    let audio: RenderedAudioUpload | null = null;
     if (parsed.hasAudio && parsed.audioBuf) {
       const bytes = await this.audio.transcodeAudio(parsed.audioBuf, { signal });
       audio = { bytes, etag: computeETag(bytes), size: bytes.byteLength };

@@ -38,7 +38,9 @@ backend/
 │   │   ├── http/                fetch timeout、SSE parser、client IP
 │   │   ├── interceptors/        request id
 │   │   ├── pipes/               zod DTO 校验
-│   │   └── rate-limit/          固定窗口限速
+│   │   ├── rate-limit/          固定窗口限速
+│   │   ├── utils/               cache、HTML 文本、intl、value helper
+│   │   └── worker/              keyed promise queue、worker loop
 │   ├── infra/
 │   │   ├── assets/              运行时资产路径定位
 │   │   ├── blob/                image/audio blob 原子写入与清理
@@ -52,9 +54,9 @@ backend/
 │       ├── contents/            内容 CRUD、manifest、binary、preview、dashboard ingest
 │       ├── devices/             Web 设备管理 + 固件设备协议
 │       ├── dynamic-content/     动态内容 provider、调度、layout engine、渲染入口
-│       ├── frame-renderer/      400x300 1bpp bitmap canvas、字体、天气图标、dashboard template
 │       ├── groups/              内容组 CRUD、排序、设备切组
 │       ├── health/              /healthz
+│       ├── hot-list/            热榜抓取与源注册
 │       ├── image-renderer/      sharp 图片管线 + 渲染缓存
 │       ├── tts/                 OpenAI-compatible TTS
 │       └── users/               用户表操作

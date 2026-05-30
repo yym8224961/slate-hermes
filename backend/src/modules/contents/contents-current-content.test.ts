@@ -259,8 +259,7 @@ describe('ContentsService current content refresh', () => {
       } as never,
       {} as never,
       {} as never,
-      { read: async () => null, delete: async () => undefined } as never,
-      deviceCurrentContentStub()
+      { read: async () => null, delete: async () => undefined } as never
     );
 
     const response = await service.patchImage('content-1', 'user-1', {
@@ -330,8 +329,7 @@ describe('ContentsService current content refresh', () => {
         delete: async (_gid: string, _contentId: string, etag: string | null) => {
           audioDeletes.push(etag);
         },
-      } as never,
-      deviceCurrentContentStub()
+      } as never
     );
 
     const response = await service.patchImage('content-1', 'user-1', {
@@ -399,8 +397,7 @@ describe('ContentsService current content refresh', () => {
           audioDeletes.push(etag);
           throw new Error('unlink failed');
         },
-      } as never,
-      deviceCurrentContentStub()
+      } as never
     );
 
     const response = await service.patchImage('content-1', 'user-1', {
@@ -461,8 +458,7 @@ describe('ContentsService current content refresh', () => {
       {} as never,
       {} as never,
       {} as never,
-      {} as never,
-      deviceCurrentContentStub()
+      {} as never
     );
 
     const response = await service.patchFrameName('content-1', 'user-1', '新标题');
@@ -488,7 +484,7 @@ describe('ContentsService current content refresh', () => {
             return fn({
               $queryRaw: async () => [{ id: 'group-1' }],
               content: {
-                aggregate: async () => ({ _max: { sortOrder: null } }),
+                findFirst: async () => null,
                 create: async () => ({}),
               },
             });
@@ -531,7 +527,3 @@ describe('ContentsService current content refresh', () => {
     }
   });
 });
-
-function deviceCurrentContentStub(): DeviceCurrentContentService {
-  return {} as unknown as DeviceCurrentContentService;
-}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import type { BitmapFont } from './bitmap-font';
+import type { BitmapFont } from './fonts/bitmap-font';
 import { wrapText } from './frame-text-layout';
 
 const font: BitmapFont = {

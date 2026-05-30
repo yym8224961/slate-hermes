@@ -1,4 +1,4 @@
-#include "sntp.h"
+#include "network/sntp.h"
 
 #include <esp_log.h>
 #include <esp_netif_sntp.h>

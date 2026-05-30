@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { EarthquakeReportConfig, type EarthquakeReportConfigT } from 'shared';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
-import { stripHtml } from '../../../common/html-text';
+import { stripHtml } from '../../../common/utils/html-text';
 import { fetchText } from '../../../common/http/fetch';
 import {
   CachedInflightFetcher,

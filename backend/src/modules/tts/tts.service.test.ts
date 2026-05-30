@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DEFAULT_TTS_VOICE } from 'shared';
-import type { AppConfig } from '../../infra/config/app.config';
 import type { AudioService } from '../audio/audio.service';
 import { NotImplementedError, ValidationError } from '../../common/errors';
+import type { TtsConfig } from './tts.config';
 import { TtsProviderError, TtsService } from './tts.service';
 
 const originalFetch = globalThis.fetch;
@@ -15,10 +15,10 @@ describe('TtsService', () => {
   it('uses an app error when TTS credentials are not configured', async () => {
     const service = new TtsService(
       {
-        ttsApiKey: undefined,
-        ttsBaseUrl: undefined,
-        ttsDefaultVoice: DEFAULT_TTS_VOICE,
-      } as AppConfig,
+        apiKey: undefined,
+        baseUrl: undefined,
+        defaultVoice: DEFAULT_TTS_VOICE,
+      } as TtsConfig,
       {} as AudioService
     );
 
@@ -36,11 +36,11 @@ describe('TtsService', () => {
 
     const service = new TtsService(
       {
-        ttsApiKey: 'test-key',
-        ttsBaseUrl: 'https://example.invalid',
-        ttsDefaultVoice: DEFAULT_TTS_VOICE,
-        ttsModel: 'tts-model',
-      } as AppConfig,
+        apiKey: 'test-key',
+        baseUrl: 'https://example.invalid',
+        defaultVoice: DEFAULT_TTS_VOICE,
+        model: 'tts-model',
+      } as TtsConfig,
       {} as AudioService
     );
 
@@ -72,11 +72,11 @@ describe('TtsService', () => {
 
     const service = new TtsService(
       {
-        ttsApiKey: 'test-key',
-        ttsBaseUrl: 'https://example.invalid',
-        ttsDefaultVoice: DEFAULT_TTS_VOICE,
-        ttsModel: 'tts-model',
-      } as AppConfig,
+        apiKey: 'test-key',
+        baseUrl: 'https://example.invalid',
+        defaultVoice: DEFAULT_TTS_VOICE,
+        model: 'tts-model',
+      } as TtsConfig,
       {
         resamplePcm16: async (buffer: Buffer) => buffer,
       } as AudioService
@@ -105,11 +105,11 @@ describe('TtsService', () => {
 
     const service = new TtsService(
       {
-        ttsApiKey: 'test-key',
-        ttsBaseUrl: 'https://example.invalid',
-        ttsDefaultVoice: DEFAULT_TTS_VOICE,
-        ttsModel: 'tts-model',
-      } as AppConfig,
+        apiKey: 'test-key',
+        baseUrl: 'https://example.invalid',
+        defaultVoice: DEFAULT_TTS_VOICE,
+        model: 'tts-model',
+      } as TtsConfig,
       {
         resamplePcm16: async (buffer: Buffer) => buffer,
       } as AudioService
@@ -139,11 +139,11 @@ describe('TtsService', () => {
 
     const service = new TtsService(
       {
-        ttsApiKey: 'test-key',
-        ttsBaseUrl: 'https://example.invalid',
-        ttsDefaultVoice: DEFAULT_TTS_VOICE,
-        ttsModel: 'tts-model',
-      } as AppConfig,
+        apiKey: 'test-key',
+        baseUrl: 'https://example.invalid',
+        defaultVoice: DEFAULT_TTS_VOICE,
+        model: 'tts-model',
+      } as TtsConfig,
       {
         resamplePcm16: async (buffer: Buffer) => buffer,
       } as AudioService

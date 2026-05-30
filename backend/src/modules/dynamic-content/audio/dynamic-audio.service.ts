@@ -10,8 +10,9 @@ import { BlobService } from '../../../infra/blob/blob.service';
 import { AppConfig } from '../../../infra/config/app.config';
 import { PrismaService } from '../../../infra/prisma/prisma.service';
 import { computeETag } from '../../../common/etag/etag.util';
-import { formatError } from '../../../common/error-format';
-import { recordValue, valueText } from '../../../common/value-utils';
+import { formatError } from '../../../common/utils/error-format';
+import { recordValue, valueText } from '../../../common/utils/value-utils';
+import { WorkerLoop } from '../../../common/worker/worker-loop';
 import { audioBlobContentId } from '../../audio/audio-blob-id';
 import { deleteContentAudioBlob, readContentAudioBlob } from '../../audio/content-audio-blobs';
 import { GroupsService } from '../../groups/groups.service';
@@ -36,9 +37,7 @@ const LEASE_MATCH_TOLERANCE_MS = 1000;
 @Injectable()
 export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DynamicAudioService.name);
-  private timer: ReturnType<typeof setTimeout> | null = null;
-  private running = false;
-  private stopped = false;
+  private readonly loop: WorkerLoop;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -46,19 +45,26 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
     private readonly config: AppConfig,
     private readonly groups: GroupsService,
     private readonly tts: TtsService
-  ) {}
+  ) {
+    this.loop = new WorkerLoop({
+      run: async () => {
+        await this.runBatch();
+        return WORKER_INTERVAL_MS;
+      },
+      onError: (err) => {
+        this.logger.warn(`TTS worker tick failed: ${formatError(err)}`);
+      },
+      fallbackDelayMs: WORKER_INTERVAL_MS,
+    });
+  }
 
   onModuleInit(): void {
     if (!this.config.backgroundWorkers) return;
-    if (this.timer) return;
-    this.stopped = false;
-    this.scheduleTick(0);
+    this.loop.start(0);
   }
 
   onModuleDestroy(): void {
-    this.stopped = true;
-    if (this.timer) clearTimeout(this.timer);
-    this.timer = null;
+    this.loop.stop();
   }
 
   async sync(contentId: string, opts: { now?: Date } = {}): Promise<boolean> {
@@ -135,17 +141,15 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
   }
 
   async tick(): Promise<void> {
-    if (this.running) return;
-    this.running = true;
-    try {
-      const jobs = await this.claimPendingJobs(WORKER_BATCH_SIZE);
-      for (const job of jobs) {
-        await this.run(job).catch((err: unknown) => {
-          this.logger.warn(`TTS worker job failed content=${job.contentId}: ${formatError(err)}`);
-        });
-      }
-    } finally {
-      this.running = false;
+    await this.loop.tick();
+  }
+
+  private async runBatch(): Promise<void> {
+    const jobs = await this.claimPendingJobs(WORKER_BATCH_SIZE);
+    for (const job of jobs) {
+      await this.run(job).catch((err: unknown) => {
+        this.logger.warn(`TTS worker job failed content=${job.contentId}: ${formatError(err)}`);
+      });
     }
   }
 
@@ -365,18 +369,6 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
     });
     await deleteContentAudioBlob(this.blob, content.groupId, content.id, previousAudioEtag);
     return true;
-  }
-
-  private scheduleTick(delayMs: number): void {
-    if (this.stopped) return;
-    this.timer = setTimeout(() => {
-      void this.tick()
-        .catch((err: unknown) => {
-          this.logger.warn(`TTS worker tick failed: ${formatError(err)}`);
-        })
-        .finally(() => this.scheduleTick(WORKER_INTERVAL_MS));
-    }, delayMs);
-    this.timer.unref?.();
   }
 }
 

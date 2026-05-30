@@ -2,6 +2,8 @@
 
 Slate 是一个面向 400 x 300 黑白墨水屏设备的开源相框 / 信息看板 / 语音玩具项目。仓库同时包含设备固件、后端 API、Web 管理端和前后端共享 schema。
 
+![Slate 软件管理、设备同步和墨水屏内容形态总览](readme-hero.png)
+
 当前形态：
 
 - `firmware/`：ESP-IDF 5.5.x 固件，目标板为 ZecTrix Note4 V1.0（ESP32-S3 + 4.2" EPD + ES8311 音频 + 按键 + 电池）。

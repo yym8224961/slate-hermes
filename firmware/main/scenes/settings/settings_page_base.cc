@@ -1,9 +1,9 @@
-#include "settings_page_base.h"
+#include "scenes/settings/settings_page_base.h"
 
 #include <utility>
 
-#include "epd_ssd1683.h"
-#include "theme.h"
+#include "drivers/display/epd_ssd1683.h"
+#include "ui/theme.h"
 
 bool SettingsPageBase::EnterSettingsScaffold(SceneContext& ctx, const char* caption) {
     if (!ctx.epd->Lock(2000))

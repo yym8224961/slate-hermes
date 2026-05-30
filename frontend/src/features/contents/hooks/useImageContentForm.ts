@@ -1,14 +1,13 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import {
   BW_THRESHOLD_DEFAULT,
   DEFAULT_DITHER_MODE,
-  DEFAULT_TTS_VOICE,
   type ContentDetailT,
   type DitherMode,
-  type TtsVoiceT,
 } from 'shared';
-import { exportCanvasBlob } from '@/features/contents/components/image-editor/canvas-export';
-import type { ImageAudioMode } from '@/features/contents/components/image-editor/ImageAudioBlock';
+import { useAudioFormState } from './useAudioFormState';
+import { useCropState } from './useCropState';
+import { useImageFormSubmit } from './useImageFormSubmit';
 
 export function useImageContentForm(content?: ContentDetailT) {
   const isEdit = !!content;
@@ -52,22 +51,14 @@ export function useImageContentForm(content?: ContentDetailT) {
     resetCrop();
   }, [audio, resetCrop]);
 
-  const buildFormData = useCallback(async (): Promise<FormData> => {
-    const fd = new FormData();
-    if (imageFile) {
-      const canvas = previewRef.current;
-      if (!canvas) {
-        throw new Error('预览画布尚未就绪，请稍后重试。');
-      }
-      const blob = await exportCanvasBlob(canvas);
-      fd.append('image', blob, 'cropped.png');
-      fd.append('threshold', String(threshold));
-      fd.append('mode', mode);
-    }
-    if (audio.audioFile) fd.append('audio', audio.audioFile);
-    fd.append('frame_name', frameName.trim());
-    return fd;
-  }, [audio.audioFile, frameName, imageFile, mode, threshold]);
+  const buildFormData = useImageFormSubmit({
+    imageFile,
+    audioFile: audio.audioFile,
+    previewRef,
+    frameName,
+    threshold,
+    mode,
+  });
 
   return {
     image: {
@@ -111,47 +102,4 @@ export function useImageContentForm(content?: ContentDetailT) {
       buildFormData,
     },
   };
-}
-
-function useCropState() {
-  const [scale, setScale] = useState(1);
-  const [offset, setOffset] = useState({ x: 0, y: 0 });
-
-  const resetCrop = useCallback(() => {
-    setScale(1);
-    setOffset({ x: 0, y: 0 });
-  }, []);
-
-  return { scale, setScale, offset, setOffset, resetCrop };
-}
-
-function useAudioFormState(content?: ContentDetailT) {
-  const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [audioMode, setAudioMode] = useState<ImageAudioMode>(
-    content?.audio_source === 'tts' ? 'tts' : 'upload'
-  );
-  const [ttsText, setTtsText] = useState(content?.audio_text ?? '');
-  const [ttsVoice, setTtsVoice] = useState<TtsVoiceT>(content?.audio_voice ?? DEFAULT_TTS_VOICE);
-
-  const resetAudio = useCallback(() => {
-    setAudioFile(null);
-    setAudioMode('upload');
-    setTtsText('');
-    setTtsVoice(DEFAULT_TTS_VOICE);
-  }, []);
-
-  return useMemo(
-    () => ({
-      audioFile,
-      setAudioFile,
-      audioMode,
-      setAudioMode,
-      ttsText,
-      setTtsText,
-      ttsVoice,
-      setTtsVoice,
-      resetAudio,
-    }),
-    [audioFile, audioMode, resetAudio, ttsText, ttsVoice]
-  );
 }

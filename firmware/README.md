@@ -31,22 +31,24 @@ firmware/
 ├── sdkconfig.defaults          ESP32-S3 / Flash / PSRAM / PM / TLS / Slate 配置
 ├── tools/                      字体生成工具
 └── main/
-    ├── app/                    App 生命周期、boot mode、scene stack、sleep manager、power state
-    ├── bsp/                    板级 GPIO、电源、I2C、EPD、按键、ADC 初始化
-    ├── chat/                   小智配置、协议、音频服务、对话服务
+    ├── app/                    App 生命周期编排
+    ├── bsp/                    板级 GPIO、电源、I2C、EPD、按键、ADC、充电状态
     ├── drivers/
-    │   ├── audio/              ES8311 + I2S duplex 音频播放/录音、音量存储
+    │   ├── audio/              ES8311 + I2S duplex 音频播放/录音
     │   ├── bus/                I2C 设备封装、总线锁、电源自救 hook
     │   ├── display/            SSD2683/SSD1683-compatible EPD 驱动
-    │   ├── input/              按键封装
-    │   └── power/              充电状态检测
-    ├── generated/              captive portal HTML 与内置字体
+    │   └── input/              按键封装
+    ├── events/                 boot stage、group sync status、UI 事件与事件总线
     ├── network/                Wi-Fi、SNTP、DNS hijack、captive portal、凭据存储
-    ├── protocol/               Slate backend HTTP API client、SyncService、协议字段名
+    ├── power/                  power state、sleep manager、重启/关机、分钟级时钟
+    ├── resources/              captive portal HTML 与内置字体
     ├── scenes/                 BootSplash、BgRefresh、Frame、Chat、Settings 及子页
+    ├── startup/                boot mode、首次启动/注册流程
     ├── storage/                LittleFS cache、NVS schema
+    ├── sync/                   Slate backend HTTP API client 与 SyncService
     ├── ui/                     状态栏、frame view、menu list、主题
-    └── utils/                  JSON、时间、字节、锁 helper
+    ├── utils/                  JSON、时间、字节、锁 helper
+    └── xiaozhi/                小智配置、协议、MCP、对话服务
 ```
 
 ## 硬件规格
@@ -175,7 +177,7 @@ nvs_flash_init + LittleFS mount
   -> SleepManager::Init()
   -> StartUiLoop()
   -> AttachInputs()
-  -> StartTimeTick()
+  -> StartMinuteTick()
   -> StartSleep()
   -> 按 boot mode 启动 captive portal 或 Wi-Fi + SyncService
   -> esp_pm_configure(80-240 MHz DFS)
@@ -379,13 +381,13 @@ ES8311 使用 lazy open：
 
 ## 小智语音
 
-`chat/` 子系统包含：
+`xiaozhi/` 子系统包含：
 
-- `xiaozhi_config_client`：向小智配置服务上报系统信息，获取 MQTT/WebSocket 配置与 activation 信息。
-- `xiaozhi_protocol` / `xiaozhi_mqtt_protocol` / `xiaozhi_websocket_protocol`：对话协议。
-- `xiaozhi_audio_service`：麦克风、播放、语音处理开关。
-- `xiaozhi_chat_service`：对话状态机、快照、音量、进入/退出/中断。
-- `xiaozhi_settings`：UUID、协议配置、音量等 NVS 设置。
+- `api/`：`activation_client`，向小智配置服务上报系统信息，获取 MQTT/WebSocket 配置与 activation 信息。
+- `config/`：`settings`，UUID、协议配置、音量等 NVS 设置。
+- `mcp/`：`mcp_dispatcher` / `mcp_tools`，MCP 协议分发与工具注册。
+- `protocol/`：`protocol` / `mqtt_protocol` / `websocket_protocol` / `audio_stream_packet`，对话协议。
+- `service/`：`audio_service`、`chat_service`、`message_handler`，对话状态机、麦克风、播放、语音处理。
 
 进入方式：ENTER 双击打开 `ChatScene`。如果尚无协议配置，会先走配置/激活流程；配置完成后进入待机。语音活动、配置任务或播放中会阻止 deep sleep。
 
@@ -459,7 +461,7 @@ idf: ">=5.5"
 
 ## 字体
 
-固件内置字体在 `main/generated/fonts/`：
+固件内置字体在 `main/resources/fonts/`：
 
 - `zfull_16.c`
 - `zfull_12.c`

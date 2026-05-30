@@ -5,7 +5,7 @@
 #include <memory>
 #include <string>
 
-#include "scene.h"
+#include "scenes/core/scene.h"
 
 class StatusBar;
 class FrameView;

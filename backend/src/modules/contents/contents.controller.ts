@@ -27,11 +27,10 @@ import { etagMatches, respondWithEtag } from '../../common/etag/etag.util';
 import { ContentsService } from './contents.service';
 import { ContentsReadService } from './contents-read.service';
 import { DynamicContentService } from '../dynamic-content/dynamic-content.service';
-import { MultipartParser } from './multipart.parser';
+import { MultipartParser } from './multipart-parser';
 import { ReorderContentsDto } from './dto/reorder-contents.dto';
-import { CreateDynamicContentDto } from './dto/create-dynamic-content.dto';
+import { CreateDynamicContentDto } from '../dynamic-content/dto/create-dynamic-content.dto';
 import { GenerateContentTtsDto } from './dto/generate-content-tts.dto';
-import { PreviewDynamicContentDto } from './dto/preview-dynamic-content.dto';
 import { ValidationError } from '../../common/errors';
 import { PatchContentUnionDto } from './dto/patch-content-union.dto';
 
@@ -215,30 +214,6 @@ export class ContentsController {
     @Body() body: GenerateContentTtsDto
   ): Promise<ContentMutationResponseT> {
     return this.contents.generateImageTts(contentId, user.userId, body);
-  }
-
-  @Post('contents/preview')
-  async previewDynamicDirect(
-    @Body() body: PreviewDynamicContentDto,
-    @Res() reply: FastifyReply
-  ): Promise<void> {
-    const data = await this.dynamicContent.previewDirect(body);
-    void reply.header('Cache-Control', 'no-store').type('application/octet-stream').send(data);
-  }
-
-  @Post('contents/:contentId/preview')
-  async previewDynamic(
-    @Param('contentId') contentId: string,
-    @CurrentUser() user: WebUserContext,
-    @Body() body: PreviewDynamicContentDto,
-    @Res() reply: FastifyReply
-  ): Promise<void> {
-    const data = await this.dynamicContent.preview(contentId, user.userId, {
-      config: body.config,
-      frame_name: body.frame_name,
-      data: body.data,
-    });
-    void reply.header('Cache-Control', 'no-store').type('application/octet-stream').send(data);
   }
 }
 

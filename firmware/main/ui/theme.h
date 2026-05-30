@@ -23,7 +23,19 @@ namespace theme {
 constexpr int kStatusBarHeight = 24;
 
 // 右侧 scrollbar thumb 几何,MenuList 与 DeviceInfoPage 共用。
-constexpr int kThumbW        = 2;
-constexpr int kThumbRightPad = 6;
-constexpr int kThumbMinH     = 14;
+constexpr int kScrollbarTrackPadTop    = 12;
+constexpr int kScrollbarTrackPadBottom = 12;
+constexpr int kScrollbarThumbW         = 2;
+constexpr int kScrollbarThumbRightPad  = 6;
+constexpr int kScrollbarThumbMinH      = 14;
+
+// Settings menu geometry.
+constexpr int kMenuRowHeight   = 42;
+constexpr int kMenuRowPadLeft  = 32;
+constexpr int kMenuRowPadRight = 24;
+constexpr int kMenuCursorBarW  = 4;
+constexpr int kMenuCursorBarH  = 22;
+
+// Device info page.
+constexpr int kDeviceInfoScrollStep = 80;
 }  // namespace theme

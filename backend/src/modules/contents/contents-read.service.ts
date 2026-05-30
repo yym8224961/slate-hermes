@@ -140,7 +140,7 @@ export class ContentsReadService {
     if (!content.audioEtag || !content.audioSize) throw new NotFoundError('该内容没有音频');
     const data = await this.audioBlobs.read(content.groupId, content.id, content.audioEtag);
     if (!data) {
-      await this.audioBlobs.handleMissing(content);
+      await this.audioBlobs.repairMissingAudioBlob(content);
       throw new NotFoundError('音频文件丢失');
     }
     return { data, etag: content.audioEtag };

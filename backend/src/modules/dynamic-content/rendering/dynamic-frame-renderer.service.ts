@@ -9,11 +9,11 @@ import {
 import { traditionalFestivalShortName } from '../traditional-festivals';
 import { timezoneFromConfig } from '../timezone';
 import { BitmapCanvas, PIXEL_BLACK, PIXEL_WHITE, type BitmapMask } from './bitmap-canvas';
-import { getDeviceFontEntry, type DeviceFontCatalogEntry } from './font-catalog';
-import { textWidth, type BitmapFont } from './bitmap-font';
-import { DynamicFrameFontService, type FontSet } from './dynamic-frame-font.service';
-import { loadWeatherIconMask } from './weather-icons';
-import { readHistoryItems, monthCellSubtitle } from './calendar-render-utils';
+import { getDeviceFontEntry, type DeviceFontCatalogEntry } from './fonts/font-catalog';
+import { textWidth, type BitmapFont } from './fonts/bitmap-font';
+import { DynamicFrameFontService, type FontSet } from './fonts/dynamic-frame-font.service';
+import { loadWeatherIconMask } from './helpers/weather-icons';
+import { readHistoryItems, monthCellSubtitle } from './helpers/calendar-render-utils';
 import {
   blockRect,
   resolveDashboardRenderInput,
@@ -21,7 +21,7 @@ import {
   resolveSeries,
   resolveTemplate,
 } from './dashboard-template';
-import { earthquakeFields } from './earthquake-render-utils';
+import { earthquakeFields } from './helpers/earthquake-render-utils';
 import {
   dateParts,
   dayFromMonthDay,
@@ -29,7 +29,7 @@ import {
   formatShortTime,
   monthFromMonthDay,
   weekdayFor,
-} from './frame-date-utils';
+} from './helpers/frame-date-utils';
 import {
   drawTextLine,
   ellipsize,
@@ -48,7 +48,7 @@ import {
   readAlign,
   readInt,
   readStringArray,
-} from './frame-value-utils';
+} from './helpers/frame-value-utils';
 import {
   fontReadingLines,
   fontSpecimen,
@@ -57,7 +57,7 @@ import {
   missingGlyphs,
   readFontId,
   type FontSpecimen,
-} from './font-test-utils';
+} from './fonts/font-test-utils';
 import {
   forecastRangeFromVal,
   forecastTextFromVal,
@@ -66,7 +66,7 @@ import {
   weatherAlertLine,
   weatherAlertSourceLabel,
   weatherAlertSummary,
-} from './weather-render-utils';
+} from './helpers/weather-render-utils';
 
 export interface DynamicRenderContext {
   type: string;

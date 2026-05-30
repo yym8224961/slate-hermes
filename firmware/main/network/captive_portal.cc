@@ -1,4 +1,4 @@
-#include "captive_portal.h"
+#include "network/captive_portal.h"
 
 #include <cJSON.h>
 #include <esp_log.h>
@@ -14,9 +14,9 @@
 #include <utility>
 #include <vector>
 
-#include "captive_portal_html.h"
-#include "json_utils.h"
-#include "wifi.h"
+#include "resources/captive_portal_html.h"
+#include "utils/json_utils.h"
+#include "network/wifi.h"
 
 namespace {
 constexpr char kTag[] = "Portal";

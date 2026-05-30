@@ -1,4 +1,4 @@
-#include "audio_player.h"
+#include "drivers/audio/audio_player.h"
 
 #include <driver/gpio.h>
 #include <esp_codec_dev_defaults.h>
@@ -7,10 +7,10 @@
 #include <cstdlib>
 #include <cstring>
 
-#include "config.h"
-#include "gpio_util.h"
-#include "i2c_bus_lock.h"
-#include "volume_store.h"
+#include "bsp/config.h"
+#include "bsp/gpio_util.h"
+#include "drivers/bus/i2c_bus_lock.h"
+#include "storage/nvs/volume_store.h"
 
 // Board::Init 已经在 InitPower 阶段把 GPIO42（AVDD_3V3 rail）拉高 + hold_en。
 // i2c_device.cc 仍然在异常路径上调 BoardI2cForcePowerOn 自救，实现放在 board_power.cc。

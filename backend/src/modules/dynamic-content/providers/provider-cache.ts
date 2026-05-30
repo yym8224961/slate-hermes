@@ -1,4 +1,4 @@
-import { setBoundedCache } from '../../../common/cache-utils';
+import { setBoundedCache } from '../../../common/utils/cache-utils';
 
 export const DEFAULT_PROVIDER_CACHE_TTL_SEC = 600;
 export const DEFAULT_PROVIDER_FETCH_TIMEOUT_MS = 5000;
@@ -43,27 +43,6 @@ export class CachedInflightFetcher<K, V> {
 
   set(key: K, data: V, fetchedAt: number): void {
     setBoundedCache(this.cache, key, { data, fetchedAt }, this.maxEntries);
-  }
-}
-
-export class InflightDedupe<K, V> {
-  private readonly inflight = new Map<K, Promise<V>>();
-
-  constructor(private readonly maxEntries?: number) {}
-
-  getOrStart(key: K, taskFactory: () => Promise<V>): Promise<V> {
-    const existing = this.inflight.get(key);
-    if (existing) return existing;
-
-    const task = taskFactory().finally(() => {
-      if (this.inflight.get(key) === task) this.inflight.delete(key);
-    });
-    if (this.maxEntries === undefined) {
-      this.inflight.set(key, task);
-    } else {
-      setBoundedCache(this.inflight, key, task, this.maxEntries);
-    }
-    return task;
   }
 }
 

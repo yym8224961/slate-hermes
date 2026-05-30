@@ -5,12 +5,13 @@ import { Wifi, Frame, Trash2 } from 'lucide-react';
 import type { DeviceSummaryT, GroupSummaryT } from 'shared';
 import { DragHandle } from '@/components/ui/DragHandle';
 import { IconBlock } from '@/components/ui/IconBlock';
-import { rssiLabel, useTimeAgo } from '@/lib/format';
-import { useDeviceOnline } from '@/features/devices/status';
+import { rssiLabel } from '@/lib/format';
+import { useTimeAgo } from '@/hooks/useTimeAgo';
+import { useDeviceOnline } from '@/features/devices/hooks/useDeviceOnline';
 import { BatteryLevelIcon } from './BatteryLevelIcon';
 import { useUnbindDeviceWithConfirm } from '@/features/devices/hooks/useUnbindDeviceWithConfirm';
 import { cn } from '@/lib/cn';
-import { useSortableStyle } from '@/hooks/useSortableStyle';
+import { useSortableStyle } from '@/hooks/dnd/useSortableStyle';
 
 export const DeviceCard = memo(function DeviceCard({
   device,

@@ -4,13 +4,14 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { AUTH_TOKEN_STORAGE_KEY, setUnauthorizedHandler, tokenStorage } from '@/lib/auth-storage';
-import { API_V1, api } from '@/lib/http';
-import { meQueryKey, useMe } from '@/features/auth/queries';
-import { closeSharedAudioContext } from '@/features/contents/components/audio/sharedAudioContext';
-import { clearContentBitmapCache } from '@/features/contents/components/preview/useContentBitmap';
+import { resetUnauthorizedState, setUnauthorizedHandler } from '@/features/auth/lib/auth-events';
+import { AUTH_TOKEN_STORAGE_KEY, tokenStorage } from '@/features/auth/lib/auth-storage';
+import { API_PREFIX, api } from '@/lib/http';
+import { notifySessionEnded } from '@/features/auth/lib/session-events';
+import { meQueryKey, useMe } from '@/features/auth/query/auth-queries';
+import { appRoutes } from '@/app/routes';
 import type { LoginRequestT, LoginResponseT, RegisterRequestT, RegisterResponseT } from 'shared';
-import { AuthContext } from './auth-context';
+import { AuthContext } from './model/auth-context';
 import { safeRedirectPath } from './redirect';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -23,15 +24,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clearLocalSession = useCallback(() => {
     setToken(null);
     qc.clear();
-    clearContentBitmapCache();
-    closeSharedAudioContext();
+    notifySessionEnded();
   }, [qc]);
 
   useEffect(() => {
     return setUnauthorizedHandler(() => {
       tokenStorage.clear({ resetUnauthorized: false });
       clearLocalSession();
-      if (window.location.pathname !== '/login') navigate('/login', { replace: true });
+      if (window.location.pathname !== appRoutes.login)
+        navigate(appRoutes.login, { replace: true });
     });
   }, [clearLocalSession, navigate]);
 
@@ -40,10 +41,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event.key !== AUTH_TOKEN_STORAGE_KEY) return;
       if (!event.newValue) {
         clearLocalSession();
-        if (window.location.pathname !== '/login') navigate('/login', { replace: true });
+        if (window.location.pathname !== appRoutes.login)
+          navigate(appRoutes.login, { replace: true });
         return;
       }
       setToken(event.newValue);
+      resetUnauthorizedState();
       void qc.invalidateQueries({ queryKey: meQueryKey });
     }
     window.addEventListener('storage', onStorage);
@@ -51,9 +54,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearLocalSession, navigate, qc]);
 
   const login = useCallback(
-    async (creds: LoginRequestT, redirectTo = '/') => {
-      const { data } = await api.post<LoginResponseT>(`${API_V1}/sessions`, creds);
+    async (creds: LoginRequestT, redirectTo: string = appRoutes.home) => {
+      const { data } = await api.post<LoginResponseT>(`${API_PREFIX}/sessions`, creds);
       tokenStorage.set(data.token);
+      resetUnauthorizedState();
       setToken(data.token);
       qc.setQueryData(meQueryKey, data.user);
       navigate(safeRedirectPath(redirectTo), { replace: true });
@@ -62,9 +66,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const register = useCallback(
-    async (creds: RegisterRequestT, redirectTo = '/') => {
-      const { data } = await api.post<RegisterResponseT>(`${API_V1}/users`, creds);
+    async (creds: RegisterRequestT, redirectTo: string = appRoutes.home) => {
+      const { data } = await api.post<RegisterResponseT>(`${API_PREFIX}/users`, creds);
       tokenStorage.set(data.token);
+      resetUnauthorizedState();
       setToken(data.token);
       qc.setQueryData(meQueryKey, data.user);
       navigate(safeRedirectPath(redirectTo), { replace: true });
@@ -78,10 +83,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const existingToken = tokenStorage.get();
     tokenStorage.clear();
     clearLocalSession();
-    navigate('/login', { replace: true });
+    navigate(appRoutes.login, { replace: true });
     if (existingToken) {
       api
-        .delete(`${API_V1}/sessions/current`, {
+        .delete(`${API_PREFIX}/sessions/current`, {
           headers: { Authorization: `Bearer ${existingToken}` },
         })
         .catch(() => {});

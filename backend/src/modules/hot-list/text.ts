@@ -1,6 +1,6 @@
 import { TextDecoder } from 'node:util';
 import type { HotListItem } from './hot-list.types';
-import { stripHtml } from '../../common/html-text';
+import { stripHtml } from '../../common/utils/html-text';
 import { isPublicHttpUrl } from '../../common/http/fetch';
 
 export function decodeGbk(value: ArrayBuffer): string {

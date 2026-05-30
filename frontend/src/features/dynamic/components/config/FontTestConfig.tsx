@@ -1,7 +1,10 @@
 import { FONT_TEST_FONTS, FontTestFontId, type DynamicConfigT, type FontTestFontIdT } from 'shared';
 import { Select, SelectItem } from '@/components/ui/Select';
 import { Checkbox } from '@/components/ui/Checkbox';
-import type { DynamicConfigChange } from '@/features/dynamic/types';
+import type { DynamicConfigChange } from '@/features/dynamic/model/config-types';
+import { createSafeParseGuard } from '@/lib/zod-utils';
+
+const isFontTestFontId = createSafeParseGuard<FontTestFontIdT>(FontTestFontId);
 
 export function FontTestConfigPanel({
   config,
@@ -47,8 +50,4 @@ export function FontTestConfigPanel({
       />
     </div>
   );
-}
-
-function isFontTestFontId(value: string): value is FontTestFontIdT {
-  return FontTestFontId.safeParse(value).success;
 }

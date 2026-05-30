@@ -19,7 +19,7 @@
 #include <memory>
 #include <string>
 
-#include "dns_hijack.h"
+#include "network/dns_hijack.h"
 
 class CaptivePortal {
    public:

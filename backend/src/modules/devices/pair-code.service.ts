@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { ConflictError, InternalError } from '../../common/errors';
-import type { PrismaClientLike } from '../../common/db/prisma-client-like';
+import type { PrismaClientLike } from '../../common/db/prisma-utils';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 
 const PAIR_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';

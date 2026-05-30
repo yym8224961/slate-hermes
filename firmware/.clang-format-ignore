@@ -1,4 +1,3 @@
 build/**
 managed_components/**
-main/generated/**
-components/xiaozhi-fonts/**
+main/resources/**

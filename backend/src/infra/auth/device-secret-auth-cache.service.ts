@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
-import { setBoundedCache } from '../../common/cache-utils';
+import { setBoundedCache } from '../../common/utils/cache-utils';
 import type { DeviceContext } from '../../common/decorators/current-device.decorator';
 
 interface CacheEntry {
@@ -48,10 +48,6 @@ export class DeviceSecretAuthCacheService {
 
   invalidateHash(secretHash: string | null | undefined): void {
     if (secretHash) this.cache.delete(secretHash);
-  }
-
-  clear(): void {
-    this.cache.clear();
   }
 
   private setCache(hash: string, device: DeviceContext | null, expiresAt: number): void {

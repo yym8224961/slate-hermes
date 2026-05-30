@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { getDateTimeFormat } from '../../../common/intl';
+import { getDateTimeFormat } from '../../../common/utils/intl';
 import { fetchArrayBuffer, fetchJson, fetchText, DESKTOP_UA } from '../fetch';
 import type {
   HotListItem,

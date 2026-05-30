@@ -1,8 +1,8 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { AppConfig } from '../../infra/config/app.config';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { formatError } from '../../common/error-format';
-import { WorkerLoop } from '../../common/worker-loop';
+import { formatError } from '../../common/utils/error-format';
+import { WorkerLoop } from '../../common/worker/worker-loop';
 import { DynamicContentRendererService } from './dynamic-content-renderer.service';
 import { claimLeaseJobs } from './lease-claim';
 

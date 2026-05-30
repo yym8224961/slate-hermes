@@ -2,30 +2,38 @@
 // 统一入口，支持图片 + 所有动态类型在同一页面切换。
 
 import { useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { ContentCreateEditor } from '@/features/contents/components/create/ContentCreateEditor';
-import { EmptyState } from '@/components/ui/EmptyState';
+import { useNavigate } from 'react-router-dom';
+import { ContentCreateEditor } from '@/features/contents/components/ContentCreateEditor';
+import { RequireRouteParams } from '@/components/layout/RequireRouteParams';
+import { appRoutes } from '@/app/routes';
 
 export function ContentNewPage() {
-  const { gid } = useParams();
   const navigate = useNavigate();
 
+  return (
+    <RequireRouteParams names={['gid'] as const} hint="请从总览页进入具体内容组。">
+      {({ gid }) => <ContentNewPageContent gid={gid} navigate={(path) => navigate(path)} />}
+    </RequireRouteParams>
+  );
+}
+
+function ContentNewPageContent({
+  gid,
+  navigate,
+}: {
+  gid: string;
+  navigate: (path: string) => void;
+}) {
   const onDone = useCallback(() => {
-    if (!gid) return;
-    navigate(`/groups/${gid}`);
+    navigate(appRoutes.group(gid));
   }, [gid, navigate]);
 
   const onEditCreatedImage = useCallback(
     (contentId: string) => {
-      if (!gid) return;
-      navigate(`/groups/${gid}/contents/image/${contentId}/edit`);
+      navigate(appRoutes.editImageContent(gid, contentId));
     },
     [gid, navigate]
   );
-
-  if (!gid) {
-    return <EmptyState title="页面不存在" hint="请从总览页进入具体内容组。" />;
-  }
 
   return <ContentCreateEditor gid={gid} onDone={onDone} onEditCreatedImage={onEditCreatedImage} />;
 }

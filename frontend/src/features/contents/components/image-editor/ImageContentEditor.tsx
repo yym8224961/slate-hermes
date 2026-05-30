@@ -9,15 +9,15 @@
 import type { FormEvent } from 'react';
 import { Image as ImageIcon } from 'lucide-react';
 import type { ContentDetailT } from 'shared';
+import { useGenerateContentTts } from '@/features/contents/query/content-audio-queries';
 import {
   useContentImage,
-  useGenerateContentTts,
   useUpdateImageContent,
-} from '@/features/contents/queries';
-import { useToast } from '@/components/feedback/useToast';
+} from '@/features/contents/query/content-list-queries';
+import { useToast } from '@/components/feedback/Toast';
 import { FormActions } from '@/components/ui/FormActions';
 import { PageHeader } from '@/components/layout/PageHeader';
-import { TYPE_META } from '@/features/contents/model/type-meta';
+import { TYPE_META } from '@/features/contents/model/content-type-meta';
 import { getApiErrorMessage } from '@/lib/api-errors';
 import { useImageContentForm } from '@/features/contents/hooks/useImageContentForm';
 import { ImageFormBody } from './ImageFormBody';

@@ -8,7 +8,8 @@ import { DragHandle } from '@/components/ui/DragHandle';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { useSortableStyle } from '@/hooks/useSortableStyle';
+import { useSortableStyle } from '@/hooks/dnd/useSortableStyle';
+import { appRoutes } from '@/app/routes';
 
 export const GroupCardSortable = memo(function GroupCardSortable({
   group,
@@ -31,7 +32,7 @@ export const GroupCardSortable = memo(function GroupCardSortable({
       )}
     >
       <Link
-        to={`/groups/${group.id}`}
+        to={appRoutes.group(group.id)}
         className="block flex-1 min-w-0 px-5 py-5 sm:px-6 sm:py-6 hover:bg-cream transition-colors"
       >
         <div className="flex items-start gap-3.5">

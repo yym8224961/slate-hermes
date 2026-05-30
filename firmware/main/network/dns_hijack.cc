@@ -1,4 +1,4 @@
-#include "dns_hijack.h"
+#include "network/dns_hijack.h"
 
 #include <esp_log.h>
 #include <lwip/netdb.h>

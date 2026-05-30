@@ -1,8 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { z } from 'zod';
-import { AppConfig } from '../../infra/config/app.config';
 import { fetchWithTimeout } from '../../common/http/fetch';
 import { parseSsePayloads } from '../../common/http/sse';
+import { AiConfig } from './ai.config';
 
 const REQUEST_TIMEOUT_MS = 45_000;
 const HISTORY_TODAY_PROMPT_VERSION = '2026-05-21.v5';
@@ -37,14 +37,14 @@ interface ChatCompletionResponse {
 export class AiService {
   private readonly logger = new Logger(AiService.name);
 
-  constructor(private readonly config: AppConfig) {}
+  constructor(private readonly config: AiConfig) {}
 
   enabled(): boolean {
-    return !!this.config.aiApiKey && !!this.config.aiBaseUrl;
+    return !!this.config.apiKey && !!this.config.baseUrl;
   }
 
   modelKey(): string {
-    return this.config.aiModel;
+    return this.config.model;
   }
 
   historyTodayPromptVersion(): string {
@@ -110,18 +110,18 @@ export class AiService {
   }
 
   private async requestJson(input: { system: string; user: string }): Promise<string | null> {
-    const url = `${this.config.aiBaseUrl!.replace(/\/+$/, '')}/chat/completions`;
+    const url = `${this.config.baseUrl!.replace(/\/+$/, '')}/chat/completions`;
     let body: string;
     try {
       const resp = await fetchWithTimeout(url, {
         method: 'POST',
         timeoutMs: REQUEST_TIMEOUT_MS,
         headers: {
-          Authorization: `Bearer ${this.config.aiApiKey}`,
+          Authorization: `Bearer ${this.config.apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: this.config.aiModel,
+          model: this.config.model,
           messages: [
             { role: 'system', content: input.system },
             { role: 'user', content: input.user },

@@ -1,4 +1,4 @@
-#include "i2c_bus_lock.h"
+#include "drivers/bus/i2c_bus_lock.h"
 
 #include <esp_log.h>
 #include <freertos/semphr.h>

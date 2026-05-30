@@ -1,4 +1,4 @@
-#include "api_client.h"
+#include "sync/api_client.h"
 
 #include <cJSON.h>
 #include <esp_crt_bundle.h>
@@ -11,10 +11,9 @@
 #include <mutex>
 #include <utility>
 
-#include "config.h"
-#include "json_utils.h"
-#include "protocol_keys.h"
-#include "time_utils.h"
+#include "bsp/config.h"
+#include "utils/json_utils.h"
+#include "utils/time_utils.h"
 
 namespace {
 constexpr char kTag[]                      = "Api";
@@ -22,6 +21,49 @@ constexpr int  kUnauthorizedResetThreshold = 5;
 constexpr int  kDefaultTimeoutMs           = 8000;
 constexpr int  kManifestTimeoutMs          = 15000;
 constexpr int  kBinaryTimeoutMs            = 20000;
+
+namespace proto {
+
+inline constexpr char kAudioEtag[]           = "audio_etag";
+inline constexpr char kAudioSize[]           = "audio_size";
+inline constexpr char kBatteryPct[]          = "battery_pct";
+inline constexpr char kBound[]               = "bound";
+inline constexpr char kCode[]                = "code";
+inline constexpr char kContentCount[]        = "content_count";
+inline constexpr char kContentEtag[]         = "content_etag";
+inline constexpr char kContents[]            = "contents";
+inline constexpr char kCurrent[]             = "current";
+inline constexpr char kCurrentContent[]      = "current_content";
+inline constexpr char kCurrentContentSeq[]   = "current_content_seq";
+inline constexpr char kCurrentContentEtag[]  = "current_content_etag";
+inline constexpr char kCurrentGroup[]        = "current_group";
+inline constexpr char kDeviceStatusBarText[] = "device_status_bar_text";
+inline constexpr char kDetail[]              = "detail";
+inline constexpr char kDevice[]              = "device";
+inline constexpr char kDeviceSecret[]        = "device_secret";
+inline constexpr char kError[]               = "error";
+inline constexpr char kFwVersion[]           = "fw_version";
+inline constexpr char kGroup[]               = "group";
+inline constexpr char kId[]                  = "id";
+inline constexpr char kImageEtag[]           = "image_etag";
+inline constexpr char kImageSize[]           = "image_size";
+inline constexpr char kKind[]                = "kind";
+inline constexpr char kManifestEtag[]        = "manifest_etag";
+inline constexpr char kMac[]                 = "mac";
+inline constexpr char kName[]                = "name";
+inline constexpr char kNextWakeSec[]         = "next_wake_sec";
+inline constexpr char kPairCode[]            = "pair_code";
+inline constexpr char kPosition[]            = "position";
+inline constexpr char kRssiDbm[]             = "rssi_dbm";
+inline constexpr char kSeq[]                 = "seq";
+inline constexpr char kServerTime[]          = "server_time";
+inline constexpr char kSortOrder[]           = "sort_order";
+inline constexpr char kStructureEtag[]       = "structure_etag";
+inline constexpr char kTelemetry[]           = "telemetry";
+inline constexpr char kTotal[]               = "total";
+inline constexpr char kWakeReason[]          = "wake_reason";
+
+}  // namespace proto
 
 bool IsAllowedBaseUrl(const std::string& url) {
     if (url.empty() || url.size() > 256)

@@ -1,7 +1,7 @@
 import type { DynamicConfigT } from 'shared';
 import { CitySearch } from './CitySearch';
 import { DynamicRefreshSettings } from './RefreshSettings';
-import type { DynamicConfigChange } from '@/features/dynamic/types';
+import type { DynamicConfigChange } from '@/features/dynamic/model/config-types';
 
 export function WeatherConfigPanel({
   config,

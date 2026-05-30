@@ -1,4 +1,4 @@
-import { hasGlyph, type BitmapFont } from './bitmap-font';
+import { hasGlyph, type BitmapFont } from './fonts/bitmap-font';
 import { BitmapCanvas } from './bitmap-canvas';
 
 export function wrapText(

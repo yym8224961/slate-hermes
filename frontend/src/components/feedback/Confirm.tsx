@@ -1,3 +1,4 @@
+/* eslint-disable react-refresh/only-export-components */
 // 全局 confirm：替代浏览器 window.confirm，用 Radix Dialog 风格化。
 //
 // 用法：
@@ -8,16 +9,41 @@
 //
 // 在 App 根挂 <ConfirmProvider /> 一次。
 
-import { useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { dialogContentConfirmCls, dialogOverlayConfirmCls } from '@/lib/styles';
-import { ConfirmCtx, type ConfirmOptions } from './confirm-context';
+
+export interface ConfirmOptions {
+  title: string;
+  description?: string;
+  confirmText?: string;
+  cancelText?: string;
+  destructive?: boolean;
+}
+
+export type ConfirmFn = (opts: ConfirmOptions) => Promise<boolean>;
 
 type Resolve = (ok: boolean) => void;
 type ConfirmRequest = ConfirmOptions & { resolve: Resolve };
+
+const ConfirmCtx = createContext<ConfirmFn | null>(null);
+
+export function useConfirm(): ConfirmFn {
+  const ctx = useContext(ConfirmCtx);
+  if (!ctx) throw new Error('useConfirm outside ConfirmProvider');
+  return ctx;
+}
 
 export function ConfirmProvider({ children }: { children: ReactNode }) {
   const [active, setActive] = useState<ConfirmRequest | null>(null);

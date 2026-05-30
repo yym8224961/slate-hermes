@@ -4,6 +4,7 @@ import { Layout } from '@/components/layout/Layout';
 import { RequireAuth } from '@/components/layout/RequireAuth';
 import { ErrorBoundary } from '@/components/feedback/ErrorBoundary';
 import { Spinner } from '@/components/ui/Spinner';
+import { appRoutes, routePaths } from './routes';
 
 const LoginPage = lazy(() =>
   import('@/pages/auth/LoginPage').then((module) => ({ default: module.LoginPage }))
@@ -46,8 +47,8 @@ export function App() {
       <ScrollToTop />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/register" element={<RegisterPage />} />
+          <Route path={routePaths.login} element={<LoginPage />} />
+          <Route path={routePaths.register} element={<RegisterPage />} />
 
           <Route
             element={
@@ -57,20 +58,14 @@ export function App() {
             }
           >
             <Route index element={<DashboardPage />} />
-            <Route path="/devices/:did" element={<DashboardPage />} />
-            <Route path="/groups/:gid" element={<GroupDetailPage />} />
-            <Route path="/groups/:gid/contents/new" element={<ContentNewPage />} />
-            <Route
-              path="/groups/:gid/contents/image/:contentId/edit"
-              element={<ImageContentEditorPage />}
-            />
-            <Route
-              path="/groups/:gid/contents/dynamic/:contentId/edit"
-              element={<DynamicContentEditorPage />}
-            />
+            <Route path={routePaths.deviceDetail} element={<DashboardPage />} />
+            <Route path={routePaths.groupDetail} element={<GroupDetailPage />} />
+            <Route path={routePaths.contentNew} element={<ContentNewPage />} />
+            <Route path={routePaths.imageContentEdit} element={<ImageContentEditorPage />} />
+            <Route path={routePaths.dynamicContentEdit} element={<DynamicContentEditorPage />} />
           </Route>
 
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to={appRoutes.home} replace />} />
         </Routes>
       </Suspense>
     </ErrorBoundary>

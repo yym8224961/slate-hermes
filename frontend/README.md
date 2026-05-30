@@ -33,19 +33,27 @@ frontend/src/
 │   ├── devices/              设备卡片、绑定弹窗、设备详情弹窗、device queries
 │   ├── dynamic/              动态内容配置表单、预览、默认 config、dashboard push panel
 │   └── groups/               内容组卡片、新建弹窗、group queries
-├── hooks/                    DnD 排序、inline rename 等通用 hooks
+├── hooks/                    跨 feature hooks；DnD hook 放在 hooks/dnd/
 ├── lib/                      axios、错误解包、格式化、图片解码、JSON helper、样式片段
 ├── pages/
 │   ├── auth/                 LoginPage、RegisterPage
 │   ├── contents/             ContentNewPage、ImageContentEditorPage、DynamicContentEditorPage
-│   ├── dashboard/            DashboardPage、GroupsSection
+│   ├── dashboard/            DashboardPage
 │   └── groups/               GroupDetailPage
 └── styles/global.css          Tailwind v4 + Mono Press design tokens
 ```
 
+## 目录约定
+
+- `features/*` 放业务域内聚的组件、hooks、queries、lib。
+- `components/ui` 只放可复用 UI 组件；纯 hook 不放在这里。
+- `components/feedback` 放全局反馈能力（Toast、Confirm、mutation feedback helper）。
+- `hooks` 只放跨 feature hooks；和某个领域强绑定的 hook 放回对应 `features/*`。
+- `lib` 只放跨业务域的基础设施和通用工具。
+
 ## 路由
 
-定义在 [src/app/App.tsx](src/app/App.tsx)。
+路径常量和 path builder 定义在 [src/app/routes.ts](src/app/routes.ts)，路由表在 [src/app/App.tsx](src/app/App.tsx)。
 
 | path | 页面 | 说明 |
 | --- | --- | --- |
@@ -163,8 +171,8 @@ queries: {
 
 约定：
 
-- query key 按 feature 拆分在 `features/*/query-keys.ts`。
-- 每个 feature 的接口 hooks 放在 `features/*/queries.ts`。
+- query key 和接口 hooks 按 feature 拆分在 `features/*/query/`。
+- 页面和组件从对应 feature 的 `query/*-queries.ts` 导入具体 hooks。
 - mutation 成功后 invalidate 相关 group/device/content query。
 - 图片和音频 binary query key 带 etag，`staleTime: Infinity`，etag 不变就不重拉。
 - 内容列表如果存在 `pending` / `generating` 音频，会每 2.5 秒轮询直到完成。
@@ -192,7 +200,7 @@ import { DynamicConfig, DEFAULT_DITHER_MODE, ditherToBinary } from 'shared';
 
 `shared` 不需要先 build；workspace 依赖和 alias 都指向源码。
 
-## 设计系统：Mono Press
+## 设计系统 Mono Press
 
 设计 token 位于 [src/styles/global.css](src/styles/global.css)。整体是报刊编辑风格：
 

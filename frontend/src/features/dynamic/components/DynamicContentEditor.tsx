@@ -2,17 +2,24 @@
 
 import { useCallback, useMemo, type FormEvent } from 'react';
 import { Sparkles } from 'lucide-react';
-import type { ContentDetailT, DynamicConfigT, DynamicTypeT } from 'shared';
-import { useContentImage, useUpdateDynamicContent } from '@/features/contents/queries';
-import { useToast } from '@/components/feedback/useToast';
+import {
+  isAudioDynamicConfig,
+  type ContentDetailT,
+  type DynamicConfigT,
+  type DynamicTypeT,
+} from 'shared';
+import { useUpdateDynamicContent } from '@/features/contents/query/content-dynamic-queries';
+import { useContentImage } from '@/features/contents/query/content-list-queries';
+import { useToast } from '@/components/feedback/Toast';
 import { FormActions } from '@/components/ui/FormActions';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { getApiErrorMessage } from '@/lib/api-errors';
 import { DYNAMIC_TYPE_META } from '@/features/dynamic/model/type-meta';
 import { useDynamicEditorBaselineSync } from '@/features/dynamic/hooks/useDynamicEditorBaselineSync';
-import { DynamicFramePreview } from '@/features/dynamic/components/preview/DynamicPreview';
+import { SavedOrLiveDynamicFramePreview } from '@/features/dynamic/components/DynamicFramePreview';
 import { useDynamicContentForm } from '@/features/dynamic/hooks/useDynamicContentForm';
 import { DynamicContentFormShell } from './DynamicContentFormShell';
+import { DynamicContentFields } from './DynamicContentFields';
 
 interface DynamicContentEditorProps {
   gid: string;
@@ -72,6 +79,11 @@ export function DynamicContentEditor({
 
   const savedPreviewEnabled = !!content.image_etag;
   const savedPreview = useContentImage(content.id, content.image_etag ?? null);
+  const dynamicMeta = form.type ? DYNAMIC_TYPE_META[form.type] : null;
+  const showParams = Boolean(dynamicMeta?.hasConfigurableParams);
+  const showAudio = Boolean(
+    dynamicMeta?.supportsAudio && form.config && isAudioDynamicConfig(form.config)
+  );
 
   const onSubmit = useCallback(async () => {
     const parsed = form.submitConfig();
@@ -117,20 +129,11 @@ export function DynamicContentEditor({
 
       <div className="mt-6 fade-up fade-up-1">
         <DynamicContentFormShell
-          type={form.type}
-          config={form.config}
-          frameName={form.frameName}
-          onFrameNameChange={form.setFrameName}
-          onConfigChange={form.changeConfig}
           onSubmit={handleSubmit}
-          contentId={content.id}
-          dashboardData={form.dashboardData}
-          dashboardDataLabel="当前数据 JSON"
           gridClassName="lg:grid-cols-[1.3fr_1fr]"
           preview={
-            <SavedOrLivePreview
+            <SavedOrLiveDynamicFramePreview
               savedData={savedPreview.data}
-              savedCacheKey={savedPreviewEnabled ? content.image_etag : null}
               savedPending={savedPreviewEnabled && savedPreview.isPending}
               liveData={form.livePreviewData}
               livePending={form.preview.isPending}
@@ -145,6 +148,22 @@ export function DynamicContentEditor({
               </p>
               <div className="border-t border-line" />
             </div>
+          }
+          fields={
+            form.type && form.config ? (
+              <DynamicContentFields
+                type={form.type}
+                config={form.config}
+                frameName={form.frameName}
+                onFrameNameChange={form.setFrameName}
+                onConfigChange={form.changeConfig}
+                showParams={showParams}
+                showAudio={showAudio}
+                contentId={content.id}
+                dashboardData={form.dashboardData}
+                dashboardDataLabel="当前数据 JSON"
+              />
+            ) : null
           }
           actions={
             <FormActions
@@ -164,35 +183,4 @@ function dashboardDataRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : null;
-}
-
-function SavedOrLivePreview({
-  savedData,
-  savedCacheKey,
-  savedPending,
-  liveData,
-  livePending,
-  hasConfig,
-  caption,
-}: {
-  savedData?: ArrayBuffer;
-  savedCacheKey?: string | null;
-  savedPending?: boolean;
-  liveData: ArrayBuffer | null;
-  livePending: boolean;
-  hasConfig: boolean;
-  caption?: string | null;
-}) {
-  const displayData = liveData ?? savedData ?? null;
-  const pending = livePending || (!liveData && Boolean(savedPending));
-
-  return (
-    <DynamicFramePreview
-      data={displayData}
-      cacheKey={liveData ? null : savedCacheKey}
-      pending={pending}
-      hasConfig={hasConfig}
-      caption={caption}
-    />
-  );
 }

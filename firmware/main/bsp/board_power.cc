@@ -1,9 +1,9 @@
-#include "board_power.h"
+#include "bsp/board_power.h"
 
 #include <driver/gpio.h>
 
-#include "config.h"
-#include "gpio_util.h"
+#include "bsp/config.h"
+#include "bsp/gpio_util.h"
 
 namespace {
 constexpr gpio_num_t kLedPin  = GPIO_NUM_3;  // 板上唯一一颗绿色 LED，低有效

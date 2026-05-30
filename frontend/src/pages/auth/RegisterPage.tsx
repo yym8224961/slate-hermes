@@ -4,9 +4,10 @@ import { useState } from 'react';
 import { Navigate, Link, useLocation } from 'react-router-dom';
 import { Input } from '@/components/ui/Input';
 import { redirectFromLocationState } from '@/features/auth/redirect';
-import { useAuth } from '@/features/auth/useAuth';
-import { useAuthForm } from '@/features/auth/useAuthForm';
-import { AuthFormLayout } from './AuthFormLayout';
+import { useAuth } from '@/features/auth/hooks/useAuth';
+import { useAuthForm } from '@/features/auth/hooks/useAuthForm';
+import { AuthFormLayout } from '@/features/auth/components/AuthFormLayout';
+import { appRoutes } from '@/app/routes';
 
 export function RegisterPage() {
   const { token, register } = useAuth();
@@ -65,7 +66,7 @@ export function RegisterPage() {
       footer={
         <p className="mt-7 text-center font-sans text-[13px] text-stone">
           已有账号？{' '}
-          <Link to="/login" className="text-ink border-b border-ink">
+          <Link to={appRoutes.login} className="text-ink border-b border-ink">
             去登录
           </Link>
         </p>

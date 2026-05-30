@@ -1,18 +1,18 @@
-#include "settings_scene.h"
+#include "scenes/settings/settings_scene.h"
 
 #include <esp_log.h>
 #include <memory>
 #include <utility>
 
-#include "device_info_page.h"
-#include "epd_ssd1683.h"
-#include "event_bus.h"
-#include "factory_reset_page.h"
-#include "menu_list.h"
-#include "restart_device_page.h"
-#include "scene_stack.h"
-#include "theme.h"
-#include "volume_page.h"
+#include "scenes/settings/pages/device_info_page.h"
+#include "drivers/display/epd_ssd1683.h"
+#include "events/event_bus.h"
+#include "scenes/settings/pages/factory_reset_page.h"
+#include "ui/menu_list.h"
+#include "scenes/settings/pages/restart_device_page.h"
+#include "scenes/core/scene_stack.h"
+#include "ui/theme.h"
+#include "scenes/settings/pages/volume_page.h"
 
 namespace {
 constexpr char kTag[] = "Settings";

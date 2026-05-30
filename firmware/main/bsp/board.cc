@@ -1,4 +1,4 @@
-#include "board.h"
+#include "bsp/board.h"
 
 #include <esp_adc/adc_cali.h>
 #include <esp_adc/adc_cali_scheme.h>
@@ -8,13 +8,13 @@
 
 #include <sdkconfig.h>
 
-#include "board_power.h"
-#include "button.h"
-#include "charge_status.h"
-#include "config.h"
-#include "epd_ssd1683.h"
-#include "i2c_bus_lock.h"
-#include "time_utils.h"
+#include "bsp/board_power.h"
+#include "drivers/input/button.h"
+#include "bsp/charge_status.h"
+#include "bsp/config.h"
+#include "drivers/display/epd_ssd1683.h"
+#include "drivers/bus/i2c_bus_lock.h"
+#include "utils/time_utils.h"
 
 namespace {
 constexpr char     kTag[]          = "Board";

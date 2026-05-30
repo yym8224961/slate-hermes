@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { HistoryTodayConfig, type HistoryTodayConfigT } from 'shared';
 import { AiService } from '../../ai/ai.service';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
-import { stripHtml } from '../../../common/html-text';
+import { stripHtml } from '../../../common/utils/html-text';
 import {
   normalizeHistoryYear,
   parseHistoryTodayData,
@@ -10,7 +10,7 @@ import {
 } from '../history-today.data';
 import { datePartsInTz } from '../timezone';
 import { fetchJson } from '../../../common/http/fetch';
-import { setBoundedCache } from '../../../common/cache-utils';
+import { setBoundedCache } from '../../../common/utils/cache-utils';
 import { CachedInflightFetcher, DEFAULT_PROVIDER_FETCH_TIMEOUT_MS } from './provider-cache';
 
 const CACHE_TTL_MS = 86_400_000;

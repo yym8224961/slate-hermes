@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
 import { fieldBaseCls } from '@/lib/styles';
 import { cn } from '@/lib/cn';
-import { API_V1 } from '@/lib/http';
+import { absoluteContentDataUrl } from '@/features/contents/query/api-paths';
 
 export function DashboardPushPanel({
   contentId,
@@ -12,11 +12,7 @@ export function DashboardPushPanel({
   data: Record<string, unknown>;
 }) {
   const [copied, setCopied] = useState(false);
-  const url = useMemo(() => {
-    const path = `${API_V1}/contents/${contentId}/data`;
-    if (typeof window === 'undefined') return path;
-    return `${window.location.origin}${path}`;
-  }, [contentId]);
+  const url = useMemo(() => absoluteContentDataUrl(contentId), [contentId]);
   const examplePayload = useMemo(() => {
     return { version: 1, data };
   }, [data]);

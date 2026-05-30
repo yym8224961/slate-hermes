@@ -1,4 +1,4 @@
-import type { BitmapFont } from './bitmap-font';
+import type { BitmapFont } from './fonts/bitmap-font';
 
 export const PIXEL_BLACK = 0;
 export const PIXEL_WHITE = 1;

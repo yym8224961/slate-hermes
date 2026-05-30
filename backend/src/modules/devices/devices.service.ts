@@ -7,8 +7,8 @@ import { ConflictError, ForbiddenError, InternalError, NotFoundError } from '../
 import { lockUserRow } from '../../common/db/row-locks';
 import { bulkSetDeviceSortOrder } from '../../common/db/bulk-sort-order';
 import { validateOrderSet } from '../../common/db/order-validation';
-import type { PrismaClientLike } from '../../common/db/prisma-client-like';
-import { prismaUniqueTargetIncludes } from '../../common/db/prisma-utils';
+import { nextDeviceSortOrder } from '../../common/db/sort-order';
+import { prismaUniqueTargetIncludes, type PrismaClientLike } from '../../common/db/prisma-utils';
 import {
   DeviceSecretAuthCacheService,
   hashDeviceSecret,
@@ -391,7 +391,7 @@ export class DevicesService {
         }
 
         await lockUserRow(tx, ownerUserId);
-        const sortOrder = await this.nextDeviceSortOrder(ownerUserId, tx);
+        const sortOrder = await nextDeviceSortOrder(tx, ownerUserId);
         const newPairCode = await this.pairCodes.generateUniquePairCode(tx);
         const ownerGroups = await this.groups.listOwnerGroups(ownerUserId, tx);
         const selectedGroupId = ownerGroups[0]?.id ?? null;
@@ -488,18 +488,6 @@ export class DevicesService {
 
   // ── 内部 helpers ────────────────────────────────────────────
 
-  private async nextDeviceSortOrder(
-    ownerUserId: string,
-    client: PrismaClientLike = this.prisma
-  ): Promise<number> {
-    const last = await client.device.findFirst({
-      where: { ownerUserId },
-      orderBy: { sortOrder: 'desc' },
-      select: { sortOrder: true },
-    });
-    return (last?.sortOrder ?? -1) + 1;
-  }
-
   private async requireOwned(deviceId: string, ownerUserId: string): Promise<DeviceRow> {
     const d = await this.prisma.device.findUnique({
       where: { id: deviceId },
@@ -526,7 +514,7 @@ export class DevicesService {
   }
 }
 
-export function toSummary(d: DeviceRow): DeviceSummaryT {
+function toSummary(d: DeviceRow): DeviceSummaryT {
   return {
     id: d.id,
     mac: d.mac,

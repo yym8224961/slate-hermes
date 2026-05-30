@@ -1,7 +1,7 @@
 import { TTS_VOICES, isTtsVoice, type DynamicConfigT } from 'shared';
 import { Select, SelectItem } from '@/components/ui/Select';
 import { Checkbox } from '@/components/ui/Checkbox';
-import type { AudioDynamicConfig } from '@/features/dynamic/types';
+import type { AudioDynamicConfig } from '@/features/dynamic/model/config-types';
 
 export function DynamicAudioSection({
   config,

@@ -16,21 +16,24 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
-#include "api_client.h"
-#include "cache.h"
+#include "storage/cache/cache.h"
+#include "sync/api_client.h"
 
 class SyncService {
    public:
     static SyncService& Get();
 
-    void Start(std::string wake_reason);
+    enum class InitialSync {
+        kNone,
+        kUserActive,
+        kBackgroundRefresh,
+    };
+
+    void Start(std::string wake_reason, InitialSync initial_sync = InitialSync::kNone);
     void Stop();
 
-    // 立即触发一次 poll。用于启动、唤醒和绑定状态变化后的后台同步。
-    void TriggerNow();
-
-    // RTC timer 到期后触发：允许同步 + telemetry，并把新 manifest/data 拉下来。
-    void TriggerWakeRefresh();
+    // 主动触发一次前台 poll。用于后台刷新被充电/解绑宽限打断后转入 active 模式。
+    void RequestUserActiveSync();
 
     // 设备主动 cycle 切组(scene 按键 callback 调)。
     // 内部置 BIT_CYCLE_NEXT/PREV,Loop 在唤醒时调 api::CycleGroup 然后立即 SyncOnce。
@@ -48,6 +51,7 @@ class SyncService {
     enum class SyncMode { kUserActive, kBackgroundRefresh };
     enum class SyncReason { kUserActive, kBackgroundRefresh, kCycle };
     void SyncOnce(SyncMode mode);
+    void Trigger(SyncMode mode);
     void DoCycle(const std::string& direction);
     bool ShouldStop() const;
     bool SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, const std::string& group_name,

@@ -43,8 +43,8 @@ class Wifi {
 
     static Wifi& Get();
 
-    // 一次性的最小底座:nvs_flash + esp_netif_init + 默认 event loop +
-    // esp_wifi_init(nvs_enable=false)。不创建任何 netif,不调 wifi_start。
+    // 一次性的最小底座:esp_netif_init + 默认 event loop + esp_wifi_init(nvs_enable=false)。
+    // 不创建任何 netif,不调 wifi_start。NVS 由 App::InitStorage 统一初始化。
     void Init();
 
     // 进 STA 模式并连接。如果当前在 AP 模式,会先彻底停掉 AP。

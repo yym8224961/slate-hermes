@@ -4,8 +4,8 @@
 #include <memory>
 #include <string>
 
-#include "scene.h"
-#include "status_bar.h"
+#include "scenes/core/scene.h"
+#include "ui/status_bar.h"
 
 class EpdSsd1683;
 

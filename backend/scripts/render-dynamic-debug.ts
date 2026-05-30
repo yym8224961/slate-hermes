@@ -18,7 +18,7 @@ import {
   DynamicFrameRendererService,
   type DynamicRenderContext,
 } from '../src/modules/dynamic-content/rendering/dynamic-frame-renderer.service';
-import { DynamicFrameFontService } from '../src/modules/dynamic-content/rendering/dynamic-frame-font.service';
+import { DynamicFrameFontService } from '../src/modules/dynamic-content/rendering/fonts/dynamic-frame-font.service';
 import { CalendarDataService } from '../src/modules/dynamic-content/calendar-data.service';
 import { DailyCalendarProvider } from '../src/modules/dynamic-content/providers/daily-calendar.provider';
 

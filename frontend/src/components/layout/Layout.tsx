@@ -3,8 +3,9 @@
 import { Link, Outlet } from 'react-router-dom';
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu';
 import { LogOut } from 'lucide-react';
-import { useAuth } from '@/features/auth/useAuth';
+import { useAuth } from '@/features/auth/hooks/useAuth';
 import { IconBlock } from '@/components/ui/IconBlock';
+import { appRoutes } from '@/app/routes';
 
 export function Layout() {
   const { user, logout } = useAuth();
@@ -14,7 +15,7 @@ export function Layout() {
       <header className="border-b border-ink bg-paper">
         <div className="max-w-6xl mx-auto px-5 sm:px-8 py-3.5 flex items-center justify-between gap-4">
           {/* logo */}
-          <Link to="/" className="flex items-center gap-3 min-w-0">
+          <Link to={appRoutes.home} className="flex items-center gap-3 min-w-0">
             <IconBlock size="md" tone="brand" className="font-serif text-[18px] font-bold">
               墨
             </IconBlock>

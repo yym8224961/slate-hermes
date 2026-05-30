@@ -6,7 +6,7 @@ import {
   type ContentSummaryT,
   type DynamicTypeT,
 } from 'shared';
-import { deviceStatusBarText } from './content-display-name';
+import { deviceStatusBarText } from '../dynamic-content/status-text/dynamic-content-status-text';
 
 export interface ContentRow {
   id: string;

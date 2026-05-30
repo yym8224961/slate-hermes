@@ -1,9 +1,9 @@
-#include "cred_store.h"
+#include "network/cred_store.h"
 
 #include <esp_log.h>
 
-#include "nvs_schema.h"
-#include "nvs_store.h"
+#include "storage/nvs/nvs_schema.h"
+#include "storage/nvs/nvs_store.h"
 
 namespace {
 constexpr char kTag[] = "Cred";

@@ -5,6 +5,8 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 PROBE_DIR="${SLATE_FONT_PROBE_DIR:-/private/tmp/slate-font-probe}"
 WORK_DIR="${SLATE_FONT_WORK_DIR:-/private/tmp/slate-font-test}"
 OUT_DIR="$ROOT/backend/assets/fonts/bitmap-1bpp"
+FIRMWARE_FONT_DIR="$ROOT/firmware/main/resources/fonts"
+SOURCE_HAN_SANS_C="${SLATE_SOURCE_HAN_SANS_C:-$FIRMWARE_FONT_DIR/source_han_sans_sc_regular_slim.c}"
 SYMBOLS="墨水屏字体测试中文点阵简繁日"
 DEMO_SYMBOLS="墨水屏字体测试中文点阵今日天气多云风力级简繁标点，。！？；：～一二三四五六七八九十口日目田回黑白像素横竖撇捺线面黑墨屏°"
 LV_FONT_CONV_BIN="$(command -v lv_font_conv || true)"
@@ -121,5 +123,13 @@ for item in 6x12:12 8x16:16 12x24:24 16x32:32 32x64:64; do
 done
 
 bun "$ROOT/backend/scripts/extract-bdf-font.ts" "$PROBE_DIR/spleen/spleen-2.2.0/spleen-5x8.bdf" "$OUT_DIR/spleen-5x8.json"
-bun "$ROOT/backend/scripts/extract-lvgl-font.ts" "$ROOT/firmware/main/generated/fonts/source_han_sans_sc_regular_slim.c" "$OUT_DIR/source-han-sans-16-slim.json"
+if [[ -f "$SOURCE_HAN_SANS_C" ]]; then
+  bun "$ROOT/backend/scripts/extract-lvgl-font.ts" "$SOURCE_HAN_SANS_C" "$OUT_DIR/source-han-sans-16-slim.json"
+elif [[ -f "$OUT_DIR/source-han-sans-16-slim.json" ]]; then
+  echo "warning: $SOURCE_HAN_SANS_C not found; keeping existing source-han-sans-16-slim.json" >&2
+else
+  echo "missing source Han Sans LVGL font: $SOURCE_HAN_SANS_C" >&2
+  echo "set SLATE_SOURCE_HAN_SANS_C to a repo-local or absolute LVGL .c font source" >&2
+  exit 1
+fi
 bash "$ROOT/backend/scripts/generate-zfull-font-assets.sh"

@@ -1,22 +1,22 @@
-#include "frame_scene.h"
+#include "scenes/frame/frame_scene.h"
 
 #include <esp_log.h>
 #include <cstdio>
 #include <vector>
 
-#include "audio_player.h"
-#include "boot_splash_scene.h"
-#include "cache.h"
-#include "epd_ssd1683.h"
-#include "event_bus.h"
-#include "frame_view.h"
-#include "power_state.h"
-#include "scene_stack.h"
-#include "settings_scene.h"
-#include "status_bar.h"
-#include "sync_service.h"
-#include "theme.h"
-#include "utf8_utils.h"
+#include "drivers/audio/audio_player.h"
+#include "scenes/splash/splash_scene.h"
+#include "storage/cache/cache.h"
+#include "drivers/display/epd_ssd1683.h"
+#include "events/event_bus.h"
+#include "ui/frame_view.h"
+#include "power/power_state.h"
+#include "scenes/core/scene_stack.h"
+#include "scenes/settings/settings_scene.h"
+#include "ui/status_bar.h"
+#include "sync/sync_service.h"
+#include "ui/theme.h"
+#include "utils/utf8_utils.h"
 
 namespace {
 constexpr char kTag[] = "Frame";
@@ -39,44 +39,44 @@ std::string MarkedGroupName(const char* raw) {
 std::string FormatGroupSyncCaption(const UiEvent& e) {
     char buf[96];
     switch (e.u.group_sync.mode) {
-        case GroupSyncStatusMode::kSwitchTarget:
+        case GroupSyncStatusMode::kCycleTarget:
             return "切到" + MarkedGroupName(e.u.group_sync.name);
-        case GroupSyncStatusMode::kSwitchCached:
+        case GroupSyncStatusMode::kCycleCacheHit:
             return "已切到" + MarkedGroupName(e.u.group_sync.name);
-        case GroupSyncStatusMode::kSwitchDownload:
+        case GroupSyncStatusMode::kCycleDownloading:
             if (e.u.group_sync.total > 0) {
                 std::snprintf(buf, sizeof(buf), "下载%s %u/%u", MarkedGroupName(e.u.group_sync.name).c_str(),
                               e.u.group_sync.current, e.u.group_sync.total);
                 return buf;
             }
             return "下载" + MarkedGroupName(e.u.group_sync.name);
-        case GroupSyncStatusMode::kCurrentUpdate:
+        case GroupSyncStatusMode::kCurrentGroupUpdating:
             if (e.u.group_sync.total > 0) {
                 std::snprintf(buf, sizeof(buf), "更新当前组 %u/%u", e.u.group_sync.current, e.u.group_sync.total);
                 return buf;
             }
             return "更新当前组";
-        case GroupSyncStatusMode::kStartupDownload:
+        case GroupSyncStatusMode::kInitialGroupDownloading:
             if (e.u.group_sync.total > 0) {
                 std::snprintf(buf, sizeof(buf), "下载%s %u/%u", MarkedGroupName(e.u.group_sync.name).c_str(),
                               e.u.group_sync.current, e.u.group_sync.total);
                 return buf;
             }
             return "下载内容组";
-        case GroupSyncStatusMode::kSavingGroup:
+        case GroupSyncStatusMode::kTargetGroupSaving:
             if (e.u.group_sync.total > 0) {
                 std::snprintf(buf, sizeof(buf), "应用%s %u/%u", MarkedGroupName(e.u.group_sync.name).c_str(),
                               e.u.group_sync.current, e.u.group_sync.total);
                 return buf;
             }
             return "应用" + MarkedGroupName(e.u.group_sync.name);
-        case GroupSyncStatusMode::kSavingCurrentGroup:
+        case GroupSyncStatusMode::kCurrentGroupSaving:
             if (e.u.group_sync.total > 0) {
                 std::snprintf(buf, sizeof(buf), "应用当前组 %u/%u", e.u.group_sync.current, e.u.group_sync.total);
                 return buf;
             }
             return "应用当前组";
-        case GroupSyncStatusMode::kSwitchFailed:
+        case GroupSyncStatusMode::kCycleFailed:
             return "切换失败，保留当前组";
     }
     return "";
@@ -247,8 +247,8 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             RefreshStatusBarAndRender(ctx, status_bar_.get());
             break;
         case UiEventKind::kUnbound: {
-            ESP_LOGW(kTag, "Unbound -> back to BootSplashScene");
-            ctx.stack->RequestReplace(std::make_unique<BootSplashScene>());
+            ESP_LOGW(kTag, "Unbound -> back to SplashScene");
+            ctx.stack->RequestReplace(std::make_unique<SplashScene>());
             break;
         }
         default:

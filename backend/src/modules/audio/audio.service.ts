@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { AppError, RateLimitedError } from '../../common/errors';
-import { formatError } from '../../common/error-format';
+import { formatError } from '../../common/utils/error-format';
 
 const execFileAsync = promisify(execFile);
 

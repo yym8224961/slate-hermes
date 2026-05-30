@@ -1,4 +1,4 @@
-#include "epd_ssd1683.h"
+#include "drivers/display/epd_ssd1683.h"
 
 #include <driver/gpio.h>
 #include <esp_log.h>
@@ -6,9 +6,9 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "config.h"
-#include "gpio_util.h"
-#include "time_utils.h"
+#include "bsp/config.h"
+#include "bsp/gpio_util.h"
+#include "utils/time_utils.h"
 
 namespace {
 constexpr char kTag[] = "Epd";
@@ -16,7 +16,12 @@ constexpr char kTag[] = "Epd";
 
 // SPI 反复 free + reinit 是为了切换 DI 数据线方向(EPD 单数据线复用 MOSI/MISO):
 // 写命令/数据走 mosi_io_num=mosi_(发送),读温度时 miso_io_num=mosi_(同一物理引脚反向接收)。
+void EpdSsd1683::AssertRefreshTaskContext() const {
+    configASSERT(refresh_task_ == nullptr || xTaskGetCurrentTaskHandle() == refresh_task_);
+}
+
 void EpdSsd1683::SpiPortInit() {
+    AssertRefreshTaskContext();
     if (spi_ && spi_inited_) {
         ESP_ERROR_CHECK_WITHOUT_ABORT(spi_bus_remove_device(spi_));
         spi_ = nullptr;
@@ -46,6 +51,7 @@ void EpdSsd1683::SpiPortInit() {
 }
 
 void EpdSsd1683::SpiPortRxInit() {
+    AssertRefreshTaskContext();
     if (spi_ && spi_inited_) {
         ESP_ERROR_CHECK_WITHOUT_ABORT(spi_bus_remove_device(spi_));
         spi_ = nullptr;
@@ -77,7 +83,7 @@ void EpdSsd1683::SpiPortRxInit() {
 uint8_t EpdSsd1683::EpdRecvData() {
     // SPI RX/TX 模式切换会 remove/free/reinit bus。当前只允许 refresh_task
     // 在刷新序列里调用,避免其它任务同时操作同一组 EPD 引脚。
-    configASSERT(refresh_task_ == nullptr || xTaskGetCurrentTaskHandle() == refresh_task_);
+    AssertRefreshTaskContext();
     SpiPortRxInit();
     uint8_t           rx = 0;
     spi_transaction_t t  = {};

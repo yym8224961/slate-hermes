@@ -12,12 +12,12 @@ import {
   DASHBOARD_AI_USAGE_STATS_TEST_DATA,
   DASHBOARD_CUSTOM_STARTER_TEST_DATA,
 } from 'shared/dynamic/test-fixtures';
-import { loadBitmapFont, textWidth, type BitmapFont } from './bitmap-font';
+import { loadBitmapFont, textWidth, type BitmapFont } from './fonts/bitmap-font';
 import {
   DynamicFrameRendererService,
   type DynamicRenderContext,
 } from './dynamic-frame-renderer.service';
-import { DynamicFrameFontService } from './dynamic-frame-font.service';
+import { DynamicFrameFontService } from './fonts/dynamic-frame-font.service';
 import { BITMAP_1BPP_FONT_DIR } from '../../../infra/assets/asset-paths';
 
 const renderer = new DynamicFrameRendererService(new DynamicFrameFontService());

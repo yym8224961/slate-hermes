@@ -14,9 +14,9 @@ function isPrismaInputJsonValue(value: unknown): value is Prisma.InputJsonValue 
     case 'number':
       return Number.isFinite(value);
     case 'object':
-      if (Array.isArray(value)) return value.every(isPrismaJsonArrayValue);
+      if (Array.isArray(value)) return value.every(isNullablePrismaInputJsonValue);
       if (!isPlainJsonObject(value)) return false;
-      return Object.values(value).every(isPrismaJsonObjectValue);
+      return Object.values(value).every(isNullablePrismaInputJsonValue);
     default:
       return false;
   }
@@ -27,10 +27,6 @@ function isPlainJsonObject(value: object): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
-function isPrismaJsonArrayValue(value: unknown): value is Prisma.InputJsonValue | null {
-  return value === null || isPrismaInputJsonValue(value);
-}
-
-function isPrismaJsonObjectValue(value: unknown): value is Prisma.InputJsonValue | null {
+function isNullablePrismaInputJsonValue(value: unknown): value is Prisma.InputJsonValue | null {
   return value === null || isPrismaInputJsonValue(value);
 }

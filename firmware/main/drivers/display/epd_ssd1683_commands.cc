@@ -1,10 +1,10 @@
-#include "epd_ssd1683.h"
+#include "drivers/display/epd_ssd1683.h"
 
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "epd_utils.h"
-#include "time_utils.h"
+#include "drivers/display/framebuffer_ops.h"
+#include "utils/time_utils.h"
 
 void EpdSsd1683::EpdInit() {
     EpdPowerOn();

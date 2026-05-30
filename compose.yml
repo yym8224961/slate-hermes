@@ -23,7 +23,7 @@ services:
       mysql:
         condition: service_healthy
     ports:
-      - "3001:3001"
+      - '3001:3001'
     volumes:
       - ./slate:/data
     env_file:
@@ -42,11 +42,11 @@ services:
       MYSQL_DATABASE: slate
       MYSQL_USER: slate
       MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set MYSQL_PASSWORD in .env}
-      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
     volumes:
       - ./mysql:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uslate -p$${MYSQL_PASSWORD}"]
+      test: ['CMD-SHELL', 'mysqladmin ping -h localhost -uslate -p$${MYSQL_PASSWORD}']
       interval: 5s
       timeout: 3s
       retries: 12

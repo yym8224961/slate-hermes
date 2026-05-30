@@ -7,7 +7,11 @@ import {
 } from 'shared';
 import { Select, SelectItem } from '@/components/ui/Select';
 import { DynamicRefreshSettings } from './RefreshSettings';
-import type { DynamicConfigChange } from '@/features/dynamic/types';
+import type { DynamicConfigChange } from '@/features/dynamic/model/config-types';
+import { createSafeParseGuard } from '@/lib/zod-utils';
+
+const isCurrentHotListSource =
+  createSafeParseGuard<CurrentHotListSourceIdT>(CurrentHotListSourceId);
 
 export function HotListConfigPanel({
   config,
@@ -52,8 +56,4 @@ function hotListKindLabel(kind: (typeof HOT_LIST_SOURCES_BY_NAME)[number]['kind'
     case 'commerce':
       return '消费';
   }
-}
-
-function isCurrentHotListSource(value: string): value is CurrentHotListSourceIdT {
-  return CurrentHotListSourceId.safeParse(value).success;
 }

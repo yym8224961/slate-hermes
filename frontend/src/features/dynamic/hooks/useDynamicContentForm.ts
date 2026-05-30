@@ -1,14 +1,14 @@
 import { useCallback, useMemo, useState } from 'react';
 import { DynamicConfig, type DynamicConfigT, type DynamicTypeT } from 'shared';
-import { usePreviewDynamicContent } from '@/features/contents/queries';
+import { usePreviewDynamicContent } from '@/features/contents/query/content-dynamic-queries';
+import { defaultConfig } from '@/features/dynamic/model/default-config';
 import {
-  defaultConfig,
   defaultDynamicFrameName,
   effectiveDynamicFrameName,
   effectiveDynamicStatusBarText,
   frameNameForSyncedDynamicConfigChange,
-} from '@/features/dynamic/model/registry';
-import { dynamicConfigKey } from '@/features/dynamic/model/json';
+} from '@/features/dynamic/model/frame-name';
+import { dynamicConfigKey } from '@/features/dynamic/model/json-parse';
 import { useDynamicPreview } from './useDynamicPreview';
 
 interface UseDynamicContentFormOptions {

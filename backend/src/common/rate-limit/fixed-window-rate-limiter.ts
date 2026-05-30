@@ -1,4 +1,4 @@
-import { evictOldestMapEntry, setBoundedCache } from '../cache-utils';
+import { evictOldestMapEntry, setBoundedCache } from '../utils/cache-utils';
 
 interface Bucket {
   windowStartMs: number;

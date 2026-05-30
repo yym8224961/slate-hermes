@@ -2,16 +2,16 @@ import { memo } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import type { ContentDetailT } from 'shared';
 import { DragHandle } from '@/components/ui/DragHandle';
-import { useContentImage, useRefreshDynamicContent } from '@/features/contents/queries';
-import { useToast } from '@/components/feedback/useToast';
+import { useRefreshDynamicContent } from '@/features/contents/query/content-dynamic-queries';
+import { useContentImage } from '@/features/contents/query/content-list-queries';
+import { useMutationAction } from '@/components/feedback/mutation-feedback';
 import { AudioPlayPreview } from '../audio/AudioPlayPreview';
 import { AudioStatusBadge } from './AudioStatusBadge';
 import { ContentCardActions } from './ContentCardActions';
 import { ContentCardShell } from './ContentCardShell';
 import { useDeleteContentWithConfirm } from '@/features/contents/hooks/useDeleteContentWithConfirm';
-import { FrameBitmapPreview } from '@/features/contents/components/preview/FrameBitmapPreview';
-import { getApiErrorMessage } from '@/lib/api-errors';
-import { useSortableStyle } from '@/hooks/useSortableStyle';
+import { FrameBitmapPreview } from '@/features/contents/components/bitmap/FrameBitmapPreview';
+import { useSortableStyle } from '@/hooks/dnd/useSortableStyle';
 
 interface ContentCardProps {
   gid: string;
@@ -22,21 +22,18 @@ interface ContentCardProps {
 export const ContentCard = memo(function ContentCard({ gid, content, onEdit }: ContentCardProps) {
   const isDynamic = content.kind === 'dynamic';
   const refresh = useRefreshDynamicContent(gid);
-  const toast = useToast();
   const { deleteWithConfirm, isPending: deletePending } = useDeleteContentWithConfirm({
     gid,
     content,
   });
   const img = useContentImage(content.id, content.image_etag);
   const { attributes, listeners, setNodeRef, style, isDragging } = useSortableStyle(content.id);
-
-  function onRefresh() {
-    if (!isDynamic) return;
-    refresh.mutate(content.id, {
-      onSuccess: () => toast.success('已刷新'),
-      onError: (err) => toast.error('刷新失败', getApiErrorMessage(err)),
-    });
-  }
+  const refreshContent = useMutationAction<string>({
+    isPending: refresh.isPending,
+    run: (contentId, callbacks) => refresh.mutate(contentId, callbacks),
+    successToast: '已刷新',
+    errorToast: '刷新失败',
+  });
 
   return (
     <ContentCardShell
@@ -50,7 +47,6 @@ export const ContentCard = memo(function ContentCard({ gid, content, onEdit }: C
       preview={
         <FrameBitmapPreview
           data={img.data}
-          cacheKey={content.image_etag}
           caption={content.device_status_bar_text}
           showStatusBar={false}
         />
@@ -80,7 +76,7 @@ export const ContentCard = memo(function ContentCard({ gid, content, onEdit }: C
             isDynamic ? (
               <button
                 type="button"
-                onClick={onRefresh}
+                onClick={() => refreshContent(content.id)}
                 aria-label="立即刷新"
                 title="立即刷新"
                 disabled={refresh.isPending}

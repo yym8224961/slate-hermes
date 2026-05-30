@@ -1,4 +1,4 @@
-import { stripHtml as stripHtmlText } from '../../common/html-text';
+import { stripHtml as stripHtmlText } from '../../common/utils/html-text';
 
 export interface RssItem {
   title?: string;

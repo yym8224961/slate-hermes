@@ -13,7 +13,7 @@ import {
   ValidationError,
 } from '../errors';
 import { mapPrismaError } from '../errors/prisma-error.map';
-import { currentRequestId } from '../request-context';
+import { currentRequestId } from '../http/request-context';
 
 interface ErrorEnvelope {
   error: string;

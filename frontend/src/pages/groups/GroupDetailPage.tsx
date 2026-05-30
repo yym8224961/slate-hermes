@@ -3,10 +3,13 @@
 // dnd-kit reorder 通过 useDndOrder 复用；本地顺序会在保存失败时回滚。
 
 import { useCallback } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Layers } from 'lucide-react';
-import { useGroup, useUpdateGroup } from '@/features/groups/queries';
-import { useGroupContents, useReorderContents } from '@/features/contents/queries';
+import { useGroup, useUpdateGroup } from '@/features/groups/query/group-queries';
+import {
+  useGroupContents,
+  useReorderContents,
+} from '@/features/contents/query/content-list-queries';
 import type { ContentDetailT, GroupSummaryT } from 'shared';
 import { Spinner } from '@/components/ui/Spinner';
 import { Button } from '@/components/ui/Button';
@@ -14,35 +17,27 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { SortableGrid } from '@/components/ui/SortableGrid';
 import { ContentCard } from '@/features/contents/components/cards/ContentCard';
 import { PageHeader } from '@/components/layout/PageHeader';
+import { RequireRouteParams } from '@/components/layout/RequireRouteParams';
 import { InlineRename } from '@/components/ui/InlineRename';
 import { useInlineRename } from '@/hooks/useInlineRename';
-import { useToast } from '@/components/feedback/useToast';
+import { useToast } from '@/components/feedback/Toast';
 import { getApiErrorMessage } from '@/lib/api-errors';
 import { formatBytes } from '@/lib/format';
-import { useDndOrder } from '@/hooks/useDndOrder';
+import { useDndOrder } from '@/hooks/dnd/useDndOrder';
+import { appRoutes } from '@/app/routes';
 
 export function GroupDetailPage() {
-  const { gid } = useParams();
   const navigate = useNavigate();
 
-  if (!gid) {
-    return (
-      <EmptyState
-        title="页面不存在"
-        hint="请从总览页进入具体内容组。"
-        action={
-          <Link
-            to="/"
-            className="inline-flex items-center gap-1 text-[13px] text-stone border-b border-stone"
-          >
-            <ArrowLeft size={13} /> 返回总览
-          </Link>
-        }
-      />
-    );
-  }
-
-  return <GroupDetailContent gid={gid} navigate={navigate} />;
+  return (
+    <RequireRouteParams
+      names={['gid'] as const}
+      hint="请从总览页进入具体内容组。"
+      action={<BackHomeLink />}
+    >
+      {({ gid }) => <GroupDetailContent gid={gid} navigate={navigate} />}
+    </RequireRouteParams>
+  );
 }
 
 function GroupDetailContent({
@@ -74,20 +69,20 @@ function GroupDetailContent({
       )
   );
   const openCreate = useCallback(() => {
-    navigate(`/groups/${gid}/contents/new`);
+    navigate(appRoutes.newContent(gid));
   }, [gid, navigate]);
   const openEdit = useCallback(
     (content: ContentDetailT) => {
       if (content.kind === 'dynamic') {
-        navigate(`/groups/${gid}/contents/dynamic/${content.id}/edit`);
+        navigate(appRoutes.editDynamicContent(gid, content.id));
       } else {
-        navigate(`/groups/${gid}/contents/image/${content.id}/edit`);
+        navigate(appRoutes.editImageContent(gid, content.id));
       }
     },
     [gid, navigate]
   );
   const goBack = useCallback(() => {
-    navigate('/');
+    navigate(appRoutes.home);
   }, [navigate]);
   const renderContent = useCallback(
     (content: ContentDetailT) => <ContentCard gid={gid} content={content} onEdit={openEdit} />,
@@ -107,7 +102,7 @@ function GroupDetailContent({
         title="内容不存在或已被删除"
         action={
           <Link
-            to="/"
+            to={appRoutes.home}
             className="inline-flex items-center gap-1 text-[13px] text-stone border-b border-stone"
           >
             <ArrowLeft size={13} /> 返回总览
@@ -148,6 +143,17 @@ function GroupDetailContent({
         )}
       </div>
     </div>
+  );
+}
+
+function BackHomeLink() {
+  return (
+    <Link
+      to={appRoutes.home}
+      className="inline-flex items-center gap-1 text-[13px] text-stone border-b border-stone"
+    >
+      <ArrowLeft size={13} /> 返回总览
+    </Link>
   );
 }
 

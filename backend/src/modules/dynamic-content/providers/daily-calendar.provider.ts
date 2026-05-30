@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Solar } from 'lunar-typescript';
 import { DailyCalendarConfig, type DailyCalendarConfigT } from 'shared';
-import { getDateTimeFormat } from '../../../common/intl';
+import { getDateTimeFormat } from '../../../common/utils/intl';
 import { pickTraditionalFestival } from '../traditional-festivals';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { findNextSolarTerm } from '../calendar-data.service';

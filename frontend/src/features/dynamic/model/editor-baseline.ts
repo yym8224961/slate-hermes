@@ -1,6 +1,6 @@
 import type { DynamicConfigT, DynamicTypeT } from 'shared';
-import { defaultDynamicFrameName } from '@/features/dynamic/model/registry';
-import { dynamicConfigKey } from '@/features/dynamic/model/json';
+import { defaultDynamicFrameName } from '@/features/dynamic/model/frame-name';
+import { dynamicConfigKey } from '@/features/dynamic/model/json-parse';
 
 export interface DynamicEditorBaseline {
   contentId: string;

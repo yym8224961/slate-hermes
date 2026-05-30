@@ -22,7 +22,7 @@ describe('ContentAudioBlobService', () => {
       recomputeManifestEtag: async () => 'etag',
     } as GroupsService);
 
-    await service.handleMissing({
+    await service.repairMissingAudioBlob({
       id: 'content-1',
       groupId: 'group-1',
       audioEtag: 'etag-1',

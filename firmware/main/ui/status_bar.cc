@@ -1,8 +1,8 @@
-#include "status_bar.h"
+#include "ui/status_bar.h"
 
 #include <cstdio>
 
-#include "theme.h"
+#include "ui/theme.h"
 
 namespace {
 

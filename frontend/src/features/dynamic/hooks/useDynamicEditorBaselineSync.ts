@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useReducer, useRef } from 'react';
 import type { DynamicConfigT, DynamicTypeT } from 'shared';
 import {
   createDynamicEditorBaseline,
@@ -13,6 +13,29 @@ interface DynamicEditorState {
   configKey: string;
 }
 
+type BaselineAction =
+  | { type: 'SET_BASELINE'; baseline: DynamicEditorBaseline }
+  | { type: 'SERVER_UPDATED_CLEAN'; serverBaseline: DynamicEditorBaseline }
+  | { type: 'SERVER_UPDATED_DIRTY'; serverBaseline: DynamicEditorBaseline };
+
+/*
+Baseline sync state:
+
+  server update arrives
+        |
+        v
+  compare current editor values with the previous baseline
+        |
+        +-- no local edits, or local values already match server
+        |      -> accept server baseline and copy server fields into the editor
+        |
+        +-- local edits differ from the incoming server baseline
+               -> move the baseline forward for future dirty checks, but keep
+                  the user's in-progress editor values intact
+
+SET_BASELINE is dispatched after a successful local save, making the saved
+server response the new clean point.
+*/
 export function useDynamicEditorBaselineSync({
   contentId,
   serverType,
@@ -36,63 +59,98 @@ export function useDynamicEditorBaselineSync({
   setFrameName: (frameName: string) => void;
   setConfig: (config: DynamicConfigT) => void;
 }) {
-  const [baseline, setBaseline] = useState(() =>
-    createDynamicEditorBaseline(contentId, serverType, serverFrameName, serverConfig)
+  const initialBaseline = useMemo(
+    () => createDynamicEditorBaseline(contentId, serverType, serverFrameName, serverConfig),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
   );
+  const [baseline, dispatch] = useReducer(baselineReducer, initialBaseline);
   const serverBaseline = useMemo(
     () => createDynamicEditorBaseline(contentId, serverType, serverFrameName, serverConfig),
     [contentId, serverConfig, serverFrameName, serverType]
   );
-  const lastSyncedServerKeyRef = useRef('');
   const editorStateRef = useRef<DynamicEditorState>({ baseline, type, frameName, configKey });
+  const syncedServerRef = useRef<DynamicEditorBaseline | null>(null);
 
   useEffect(() => {
     editorStateRef.current = { baseline, type, frameName, configKey };
   }, [baseline, configKey, frameName, type]);
 
   useEffect(() => {
-    const serverKey = [
-      serverBaseline.contentId,
-      serverBaseline.type,
-      serverBaseline.frameName,
-      serverBaseline.configKey,
-    ].join('\0');
-    if (lastSyncedServerKeyRef.current === serverKey) return;
-
-    const {
-      baseline: currentBaseline,
-      type: currentType,
-      frameName: currentFrameName,
-      configKey: currentConfigKey,
-    } = editorStateRef.current;
-    const hasLocalEdits =
-      currentBaseline.contentId === serverBaseline.contentId &&
-      (currentType !== currentBaseline.type ||
-        currentFrameName !== currentBaseline.frameName ||
-        currentConfigKey !== currentBaseline.configKey);
-    const localMatchesServer =
-      currentType === serverBaseline.type &&
-      currentFrameName === serverBaseline.frameName &&
-      currentConfigKey === serverBaseline.configKey;
-
-    // State transition model:
-    // 1. clean editor + new server baseline -> replace baseline and editor state.
-    // 2. dirty editor + different server baseline -> move the baseline only, preserving local edits.
-    // 3. dirty editor already matches server -> fall through and cleanly converge editor + baseline.
-    if (hasLocalEdits && !localMatchesServer) {
-      if (!isSameDynamicEditorBaseline(currentBaseline, serverBaseline)) {
-        setBaseline(serverBaseline);
-      }
-      lastSyncedServerKeyRef.current = serverKey;
+    if (
+      syncedServerRef.current &&
+      isSameDynamicEditorBaseline(syncedServerRef.current, serverBaseline)
+    ) {
       return;
     }
 
-    if (!isSameDynamicEditorBaseline(currentBaseline, serverBaseline)) setBaseline(serverBaseline);
-    if (currentType !== serverBaseline.type) setType(serverBaseline.type);
-    if (currentFrameName !== serverBaseline.frameName) setFrameName(serverBaseline.frameName);
-    if (currentConfigKey !== serverBaseline.configKey) setConfig(serverConfig);
-    lastSyncedServerKeyRef.current = serverKey;
+    const editorState = editorStateRef.current;
+    const transition = resolveServerBaselineTransition(editorState, serverBaseline);
+    dispatch({ type: transition, serverBaseline });
+
+    if (transition === 'SERVER_UPDATED_CLEAN') {
+      syncEditorToServer(editorState, serverBaseline, serverConfig, {
+        setType,
+        setFrameName,
+        setConfig,
+      });
+    }
+
+    syncedServerRef.current = serverBaseline;
   }, [serverBaseline, serverConfig, setConfig, setFrameName, setType]);
 
-  return { baseline, setBaseline };
+  return {
+    baseline,
+    setBaseline: (nextBaseline: DynamicEditorBaseline) =>
+      dispatch({ type: 'SET_BASELINE', baseline: nextBaseline }),
+  };
+}
+
+function baselineReducer(
+  baseline: DynamicEditorBaseline,
+  action: BaselineAction
+): DynamicEditorBaseline {
+  switch (action.type) {
+    case 'SET_BASELINE':
+      return action.baseline;
+    case 'SERVER_UPDATED_CLEAN':
+    case 'SERVER_UPDATED_DIRTY':
+      return isSameDynamicEditorBaseline(baseline, action.serverBaseline)
+        ? baseline
+        : action.serverBaseline;
+  }
+}
+
+function resolveServerBaselineTransition(
+  editorState: DynamicEditorState,
+  serverBaseline: DynamicEditorBaseline
+): Extract<BaselineAction['type'], 'SERVER_UPDATED_CLEAN' | 'SERVER_UPDATED_DIRTY'> {
+  const hasLocalEdits =
+    editorState.baseline.contentId === serverBaseline.contentId &&
+    (editorState.type !== editorState.baseline.type ||
+      editorState.frameName !== editorState.baseline.frameName ||
+      editorState.configKey !== editorState.baseline.configKey);
+  const localMatchesServer =
+    editorState.type === serverBaseline.type &&
+    editorState.frameName === serverBaseline.frameName &&
+    editorState.configKey === serverBaseline.configKey;
+
+  return hasLocalEdits && !localMatchesServer ? 'SERVER_UPDATED_DIRTY' : 'SERVER_UPDATED_CLEAN';
+}
+
+function syncEditorToServer(
+  editorState: DynamicEditorState,
+  serverBaseline: DynamicEditorBaseline,
+  serverConfig: DynamicConfigT,
+  setters: {
+    setType: (type: DynamicTypeT) => void;
+    setFrameName: (frameName: string) => void;
+    setConfig: (config: DynamicConfigT) => void;
+  }
+): void {
+  if (editorState.type !== serverBaseline.type) setters.setType(serverBaseline.type);
+  if (editorState.frameName !== serverBaseline.frameName) {
+    setters.setFrameName(serverBaseline.frameName);
+  }
+  if (editorState.configKey !== serverBaseline.configKey) setters.setConfig(serverConfig);
 }

@@ -1,9 +1,9 @@
-#include "frame_view.h"
+#include "ui/frame_view.h"
 
 #include <esp_log.h>
 
-#include "epd_ssd1683.h"
-#include "theme.h"
+#include "drivers/display/epd_ssd1683.h"
+#include "ui/theme.h"
 
 namespace {
 constexpr char kTag[]      = "FrameView";

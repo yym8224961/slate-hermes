@@ -1,4 +1,4 @@
-#include "epd_ssd1683.h"
+#include "drivers/display/epd_ssd1683.h"
 
 #include <esp_heap_caps.h>
 #include <esp_log.h>
@@ -9,9 +9,9 @@
 #include <algorithm>
 #include <cstring>
 
-#include "config.h"
-#include "epd_utils.h"
-#include "gpio_util.h"
+#include "bsp/config.h"
+#include "drivers/display/framebuffer_ops.h"
+#include "bsp/gpio_util.h"
 
 namespace {
 constexpr char kTag[] = "Epd";

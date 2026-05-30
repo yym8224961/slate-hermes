@@ -1,0 +1,38 @@
+import { useCallback } from 'react';
+import { useQueryClient, type QueryClient } from '@tanstack/react-query';
+import type { ContentDetailT } from 'shared';
+import { groupKeys } from '@/features/groups/query/keys';
+import { contentKeys } from './keys';
+
+const AUDIO_GENERATING_REFETCH_INTERVAL_MS = 2500;
+
+type AudioStatusRow = Pick<ContentDetailT, 'audio_status'>;
+type AudioStatusQueryData = AudioStatusRow | AudioStatusRow[];
+
+export function audioGenerationRefetchInterval(query: { state: { data?: AudioStatusQueryData } }) {
+  const data = query.state.data;
+  const hasGeneratingAudio = Array.isArray(data)
+    ? data.some(isGeneratingAudio)
+    : isGeneratingAudio(data);
+  return hasGeneratingAudio ? AUDIO_GENERATING_REFETCH_INTERVAL_MS : false;
+}
+
+export function useInvalidateGroupContent(gid: string) {
+  const qc = useQueryClient();
+  return useCallback((contentId?: string) => invalidateGroupContent(qc, gid, contentId), [gid, qc]);
+}
+
+function isGeneratingAudio(row: AudioStatusRow | undefined): boolean {
+  return row?.audio_status === 'pending' || row?.audio_status === 'generating';
+}
+
+function invalidateGroupContent(qc: QueryClient, gid: string, contentId?: string) {
+  void qc.invalidateQueries({ queryKey: contentKeys.group(gid) });
+  void qc.invalidateQueries({ queryKey: groupKeys.list });
+  void qc.invalidateQueries({ queryKey: groupKeys.detail(gid) });
+  if (contentId) {
+    void qc.invalidateQueries({ queryKey: contentKeys.detail(contentId) });
+    qc.removeQueries({ queryKey: contentKeys.image(contentId) });
+    qc.removeQueries({ queryKey: contentKeys.audio(contentId) });
+  }
+}

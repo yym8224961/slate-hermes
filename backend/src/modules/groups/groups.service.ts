@@ -7,7 +7,8 @@ import { ForbiddenError, NotFoundError } from '../../common/errors';
 import { lockUserRow } from '../../common/db/row-locks';
 import { bulkSetGroupSortOrder } from '../../common/db/bulk-sort-order';
 import { validateOrderSet } from '../../common/db/order-validation';
-import type { PrismaClientLike } from '../../common/db/prisma-client-like';
+import { nextGroupSortOrder } from '../../common/db/sort-order';
+import type { PrismaClientLike } from '../../common/db/prisma-utils';
 import { audioBlobContentId } from '../audio/audio-blob-id';
 import { computeGroupEtags, computeGroupManifestEtag } from './group-etag';
 
@@ -268,7 +269,7 @@ export class GroupsService {
   async create(ownerUserId: string, body: { name: string }): Promise<GroupSummaryT> {
     const created = await this.prisma.$transaction(async (tx) => {
       await lockUserRow(tx, ownerUserId);
-      const sortOrder = await this.nextGroupSortOrder(ownerUserId, tx);
+      const sortOrder = await nextGroupSortOrder(tx, ownerUserId);
       const group = await tx.group.create({
         data: {
           name: body.name,
@@ -347,18 +348,6 @@ export class GroupsService {
     );
     const failed = deleted.filter((result) => result.status === 'rejected').length;
     if (failed > 0) this.logger.warn(`group ${gid} deleted with ${failed} blob cleanup failure(s)`);
-  }
-
-  async nextGroupSortOrder(
-    ownerUserId: string,
-    client: PrismaClientLike = this.prisma
-  ): Promise<number> {
-    const top = await client.group.findFirst({
-      where: { ownerUserId },
-      orderBy: { sortOrder: 'desc' },
-      select: { sortOrder: true },
-    });
-    return (top?.sortOrder ?? -1) + 1;
   }
 
   async reorderGroups(ownerUserId: string, order: string[]): Promise<void> {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { AppConfig } from '../../../infra/config/app.config';
+import type { QweatherConfig } from './qweather.config';
 import { forecastLabel, WeatherProvider } from './weather.provider';
 
 const originalFetch = globalThis.fetch;
@@ -30,9 +30,9 @@ describe('forecastLabel', () => {
     }) as unknown as typeof fetch;
 
     const provider = new WeatherProvider({
-      qweatherApiKey: 'key',
-      qweatherApiHost: 'https://weather.example',
-    } as AppConfig);
+      apiKey: 'key',
+      apiHost: 'https://weather.example',
+    } as QweatherConfig);
 
     await expect(provider.searchCities('长沙', 8, 1)).resolves.toEqual([
       { id: '101250101', name: '长沙', adm1: '湖南省', adm2: '长沙市' },
@@ -44,9 +44,9 @@ describe('forecastLabel', () => {
 
   it('does not reuse stale last-data fallback when QWeather is not configured', async () => {
     const provider = new WeatherProvider({
-      qweatherApiKey: '',
-      qweatherApiHost: '',
-    } as AppConfig);
+      apiKey: '',
+      apiHost: '',
+    } as QweatherConfig);
     const config = provider.validateConfig({
       type: 'weather',
       tz: 'Asia/Shanghai',

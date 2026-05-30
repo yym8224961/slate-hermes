@@ -1,8 +1,9 @@
 import axios, { type AxiosError } from 'axios';
 import { API_PREFIX } from 'shared';
-import { notifyUnauthorized, tokenStorage } from './auth-storage';
+import { notifyUnauthorized } from '@/features/auth/lib/auth-events';
+import { tokenStorage } from '@/features/auth/lib/auth-storage';
 
-export const API_V1 = API_PREFIX;
+export { API_PREFIX };
 
 export const api = axios.create({
   baseURL: '/',

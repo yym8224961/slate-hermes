@@ -1,4 +1,4 @@
-#include "bg_refresh_scene.h"
+#include "scenes/bg_refresh/bg_refresh_scene.h"
 
 #include <esp_log.h>
 #include <freertos/FreeRTOS.h>
@@ -11,14 +11,14 @@
 #include <new>
 #include <vector>
 
-#include "cache.h"
-#include "epd_ssd1683.h"
-#include "epd_utils.h"
-#include "event_bus.h"
-#include "frame_view.h"
-#include "power_state.h"
-#include "status_bar.h"
-#include "theme.h"
+#include "storage/cache/cache.h"
+#include "drivers/display/epd_ssd1683.h"
+#include "drivers/display/framebuffer_ops.h"
+#include "events/event_bus.h"
+#include "ui/frame_view.h"
+#include "power/power_state.h"
+#include "ui/status_bar.h"
+#include "ui/theme.h"
 
 namespace {
 constexpr char kTag[] = "BgRefresh";
@@ -179,15 +179,8 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
         return false;
     }
 
-    auto* screen = lv_screen_active();
-    root_        = lv_obj_create(screen);
-    lv_obj_set_size(root_, LV_HOR_RES, theme::kStatusBarHeight);
-    lv_obj_set_pos(root_, 0, 0);
-    lv_obj_set_style_bg_color(root_, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(root_, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(root_, 0, 0);
-    lv_obj_set_style_border_width(root_, 0, 0);
-    lv_obj_clear_flag(root_, LV_OBJ_FLAG_SCROLLABLE);
+    root_ = CreateFullscreenRoot();
+    lv_obj_set_height(root_, theme::kStatusBarHeight);
 
     status_bar_ = std::make_unique<StatusBar>(root_);
     status_bar_->SetCaption(meta.status_bar_text);

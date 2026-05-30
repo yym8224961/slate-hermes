@@ -9,9 +9,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { FRAME_WIDTH, FRAME_HEIGHT } from 'shared';
 import type { DitherMode } from 'shared';
 import { cn } from '@/lib/cn';
-import { clearCanvas, decodeBppImage, isValidBppLength } from '@/lib/frame/bpp';
-import { drawImagePreview } from '@/lib/frame/image-preview';
-import { StatusBarOverlay } from '../preview/StatusBarOverlay';
+import { clearCanvas, decodeBppImage, isValidBppLength } from '@/lib/eink/bpp';
+import { drawImagePreview } from '@/lib/eink/image-preview';
+import { StatusBarOverlay } from '../bitmap/StatusBarOverlay';
+import { useCanvasPan } from './useCanvasPan';
 
 interface PreviewCanvasProps {
   imageFile: File | null;
@@ -213,84 +214,4 @@ export function PreviewCanvas({
       {showStatusBar && <StatusBarOverlay caption={statusCaption} showSafeArea={showSafeArea} />}
     </div>
   );
-}
-
-function useCanvasPan({
-  enabled,
-  offset,
-  currentOffsetRef,
-  onOffsetChange,
-  onPreviewMove,
-  onCommit,
-}: {
-  enabled: boolean;
-  offset: { x: number; y: number };
-  currentOffsetRef: React.MutableRefObject<{ x: number; y: number }>;
-  onOffsetChange: (o: { x: number; y: number }) => void;
-  onPreviewMove: () => void;
-  onCommit: () => void;
-}) {
-  const [isDragging, setIsDragging] = useState(false);
-  const isDraggingRef = useRef(false);
-  const dragStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(
-    null
-  );
-
-  useEffect(() => {
-    if (!isDraggingRef.current) currentOffsetRef.current = offset;
-  }, [currentOffsetRef, offset]);
-
-  useEffect(() => {
-    if (enabled) return;
-    isDraggingRef.current = false;
-    setIsDragging(false);
-    dragStartRef.current = null;
-    currentOffsetRef.current = offset;
-  }, [currentOffsetRef, enabled, offset]);
-
-  const onPointerDown = useCallback(
-    (e: React.PointerEvent) => {
-      if (!enabled) return;
-      isDraggingRef.current = true;
-      setIsDragging(true);
-      currentOffsetRef.current = offset;
-      dragStartRef.current = {
-        x: e.clientX,
-        y: e.clientY,
-        offsetX: offset.x,
-        offsetY: offset.y,
-      };
-      e.currentTarget.setPointerCapture(e.pointerId);
-    },
-    [currentOffsetRef, enabled, offset]
-  );
-
-  const onPointerMove = useCallback(
-    (e: React.PointerEvent) => {
-      if (!isDraggingRef.current || !dragStartRef.current) return;
-      currentOffsetRef.current = {
-        x: dragStartRef.current.offsetX + (e.clientX - dragStartRef.current.x),
-        y: dragStartRef.current.offsetY + (e.clientY - dragStartRef.current.y),
-      };
-      onPreviewMove();
-    },
-    [currentOffsetRef, onPreviewMove]
-  );
-
-  const onPointerUp = useCallback(() => {
-    if (!isDraggingRef.current) return;
-    isDraggingRef.current = false;
-    setIsDragging(false);
-    dragStartRef.current = null;
-    onOffsetChange(currentOffsetRef.current);
-    onCommit();
-  }, [currentOffsetRef, onCommit, onOffsetChange]);
-
-  return {
-    isDragging,
-    isDraggingRef,
-    onPointerDown,
-    onPointerMove,
-    onPointerUp,
-  };
 }

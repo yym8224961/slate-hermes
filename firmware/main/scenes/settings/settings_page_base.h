@@ -3,8 +3,8 @@
 #include <functional>
 #include <memory>
 
-#include "scene.h"
-#include "status_bar.h"
+#include "scenes/core/scene.h"
+#include "ui/status_bar.h"
 
 class SettingsPageBase : public Scene {
    public:

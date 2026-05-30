@@ -1,4 +1,4 @@
-#include "app.h"
+#include "app/app.h"
 
 #include <esp_log.h>
 #include <esp_pm.h>
@@ -16,32 +16,44 @@
 #include <string>
 #include <utility>
 
-#include "bg_refresh_scene.h"
-#include "board.h"
-#include "boot_mode.h"
-#include "button.h"
-#include "config.h"
-#include "epd_ssd1683.h"
+#include "scenes/bg_refresh/bg_refresh_scene.h"
+#include "bsp/board.h"
+#include "startup/boot_mode.h"
+#include "drivers/input/button.h"
+#include "bsp/config.h"
+#include "drivers/display/epd_ssd1683.h"
 
-#include "api_client.h"
-#include "audio_player.h"
-#include "boot_splash_scene.h"
-#include "cache.h"
-#include "captive_portal.h"
-#include "chat_scene.h"
-#include "cred_store.h"
-#include "event_bus.h"
-#include "frame_scene.h"
-#include "power_state.h"
-#include "setup_flow.h"
-#include "sync_service.h"
-#include "system_restart.h"
-#include "time_utils.h"
-#include "wifi.h"
-#include "xiaozhi_chat_service.h"
+#include "sync/api_client.h"
+#include "drivers/audio/audio_player.h"
+#include "scenes/splash/splash_scene.h"
+#include "storage/cache/cache.h"
+#include "network/captive_portal.h"
+#include "scenes/chat/chat_scene.h"
+#include "network/cred_store.h"
+#include "events/event_bus.h"
+#include "scenes/frame/frame_scene.h"
+#include "power/power_state.h"
+#include "startup/setup_flow.h"
+#include "sync/sync_service.h"
+#include "power/shutdown_subsystems.h"
+#include "power/system_restart.h"
+#include "utils/time_utils.h"
+#include "network/wifi.h"
+#include "xiaozhi/service/chat_service.h"
 
 namespace {
 constexpr char kTag[] = "App";
+
+ButtonInput MakeButtonInput(Button* button) {
+    if (!button)
+        return {};
+    return ButtonInput{
+        [button](ButtonInput::Callback cb) { button->OnPressDown(std::move(cb)); },
+        [button](ButtonInput::Callback cb) { button->OnPressUp(std::move(cb)); },
+        [button](ButtonInput::Callback cb) { button->OnLongPress(std::move(cb)); },
+        [button](ButtonInput::Callback cb) { button->OnClick(std::move(cb)); },
+    };
+}
 
 void PostChargeSnapshot(const ChargeStatus::Snapshot& snap, TickType_t timeout = pdMS_TO_TICKS(100)) {
     evt::PostChargeChanged(static_cast<uint8_t>(snap.state), snap.power_present, snap.charging, snap.full,
@@ -135,7 +147,7 @@ void App::PostWakeupKeyEvent(uint64_t ext1_mask) {
 
 void App::PromoteToFrameSceneFromCache() {
     if (!PostCachedGroupReadyIfAny()) {
-        scene_stack_.Push(std::make_unique<BootSplashScene>());
+        scene_stack_.Push(std::make_unique<SplashScene>());
     }
 }
 
@@ -158,12 +170,12 @@ bool App::HandleBackgroundRefreshDone(const UiEvent& e) {
         case SleepManager::SleepOutcome::kPausedByCharge:
             scene_stack_.Pop();
             PromoteToFrameSceneFromCache();
-            SyncService::Get().TriggerNow();
+            SyncService::Get().RequestUserActiveSync();
             break;
         case SleepManager::SleepOutcome::kUnboundGrace:
             scene_stack_.Pop();
-            scene_stack_.Push(std::make_unique<BootSplashScene>());
-            SyncService::Get().TriggerNow();
+            scene_stack_.Push(std::make_unique<SplashScene>());
+            SyncService::Get().RequestUserActiveSync();
             break;
         case SleepManager::SleepOutcome::kDisabled:
             ESP_LOGW(kTag, "Sleep disabled after background refresh; promote active");
@@ -214,7 +226,7 @@ void App::UiLoopTask() {
     switch (decision_.mode) {
         case boot_mode::Mode::kPortal:
         case boot_mode::Mode::kFullActive:
-            scene_stack_.Push(std::make_unique<BootSplashScene>());
+            scene_stack_.Push(std::make_unique<SplashScene>());
             break;
         case boot_mode::Mode::kBackgroundRefresh:
             scene_stack_.Push(std::make_unique<BgRefreshScene>());
@@ -254,15 +266,12 @@ void App::AttachInputs() {
 
     auto* board = &Board::Get();
 
-    combo_key_.Install(
-        board->up_btn(), board->down_btn(),
-        [] {
-            if (auto* epd = Board::Get().epd())
-                epd->RequestUrgentFullRefresh();
-        },
-        post_button(UiEventKind::kButtonShort, ButtonId::kUp), post_button(UiEventKind::kButtonLong, ButtonId::kUp),
-        post_button(UiEventKind::kButtonShort, ButtonId::kDown),
-        post_button(UiEventKind::kButtonLong, ButtonId::kDown));
+    up_down_combo_.Install(MakeButtonInput(board->up_btn()), MakeButtonInput(board->down_btn()), [] {
+        if (auto* epd = Board::Get().epd())
+            epd->RequestUrgentFullRefresh();
+    }, post_button(UiEventKind::kButtonShort, ButtonId::kUp), post_button(UiEventKind::kButtonLong, ButtonId::kUp),
+                           post_button(UiEventKind::kButtonShort, ButtonId::kDown),
+                           post_button(UiEventKind::kButtonLong, ButtonId::kDown));
 
     board->boot_btn()->OnClick(post_button(UiEventKind::kButtonShort, ButtonId::kEnter));
     board->boot_btn()->OnDoubleClick(post_button(UiEventKind::kButtonDouble, ButtonId::kEnter));
@@ -276,11 +285,11 @@ void App::AttachInputs() {
     Wifi::Get().OnDisconnected([](int /*reason*/) { evt::PostWifiState(false, 0); });
 }
 
-void App::StartTimeTick() {
-    time_tick_.Start();
+void App::StartMinuteTick() {
+    minute_tick_.Start();
 }
 
-bool App::InitWifiAndSync(cred::Credentials& creds) {
+bool App::InitWifiAndSync(cred::Credentials& creds, bool background_refresh) {
     Wifi::Get().Init();
 
     // poll 收 401 → emit kSecretInvalid;UiLoop 拦下来在主线程清 NVS + esp_restart。
@@ -290,8 +299,9 @@ bool App::InitWifiAndSync(cred::Credentials& creds) {
         // 连上 → 状态栏立即显示 wifi 图标
         evt::PostWifiState(true, Wifi::Get().GetRssi());
 
-        // 首轮同步由 App 根据 boot_mode 显式 Trigger。
-        SyncService::Get().Start(decision_.wake_reason);
+        SyncService::Get().Start(decision_.wake_reason,
+                                 background_refresh ? SyncService::InitialSync::kBackgroundRefresh
+                                                    : SyncService::InitialSync::kUserActive);
         return true;
     } else {
         return false;
@@ -369,10 +379,12 @@ void App::Init() {
     policy.idle_timeout_min = CONFIG_SLATE_IDLE_DEEP_SLEEP_MIN;
     policy.disabled         = (decision_.mode == boot_mode::Mode::kPortal);
     sleep_mgr_.Init(policy);
+    sleep_mgr_.SetSleepBlocker([]() { return xiaozhi::ChatService::Get().BlocksSleep(); });
+    system_shutdown::SetPreShutdownHook([]() { xiaozhi::ChatService::Get().SuspendForSleep(); });
 
     StartUiLoop();
     AttachInputs();
-    StartTimeTick();
+    StartMinuteTick();
     StartSleep();
 
     switch (decision_.mode) {
@@ -381,26 +393,22 @@ void App::Init() {
             StartPortal();
             break;
         case boot_mode::Mode::kBackgroundRefresh: {
-            const bool net_ok = InitWifiAndSync(creds);
-            if (net_ok) {
-                SyncService::Get().TriggerWakeRefresh();
-            } else {
+            const bool net_ok = InitWifiAndSync(creds, true);
+            if (!net_ok) {
                 ESP_LOGW(kTag, "Background refresh network setup failed -> deep sleep");
                 evt::PostSimple(UiEventKind::kBgRefreshDone, portMAX_DELAY);
             }
             break;
         }
         case boot_mode::Mode::kFullActive: {
-            const bool net_ok = InitWifiAndSync(creds);
+            const bool net_ok = InitWifiAndSync(creds, false);
             if (net_ok && !decision_.first_register) {
                 PostCachedGroupReadyIfAny();
                 if (decision_.wake_cause == boot_mode::WakeCause::kButton) {
                     PostWakeupKeyEvent(decision_.ext1_mask);
                 }
             }
-            if (net_ok) {
-                SyncService::Get().TriggerNow();
-            } else {
+            if (!net_ok) {
                 ESP_LOGW(kTag, "Fallback to captive portal");
                 StartPortal();
                 sleep_mgr_.Disable();

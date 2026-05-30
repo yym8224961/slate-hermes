@@ -4,7 +4,7 @@ import type { ContentAudioSource, ContentAudioStatus } from '@prisma/client';
 import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { lockGroupRow } from '../../common/db/row-locks';
-import { formatError } from '../../common/error-format';
+import { formatError } from '../../common/utils/error-format';
 import { GroupsService } from '../groups/groups.service';
 import { deleteContentAudioBlob, readContentAudioBlob } from '../audio/content-audio-blobs';
 
@@ -31,7 +31,7 @@ export class ContentAudioBlobService {
     return readContentAudioBlob(this.blob, groupId, contentId, audioEtag);
   }
 
-  async handleMissing(content: {
+  async repairMissingAudioBlob(content: {
     id: string;
     groupId: string;
     audioEtag: string | null;

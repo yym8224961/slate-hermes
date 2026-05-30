@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ContentKind, Prisma } from '@prisma/client';
-import { deviceStatusBarText } from '../contents/content-display-name';
+import { deviceStatusBarText } from '../dynamic-content/status-text/dynamic-content-status-text';
 
 export interface GroupEtagContentRow {
   id: string;

@@ -1,7 +1,7 @@
 import { DASHBOARD_SYSTEM_TEMPLATES, DashboardConfig, type DashboardTemplateT } from 'shared';
 import type { DynamicRenderContext } from './dynamic-frame-renderer.service';
 import { FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
-import { clamp, isRecord, pickText, readInt, readNumberArray } from './frame-value-utils';
+import { clamp, isRecord, pickText, readInt, readNumberArray } from './helpers/frame-value-utils';
 
 export const STATUS_BAR_H = 24;
 

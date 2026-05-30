@@ -3,8 +3,8 @@
 import { useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { Music, Trash2 } from 'lucide-react';
-import { useDeleteContentAudio } from '@/features/contents/queries';
-import { useConfirmAction } from '@/components/feedback/useConfirmAction';
+import { useDeleteContentAudio } from '@/features/contents/query/content-audio-queries';
+import { useConfirmAction } from '@/components/feedback/mutation-feedback';
 import { cn } from '@/lib/cn';
 import { formatBytes } from '@/lib/format';
 

@@ -8,7 +8,7 @@ import type { TtsService } from '../../tts/tts.service';
 import { buildDynamicAudioTextForContent, DynamicAudioService } from './dynamic-audio.service';
 
 describe('DynamicAudioService', () => {
-  it('clears its scheduled timer on module destroy', () => {
+  it('stops its worker loop on module destroy', () => {
     const service = new DynamicAudioService(
       {} as PrismaService,
       {} as BlobService,
@@ -18,10 +18,11 @@ describe('DynamicAudioService', () => {
     );
 
     service.onModuleInit();
-    expect((service as unknown as { timer: unknown }).timer).not.toBeNull();
+    const loop = (service as unknown as { loop: { stopped: boolean } }).loop;
+    expect(loop.stopped).toBe(false);
 
     service.onModuleDestroy();
-    expect((service as unknown as { timer: unknown }).timer).toBeNull();
+    expect(loop.stopped).toBe(true);
   });
 });
 

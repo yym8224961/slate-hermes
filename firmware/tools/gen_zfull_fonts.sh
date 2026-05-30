@@ -16,7 +16,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-readonly OUT_DIR="firmware/main/generated/fonts"
+readonly OUT_DIR="firmware/main/resources/fonts"
 readonly DEFAULT_ZFULL_TTF="backend/assets/fonts/vector/Zfull-GB.ttf"
 ZFULL_TTF="${ZFULL_TTF:-$DEFAULT_ZFULL_TTF}"
 

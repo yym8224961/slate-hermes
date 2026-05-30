@@ -3,9 +3,9 @@
 #include <memory>
 #include <string>
 
-#include "scene.h"
-#include "status_bar.h"
-#include "xiaozhi_chat_service.h"
+#include "scenes/core/scene.h"
+#include "ui/status_bar.h"
+#include "xiaozhi/service/chat_service.h"
 
 namespace xiaozhi {
 struct ChatSnapshot;
@@ -25,6 +25,7 @@ class ChatScene : public Scene {
 
    private:
     void EnsureServiceStarted(SceneContext& ctx);
+    void CreateLayout();
     void Render(SceneContext& ctx, bool full = false);
     void RenderContent();
     void HideContentViews();
@@ -33,7 +34,7 @@ class ChatScene : public Scene {
     void ClearChatMessages();
     void ShowEmptyChatHint();
     void AppendChatBubble(const std::string& role, const std::string& text);
-    void LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::string& text, bool user);
+    void LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::string& text);
     void UpdateStatusBarTitle(const xiaozhi::ChatSnapshot& snap);
 
     lv_obj_t*                  root_                   = nullptr;

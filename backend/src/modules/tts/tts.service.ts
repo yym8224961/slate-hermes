@@ -3,8 +3,8 @@ import { DEFAULT_TTS_VOICE, TTS_VOICES, isTtsVoice, type TtsVoiceT } from 'share
 import { AppError, NotImplementedError, ValidationError } from '../../common/errors';
 import { fetchWithTimeout } from '../../common/http/fetch';
 import { parseSseJson } from '../../common/http/sse';
-import { AppConfig } from '../../infra/config/app.config';
 import { AudioService } from '../audio/audio.service';
+import { TtsConfig } from './tts.config';
 
 const SOURCE_SAMPLE_RATE = 24000;
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -35,7 +35,7 @@ interface ChatCompletionChunk {
 @Injectable()
 export class TtsService {
   constructor(
-    private readonly config: AppConfig,
+    private readonly config: TtsConfig,
     private readonly audio: AudioService
   ) {}
 
@@ -44,7 +44,7 @@ export class TtsService {
   }
 
   defaultVoice(): TtsVoiceT {
-    const voice = this.config.ttsDefaultVoice;
+    const voice = this.config.defaultVoice;
     return isTtsVoice(voice) ? voice : DEFAULT_TTS_VOICE;
   }
 
@@ -74,8 +74,8 @@ export class TtsService {
         max_chars: MAX_TTS_STYLE_CHARS,
       });
     }
-    const apiKey = this.config.ttsApiKey;
-    const baseUrl = this.config.ttsBaseUrl;
+    const apiKey = this.config.apiKey;
+    const baseUrl = this.config.baseUrl;
     if (!apiKey || !baseUrl) {
       throw new NotImplementedError('TTS_API_KEY 或 TTS_BASE_URL 未配置', {
         code: 'tts_not_configured',
@@ -108,7 +108,7 @@ export class TtsService {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: this.config.ttsModel,
+        model: this.config.model,
         messages: [
           { role: 'user', content: input.style },
           { role: 'assistant', content: input.text },

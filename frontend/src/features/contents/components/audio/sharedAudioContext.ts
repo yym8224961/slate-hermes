@@ -1,3 +1,5 @@
+import { onSessionEnded } from '@/features/auth/lib/session-events';
+
 export const CONTENT_AUDIO_SAMPLE_RATE = 16000;
 
 let sharedAudioContext: AudioContext | null = null;
@@ -25,6 +27,11 @@ export function closeSharedAudioContext(): void {
   if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => {});
 }
 
+const unsubscribeSessionEnded = onSessionEnded(closeSharedAudioContext);
+
 if (import.meta.hot) {
-  import.meta.hot.dispose(closeSharedAudioContext);
+  import.meta.hot.dispose(() => {
+    unsubscribeSessionEnded();
+    closeSharedAudioContext();
+  });
 }

@@ -11,7 +11,7 @@
 #include <functional>
 #include <vector>
 
-#include "epd_utils.h"
+#include "drivers/display/framebuffer_ops.h"
 
 // SSD1683 类驱动 4.2" 黑白 EPD（400×300，1bpp）+ LVGL 集成。
 // SPI 写帧 + 异步 refresh_task（300 ms 节流，防过频刷新损伤 EPD）+ LVGL flush_cb
@@ -89,6 +89,7 @@ class EpdSsd1683 {
     static void RefreshTaskEntry(void* arg);
     void        RefreshTaskLoop();
 
+    void AssertRefreshTaskContext() const;
     void SpiPortInit();    // 发送模式（DI 当 MOSI，40 MHz）
     void SpiPortRxInit();  // 接收模式（DI 反向当 MISO，8 MHz）—— 读温度寄存器
     void SpiGpioInit();
