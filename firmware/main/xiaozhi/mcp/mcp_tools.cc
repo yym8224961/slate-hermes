@@ -72,7 +72,6 @@ std::string BuildDeviceStatusJson() {
     cJSON_AddNumberToObject(audio, "volume", vol::ToCodec(chat_level));
     cJSON_AddNumberToObject(audio, "level", chat_level);
     cJSON_AddNumberToObject(audio, "max_level", vol::kMax);
-    cJSON_AddNumberToObject(audio, "album_level", vol::GetAlbum());
     cJSON_AddBoolToObject(audio, "chat_active", AudioService::Get().IsActive());
     cJSON_AddBoolToObject(audio, "voice_processing", AudioService::Get().IsVoiceProcessing());
     cJSON_AddItemToObject(root, "audio_speaker", audio);

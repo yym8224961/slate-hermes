@@ -172,7 +172,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
 
     // 仅缓存音量,首次 Lazy open 后再 set 到 codec。放在同步原语创建之后，
     // 即使 Init 中途失败，未初始化实例的默认值也保持与 volume_store 默认值一致。
-    volume_.store(vol::ToCodec(vol::GetAlbum()), std::memory_order_relaxed);
+    volume_.store(vol::ToCodec(vol::Get()), std::memory_order_relaxed);
 
     // NO_LIGHT_SLEEP 锁:播放/对话期间持有,防止自动 light sleep 停时钟使 I2S DMA 欠载
     // 而卡顿。创建失败不致命(退化为无锁,等价旧行为),acquire/release 内部判空。
@@ -334,7 +334,7 @@ void AudioPlayer::SetVolume(int v) {
         v = 100;
     volume_.store(v, std::memory_order_relaxed);
     // Codec 还没 lazy open 就只更新缓存,首次 open 时一并 set。
-    if (dev_ && codec_opened_.load(std::memory_order_acquire) && !chat_active_.load(std::memory_order_relaxed)) {
+    if (dev_ && codec_opened_.load(std::memory_order_acquire)) {
         xSemaphoreTake(codec_mutex_, portMAX_DELAY);
         ScopedI2cBusLock lock("AudioPlayer::SetVolume");
         if (lock.status() == ESP_OK) {
@@ -344,49 +344,26 @@ void AudioPlayer::SetVolume(int v) {
     }
 }
 
-bool AudioPlayer::BeginChat(int codec_volume) {
+bool AudioPlayer::BeginChat() {
     if (!initialized_)
         return false;
     Stop();
     chat_active_.store(true, std::memory_order_relaxed);
-    if (codec_volume < 0)
-        codec_volume = 0;
-    if (codec_volume > 100)
-        codec_volume = 100;
-    chat_volume_.store(codec_volume, std::memory_order_relaxed);
     if (!EnsureCodecOpen()) {
         chat_active_.store(false, std::memory_order_relaxed);
         return false;
     }
-    SetChatVolume(chat_volume_.load(std::memory_order_relaxed));
     // 对话期间(双工 I2S)禁 light sleep；与 EndChat 的 release 配对(由 chat_active_ 守卫)。
     AcquireAudioPmLock();
     return true;
 }
 
-void AudioPlayer::EndChat(int album_codec_volume) {
+void AudioPlayer::EndChat() {
     if (!initialized_)
         return;
     const bool was_active = chat_active_.exchange(false, std::memory_order_relaxed);
-    SetVolume(album_codec_volume);
     if (was_active)
         ReleaseAudioPmLock();
-}
-
-void AudioPlayer::SetChatVolume(int codec_volume) {
-    if (codec_volume < 0)
-        codec_volume = 0;
-    if (codec_volume > 100)
-        codec_volume = 100;
-    chat_volume_.store(codec_volume, std::memory_order_relaxed);
-    if (!dev_ || !codec_opened_.load(std::memory_order_acquire) || !chat_active_.load(std::memory_order_relaxed))
-        return;
-    xSemaphoreTake(codec_mutex_, portMAX_DELAY);
-    ScopedI2cBusLock lock("AudioPlayer::SetChatVolume");
-    if (lock.status() == ESP_OK) {
-        esp_codec_dev_set_out_vol(dev_, chat_volume_.load(std::memory_order_relaxed));
-    }
-    xSemaphoreGive(codec_mutex_);
 }
 
 bool AudioPlayer::ReadChatPcm(int16_t* dest, size_t samples) {

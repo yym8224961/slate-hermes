@@ -14,7 +14,6 @@
 #include <cstring>
 
 #include "drivers/audio/audio_player.h"
-#include "storage/nvs/volume_store.h"
 #include "utils/time_utils.h"
 
 namespace {
@@ -239,18 +238,18 @@ void AudioService::Stop() {
         CloseCodecResources();
 }
 
-bool AudioService::Begin(int xiaozhi_codec_volume) {
+bool AudioService::Begin() {
     if (!started_.load(std::memory_order_relaxed) || !player_)
         return false;
     ResetAllQueues();
-    if (!player_->BeginChat(xiaozhi_codec_volume))
+    if (!player_->BeginChat())
         return false;
     active_.store(true, std::memory_order_relaxed);
     voice_processing_.store(false, std::memory_order_relaxed);
     return true;
 }
 
-void AudioService::EndAndRestoreAlbumVolume(int album_level) {
+void AudioService::End() {
     voice_processing_.store(false, std::memory_order_relaxed);
     const bool was_active = active_.exchange(false, std::memory_order_relaxed);
     ResetAllQueues();
@@ -259,12 +258,7 @@ void AudioService::EndAndRestoreAlbumVolume(int album_level) {
         ResetDecoderResourcesLocked();
     }
     if (was_active && player_)
-        player_->EndChat(vol::ToCodec(album_level));
-}
-
-void AudioService::SetVolume(int codec_volume) {
-    if (player_ && active_.load(std::memory_order_relaxed))
-        player_->SetChatVolume(codec_volume);
+        player_->EndChat();
 }
 
 void AudioService::EnableVoiceProcessing(bool enable) {

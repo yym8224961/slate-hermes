@@ -103,13 +103,12 @@ void ConfirmActionPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
     }
 }
 
-VolumePage::VolumePage(Target target) : target_(target) {
-}
+VolumePage::VolumePage() = default;
 
 VolumePage::~VolumePage() = default;
 
 void VolumePage::OnEnter(SceneContext& ctx) {
-    if (!EnterSettingsScaffold(ctx, Caption()))
+    if (!EnterSettingsScaffold(ctx, "音量调节"))
         return;
 
     value_label_ = lv_label_create(RootObj());
@@ -138,10 +137,9 @@ void VolumePage::OnEnter(SceneContext& ctx) {
     lv_obj_set_style_pad_all(bar_fill_, 0, 0);
     lv_obj_clear_flag(bar_fill_, LV_OBJ_FLAG_SCROLLABLE);
 
-    hint_label_ = CreateBottomHint(target_ == Target::kAlbum ? "上/下 调节   按确认 返回   长按确认 试听"
-                                                             : "上/下 调节   按确认 返回");
+    hint_label_ = CreateBottomHint("上/下 调节   按确认 返回   长按确认 试听");
 
-    level_ = (target_ == Target::kAlbum) ? vol::GetAlbum() : vol::GetXiaozhi();
+    level_ = vol::Get();
     RedrawValue();
 
     FinishSettingsScaffoldEnter(ctx);
@@ -213,29 +211,28 @@ void VolumePage::RedrawValue() {
 }
 
 void VolumePage::ApplyLevel(SceneContext& ctx) {
-    if (target_ == Target::kAlbum) {
-        AudioPlayer::Get().SetVolume(vol::ToCodec(level_));
-    } else if (ctx.chat_service) {
-        if (auto* service = ctx.chat_service())
+    if (ctx.chat_service) {
+        if (auto* service = ctx.chat_service()) {
             service->PreviewVolume(level_);
+            return;
+        }
     }
+    AudioPlayer::Get().SetVolume(vol::ToCodec(level_));
 }
 
 void VolumePage::SaveLevel(SceneContext& ctx) {
-    if (target_ == Target::kAlbum) {
-        vol::SetAlbum(level_);
-    } else {
-        vol::SetXiaozhi(level_);
+    if (ctx.chat_service) {
+        if (auto* service = ctx.chat_service()) {
+            service->SetVolume(level_);
+            return;
+        }
     }
-    ApplyLevel(ctx);
-}
-
-const char* VolumePage::Caption() const {
-    return target_ == Target::kAlbum ? "内容音量" : "小智音量";
+    vol::Set(level_);
+    AudioPlayer::Get().SetVolume(vol::ToCodec(level_));
 }
 
 void VolumePage::PlayTestTone(SceneContext& ctx) {
-    if (!ctx.audio || target_ != Target::kAlbum)
+    if (!ctx.audio)
         return;
     if (test_tone_.empty())
         test_tone_ = MakeTestTone();

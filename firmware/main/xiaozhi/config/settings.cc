@@ -92,11 +92,11 @@ bool HasProtocolConfig() {
 }
 
 int GetVolume() {
-    return vol::GetXiaozhi();
+    return vol::Get();
 }
 
 void SetVolume(int level) {
-    vol::SetXiaozhi(level);
+    vol::Set(level);
 }
 
 void ClearAll() {

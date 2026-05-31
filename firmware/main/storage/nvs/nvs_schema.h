@@ -27,8 +27,7 @@ inline constexpr char kDevSec[] = "dev_sec";
 }  // namespace net
 
 namespace audio {
-inline constexpr char kAlbumVol[] = "album_vol";
-inline constexpr char kChatVol[]  = "chat_vol";
+inline constexpr char kVolume[] = "volume";
 }  // namespace audio
 
 namespace chat {
@@ -65,8 +64,7 @@ SLATE_NVS_ASSERT_NAME(net::kUrl);
 SLATE_NVS_ASSERT_NAME(net::kDevId);
 SLATE_NVS_ASSERT_NAME(net::kDevSec);
 
-SLATE_NVS_ASSERT_NAME(audio::kAlbumVol);
-SLATE_NVS_ASSERT_NAME(audio::kChatVol);
+SLATE_NVS_ASSERT_NAME(audio::kVolume);
 
 SLATE_NVS_ASSERT_NAME(chat::kUuid);
 

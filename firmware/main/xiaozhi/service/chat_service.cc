@@ -162,8 +162,8 @@ void ChatService::AdjustVolume(int delta) {
 
 void ChatService::PreviewVolume(int level) {
     level = std::clamp(level, 0, vol::kMax);
-    if (audio_)
-        audio_->SetVolume(vol::ToCodec(level));
+    if (player_)
+        player_->SetVolume(vol::ToCodec(level));
 }
 
 void ChatService::SetVolume(int level) {
@@ -301,7 +301,7 @@ void ChatService::EndAudioSession() {
         return;
     audio_->EnableVoiceProcessing(false);
     if (audio_->IsActive()) {
-        audio_->EndAndRestoreAlbumVolume(vol::GetAlbum());
+        audio_->End();
     } else {
         audio_->ResetDecoder();
     }
@@ -568,7 +568,7 @@ void ChatService::ConversationTask() {
         return;
     }
 
-    if (!audio_->Begin(vol::ToCodec(settings::GetVolume()))) {
+    if (!audio_->Begin()) {
         SetError("音频初始化失败");
         StopConversation(true);
         return;

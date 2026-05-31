@@ -33,9 +33,7 @@ class ConfirmActionPage : public SettingsPageBase {
 
 class VolumePage : public SettingsPageBase {
    public:
-    enum class Target { kAlbum, kXiaozhi };
-
-    explicit VolumePage(Target target = Target::kAlbum);
+    VolumePage();
     ~VolumePage() override;
 
     const char* Name() const override {
@@ -49,14 +47,12 @@ class VolumePage : public SettingsPageBase {
     void        RedrawValue();
     void        ApplyLevel(SceneContext& ctx);
     void        SaveLevel(SceneContext& ctx);
-    const char* Caption() const;
     void        PlayTestTone(SceneContext& ctx);
 
     lv_obj_t*            bar_track_   = nullptr;
     lv_obj_t*            bar_fill_    = nullptr;
     lv_obj_t*            value_label_ = nullptr;
     lv_obj_t*            hint_label_  = nullptr;
-    Target               target_      = Target::kAlbum;
     int                  level_       = 0;
     bool                 dirty_       = false;
     std::vector<uint8_t> test_tone_;

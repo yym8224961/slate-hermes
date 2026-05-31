@@ -334,7 +334,7 @@ BgRefreshScene       timer wake 后台刷新
 FrameScene           常规显示与翻页
 ChatScene            小智语音对话
 SettingsScene        设置页
-  ├─ VolumePage      内容音量 / 小智音量
+  ├─ VolumePage      音量调节
   ├─ DeviceInfoPage
   ├─ RestartDevicePage
   └─ FactoryResetPage
@@ -377,7 +377,7 @@ ES8311 使用 lazy open：
 16 kHz mono signed 16-bit little-endian raw PCM
 ```
 
-内容音量和小智音量分开存储。
+内容播放和小智对话共用同一个音量设置。
 
 ## 小智语音
 

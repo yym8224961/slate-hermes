@@ -42,11 +42,9 @@ class AudioPlayer {
     // 0..100,默认 90。改 codec output volume 寄存器。
     void SetVolume(int v);
 
-    // 小智对话独占音频硬件。BeginChat 会停止内容播放，并把 codec 音量切到
-    // 小智音量；EndChat 恢复内容音量缓存。
-    bool BeginChat(int codec_volume);
-    void EndChat(int album_codec_volume);
-    void SetChatVolume(int codec_volume);
+    // 小智对话独占音频硬件。
+    bool BeginChat();
+    void EndChat();
     bool ReadChatPcm(int16_t* dest, size_t samples);
     bool WriteChatPcm(const int16_t* data, size_t samples);
     bool IsChatActive() const {
@@ -79,7 +77,6 @@ class AudioPlayer {
     const audio_codec_gpio_if_t* gpio_if_   = nullptr;
     esp_codec_dev_handle_t       dev_       = nullptr;
     std::atomic<int>             volume_{90};
-    std::atomic<int>             chat_volume_{90};
 
     // 共享 PCM:Play 写入,task 读取并播。简单 swap,不做 ring buffer
     // (本场景 frame 切换 = 整段重播,不是流式追加)。

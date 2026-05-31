@@ -23,9 +23,8 @@ class AudioService {
 
     bool Start(AudioPlayer* player);
     void Stop();
-    bool Begin(int xiaozhi_codec_volume);
-    void EndAndRestoreAlbumVolume(int album_level);
-    void SetVolume(int codec_volume);
+    bool Begin();
+    void End();
     void EnableVoiceProcessing(bool enable);
     bool IsActive() const {
         return active_.load(std::memory_order_relaxed);
