@@ -1,4 +1,4 @@
-import { fieldBaseCls } from '@/lib/styles';
+import { fieldBaseCls } from '@/components/ui/styles/form';
 import { cn } from '@/lib/cn';
 
 export function JsonEditor({

@@ -1,7 +1,7 @@
 import { HistoryTodayConfig, type DynamicConfigT } from 'shared';
 import { Select, SelectItem } from '@/components/ui/Select';
 import type { DynamicConfigChange } from '@/features/dynamic/model/config-types';
-import { createSafeParseGuard } from '@/lib/zod-utils';
+import { createSafeParseGuard } from '@/features/dynamic/lib/zod-utils';
 
 type HistoryTodaySource = Extract<
   Extract<DynamicConfigT, { type: 'history_today' }>['source'],

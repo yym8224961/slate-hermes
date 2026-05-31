@@ -14,14 +14,14 @@
 #include <utility>
 #include <vector>
 
+#include "network/wifi.h"
 #include "resources/captive_portal_html.h"
 #include "utils/json_utils.h"
-#include "network/wifi.h"
 
 namespace {
-constexpr char kTag[] = "Portal";
+constexpr char   kTag[]           = "Portal";
 constexpr size_t kMaxServerUrlLen = 256;
-std::mutex g_scan_mutex;
+std::mutex       g_scan_mutex;
 
 std::string WifiSsidToString(const uint8_t ssid[32]) {
     size_t len = 0;
@@ -68,15 +68,44 @@ struct StopTaskContext {
 
 }  // namespace
 
-// ─── 工具:将 {{KEY}} 替换为 value(简单字符串替换) ──────────────────
-static std::string Substitute(const std::string& tmpl, const std::vector<std::pair<std::string, std::string>>& kv) {
+static std::string EscapeHtmlAttr(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (char ch : value) {
+        switch (ch) {
+            case '&':
+                out += "&amp;";
+                break;
+            case '<':
+                out += "&lt;";
+                break;
+            case '>':
+                out += "&gt;";
+                break;
+            case '"':
+                out += "&quot;";
+                break;
+            case '\'':
+                out += "&#39;";
+                break;
+            default:
+                out.push_back(ch);
+                break;
+        }
+    }
+    return out;
+}
+
+static std::string RenderTemplate(const std::string&                                      tmpl,
+                                  const std::vector<std::pair<std::string, std::string>>& vars) {
     std::string s = tmpl;
-    for (const auto& p : kv) {
+    for (const auto& p : vars) {
         const std::string token = "{{" + p.first + "}}";
         size_t            pos   = 0;
+        const std::string value = EscapeHtmlAttr(p.second);
         while ((pos = s.find(token, pos)) != std::string::npos) {
-            s.replace(pos, token.size(), p.second);
-            pos += p.second.size();
+            s.replace(pos, token.size(), value);
+            pos += value.size();
         }
     }
     return s;
@@ -84,16 +113,15 @@ static std::string Substitute(const std::string& tmpl, const std::vector<std::pa
 
 // ─── HTTP handlers ─────────────────────────────────────────────────
 esp_err_t CaptivePortal::HandleRoot(httpd_req_t* req) {
-    // 替换占位符
     uint8_t mac[6] = {0};
     esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
     char ap_ssid[24];
     std::snprintf(ap_ssid, sizeof(ap_ssid), "%s-%02X%02X", CONFIG_SLATE_AP_SSID_PREFIX, mac[4], mac[5]);
 
-    std::string html = Substitute(slate::kCaptivePortalHtml, {
-                                                                 {"SERVER_URL", CONFIG_SLATE_DEFAULT_SERVER_URL},
-                                                                 {"AP_SSID", ap_ssid},
-                                                             });
+    std::string html = RenderTemplate(slate::kCaptivePortalHtml, {
+                                                                     {"SERVER_URL", CONFIG_SLATE_DEFAULT_SERVER_URL},
+                                                                     {"AP_SSID", ap_ssid},
+                                                                 });
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, html.c_str(), html.size());
@@ -108,13 +136,13 @@ esp_err_t CaptivePortal::HandleScan(httpd_req_t* req) {
         return ESP_OK;
     }
 
-    wifi_scan_config_t scan_cfg = {};
-    scan_cfg.show_hidden        = false;
-    scan_cfg.scan_type          = WIFI_SCAN_TYPE_ACTIVE;
+    wifi_scan_config_t scan_cfg   = {};
+    scan_cfg.show_hidden          = false;
+    scan_cfg.scan_type            = WIFI_SCAN_TYPE_ACTIVE;
     scan_cfg.scan_time.active.min = 30;
     scan_cfg.scan_time.active.max = 90;
-    esp_err_t err               = esp_wifi_scan_start(&scan_cfg, true);  // blocking
-    uint16_t  num               = 0;
+    esp_err_t err                 = esp_wifi_scan_start(&scan_cfg, true);  // blocking
+    uint16_t  num                 = 0;
     if (err == ESP_OK) {
         esp_wifi_scan_get_ap_num(&num);
     } else {

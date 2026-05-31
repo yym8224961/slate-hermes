@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { DEFAULT_TTS_VOICE } from 'shared';
-import type { AudioService } from '../audio/audio.service';
+import type { AudioTranscoderService } from '../audio/audio-transcoder.service';
 import { NotImplementedError, ValidationError } from '../../common/errors';
 import type { TtsConfig } from './tts.config';
 import { TtsProviderError, TtsService } from './tts.service';
@@ -19,7 +19,7 @@ describe('TtsService', () => {
         baseUrl: undefined,
         defaultVoice: DEFAULT_TTS_VOICE,
       } as TtsConfig,
-      {} as AudioService
+      {} as AudioTranscoderService
     );
 
     await expect(
@@ -41,7 +41,7 @@ describe('TtsService', () => {
         defaultVoice: DEFAULT_TTS_VOICE,
         model: 'tts-model',
       } as TtsConfig,
-      {} as AudioService
+      {} as AudioTranscoderService
     );
 
     await expect(
@@ -79,7 +79,7 @@ describe('TtsService', () => {
       } as TtsConfig,
       {
         resamplePcm16: async (buffer: Buffer) => buffer,
-      } as AudioService
+      } as AudioTranscoderService
     );
 
     const result = service.synthesizeToDevicePcm({ text: 'hello', voice: DEFAULT_TTS_VOICE });
@@ -112,7 +112,7 @@ describe('TtsService', () => {
       } as TtsConfig,
       {
         resamplePcm16: async (buffer: Buffer) => buffer,
-      } as AudioService
+      } as AudioTranscoderService
     );
 
     await expect(
@@ -146,7 +146,7 @@ describe('TtsService', () => {
       } as TtsConfig,
       {
         resamplePcm16: async (buffer: Buffer) => buffer,
-      } as AudioService
+      } as AudioTranscoderService
     );
 
     await expect(

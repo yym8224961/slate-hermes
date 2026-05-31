@@ -17,8 +17,10 @@ class AudioPlayer;
 
 namespace xiaozhi {
 
-enum class ChatState {
-    kCheckingConfig,
+class AudioService;
+
+enum class ChatState : int {
+    kCheckingConfig = 0,
     kAwaitingActivation,
     kReadyIdle,
     kConnecting,
@@ -63,12 +65,16 @@ class ChatService {
    public:
     static ChatService& Get();
 
-    bool Start(AudioPlayer* player);
+    bool Start(AudioPlayer* player, AudioService* audio);
+    bool IsStarted() const {
+        return started_.load(std::memory_order_relaxed);
+    }
     void EnterMode();
     void LeaveMode();
     void ToggleChat();
     void StopConversation(bool send_goodbye = true);
     void AdjustVolume(int delta);
+    void PreviewVolume(int level);
     void SetVolume(int level);
     bool BlocksSleep() const;
     void SuspendForSleep();
@@ -122,6 +128,7 @@ class ChatService {
     void      PostChanged();
 
     AudioPlayer*           player_ = nullptr;
+    AudioService*          audio_  = nullptr;
     std::atomic<bool>      started_{false};
     std::atomic<bool>      in_mode_{false};
     std::atomic<bool>      config_running_{false};

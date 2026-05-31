@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { DEFAULT_TTS_VOICE, type ContentDetailT, type TtsVoiceT } from 'shared';
-import type { ImageAudioMode } from '@/features/contents/components/image-editor/ImageAudioBlock';
+import type { ImageAudioMode } from '@/features/contents/components/image-form/ImageAudioBlock';
 
 export function useAudioFormState(content?: ContentDetailT) {
   const [audioFile, setAudioFile] = useState<File | null>(null);

@@ -64,7 +64,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
     publish_topic_ = cfg.publish_topic;
 
     EspNetwork network;
-    auto mqtt_unique = network.CreateMqtt(0);
+    auto       mqtt_unique = network.CreateMqtt(0);
     if (!mqtt_unique) {
         if (report_error)
             SetError("小智 MQTT 初始化失败");
@@ -87,32 +87,9 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
     });
     mqtt->OnError([this](const std::string& err) { ESP_LOGW(kTag, "MQTT error: %s", err.c_str()); });
     mqtt->OnMessage([this](const std::string& topic, const std::string& payload) {
-        cJSON* root = cJSON_Parse(payload.c_str());
-        if (!root) {
-            ESP_LOGW(kTag, "MQTT rx ignored: invalid JSON");
-            return;
-        }
-        const std::string type = JsonType(root);
-        if (!type.empty()) {
-            if (type == "hello") {
-                ParseServerHello(root);
-            } else if (type == "goodbye") {
-                cJSON*            sid                = cJSON_GetObjectItem(root, "session_id");
-                const std::string current_session_id = SessionIdCopy();
-                if (!cJSON_IsString(sid) || current_session_id == sid->valuestring) {
-                    mcp_accepting_.store(false, std::memory_order_relaxed);
-                    xEventGroupSetBits(event_group_, kServerGoodbyeEvent);
-                    PostChannelClosedEvent();
-                }
-            } else if (type == "mcp" && HandleMcpMessage(root)) {
-            } else if (on_incoming_json_) {
-                on_incoming_json_(root);
-            }
-        } else {
-            ESP_LOGW(kTag, "MQTT rx ignored: missing type");
-        }
-        cJSON_Delete(root);
-        MarkIncomingNow();
+        (void)topic;
+        if (HandleMqttMessagePayload(payload))
+            MarkIncomingNow();
     });
 
     std::string  host = cfg.endpoint;
@@ -223,54 +200,8 @@ bool MqttProtocol::OpenAudioChannel() {
         return false;
     }
     udp->OnMessage([this](const std::string& data) {
-        constexpr size_t kNonceSize = 16;
-        std::lock_guard<std::mutex> lock(crypto_mutex_);
-        const size_t nonce_len = aes_nonce_.size();
-        if (nonce_len != kNonceSize || data.size() <= kNonceSize || data[0] != 0x01) {
-            ESP_LOGW(kTag, "UDP rx invalid packet: bytes=%u nonce_len=%u first=0x%02x",
-                     static_cast<unsigned>(data.size()), static_cast<unsigned>(nonce_len),
-                     data.empty() ? 0 : static_cast<unsigned char>(data[0]));
-            return;
-        }
-
-        const uint16_t declared_payload_size = util::ReadBe16(data.data() + 2);
-        const uint32_t timestamp             = util::ReadBe32(data.data() + 8);
-        const uint32_t sequence              = util::ReadBe32(data.data() + 12);
-        if (sequence < remote_sequence_) {
-            ESP_LOGW(kTag, "UDP rx old sequence=%lu remote=%lu", static_cast<unsigned long>(sequence),
-                     static_cast<unsigned long>(remote_sequence_));
-            return;
-        }
-
-        const size_t payload_size = data.size() - kNonceSize;
-        if (declared_payload_size != payload_size) {
-            ESP_LOGW(kTag, "UDP rx payload size mismatch declared=%u actual=%u", declared_payload_size,
-                     static_cast<unsigned>(payload_size));
-            return;
-        }
-        int sample_rate    = 0;
-        int frame_duration = 0;
-        GetServerAudioParams(sample_rate, frame_duration);
-        auto packet            = std::make_unique<AudioStreamPacket>();
-        packet->sample_rate    = sample_rate;
-        packet->frame_duration = frame_duration;
-        packet->timestamp      = timestamp;
-        packet->payload.resize(payload_size);
-
-        size_t                          nc_off           = 0;
-        uint8_t                         stream_block[16] = {0};
-        std::array<uint8_t, kNonceSize> nonce{};
-        std::memcpy(nonce.data(), data.data(), nonce.size());
-        auto encrypted = reinterpret_cast<const uint8_t*>(data.data() + kNonceSize);
-        int ret = mbedtls_aes_crypt_ctr(&aes_decrypt_ctx_, payload_size, &nc_off, nonce.data(), stream_block, encrypted,
-                                        packet->payload.data());
-        if (ret == 0 && on_incoming_audio_) {
-            on_incoming_audio_(std::move(packet));
-        } else if (ret != 0) {
-            ESP_LOGW(kTag, "UDP decrypt failed: ret=%d", ret);
-        }
-        remote_sequence_    = sequence;
-        MarkIncomingNow();
+        if (HandleUdpPacket(data))
+            MarkIncomingNow();
     });
     std::string udp_server;
     int         udp_port = 0;
@@ -364,6 +295,85 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     return udp_->Send(encrypted) > 0;
 }
 
+bool MqttProtocol::HandleMqttMessagePayload(const std::string& payload) {
+    cJSON* root = cJSON_Parse(payload.c_str());
+    if (!root) {
+        ESP_LOGW(kTag, "MQTT rx ignored: invalid JSON");
+        return false;
+    }
+
+    const std::string type = JsonType(root);
+    if (type.empty()) {
+        ESP_LOGW(kTag, "MQTT rx ignored: missing type");
+    } else if (type == "hello") {
+        ParseServerHello(root);
+    } else if (type == "goodbye") {
+        cJSON*            sid                = cJSON_GetObjectItem(root, "session_id");
+        const std::string current_session_id = SessionIdCopy();
+        if (!cJSON_IsString(sid) || current_session_id == sid->valuestring) {
+            mcp_accepting_.store(false, std::memory_order_relaxed);
+            xEventGroupSetBits(event_group_, kServerGoodbyeEvent);
+            PostChannelClosedEvent();
+        }
+    } else if (type == "mcp" && HandleMcpMessage(root)) {
+    } else if (on_incoming_json_) {
+        on_incoming_json_(root);
+    }
+    cJSON_Delete(root);
+    return true;
+}
+
+bool MqttProtocol::HandleUdpPacket(const std::string& data) {
+    constexpr size_t            kNonceSize = 16;
+    std::lock_guard<std::mutex> lock(crypto_mutex_);
+    const size_t                nonce_len = aes_nonce_.size();
+    if (nonce_len != kNonceSize || data.size() <= kNonceSize || data[0] != 0x01) {
+        ESP_LOGW(kTag, "UDP rx invalid packet: bytes=%u nonce_len=%u first=0x%02x", static_cast<unsigned>(data.size()),
+                 static_cast<unsigned>(nonce_len), data.empty() ? 0 : static_cast<unsigned char>(data[0]));
+        return false;
+    }
+
+    const uint16_t declared_payload_size = util::ReadBe16(data.data() + 2);
+    const uint32_t timestamp             = util::ReadBe32(data.data() + 8);
+    const uint32_t sequence              = util::ReadBe32(data.data() + 12);
+    if (sequence < remote_sequence_) {
+        ESP_LOGW(kTag, "UDP rx old sequence=%lu remote=%lu", static_cast<unsigned long>(sequence),
+                 static_cast<unsigned long>(remote_sequence_));
+        return false;
+    }
+
+    const size_t payload_size = data.size() - kNonceSize;
+    if (declared_payload_size != payload_size) {
+        ESP_LOGW(kTag, "UDP rx payload size mismatch declared=%u actual=%u", declared_payload_size,
+                 static_cast<unsigned>(payload_size));
+        return false;
+    }
+
+    int sample_rate    = 0;
+    int frame_duration = 0;
+    GetServerAudioParams(sample_rate, frame_duration);
+    auto packet            = std::make_unique<AudioStreamPacket>();
+    packet->sample_rate    = sample_rate;
+    packet->frame_duration = frame_duration;
+    packet->timestamp      = timestamp;
+    packet->payload.resize(payload_size);
+
+    size_t                          nc_off           = 0;
+    uint8_t                         stream_block[16] = {0};
+    std::array<uint8_t, kNonceSize> nonce{};
+    std::memcpy(nonce.data(), data.data(), nonce.size());
+    auto encrypted = reinterpret_cast<const uint8_t*>(data.data() + kNonceSize);
+    int  ret = mbedtls_aes_crypt_ctr(&aes_decrypt_ctx_, payload_size, &nc_off, nonce.data(), stream_block, encrypted,
+                                     packet->payload.data());
+    if (ret == 0 && on_incoming_audio_) {
+        on_incoming_audio_(std::move(packet));
+    } else if (ret != 0) {
+        ESP_LOGW(kTag, "UDP decrypt failed: ret=%d", ret);
+    }
+    remote_sequence_ = sequence;
+    return true;
+}
+
 std::string MqttProtocol::GetHelloMessage() const {
     cJSON* root = cJSON_CreateObject();
     cJSON_AddStringToObject(root, "type", "hello");
@@ -445,7 +455,7 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
         return;
     }
 
-    std::string aes_key = DecodeHexString(key->valuestring);
+    std::string aes_key   = DecodeHexString(key->valuestring);
     std::string aes_nonce = DecodeHexString(nonce->valuestring);
     if (aes_nonce.size() != 16 || aes_key.size() != 16) {
         fail("小智 UDP 加密参数无效");
@@ -461,7 +471,7 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
         return;
     }
     SetServerAudioParams(sample_rate, frame_duration);
-    local_sequence_ = 0;
+    local_sequence_  = 0;
     remote_sequence_ = 0;
     xEventGroupSetBits(event_group_, kServerHelloEvent);
 }

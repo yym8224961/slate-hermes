@@ -1,15 +1,13 @@
 import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
 import type { IngestResponseT } from 'shared';
-import { Public } from '../../../common/decorators/public.decorator';
-import {
-  CurrentUser,
-  type WebUserContext,
-} from '../../../common/decorators/current-user.decorator';
+import { CurrentUser, Public } from '../../../common/nest/decorators/auth-context.decorators';
+import type { WebUserContext } from '../../../common/nest/auth-context';
+import { RateLimit } from '../../../common/rate-limit/rate-limit-guard';
 import { DynamicContentService } from '../dynamic-content.service';
 import { IngestPayloadSizeGuard } from './ingest-payload-size.guard';
 import { IngestPayloadSizePipe } from './ingest-payload-size.pipe';
-import { IngestRateLimitGuard } from './ingest-rate-limit.guard';
 import { IngestPayloadDto } from './ingest-payload.dto';
+import { ingestRateLimit } from '../dynamic-rate-limits';
 
 @Controller('contents')
 export class DashboardIngestController {
@@ -23,11 +21,12 @@ export class DashboardIngestController {
   // ⚠️ 设计决定（不要改回 token 模式）：本项目用户基数极小（个位数），权衡复杂度后选择
   // capability URL。引入 token 需要：DashboardPushPanel 显示 token / 用户在脚本里拼 token /
   // 后端验签 / token 轮换接口，整链路心智成本远高于"URL 当 ID 用"。
-  // 防滥用靠 IngestRateLimitGuard + IngestPayloadSizeGuard/Pipe：
+  // 防滥用靠 RateLimit + IngestPayloadSizeGuard/Pipe：
   // 30 req/min/contentId + bodyLimit 64KB。
   // 真要堵未授权推送，应整体迁移到设备 Bearer 或 OAuth，而不是回退到 ad-hoc token。
   @Public()
-  @UseGuards(IngestPayloadSizeGuard, IngestRateLimitGuard)
+  @RateLimit(ingestRateLimit)
+  @UseGuards(IngestPayloadSizeGuard)
   @Post(':contentId/data')
   async ingest(
     @Param('contentId') contentId: string,

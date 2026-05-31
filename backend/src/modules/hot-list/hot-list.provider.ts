@@ -12,9 +12,9 @@ import type {
   DataProvider,
   DynamicContentFetchCtx,
 } from '../dynamic-content/dynamic-content.types';
-import { HOT_LIST_SOURCE_REGISTRY } from './hot-list-sources';
+import { HOT_LIST_SOURCE_REGISTRY } from './hot-list-source-registry';
 import type { HotListItem, HotListProviderData, HotListSource } from './hot-list.types';
-import { withRanks } from './text';
+import { withRanks } from './hot-list.utils';
 import {
   DEFAULT_PROVIDER_CACHE_TTL_SEC,
   DEFAULT_PROVIDER_FETCH_TIMEOUT_MS,

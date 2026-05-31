@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 import { DialogHeader } from '@/components/ui/DialogHeader';
-import { dialogContentCls, dialogOverlayCls } from '@/lib/styles';
+import { dialogContentCls, dialogOverlayCls } from '@/components/ui/styles/dialog';
 
 export function CreateGroupDialog({
   open,

@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Put } from '@nestjs/common';
 import type { GroupSummaryT } from 'shared';
-import { CurrentUser, type WebUserContext } from '../../common/decorators/current-user.decorator';
+import { CurrentUser } from '../../common/nest/decorators/auth-context.decorators';
+import type { WebUserContext } from '../../common/nest/auth-context';
 import { GroupsService } from './groups.service';
 import { CreateGroupDto } from './dto/create-group.dto';
 import { UpdateGroupDto } from './dto/update-group.dto';

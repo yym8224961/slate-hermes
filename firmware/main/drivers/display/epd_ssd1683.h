@@ -36,12 +36,12 @@ class EpdSsd1683 {
     // 调用后自动 notify refresh_task；调用方再发 RequestUrgentXxxRefresh 设 urgent 标志。
     void WriteRaw1bpp(int x, int y, int w, int h, const uint8_t* data, size_t len);
 
-    // 把已知的当前物理画面种到 buffer_/prev_buffer_，不触发刷新。
+    // 把已知的当前物理画面种到 buffer_/prev_snapshot_，不触发刷新。
     // deep sleep 唤醒后内存丢失，但 EPD 物理像素仍保持；timer 自动刷新要先用
-    // 睡前缓存重建 previous buffer，后续才能做真正 partial 而不是首次 full 清屏。
+    // 睡前缓存重建 previous snapshot，后续才能做真正 partial 而不是首次 full 清屏。
     void SeedPreviousRaw1bpp(int x, int y, int w, int h, const uint8_t* data, size_t len);
 
-    // 读取上次已刷到物理屏的 framebuffer 快照。只有 prev_buffer_ 已同步时返回 true。
+    // 读取上次已刷到物理屏的 framebuffer 快照。只有 prev_snapshot_ 已同步时返回 true。
     bool ReadPreviousRaw1bpp(int x, int y, int w, int h, uint8_t* out, size_t len);
 
     bool Lock(int timeout_ms = 0);
@@ -56,15 +56,14 @@ class EpdSsd1683 {
     bool                spi_inited_ = false;
 
     uint8_t*             buffer_          = nullptr;  // 实时 framebuffer（LVGL flush 写入）
-    uint8_t*             prev_buffer_     = nullptr;  // 上次刷到 EPD 的快照
-    uint8_t*             tx_buf_          = nullptr;  // refresh_task 用的临时快照
-    uint8_t*             prev_tx_buf_     = nullptr;  // refresh_task 使用的 previous 快照
+    uint8_t*             snapshot_        = nullptr;  // refresh_task 冻结的本轮快照
+    uint8_t*             prev_snapshot_   = nullptr;  // 上次已刷到 EPD 的快照
     uint8_t*             lvgl_render_buf_ = nullptr;
     std::vector<uint8_t> epd_line_;
 
     // 200 而非 128：LVGL anti-alias 字体边缘的灰度像素被划入「黑」，
     // 字体看起来粗实清晰。128 中性二值化会让灰边判白丢失,字体发虚。
-    uint8_t bw_threshold_ = 200;
+    static constexpr uint8_t kBwThreshold = 200;
 
     lv_display_t* lvgl_display_ = nullptr;
     static void   LvglFlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t* color_p);
@@ -77,7 +76,7 @@ class EpdSsd1683 {
     bool                 urgent_refresh_           = false;
     bool                 force_full_refresh_       = false;
     bool                 refresh_task_stop_        = false;
-    bool                 prev_buffer_synced_       = false;
+    bool                 prev_snapshot_synced_     = false;
     bool                 refresh_in_progress_      = false;
     TickType_t           last_sample_tick_         = 0;
     TickType_t           last_flush_tick_          = 0;  // LVGL 最后一次 flush_cb 的时刻,用于等待静默
@@ -88,6 +87,15 @@ class EpdSsd1683 {
     void        StartRefreshTask();
     static void RefreshTaskEntry(void* arg);
     void        RefreshTaskLoop();
+    bool        RefreshTaskShouldStop();
+    void        DebounceRefreshNotify();
+    bool        TakeRefreshRequest(bool& urgent, bool& force_full);
+    bool        ThrottleRefreshSampling(bool urgent, bool force_full);
+    bool        CaptureRefreshSnapshot(bool force_full, epd::DiffResult& diff, bool& prev_synced);
+    bool        ShouldUseFullRefresh(const epd::DiffResult& diff, bool force_full, bool prev_synced) const;
+    void        RunRefresh(bool full_refresh);
+    void        FinishRefreshSnapshot();
+    void        MarkRefreshIdle();
 
     void AssertRefreshTaskContext() const;
     void SpiPortInit();    // 发送模式（DI 当 MOSI，40 MHz）

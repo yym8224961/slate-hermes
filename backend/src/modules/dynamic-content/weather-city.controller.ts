@@ -1,13 +1,14 @@
-import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Query } from '@nestjs/common';
 import { ValidationError } from '../../common/errors';
+import { RateLimit } from '../../common/rate-limit/rate-limit-guard';
 import { WeatherProvider, type WeatherCitySearchResult } from './providers/weather.provider';
-import { WeatherCitySearchRateLimitGuard } from './weather-city-search-rate-limit.guard';
+import { weatherCitySearchRateLimit } from './dynamic-rate-limits';
 
 @Controller('dynamic')
 export class WeatherCityController {
   constructor(private readonly weather: WeatherProvider) {}
 
-  @UseGuards(WeatherCitySearchRateLimitGuard)
+  @RateLimit(weatherCitySearchRateLimit)
   @Get('weather/cities')
   async searchWeatherCities(
     @Query('q') query: string | undefined

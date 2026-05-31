@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { setBoundedCache } from '../../common/utils/cache-utils';
-import type { DeviceContext } from '../../common/decorators/current-device.decorator';
+import type { DeviceContext } from '../../common/nest/auth-context';
 
 interface CacheEntry {
   device: DeviceContext | null;

@@ -1,13 +1,13 @@
 import crypto from 'node:crypto';
 import { getDateTimeFormat } from '../../../common/utils/intl';
-import { fetchArrayBuffer, fetchJson, fetchText, DESKTOP_UA } from '../fetch';
+import { fetchArrayBuffer, fetchJson, fetchText, DESKTOP_UA } from '../../../common/http/fetch';
 import type {
   HotListItem,
   HotListSource,
   NeteaseResponse,
   QqNewsResponse,
 } from '../hot-list.types';
-import { firstMatch, htmlBlockMatches, htmlBlocks, parseRss, stripHtml } from '../html';
+import { firstMatch, htmlBlockMatches, htmlBlocks, parseRss, stripHtml } from '../html-utils';
 import {
   absoluteUrl,
   compactHot,
@@ -15,7 +15,8 @@ import {
   normalizeTimestamp,
   parseChineseNumber,
   withRanks,
-} from '../text';
+} from '../hot-list.utils';
+import { defineDirectSource } from '../source-factory';
 
 type DirectSourceId =
   | '51cto'
@@ -670,11 +671,7 @@ export const DAILY_HOT_DIRECT_SOURCES: readonly HotListSource[] = [
 ];
 
 function directSource(def: DirectSourceDef): HotListSource {
-  return {
-    id: def.id,
-    label: def.label,
-    fetch: (ctx) => def.fetch(ctx.signal),
-  };
+  return defineDirectSource(def);
 }
 
 function rssSource(

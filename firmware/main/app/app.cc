@@ -16,29 +16,29 @@
 #include <string>
 #include <utility>
 
-#include "scenes/bg_refresh/bg_refresh_scene.h"
 #include "bsp/board.h"
-#include "startup/boot_mode.h"
-#include "drivers/input/button.h"
 #include "bsp/config.h"
 #include "drivers/display/epd_ssd1683.h"
+#include "drivers/input/button.h"
+#include "scenes/bg_refresh/bg_refresh_scene.h"
+#include "startup/boot_mode.h"
 
-#include "sync/api_client.h"
 #include "drivers/audio/audio_player.h"
-#include "scenes/splash/splash_scene.h"
-#include "storage/cache/cache.h"
-#include "network/captive_portal.h"
-#include "scenes/chat/chat_scene.h"
-#include "network/cred_store.h"
 #include "events/event_bus.h"
-#include "scenes/frame/frame_scene.h"
-#include "power/power_state.h"
-#include "startup/setup_flow.h"
-#include "sync/sync_service.h"
-#include "power/shutdown_subsystems.h"
-#include "power/system_restart.h"
-#include "utils/time_utils.h"
+#include "network/captive_portal.h"
+#include "network/cred_store.h"
 #include "network/wifi.h"
+#include "power/power_state.h"
+#include "power/shutdown.h"
+#include "scenes/chat/chat_scene.h"
+#include "scenes/frame/frame_scene.h"
+#include "scenes/splash/splash_scene.h"
+#include "startup/setup_flow.h"
+#include "storage/cache/cache.h"
+#include "sync/api_client.h"
+#include "sync/sync_service.h"
+#include "utils/time_utils.h"
+#include "xiaozhi/service/audio_service.h"
 #include "xiaozhi/service/chat_service.h"
 
 namespace {
@@ -101,10 +101,22 @@ void App::InitSceneStack() {
     ctx.audio = &AudioPlayer::Get();
     ctx.stack = &scene_stack_;
 
-    ctx.read_battery   = [this](int* mv, int* pct) -> bool { return ReadBattery(mv, pct); };
-    ctx.read_charge    = []() { return Board::Get().charge()->Get(); };
-    ctx.wifi_connected = []() { return Wifi::Get().IsConnected(); };
-    ctx.wifi_rssi      = []() -> int { return Wifi::Get().GetRssi(); };
+    ctx.read_battery                = [this](int* mv, int* pct) -> bool { return ReadBattery(mv, pct); };
+    ctx.read_charge                 = []() { return Board::Get().charge()->Get(); };
+    ctx.wifi_connected              = []() { return Wifi::Get().IsConnected(); };
+    ctx.wifi_rssi                   = []() -> int { return Wifi::Get().GetRssi(); };
+    ctx.current_frame_seq           = []() -> int { return power_state::GetCurrentFrameSeq(); };
+    ctx.clear_current_frame         = []() { power_state::ClearCurrentFrame(); };
+    ctx.set_current_frame_from_meta = [](int seq, const cache::FrameMeta& meta) {
+        power_state::SetCurrentFrameFromMeta(seq, meta);
+    };
+    ctx.cycle_group = [](bool next) {
+        if (next)
+            SyncService::Get().CycleNext();
+        else
+            SyncService::Get().CyclePrev();
+    };
+    ctx.chat_service = []() -> xiaozhi::ChatService* { return &xiaozhi::ChatService::Get(); };
 
     scene_stack_.SetContext(ctx);
 }
@@ -155,7 +167,7 @@ bool App::HandleSecretInvalid(const UiEvent& e) {
     if (e.kind != UiEventKind::kSecretInvalid)
         return false;
     cred::ClearSecret();
-    system_restart::GracefulRestart(200);
+    power_shutdown::GracefulRestart(200);
     while (true)
         vTaskDelay(portMAX_DELAY);
 }
@@ -198,7 +210,7 @@ bool App::HandleInitialGroupReady(const UiEvent& e) {
         !scene_stack_.Empty()) {
         return false;
     }
-    scene_stack_.Push(std::make_unique<FrameScene>(e.u.group.gid, e.u.group.content_count));
+    scene_stack_.Push(std::make_unique<FrameScene>(scene_stack_.Context(), e.u.group.gid, e.u.group.content_count));
     scene_stack_.ApplyPending();
     return true;
 }
@@ -266,12 +278,15 @@ void App::AttachInputs() {
 
     auto* board = &Board::Get();
 
-    up_down_combo_.Install(MakeButtonInput(board->up_btn()), MakeButtonInput(board->down_btn()), [] {
-        if (auto* epd = Board::Get().epd())
-            epd->RequestUrgentFullRefresh();
-    }, post_button(UiEventKind::kButtonShort, ButtonId::kUp), post_button(UiEventKind::kButtonLong, ButtonId::kUp),
-                           post_button(UiEventKind::kButtonShort, ButtonId::kDown),
-                           post_button(UiEventKind::kButtonLong, ButtonId::kDown));
+    up_down_combo_.Install(
+        MakeButtonInput(board->up_btn()), MakeButtonInput(board->down_btn()),
+        [] {
+            if (auto* epd = Board::Get().epd())
+                epd->RequestUrgentFullRefresh();
+        },
+        post_button(UiEventKind::kButtonShort, ButtonId::kUp), post_button(UiEventKind::kButtonLong, ButtonId::kUp),
+        post_button(UiEventKind::kButtonShort, ButtonId::kDown),
+        post_button(UiEventKind::kButtonLong, ButtonId::kDown));
 
     board->boot_btn()->OnClick(post_button(UiEventKind::kButtonShort, ButtonId::kEnter));
     board->boot_btn()->OnDoubleClick(post_button(UiEventKind::kButtonDouble, ButtonId::kEnter));
@@ -285,8 +300,8 @@ void App::AttachInputs() {
     Wifi::Get().OnDisconnected([](int /*reason*/) { evt::PostWifiState(false, 0); });
 }
 
-void App::StartMinuteTick() {
-    minute_tick_.Start();
+void App::StartMinuteBoundaryTicker() {
+    minute_ticker_.Start();
 }
 
 bool App::InitWifiAndSync(cred::Credentials& creds, bool background_refresh) {
@@ -299,9 +314,9 @@ bool App::InitWifiAndSync(cred::Credentials& creds, bool background_refresh) {
         // 连上 → 状态栏立即显示 wifi 图标
         evt::PostWifiState(true, Wifi::Get().GetRssi());
 
-        SyncService::Get().Start(decision_.wake_reason,
-                                 background_refresh ? SyncService::InitialSync::kBackgroundRefresh
-                                                    : SyncService::InitialSync::kUserActive);
+        SyncService::Get().Start(decision_.wake_reason, background_refresh
+                                                            ? SyncService::InitialSync::kBackgroundRefresh
+                                                            : SyncService::InitialSync::kUserActive);
         return true;
     } else {
         return false;
@@ -336,7 +351,7 @@ void App::StartPortal() {
         if (!success)
             return;
         portal_->Stop();
-        system_restart::GracefulRestart(500);
+        power_shutdown::GracefulRestart(500);
     });
 
     portal_->Start();
@@ -367,7 +382,7 @@ void App::Init() {
     InitStorage();
     InitDevices();
     InitEventBus();
-    xiaozhi::ChatService::Get().Start(&AudioPlayer::Get());
+    xiaozhi::ChatService::Get().Start(&AudioPlayer::Get(), &xiaozhi::AudioService::Get());
     InitSceneStack();
 
     cred::Credentials creds;
@@ -380,11 +395,11 @@ void App::Init() {
     policy.disabled         = (decision_.mode == boot_mode::Mode::kPortal);
     sleep_mgr_.Init(policy);
     sleep_mgr_.SetSleepBlocker([]() { return xiaozhi::ChatService::Get().BlocksSleep(); });
-    system_shutdown::SetPreShutdownHook([]() { xiaozhi::ChatService::Get().SuspendForSleep(); });
+    power_shutdown::SetPreShutdownHook([]() { xiaozhi::ChatService::Get().SuspendForSleep(); });
 
     StartUiLoop();
     AttachInputs();
-    StartMinuteTick();
+    StartMinuteBoundaryTicker();
     StartSleep();
 
     switch (decision_.mode) {

@@ -130,21 +130,21 @@ void SyncService::CyclePrev() {
 }
 
 std::string SyncService::CurrentGroupId() const {
-    return GetCurrentGroupLocked();
+    return CurrentGroupSnapshot();
 }
 
-std::string SyncService::GetCurrentGroupLocked() const {
+std::string SyncService::CurrentGroupSnapshot() const {
     std::lock_guard<std::mutex> lock(current_group_mutex_);
     std::string                 gid = current_group_;
     return gid;
 }
 
-void SyncService::SetCurrentGroupLocked(const std::string& gid) {
+void SyncService::SetCurrentGroup(const std::string& gid) {
     std::lock_guard<std::mutex> lock(current_group_mutex_);
     current_group_ = gid;
 }
 
-void SyncService::ClearCurrentGroupLocked() {
+void SyncService::ClearCurrentGroup() {
     std::lock_guard<std::mutex> lock(current_group_mutex_);
     current_group_.clear();
 }

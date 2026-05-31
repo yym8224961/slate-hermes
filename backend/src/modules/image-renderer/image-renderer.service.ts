@@ -12,7 +12,7 @@ import {
   type DitherMode,
 } from 'shared';
 import { ValidationError } from '../../common/errors';
-import { computeETag } from '../../common/etag/etag.util';
+import { computeETag } from '../../common/utils/etag';
 import { ImageRenderCacheService } from './image-render-cache.service';
 
 export interface RenderOptions {

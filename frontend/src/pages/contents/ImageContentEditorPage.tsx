@@ -1,7 +1,7 @@
 // 图片内容编辑页面 — 将路由参数解析后传入编辑器。
 
-import { ImageContentEditor } from '@/features/contents/components/image-editor/ImageContentEditor';
-import { ContentEditorPageLayout } from './ContentEditorPageLayout';
+import { ImageContentEditor } from '@/features/contents/components/image-form/ImageContentEditor';
+import { ContentEditorPageLayout } from '@/features/contents/components/ContentEditorPageLayout';
 
 export function ImageContentEditorPage() {
   return (

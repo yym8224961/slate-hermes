@@ -1,6 +1,6 @@
-import { DESKTOP_UA } from '../fetch';
+import { DESKTOP_UA } from '../../../common/http/fetch';
 import { defineJsonSource } from '../source-factory';
-import { compactHot } from '../text';
+import { compactHot } from '../hot-list.utils';
 
 interface JuejinResponse {
   data?: Array<{

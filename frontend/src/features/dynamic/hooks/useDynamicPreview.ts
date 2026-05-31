@@ -1,41 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DynamicConfig, type DynamicConfigT, type DynamicTypeT } from 'shared';
-import type { UseMutationResult } from '@tanstack/react-query';
-import { effectiveDynamicFrameName } from '@/features/dynamic/model/frame-name';
+import { effectiveDynamicFrameName } from '@/features/dynamic/model/display-name';
+import { usePreviewDynamicContent } from '@/features/dynamic/query/dynamic-content-queries';
 
 type PreviewContentType = DynamicTypeT | 'image';
 
-type PreviewMutation = UseMutationResult<
-  ArrayBuffer,
-  Error,
-  {
-    config: DynamicConfigT;
-    frameName?: string | null;
-    data?: Record<string, unknown>;
-    signal?: AbortSignal;
-  }
->;
-
 export function useDynamicPreview({
+  contentId,
   type,
   config,
   frameName,
   dashboardData,
-  preview,
   debounceMs = 800,
 }: {
+  contentId?: string;
   type: PreviewContentType | null;
   config: DynamicConfigT | null;
   frameName: string;
   dashboardData?: Record<string, unknown> | null;
-  preview: PreviewMutation;
   debounceMs?: number;
 }) {
+  const preview = usePreviewDynamicContent(contentId);
   const [livePreviewData, setLivePreviewData] = useState<ArrayBuffer | null>(null);
   const previewSeq = useRef(0);
-  // React Query v5 exposes a stable mutate reference; keeping it as a named
-  // dependency makes the debounce effect explicit without depending on the
-  // whole mutation result object.
   const previewMutate = preview.mutate;
 
   const invalidatePreview = useCallback(() => {
@@ -80,5 +67,5 @@ export function useDynamicPreview({
     };
   }, [config, dashboardData, debounceMs, frameName, invalidatePreview, previewMutate, type]);
 
-  return { livePreviewData, invalidatePreview };
+  return { livePreviewData, previewPending: preview.isPending, invalidatePreview };
 }

@@ -10,7 +10,7 @@
 
 #include "utils/byte_utils.h"
 #include "utils/json_utils.h"
-#include "xiaozhi/api/activation_client.h"
+#include "xiaozhi/config/activation_client.h"
 #include "xiaozhi/config/settings.h"
 
 namespace {
@@ -85,68 +85,12 @@ bool WebsocketProtocol::OpenAudioChannel() {
     }
     const std::string protocol_version = std::to_string(version_.load(std::memory_order_acquire));
     websocket->SetHeader("Protocol-Version", protocol_version.c_str());
-    ActivationClient      client;
+    ActivationClient  client;
     const std::string device_id = client.DeviceId();
     const std::string client_id = settings::GetUuid();
     websocket->SetHeader("Device-Id", device_id.c_str());
     websocket->SetHeader("Client-Id", client_id.c_str());
-    websocket->OnData([this](const char* data, size_t len, bool binary) {
-        if (binary) {
-            if (!on_incoming_audio_)
-                return;
-            int sample_rate    = 0;
-            int frame_duration = 0;
-            GetServerAudioParams(sample_rate, frame_duration);
-            const int version = version_.load(std::memory_order_acquire);
-            if (version == 2 && len >= kBinaryProtocol2HeaderSize) {
-                const uint32_t timestamp    = util::ReadBe32(data + 8);
-                const uint32_t payload_size = util::ReadBe32(data + 12);
-                if (payload_size > len - kBinaryProtocol2HeaderSize)
-                    return;
-                auto payload           = reinterpret_cast<const uint8_t*>(data + kBinaryProtocol2HeaderSize);
-                auto packet            = std::make_unique<AudioStreamPacket>();
-                packet->sample_rate    = sample_rate;
-                packet->frame_duration = frame_duration;
-                packet->timestamp      = timestamp;
-                packet->payload.assign(payload, payload + payload_size);
-                on_incoming_audio_(std::move(packet));
-            } else if (version == 3 && len >= kBinaryProtocol3HeaderSize) {
-                const uint16_t payload_size = util::ReadBe16(data + 2);
-                if (payload_size > len - kBinaryProtocol3HeaderSize)
-                    return;
-                auto payload           = reinterpret_cast<const uint8_t*>(data + kBinaryProtocol3HeaderSize);
-                auto packet            = std::make_unique<AudioStreamPacket>();
-                packet->sample_rate    = sample_rate;
-                packet->frame_duration = frame_duration;
-                packet->payload.assign(payload, payload + payload_size);
-                on_incoming_audio_(std::move(packet));
-            } else {
-                auto packet            = std::make_unique<AudioStreamPacket>();
-                packet->sample_rate    = sample_rate;
-                packet->frame_duration = frame_duration;
-                packet->payload.assign(reinterpret_cast<const uint8_t*>(data),
-                                       reinterpret_cast<const uint8_t*>(data) + len);
-                on_incoming_audio_(std::move(packet));
-            }
-        } else {
-            cJSON* root = cJSON_ParseWithLength(data, len);
-            if (!root) {
-                ESP_LOGW(kTag, "WS rx ignored: invalid JSON");
-                return;
-            }
-            cJSON* type = cJSON_GetObjectItem(root, "type");
-            if (cJSON_IsString(type)) {
-                if (std::strcmp(type->valuestring, "hello") == 0) {
-                    ParseServerHello(root);
-                } else if (std::strcmp(type->valuestring, "mcp") == 0 && HandleMcpMessage(root)) {
-                } else if (on_incoming_json_) {
-                    on_incoming_json_(root);
-                }
-            }
-            cJSON_Delete(root);
-        }
-        MarkIncomingNow();
-    });
+    websocket->OnData([this](const char* data, size_t len, bool binary) { HandleIncomingData(data, len, binary); });
     websocket->OnDisconnected([this]() {
         ESP_LOGW(kTag, "WS disconnected");
         bool notify_closed = false;
@@ -252,30 +196,10 @@ bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
     if (!websocket_ || !websocket_->IsConnected() || !packet)
         return false;
     const int version = version_.load(std::memory_order_acquire);
-    if (version == 2) {
-        if (packet->payload.size() > UINT32_MAX)
-            return false;
-        auto& out = send_buffer_;
-        out.resize(kBinaryProtocol2HeaderSize + packet->payload.size());
-        util::WriteBe16(out.data(), static_cast<uint16_t>(version));
-        util::WriteBe16(out.data() + 2, 0);
-        util::WriteBe32(out.data() + 4, 0);
-        util::WriteBe32(out.data() + 8, packet->timestamp);
-        util::WriteBe32(out.data() + 12, static_cast<uint32_t>(packet->payload.size()));
-        std::memcpy(out.data() + kBinaryProtocol2HeaderSize, packet->payload.data(), packet->payload.size());
-        return websocket_->Send(out.data(), out.size(), true);
-    }
-    if (version == 3) {
-        if (packet->payload.size() > UINT16_MAX)
-            return false;
-        auto& out = send_buffer_;
-        out.resize(kBinaryProtocol3HeaderSize + packet->payload.size());
-        out[0] = 0;
-        out[1] = 0;
-        util::WriteBe16(out.data() + 2, static_cast<uint16_t>(packet->payload.size()));
-        std::memcpy(out.data() + kBinaryProtocol3HeaderSize, packet->payload.data(), packet->payload.size());
-        return websocket_->Send(out.data(), out.size(), true);
-    }
+    if (version == 2)
+        return SendProtocol2Audio(*packet);
+    if (version == 3)
+        return SendProtocol3Audio(*packet);
     return websocket_->Send(packet->payload.data(), packet->payload.size(), true);
 }
 
@@ -287,6 +211,90 @@ bool WebsocketProtocol::SendText(const std::string& text) {
     }
     const bool ok = websocket_->Send(text);
     return ok;
+}
+
+void WebsocketProtocol::HandleIncomingData(const char* data, size_t len, bool binary) {
+    const bool handled = binary ? HandleIncomingBinary(data, len) : HandleIncomingText(data, len);
+    if (handled)
+        MarkIncomingNow();
+}
+
+bool WebsocketProtocol::HandleIncomingBinary(const char* data, size_t len) {
+    if (!on_incoming_audio_)
+        return false;
+
+    int sample_rate    = 0;
+    int frame_duration = 0;
+    GetServerAudioParams(sample_rate, frame_duration);
+
+    auto packet            = std::make_unique<AudioStreamPacket>();
+    packet->sample_rate    = sample_rate;
+    packet->frame_duration = frame_duration;
+    const int version      = version_.load(std::memory_order_acquire);
+    if (version == 2 && len >= kBinaryProtocol2HeaderSize) {
+        const uint32_t payload_size = util::ReadBe32(data + 12);
+        if (payload_size > len - kBinaryProtocol2HeaderSize)
+            return false;
+        packet->timestamp  = util::ReadBe32(data + 8);
+        const auto payload = reinterpret_cast<const uint8_t*>(data + kBinaryProtocol2HeaderSize);
+        packet->payload.assign(payload, payload + payload_size);
+    } else if (version == 3 && len >= kBinaryProtocol3HeaderSize) {
+        const uint16_t payload_size = util::ReadBe16(data + 2);
+        if (payload_size > len - kBinaryProtocol3HeaderSize)
+            return false;
+        const auto payload = reinterpret_cast<const uint8_t*>(data + kBinaryProtocol3HeaderSize);
+        packet->payload.assign(payload, payload + payload_size);
+    } else {
+        const auto payload = reinterpret_cast<const uint8_t*>(data);
+        packet->payload.assign(payload, payload + len);
+    }
+    on_incoming_audio_(std::move(packet));
+    return true;
+}
+
+bool WebsocketProtocol::HandleIncomingText(const char* data, size_t len) {
+    cJSON* root = cJSON_ParseWithLength(data, len);
+    if (!root) {
+        ESP_LOGW(kTag, "WS rx ignored: invalid JSON");
+        return false;
+    }
+    cJSON* type = cJSON_GetObjectItem(root, "type");
+    if (cJSON_IsString(type)) {
+        if (std::strcmp(type->valuestring, "hello") == 0) {
+            ParseServerHello(root);
+        } else if (std::strcmp(type->valuestring, "mcp") == 0 && HandleMcpMessage(root)) {
+        } else if (on_incoming_json_) {
+            on_incoming_json_(root);
+        }
+    }
+    cJSON_Delete(root);
+    return true;
+}
+
+bool WebsocketProtocol::SendProtocol2Audio(const AudioStreamPacket& packet) {
+    if (packet.payload.size() > UINT32_MAX)
+        return false;
+    auto& out = send_buffer_;
+    out.resize(kBinaryProtocol2HeaderSize + packet.payload.size());
+    util::WriteBe16(out.data(), 2);
+    util::WriteBe16(out.data() + 2, 0);
+    util::WriteBe32(out.data() + 4, 0);
+    util::WriteBe32(out.data() + 8, packet.timestamp);
+    util::WriteBe32(out.data() + 12, static_cast<uint32_t>(packet.payload.size()));
+    std::memcpy(out.data() + kBinaryProtocol2HeaderSize, packet.payload.data(), packet.payload.size());
+    return websocket_->Send(out.data(), out.size(), true);
+}
+
+bool WebsocketProtocol::SendProtocol3Audio(const AudioStreamPacket& packet) {
+    if (packet.payload.size() > UINT16_MAX)
+        return false;
+    auto& out = send_buffer_;
+    out.resize(kBinaryProtocol3HeaderSize + packet.payload.size());
+    out[0] = 0;
+    out[1] = 0;
+    util::WriteBe16(out.data() + 2, static_cast<uint16_t>(packet.payload.size()));
+    std::memcpy(out.data() + kBinaryProtocol3HeaderSize, packet.payload.data(), packet.payload.size());
+    return websocket_->Send(out.data(), out.size(), true);
 }
 
 std::string WebsocketProtocol::GetHelloMessage() const {

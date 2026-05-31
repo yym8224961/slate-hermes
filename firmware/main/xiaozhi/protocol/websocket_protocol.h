@@ -40,6 +40,11 @@ class WebsocketProtocol : public Protocol {
 
     bool        SendText(const std::string& text) override;
     std::string GetHelloMessage() const;
+    void        HandleIncomingData(const char* data, size_t len, bool binary);
+    bool        HandleIncomingBinary(const char* data, size_t len);
+    bool        HandleIncomingText(const char* data, size_t len);
+    bool        SendProtocol2Audio(const AudioStreamPacket& packet);
+    bool        SendProtocol3Audio(const AudioStreamPacket& packet);
     void        ParseServerHello(const cJSON* root);
 };
 

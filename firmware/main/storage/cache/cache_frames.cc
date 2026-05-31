@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <cstdint>
 #include <cstring>
+#include <utility>
 
 #include "storage/cache/cache_io.h"
 #include "storage/cache/cache_paths.h"
@@ -161,6 +162,7 @@ bool ReadFrameMeta(const std::string& gid, int idx, FrameMeta& out) {
     return ReadFrameMetaFile(internal::MetaPath(gid, idx), out);
 }
 
+namespace {
 bool BeginFrameStage(const std::string& gid) {
     if (gid.empty())
         return false;
@@ -274,6 +276,59 @@ bool CommitStagedFrame(const std::string& gid, int idx, const std::string& image
         internal::RemoveIfExists(internal::EtagPath(gid, idx, "pcm"));
     }
     return ok;
+}
+}  // namespace
+
+CacheWriter::CacheWriter(std::string gid) : gid_(std::move(gid)) {
+}
+
+CacheWriter::~CacheWriter() {
+    Rollback();
+}
+
+bool CacheWriter::Begin() {
+    if (begun_)
+        return true;
+    begun_ = BeginFrameStage(gid_);
+    return begun_;
+}
+
+bool CacheWriter::FrameImageExists(int idx, const std::string& expected_etag) const {
+    return begun_ && StagedFrameImageExists(gid_, idx, expected_etag);
+}
+
+bool CacheWriter::WriteFrameImage(int idx, const std::vector<uint8_t>& bytes, const std::string& etag) {
+    return begun_ && WriteStagedFrameImage(gid_, idx, bytes, etag);
+}
+
+bool CacheWriter::FrameAudioExists(int idx, const std::string& expected_etag) const {
+    return begun_ && StagedFrameAudioExists(gid_, idx, expected_etag);
+}
+
+bool CacheWriter::WriteFrameAudio(int idx, const std::vector<uint8_t>& bytes, const std::string& etag) {
+    return begun_ && WriteStagedFrameAudio(gid_, idx, bytes, etag);
+}
+
+bool CacheWriter::WriteFrameMeta(int idx, const FrameMeta& meta) {
+    return begun_ && WriteStagedFrameMeta(gid_, idx, meta);
+}
+
+bool CacheWriter::CommitFrame(int idx, const std::string& image_etag, const std::string& audio_etag) {
+    return begun_ && CommitStagedFrame(gid_, idx, image_etag, audio_etag);
+}
+
+bool CacheWriter::Commit() {
+    if (!begun_)
+        return false;
+    committed_ = true;
+    CleanupFrameStage(gid_);
+    return true;
+}
+
+void CacheWriter::Rollback() {
+    if (begun_ && !committed_)
+        CleanupFrameStage(gid_);
+    begun_ = false;
 }
 
 }  // namespace cache

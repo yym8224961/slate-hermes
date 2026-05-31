@@ -11,7 +11,7 @@ import {
 } from 'shared';
 import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { computeETag } from '../../common/etag/etag.util';
+import { computeETag } from '../../common/utils/etag';
 import { ConflictError, InternalError, NotFoundError, ValidationError } from '../../common/errors';
 import { toPrismaInputJson } from '../../common/db/prisma-json';
 import { lockGroupRow } from '../../common/db/row-locks';
@@ -20,11 +20,11 @@ import { nextContentSortOrder } from '../../common/db/sort-order';
 import { formatError } from '../../common/utils/error-format';
 import { KeyedPromiseQueue } from '../../common/worker/keyed-promise-queue';
 import { GroupsService } from '../groups/groups.service';
-import { deleteContentAudioBlob } from '../audio/content-audio-blobs';
+import { deleteContentAudioBlob } from '../../infra/blob/content-audio-blobs';
 import { DynamicContentRegistry } from './dynamic-content-registry';
 import { DynamicContentRendererService } from './dynamic-content-renderer.service';
 import { defaultDynamicFrameName } from './status-text/dynamic-content-status-text';
-import { toContentMutationResponse } from '../../common/api/content-mutation-response';
+import { toContentMutationResponse } from '../contents/content-mutation-response';
 
 const DYNAMIC_MUTATION_TAIL_TTL_MS = 5 * 60_000;
 

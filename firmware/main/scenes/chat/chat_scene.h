@@ -5,11 +5,11 @@
 
 #include "scenes/core/scene.h"
 #include "ui/status_bar.h"
-#include "xiaozhi/service/chat_service.h"
 
 namespace xiaozhi {
 struct ChatSnapshot;
-}
+class ChatService;
+}  // namespace xiaozhi
 
 class ChatScene : public Scene {
    public:
@@ -24,18 +24,19 @@ class ChatScene : public Scene {
     }
 
    private:
-    void EnsureServiceStarted(SceneContext& ctx);
-    void CreateLayout();
-    void Render(SceneContext& ctx, bool full = false);
-    void RenderContent();
-    void HideContentViews();
-    void RenderSystemMessage(const std::string& text, bool show_code, const std::string& code);
-    void RenderChatMessages(const xiaozhi::ChatSnapshot& snap);
-    void ClearChatMessages();
-    void ShowEmptyChatHint();
-    void AppendChatBubble(const std::string& role, const std::string& text);
-    void LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::string& text);
-    void UpdateStatusBarTitle(const xiaozhi::ChatSnapshot& snap);
+    void                  EnsureServiceStarted(SceneContext& ctx);
+    xiaozhi::ChatService* Service(SceneContext& ctx);
+    void                  CreateLayout();
+    void                  Render(SceneContext& ctx, bool full = false);
+    void                  RenderContent();
+    void                  HideContentViews();
+    void                  RenderSystemMessage(const std::string& text, bool show_code, const std::string& code);
+    void                  RenderChatMessages(const xiaozhi::ChatSnapshot& snap);
+    void                  ClearChatMessages();
+    void                  ShowEmptyChatHint();
+    void                  AppendChatBubble(const std::string& role, const std::string& text);
+    void                  LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::string& text);
+    void                  UpdateStatusBarTitle(const xiaozhi::ChatSnapshot& snap);
 
     lv_obj_t*                  root_                   = nullptr;
     lv_obj_t*                  standby_icon_label_     = nullptr;
@@ -46,7 +47,8 @@ class ChatScene : public Scene {
     lv_obj_t*                  chat_content_           = nullptr;
     lv_obj_t*                  chat_empty_label_       = nullptr;
     lv_obj_t*                  hint_label_             = nullptr;
-    xiaozhi::ChatState         rendered_state_         = xiaozhi::ChatState::kCheckingConfig;
+    xiaozhi::ChatService*      service_                = nullptr;
+    int                        rendered_state_         = 0;
     bool                       service_entered_        = false;
     size_t                     rendered_message_count_ = 0;
     std::string                rendered_messages_key_;

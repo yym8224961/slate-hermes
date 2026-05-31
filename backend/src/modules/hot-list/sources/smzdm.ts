@@ -1,7 +1,7 @@
 import type { HotListSource } from '../hot-list.types';
-import { DESKTOP_UA, fetchJson, fetchText } from '../fetch';
-import { firstMatch, htmlBlocks } from '../html';
-import { compactHot, withRanks } from '../text';
+import { DESKTOP_UA, fetchJson, fetchText } from '../../../common/http/fetch';
+import { firstMatch, htmlBlocks } from '../html-utils';
+import { compactHot, withRanks } from '../hot-list.utils';
 
 interface SmzdmResponse {
   data?: Array<{

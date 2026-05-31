@@ -1,6 +1,6 @@
 export const contentKeys = {
   group: (gid: string | undefined) => ['contents', gid] as const,
-  detail: (contentId: string | undefined) => ['content', contentId] as const,
+  detail: (contentId: string | undefined) => ['contents', 'detail', contentId] as const,
   image: (contentId: string, etag?: string | null) =>
     etag === undefined
       ? (['content-image', contentId] as const)

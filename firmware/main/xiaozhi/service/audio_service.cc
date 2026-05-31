@@ -14,8 +14,8 @@
 #include <cstring>
 
 #include "drivers/audio/audio_player.h"
-#include "utils/time_utils.h"
 #include "storage/nvs/volume_store.h"
+#include "utils/time_utils.h"
 
 namespace {
 constexpr char kTag[]            = "XiaoAudio";
@@ -73,6 +73,17 @@ esp_opus_dec_frame_duration_t DecDurationEnum(int ms) {
 }  // namespace
 
 namespace xiaozhi {
+
+#if defined(CONFIG_LOG_DEFAULT_LEVEL_DEBUG)
+#define AUDIO_DIAG(expr) \
+    do {                 \
+        expr;            \
+    } while (0)
+#else
+#define AUDIO_DIAG(expr) \
+    do {                 \
+    } while (0)
+#endif
 
 AudioService& AudioService::Get() {
     static AudioService s;
@@ -146,17 +157,8 @@ bool AudioService::Start(AudioPlayer* player) {
         return false;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        encode_queue_.clear();
-        decode_queue_.clear();
-        playback_queue_.clear();
-        send_queue_.clear();
-    }
-    diag_.Reset();
-    decode_active_.store(false, std::memory_order_relaxed);
-    playback_active_.store(false, std::memory_order_relaxed);
-    queue_epoch_.fetch_add(1, std::memory_order_relaxed);
+    ResetAllQueues();
+    AUDIO_DIAG(diag_.Reset());
 
     started_.store(true, std::memory_order_relaxed);
     {
@@ -232,13 +234,7 @@ void AudioService::Stop() {
             ++expected;
     }
     const bool stopped = WaitForTasksToStop(expected);
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        encode_queue_.clear();
-        decode_queue_.clear();
-        playback_queue_.clear();
-        send_queue_.clear();
-    }
+    ClearAllQueues();
     if (stopped)
         CloseCodecResources();
 }
@@ -246,16 +242,7 @@ void AudioService::Stop() {
 bool AudioService::Begin(int xiaozhi_codec_volume) {
     if (!started_.load(std::memory_order_relaxed) || !player_)
         return false;
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        encode_queue_.clear();
-        decode_queue_.clear();
-        playback_queue_.clear();
-        send_queue_.clear();
-    }
-    decode_active_.store(false, std::memory_order_relaxed);
-    playback_active_.store(false, std::memory_order_relaxed);
-    queue_epoch_.fetch_add(1, std::memory_order_relaxed);
+    ResetAllQueues();
     if (!player_->BeginChat(xiaozhi_codec_volume))
         return false;
     active_.store(true, std::memory_order_relaxed);
@@ -266,22 +253,10 @@ bool AudioService::Begin(int xiaozhi_codec_volume) {
 void AudioService::EndAndRestoreAlbumVolume(int album_level) {
     voice_processing_.store(false, std::memory_order_relaxed);
     const bool was_active = active_.exchange(false, std::memory_order_relaxed);
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        encode_queue_.clear();
-        decode_queue_.clear();
-        playback_queue_.clear();
-        send_queue_.clear();
-    }
-    decode_active_.store(false, std::memory_order_relaxed);
-    playback_active_.store(false, std::memory_order_relaxed);
-    queue_epoch_.fetch_add(1, std::memory_order_relaxed);
+    ResetAllQueues();
     {
         std::lock_guard<std::mutex> lock(codec_mutex_);
-        if (opus_decoder_)
-            esp_opus_dec_reset(opus_decoder_);
-        if (output_resampler_)
-            esp_ae_rate_cvt_reset(reinterpret_cast<esp_ae_rate_cvt_handle_t>(output_resampler_));
+        ResetDecoderResourcesLocked();
     }
     if (was_active && player_)
         player_->EndChat(vol::ToCodec(album_level));
@@ -308,25 +283,15 @@ bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> pa
             return false;
         decode_queue_.push_back(std::move(packet));
     }
-    diag_.decode_push_count.fetch_add(1, std::memory_order_relaxed);
+    AUDIO_DIAG(diag_.decode_push_count.fetch_add(1, std::memory_order_relaxed));
     xSemaphoreGive(decode_notify_);
     return true;
 }
 
 void AudioService::ResetDecoder() {
-    {
-        std::lock_guard<std::mutex> lock(queue_mutex_);
-        decode_queue_.clear();
-        playback_queue_.clear();
-    }
-    decode_active_.store(false, std::memory_order_relaxed);
-    playback_active_.store(false, std::memory_order_relaxed);
-    queue_epoch_.fetch_add(1, std::memory_order_relaxed);
+    ResetDecodeQueues();
     std::lock_guard<std::mutex> lock(codec_mutex_);
-    if (opus_decoder_)
-        esp_opus_dec_reset(opus_decoder_);
-    if (output_resampler_)
-        esp_ae_rate_cvt_reset(reinterpret_cast<esp_ae_rate_cvt_handle_t>(output_resampler_));
+    ResetDecoderResourcesLocked();
 }
 
 std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
@@ -335,8 +300,8 @@ std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
         return nullptr;
     auto packet = std::move(send_queue_.front());
     send_queue_.pop_front();
-    diag_.send_pop_count.fetch_add(1, std::memory_order_relaxed);
-    diag_.last_send_pop_ms.store(time_utils::NowMs(), std::memory_order_relaxed);
+    AUDIO_DIAG(diag_.send_pop_count.fetch_add(1, std::memory_order_relaxed));
+    AUDIO_DIAG(diag_.last_send_pop_ms.store(time_utils::NowMs(), std::memory_order_relaxed));
     if (decode_notify_)
         xSemaphoreGive(decode_notify_);
     return packet;
@@ -392,6 +357,9 @@ void AudioService::CodecTaskEntry(void* arg) {
 
 void AudioService::InputTask() {
     std::vector<int16_t> pcm;
+#if !defined(CONFIG_LOG_DEFAULT_LEVEL_DEBUG)
+    uint32_t read_fail_log_count = 0;
+#endif
 
     while (started_.load(std::memory_order_relaxed)) {
         if (!active_.load(std::memory_order_relaxed) || !voice_processing_.load(std::memory_order_relaxed) ||
@@ -402,7 +370,8 @@ void AudioService::InputTask() {
 
         pcm.resize(encoder_frame_samples_);
         if (!player_->ReadChatPcm(pcm.data(), pcm.size())) {
-            diag_.input_read_fail.fetch_add(1, std::memory_order_relaxed);
+            AUDIO_DIAG(diag_.input_read_fail.fetch_add(1, std::memory_order_relaxed));
+#if defined(CONFIG_LOG_DEFAULT_LEVEL_DEBUG)
             const uint32_t fail_count = diag_.input_read_fail.load(std::memory_order_relaxed);
             if (fail_count == 1 || (fail_count % 100) == 0) {
                 ESP_LOGW(kTag, "ReadChatPcm failed: active=%d voice=%d fail=%lu ok=%lu",
@@ -411,9 +380,19 @@ void AudioService::InputTask() {
                          static_cast<unsigned long>(fail_count),
                          static_cast<unsigned long>(diag_.input_read_ok.load(std::memory_order_relaxed)));
             }
+#else
+            ++read_fail_log_count;
+            if (read_fail_log_count == 1 || (read_fail_log_count % 100) == 0) {
+                ESP_LOGW(kTag, "ReadChatPcm failed: active=%d voice=%d fail=%lu",
+                         active_.load(std::memory_order_relaxed) ? 1 : 0,
+                         voice_processing_.load(std::memory_order_relaxed) ? 1 : 0,
+                         static_cast<unsigned long>(read_fail_log_count));
+            }
+#endif
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
+#if defined(CONFIG_LOG_DEFAULT_LEVEL_DEBUG)
         diag_.input_read_ok.fetch_add(1, std::memory_order_relaxed);
         diag_.last_input_ok_ms.store(time_utils::NowMs(), std::memory_order_relaxed);
         int peak = 0;
@@ -423,6 +402,7 @@ void AudioService::InputTask() {
                 peak = value;
         }
         diag_.last_input_peak.store(static_cast<uint32_t>(peak), std::memory_order_relaxed);
+#endif
 
         if (!PushTaskToEncodeQueue(std::move(pcm)))
             vTaskDelay(pdMS_TO_TICKS(5));
@@ -455,7 +435,7 @@ void AudioService::OutputTask() {
 
         playback_active_.store(true, std::memory_order_relaxed);
         player_->WriteChatPcm(task->pcm.data(), task->pcm.size());
-        diag_.playback_write_count.fetch_add(1, std::memory_order_relaxed);
+        AUDIO_DIAG(diag_.playback_write_count.fetch_add(1, std::memory_order_relaxed));
         playback_active_.store(false, std::memory_order_relaxed);
     }
     playback_active_.store(false, std::memory_order_relaxed);
@@ -463,118 +443,126 @@ void AudioService::OutputTask() {
 
 void AudioService::CodecTask() {
     while (started_.load(std::memory_order_relaxed)) {
-        bool did_work = false;
+        const bool decoded = ProcessDecodePacket();
+        const bool encoded = ProcessEncodeTask();
 
-        std::unique_ptr<AudioStreamPacket> decode_packet;
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex_);
-            if (!decode_queue_.empty() && playback_queue_.size() < kMaxPlaybackTasks) {
-                decode_packet = std::move(decode_queue_.front());
-                decode_queue_.pop_front();
-            }
-        }
-        if (decode_packet) {
-            did_work = true;
-            decode_active_.store(true, std::memory_order_relaxed);
-            auto task       = std::make_unique<PcmTask>();
-            task->timestamp = decode_packet->timestamp;
-            task->epoch     = decode_packet->epoch;
-
-            bool decoded = false;
-            {
-                std::lock_guard<std::mutex> lock(codec_mutex_);
-                if (EnsureDecoderLocked(decode_packet->sample_rate, decode_packet->frame_duration)) {
-                    task->pcm.resize(decoder_frame_samples_);
-                    esp_audio_dec_in_raw_t raw = {
-                        .buffer        = decode_packet->payload.data(),
-                        .len           = static_cast<uint32_t>(decode_packet->payload.size()),
-                        .consumed      = 0,
-                        .frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE,
-                    };
-                    esp_audio_dec_out_frame_t frame = {
-                        .buffer       = reinterpret_cast<uint8_t*>(task->pcm.data()),
-                        .len          = static_cast<uint32_t>(task->pcm.size() * sizeof(int16_t)),
-                        .needed_size  = 0,
-                        .decoded_size = 0,
-                    };
-                    esp_audio_dec_info_t info = {};
-                    auto                 ret  = esp_opus_dec_decode(opus_decoder_, &raw, &frame, &info);
-                    if (ret != ESP_AUDIO_ERR_OK || frame.decoded_size == 0) {
-                        ESP_LOGW(kTag, "Decode failed: %d", ret);
-                    } else {
-                        task->pcm.resize(frame.decoded_size / sizeof(int16_t));
-                        decoded = ResampleToDeviceRateLocked(task->pcm, decode_packet->sample_rate);
-                    }
-                }
-            }
-            if (decoded && !task->pcm.empty()) {
-                {
-                    std::lock_guard<std::mutex> lock(queue_mutex_);
-                    if (task->epoch == queue_epoch_.load(std::memory_order_relaxed) &&
-                        playback_queue_.size() < kMaxPlaybackTasks) {
-                        playback_queue_.push_back(std::move(task));
-                    }
-                }
-                if (playback_notify_)
-                    xSemaphoreGive(playback_notify_);
-            }
-            decode_active_.store(false, std::memory_order_relaxed);
-        }
-
-        std::unique_ptr<PcmTask> encode_task;
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex_);
-            if (!encode_queue_.empty() && send_queue_.size() < kMaxSendPackets) {
-                encode_task = std::move(encode_queue_.front());
-                encode_queue_.pop_front();
-            }
-        }
-        if (encode_task) {
-            did_work = true;
-            if (encode_task->pcm.size() != static_cast<size_t>(encoder_frame_samples_)) {
-                ESP_LOGW(kTag, "Skip encode: invalid frame samples=%u expected=%d",
-                         static_cast<unsigned>(encode_task->pcm.size()), encoder_frame_samples_);
-                diag_.encode_fail.fetch_add(1, std::memory_order_relaxed);
-            } else {
-                std::vector<uint8_t>     encoded(encoder_output_bytes_);
-                esp_audio_enc_in_frame_t in = {
-                    .buffer = reinterpret_cast<uint8_t*>(encode_task->pcm.data()),
-                    .len    = static_cast<uint32_t>(encode_task->pcm.size() * sizeof(int16_t)),
-                };
-                esp_audio_enc_out_frame_t out = {};
-                out.buffer                    = encoded.data();
-                out.len                       = static_cast<uint32_t>(encoded.size());
-                out.encoded_bytes             = 0;
-                auto ret                      = esp_opus_enc_process(opus_encoder_, &in, &out);
-                if (ret == ESP_AUDIO_ERR_OK && out.encoded_bytes == 0) {
-                    diag_.encode_empty.fetch_add(1, std::memory_order_relaxed);
-                } else if (ret != ESP_AUDIO_ERR_OK) {
-                    diag_.encode_fail.fetch_add(1, std::memory_order_relaxed);
-                    ESP_LOGW(kTag, "Encode failed: %d", ret);
-                } else {
-                    diag_.encode_ok.fetch_add(1, std::memory_order_relaxed);
-                    diag_.last_encode_ok_ms.store(time_utils::NowMs(), std::memory_order_relaxed);
-                    auto packet            = std::make_unique<AudioStreamPacket>();
-                    packet->sample_rate    = kClientSampleRate;
-                    packet->frame_duration = kOpusFrameDurationMs;
-                    packet->timestamp      = encode_task->timestamp;
-                    packet->epoch          = encode_task->epoch;
-                    packet->payload.assign(encoded.data(), encoded.data() + out.encoded_bytes);
-                    {
-                        std::lock_guard<std::mutex> lock(queue_mutex_);
-                        if (packet->epoch == queue_epoch_.load(std::memory_order_relaxed))
-                            send_queue_.push_back(std::move(packet));
-                    }
-                    if (send_notify_)
-                        xSemaphoreGive(send_notify_);
-                }
-            }
-        }
-
-        if (!did_work && decode_notify_)
+        if (!decoded && !encoded && decode_notify_)
             xSemaphoreTake(decode_notify_, pdMS_TO_TICKS(kCodecTaskDelayMs));
     }
     decode_active_.store(false, std::memory_order_relaxed);
+}
+
+bool AudioService::ProcessDecodePacket() {
+    std::unique_ptr<AudioStreamPacket> decode_packet;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        if (!decode_queue_.empty() && playback_queue_.size() < kMaxPlaybackTasks) {
+            decode_packet = std::move(decode_queue_.front());
+            decode_queue_.pop_front();
+        }
+    }
+    if (!decode_packet)
+        return false;
+
+    decode_active_.store(true, std::memory_order_relaxed);
+    auto task       = std::make_unique<PcmTask>();
+    task->timestamp = decode_packet->timestamp;
+    task->epoch     = decode_packet->epoch;
+
+    bool decoded = false;
+    {
+        std::lock_guard<std::mutex> lock(codec_mutex_);
+        if (EnsureDecoderLocked(decode_packet->sample_rate, decode_packet->frame_duration)) {
+            task->pcm.resize(decoder_frame_samples_);
+            esp_audio_dec_in_raw_t raw = {
+                .buffer        = decode_packet->payload.data(),
+                .len           = static_cast<uint32_t>(decode_packet->payload.size()),
+                .consumed      = 0,
+                .frame_recover = ESP_AUDIO_DEC_RECOVERY_NONE,
+            };
+            esp_audio_dec_out_frame_t frame = {
+                .buffer       = reinterpret_cast<uint8_t*>(task->pcm.data()),
+                .len          = static_cast<uint32_t>(task->pcm.size() * sizeof(int16_t)),
+                .needed_size  = 0,
+                .decoded_size = 0,
+            };
+            esp_audio_dec_info_t info = {};
+            auto                 ret  = esp_opus_dec_decode(opus_decoder_, &raw, &frame, &info);
+            if (ret != ESP_AUDIO_ERR_OK || frame.decoded_size == 0) {
+                ESP_LOGW(kTag, "Decode failed: %d", ret);
+            } else {
+                task->pcm.resize(frame.decoded_size / sizeof(int16_t));
+                decoded = ResampleToDeviceRateLocked(task->pcm, decode_packet->sample_rate);
+            }
+        }
+    }
+    if (decoded && !task->pcm.empty()) {
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            if (task->epoch == queue_epoch_.load(std::memory_order_relaxed) &&
+                playback_queue_.size() < kMaxPlaybackTasks) {
+                playback_queue_.push_back(std::move(task));
+            }
+        }
+        if (playback_notify_)
+            xSemaphoreGive(playback_notify_);
+    }
+    decode_active_.store(false, std::memory_order_relaxed);
+    return true;
+}
+
+bool AudioService::ProcessEncodeTask() {
+    std::unique_ptr<PcmTask> encode_task;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        if (!encode_queue_.empty() && send_queue_.size() < kMaxSendPackets) {
+            encode_task = std::move(encode_queue_.front());
+            encode_queue_.pop_front();
+        }
+    }
+    if (!encode_task)
+        return false;
+
+    if (encode_task->pcm.size() != static_cast<size_t>(encoder_frame_samples_)) {
+        ESP_LOGW(kTag, "Skip encode: invalid frame samples=%u expected=%d",
+                 static_cast<unsigned>(encode_task->pcm.size()), encoder_frame_samples_);
+        AUDIO_DIAG(diag_.encode_fail.fetch_add(1, std::memory_order_relaxed));
+        return true;
+    }
+
+    std::vector<uint8_t>     encoded(encoder_output_bytes_);
+    esp_audio_enc_in_frame_t in = {
+        .buffer = reinterpret_cast<uint8_t*>(encode_task->pcm.data()),
+        .len    = static_cast<uint32_t>(encode_task->pcm.size() * sizeof(int16_t)),
+    };
+    esp_audio_enc_out_frame_t out = {};
+    out.buffer                    = encoded.data();
+    out.len                       = static_cast<uint32_t>(encoded.size());
+    out.encoded_bytes             = 0;
+    auto ret                      = esp_opus_enc_process(opus_encoder_, &in, &out);
+    if (ret == ESP_AUDIO_ERR_OK && out.encoded_bytes == 0) {
+        AUDIO_DIAG(diag_.encode_empty.fetch_add(1, std::memory_order_relaxed));
+    } else if (ret != ESP_AUDIO_ERR_OK) {
+        AUDIO_DIAG(diag_.encode_fail.fetch_add(1, std::memory_order_relaxed));
+        ESP_LOGW(kTag, "Encode failed: %d", ret);
+    } else {
+        AUDIO_DIAG(diag_.encode_ok.fetch_add(1, std::memory_order_relaxed));
+        AUDIO_DIAG(diag_.last_encode_ok_ms.store(time_utils::NowMs(), std::memory_order_relaxed));
+        auto packet            = std::make_unique<AudioStreamPacket>();
+        packet->sample_rate    = kClientSampleRate;
+        packet->frame_duration = kOpusFrameDurationMs;
+        packet->timestamp      = encode_task->timestamp;
+        packet->epoch          = encode_task->epoch;
+        packet->payload.assign(encoded.data(), encoded.data() + out.encoded_bytes);
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex_);
+            if (packet->epoch == queue_epoch_.load(std::memory_order_relaxed))
+                send_queue_.push_back(std::move(packet));
+        }
+        if (send_notify_)
+            xSemaphoreGive(send_notify_);
+    }
+    return true;
 }
 
 bool AudioService::PushTaskToEncodeQueue(std::vector<int16_t>&& pcm) {
@@ -690,6 +678,39 @@ bool AudioService::ResampleToDeviceRateLocked(std::vector<int16_t>& pcm, int sam
     return true;
 }
 
+void AudioService::ClearAllQueues() {
+    std::lock_guard<std::mutex> lock(queue_mutex_);
+    encode_queue_.clear();
+    decode_queue_.clear();
+    playback_queue_.clear();
+    send_queue_.clear();
+}
+
+void AudioService::ResetAllQueues() {
+    ClearAllQueues();
+    decode_active_.store(false, std::memory_order_relaxed);
+    playback_active_.store(false, std::memory_order_relaxed);
+    queue_epoch_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioService::ResetDecodeQueues() {
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        decode_queue_.clear();
+        playback_queue_.clear();
+    }
+    decode_active_.store(false, std::memory_order_relaxed);
+    playback_active_.store(false, std::memory_order_relaxed);
+    queue_epoch_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void AudioService::ResetDecoderResourcesLocked() {
+    if (opus_decoder_)
+        esp_opus_dec_reset(opus_decoder_);
+    if (output_resampler_)
+        esp_ae_rate_cvt_reset(reinterpret_cast<esp_ae_rate_cvt_handle_t>(output_resampler_));
+}
+
 void AudioService::CloseCodecResources() {
     std::lock_guard<std::mutex> lock(codec_mutex_);
     if (opus_encoder_) {
@@ -740,3 +761,5 @@ bool AudioService::WaitForTasksToStop(int expected_count) {
 }
 
 }  // namespace xiaozhi
+
+#undef AUDIO_DIAG

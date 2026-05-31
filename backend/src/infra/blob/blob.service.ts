@@ -7,6 +7,7 @@ import { AppConfig } from '../config/app.config';
 import { formatError } from '../../common/utils/error-format';
 import { ValidationError } from '../../common/errors';
 import { eachLimit } from '../../common/utils/each-limit';
+import { KeyedPromiseQueue } from '../../common/worker/keyed-promise-queue';
 
 export type BlobKind = 'image' | 'audio';
 
@@ -17,19 +18,10 @@ const MAX_BLOB_BYTES: Record<BlobKind, number> = {
   audio: 5 * 1024 * 1024,
 };
 
-interface BlobQueueTask {
-  run(): Promise<void>;
-}
-
-interface BlobQueueEntry {
-  running: boolean;
-  pending: BlobQueueTask[];
-}
-
 @Injectable()
 export class BlobService implements OnModuleInit {
   private readonly logger = new Logger(BlobService.name);
-  private readonly writeQueues = new Map<string, BlobQueueEntry>();
+  private readonly writeQueue = new KeyedPromiseQueue();
   private blobRoot: string | null = null;
 
   constructor(private readonly config: AppConfig) {}
@@ -115,46 +107,7 @@ export class BlobService implements OnModuleInit {
   }
 
   private runExclusive<T>(key: string, fn: () => Promise<T>): Promise<T> {
-    const entry = this.queueEntry(key);
-    return new Promise<T>((resolve, reject) => {
-      entry.pending.push({
-        run: async () => {
-          try {
-            resolve(await fn());
-          } catch (err) {
-            reject(err);
-          }
-        },
-      });
-      if (!entry.running) void this.drainQueue(key, entry);
-    });
-  }
-
-  private queueEntry(key: string): BlobQueueEntry {
-    let entry = this.writeQueues.get(key);
-    if (!entry) {
-      entry = { running: false, pending: [] };
-      this.writeQueues.set(key, entry);
-    }
-    return entry;
-  }
-
-  private async drainQueue(key: string, entry: BlobQueueEntry): Promise<void> {
-    if (entry.running) return;
-    entry.running = true;
-    try {
-      while (entry.pending.length > 0) {
-        const task = entry.pending.shift();
-        if (task) await task.run();
-      }
-    } finally {
-      entry.running = false;
-      if (entry.pending.length === 0) {
-        this.writeQueues.delete(key);
-      } else {
-        void this.drainQueue(key, entry);
-      }
-    }
+    return this.writeQueue.run(key, fn);
   }
 
   private async cleanupStaleTmpFiles(): Promise<void> {

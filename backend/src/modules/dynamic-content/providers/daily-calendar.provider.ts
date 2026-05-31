@@ -1,10 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { Solar } from 'lunar-typescript';
 import { DailyCalendarConfig, type DailyCalendarConfigT } from 'shared';
-import { getDateTimeFormat } from '../../../common/utils/intl';
 import { pickTraditionalFestival } from '../traditional-festivals';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
 import { findNextSolarTerm } from '../calendar-data.service';
+import { datePartsInTz } from '../timezone';
 
 export interface DailyCalendarProviderData {
   /** 公历：2026 */
@@ -41,32 +41,6 @@ export interface DailyCalendarProviderData {
 
 const WEEKDAY_CN = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'];
 
-/**
- * 把 Date 按 tz 拆成本地 y/m/d。Node 默认 UTC 是大坑，必须明示 tz。
- *
- * 用 Intl.DateTimeFormat 提取分量；非 v8 引擎也应当支持。
- */
-function dateInTz(now: Date, tz: string): { y: number; m: number; d: number; weekday: number } {
-  const fmt = getDateTimeFormat('en-US', {
-    timeZone: tz,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    weekday: 'short',
-  });
-  const parts = fmt.formatToParts(now);
-  const obj: Record<string, string> = {};
-  for (const p of parts) obj[p.type] = p.value;
-  // weekday short: Sun/Mon/...; 转 0-6（周日=0）
-  const wkMap: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
-  return {
-    y: parseInt(obj.year!, 10),
-    m: parseInt(obj.month!, 10),
-    d: parseInt(obj.day!, 10),
-    weekday: wkMap[obj.weekday!] ?? 0,
-  };
-}
-
 @Injectable()
 export class DailyCalendarProvider implements DataProvider<
   DailyCalendarConfigT,
@@ -89,8 +63,8 @@ export class DailyCalendarProvider implements DataProvider<
     config: DailyCalendarConfigT,
     ctx: DynamicContentFetchCtx
   ): DailyCalendarProviderData {
-    const { y, m, d, weekday } = dateInTz(ctx.now, config.tz);
-    const solar = Solar.fromYmd(y, m, d);
+    const { year, month, day, weekday } = datePartsInTz(ctx.now, config.tz);
+    const solar = Solar.fromYmd(year, month, day);
     const lunar = solar.getLunar();
 
     const ganzhiYear = `${lunar.getYearInGanZhiExact()}年`;
@@ -104,11 +78,13 @@ export class DailyCalendarProvider implements DataProvider<
     const isToday =
       jieQi &&
       jieQiDate &&
-      jieQiDate.getYear() === y &&
-      jieQiDate.getMonth() === m &&
-      jieQiDate.getDay() === d;
+      jieQiDate.getYear() === year &&
+      jieQiDate.getMonth() === month &&
+      jieQiDate.getDay() === day;
 
-    const nextTerm = isToday ? { name: jieQi, days: 0 } : findNextSolarTerm(lunar, y, m, d);
+    const nextTerm = isToday
+      ? { name: jieQi, days: 0 }
+      : findNextSolarTerm(lunar, year, month, day);
     const festivals = [
       ...lunar.getFestivals(),
       ...lunar.getOtherFestivals(),
@@ -117,10 +93,10 @@ export class DailyCalendarProvider implements DataProvider<
     ].filter(Boolean);
 
     return {
-      year: String(y),
-      month: String(m),
-      day: String(d),
-      monthDay: `${String(m).padStart(2, '0')}/${String(d).padStart(2, '0')}`,
+      year: String(year),
+      month: String(month),
+      day: String(day),
+      monthDay: `${String(month).padStart(2, '0')}/${String(day).padStart(2, '0')}`,
       weekdayCN: WEEKDAY_CN[weekday]!,
       lunar: lunarStr,
       lunarDate,

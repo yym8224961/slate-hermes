@@ -5,27 +5,27 @@ import type { ContentAudioSource, ContentKind } from '@prisma/client';
 import { type ContentMutationResponseT } from 'shared';
 import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
-import { computeETag } from '../../common/etag/etag.util';
+import { computeETag } from '../../common/utils/etag';
 import { ConflictError, NotFoundError, ValidationError } from '../../common/errors';
 import { lockGroupRow } from '../../common/db/row-locks';
 import { bulkSetContentSortOrder, compactContentSortOrders } from '../../common/db/bulk-sort-order';
 import { validateOrderSet } from '../../common/db/order-validation';
 import { nextContentSortOrder } from '../../common/db/sort-order';
 import { formatError } from '../../common/utils/error-format';
-import { AudioService } from '../audio/audio.service';
-import { audioBlobContentId } from '../audio/audio-blob-id';
-import { TtsService } from '../tts/tts.service';
+import { AudioTranscoderService } from '../audio/audio-transcoder.service';
+import { audioBlobContentId } from '../../infra/blob/content-audio-blobs';
+import { MAX_TTS_TEXT_CHARS, TtsService } from '../tts/tts.service';
 import { GroupsService } from '../groups/groups.service';
 import { ImageRendererService } from '../image-renderer/image-renderer.service';
 import { ContentAudioBlobService } from './content-audio-blob.service';
-import { toContentMutationResponse } from '../../common/api/content-mutation-response';
+import { BlobRollbackPlan } from './blob-rollback';
 import {
   pendingTtsAudioFields,
   readyUploadedAudioFields,
   resetAudioFields,
 } from './content-audio-fields';
+import { toContentMutationResponse } from './content-mutation-response';
 import type { ParsedContentUpload } from './multipart-parser';
-import { BlobRollbackPlan } from './blob-rollback';
 
 interface RenderedImageUpload {
   bytes: Buffer;
@@ -53,7 +53,7 @@ export class ContentsService {
     private readonly blob: BlobService,
     private readonly groups: GroupsService,
     private readonly imageRenderer: ImageRendererService,
-    private readonly audio: AudioService,
+    private readonly audio: AudioTranscoderService,
     private readonly tts: TtsService,
     private readonly audioBlobs: ContentAudioBlobService
   ) {}
@@ -159,10 +159,10 @@ export class ContentsService {
     if (content.kind !== 'image') throw new ValidationError('只有图片内容支持手动输入 TTS 文案');
     const text = raw.text.trim();
     if (!text) throw new ValidationError('TTS 文案不能为空');
-    if (text.length > 500) {
-      throw new ValidationError('TTS 文案不能超过 500 字', {
+    if (text.length > MAX_TTS_TEXT_CHARS) {
+      throw new ValidationError(`TTS 文案不能超过 ${MAX_TTS_TEXT_CHARS} 字`, {
         code: 'tts_text_too_long',
-        max_chars: 500,
+        max_chars: MAX_TTS_TEXT_CHARS,
       });
     }
     const voice = this.tts.normalizeVoice(raw.voice);

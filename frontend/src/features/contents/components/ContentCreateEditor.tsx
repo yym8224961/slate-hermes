@@ -5,9 +5,10 @@ import { useState } from 'react';
 import { Plus } from 'lucide-react';
 import { DASHBOARD_CUSTOM_STARTER_TEST_DATA } from 'shared/dynamic/test-fixtures';
 import { PageHeader } from '@/components/layout/PageHeader';
-import type { AllContentType } from '@/features/contents/model/content-type-meta';
+import { TYPE_META, type AllContentType } from '@/features/contents/model/content-type-meta';
+import { DynamicCreateForm } from '@/features/dynamic/components/DynamicCreateForm';
 import { useDynamicContentForm } from '@/features/dynamic/hooks/useDynamicContentForm';
-import { DynamicCreateForm } from './DynamicCreateForm';
+import { ContentTypeCardGrid, ContentTypePicker } from './ContentTypePicker';
 import { ImageCreateForm } from './ImageCreateForm';
 
 // ─── 主编辑器 ──────────────────────────────────────────────────────────────────
@@ -37,6 +38,16 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
     dynamicForm.reset();
   }
 
+  const selectedTypeHeader = type ? (
+    <div className="space-y-3">
+      <ContentTypePicker value={type} onChange={handleTypeChange} onBack={resetTypeSelection} />
+      <p className="font-sans text-[12px] text-stone leading-relaxed">
+        {TYPE_META[type].description}
+      </p>
+      <div className="border-t border-line" />
+    </div>
+  ) : null;
+
   return (
     <div>
       <PageHeader
@@ -47,12 +58,14 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
       />
 
       <div className="mt-6 fade-up fade-up-1">
-        {type === 'image' ? (
+        {!type ? (
+          <div className="max-w-3xl">
+            <ContentTypeCardGrid onChange={handleTypeChange} />
+          </div>
+        ) : type === 'image' ? (
           <ImageCreateForm
             gid={gid}
-            type={type}
-            onTypeChange={handleTypeChange}
-            onResetType={resetTypeSelection}
+            header={selectedTypeHeader}
             onDone={onDone}
             onEditCreatedImage={onEditCreatedImage}
           />
@@ -61,8 +74,7 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
             gid={gid}
             type={type}
             form={dynamicForm}
-            onTypeChange={handleTypeChange}
-            onResetType={resetTypeSelection}
+            header={selectedTypeHeader}
             onDone={onDone}
           />
         )}

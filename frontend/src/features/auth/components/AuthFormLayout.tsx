@@ -1,6 +1,6 @@
 import type { FormEvent, ReactNode } from 'react';
 import { ArrowRight } from 'lucide-react';
-import { AuthLayout } from '@/components/layout/AuthLayout';
+import { AuthLayout } from '@/features/auth/components/AuthLayout';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/ui/Spinner';
 

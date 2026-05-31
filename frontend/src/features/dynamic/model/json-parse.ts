@@ -1,5 +1,5 @@
 import { DashboardTemplate, type DashboardTemplateT, type DynamicConfigT } from 'shared';
-import { canonicalJsonKey } from '@/lib/json';
+import { canonicalJsonKey } from '@/features/dynamic/lib/json';
 
 export function parseDashboardTemplate(
   text: string

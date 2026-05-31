@@ -12,7 +12,7 @@ class FrameView;
 
 class FrameScene : public Scene {
    public:
-    FrameScene(const char* gid, int content_count);
+    FrameScene(SceneContext& ctx, const char* gid, int content_count);
     ~FrameScene() override;
 
     const char* Name() const override {

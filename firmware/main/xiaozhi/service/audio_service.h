@@ -3,6 +3,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <sdkconfig.h>
 
 #include <atomic>
 #include <deque>
@@ -45,6 +46,7 @@ class AudioService {
         uint32_t             epoch     = 0;
     };
 
+#if defined(CONFIG_LOG_DEFAULT_LEVEL_DEBUG)
     struct DiagCounters {
         std::atomic<uint32_t> input_read_ok{0};
         std::atomic<uint32_t> input_read_fail{0};
@@ -74,6 +76,7 @@ class AudioService {
             last_send_pop_ms.store(0, std::memory_order_relaxed);
         }
     };
+#endif
 
     AudioService()  = default;
     ~AudioService() = default;
@@ -84,9 +87,15 @@ class AudioService {
     void        InputTask();
     void        OutputTask();
     void        CodecTask();
+    bool        ProcessDecodePacket();
+    bool        ProcessEncodeTask();
     bool        PushTaskToEncodeQueue(std::vector<int16_t>&& pcm);
     bool        EnsureDecoderLocked(int sample_rate, int frame_duration);
     bool        ResampleToDeviceRateLocked(std::vector<int16_t>& pcm, int sample_rate);
+    void        ClearAllQueues();
+    void        ResetAllQueues();
+    void        ResetDecodeQueues();
+    void        ResetDecoderResourcesLocked();
     void        CloseCodecResources();
     void        ClearTaskHandle(TaskHandle_t current);
     void        SignalTaskStopped();
@@ -121,10 +130,12 @@ class AudioService {
     std::atomic<uint32_t>                          queue_epoch_{0};
     std::atomic<bool>                              decode_active_{false};
     std::atomic<bool>                              playback_active_{false};
-    DiagCounters                                   diag_;
-    TaskHandle_t                                   input_task_  = nullptr;
-    TaskHandle_t                                   output_task_ = nullptr;
-    TaskHandle_t                                   codec_task_  = nullptr;
+#if defined(CONFIG_LOG_DEFAULT_LEVEL_DEBUG)
+    DiagCounters diag_;
+#endif
+    TaskHandle_t input_task_  = nullptr;
+    TaskHandle_t output_task_ = nullptr;
+    TaskHandle_t codec_task_  = nullptr;
 };
 
 }  // namespace xiaozhi

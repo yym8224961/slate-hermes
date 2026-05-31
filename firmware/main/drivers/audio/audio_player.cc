@@ -8,9 +8,9 @@
 #include <cstring>
 
 #include "bsp/config.h"
-#include "bsp/gpio_util.h"
 #include "drivers/bus/i2c_bus_lock.h"
 #include "storage/nvs/volume_store.h"
+#include "utils/gpio_util.h"
 
 // Board::Init 已经在 InitPower 阶段把 GPIO42（AVDD_3V3 rail）拉高 + hold_en。
 // i2c_device.cc 仍然在异常路径上调 BoardI2cForcePowerOn 自救，实现放在 board_power.cc。
@@ -43,7 +43,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     // (老代码用 .auto_clear,IDF 5.4+ 已 deprecated 改为 alias)
     chan_cfg.auto_clear_after_cb = true;
     chan_cfg.intr_priority       = 0;
-    esp_err_t err = i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_);
+    esp_err_t err                = i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_);
     if (err != ESP_OK) {
         ESP_LOGE(kTag, "I2S channel create failed: %s", esp_err_to_name(err));
         return fail();
@@ -72,7 +72,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     std_cfg.gpio_cfg.ws   = static_cast<gpio_num_t>(AUDIO_I2S_GPIO_WS);
     std_cfg.gpio_cfg.dout = static_cast<gpio_num_t>(AUDIO_I2S_GPIO_DOUT);
     std_cfg.gpio_cfg.din  = static_cast<gpio_num_t>(AUDIO_I2S_GPIO_DIN);
-    err = i2s_channel_init_std_mode(tx_handle_, &std_cfg);
+    err                   = i2s_channel_init_std_mode(tx_handle_, &std_cfg);
     if (err != ESP_OK) {
         ESP_LOGE(kTag, "I2S tx init failed: %s", esp_err_to_name(err));
         return fail();

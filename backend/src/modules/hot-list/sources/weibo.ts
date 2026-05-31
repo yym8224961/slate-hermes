@@ -1,4 +1,4 @@
-import { DESKTOP_UA } from '../fetch';
+import { DESKTOP_UA } from '../../../common/http/fetch';
 import { defineJsonSource } from '../source-factory';
 
 interface WeiboResponse {

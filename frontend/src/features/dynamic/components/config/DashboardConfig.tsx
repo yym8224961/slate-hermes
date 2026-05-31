@@ -16,7 +16,7 @@ import { DynamicRefreshSettings } from './RefreshSettings';
 import { DashboardPushPanel } from './DashboardPushPanel';
 import { parseDashboardTemplate, parseJsonRecord } from '@/features/dynamic/model/json-parse';
 import type { DynamicConfigChange } from '@/features/dynamic/model/config-types';
-import { useJsonDraftWithEcho } from '@/hooks/useJsonDraftWithEcho';
+import { useJsonDraftWithEcho } from '@/features/dynamic/hooks/useJsonDraftWithEcho';
 
 const CUSTOM_DASHBOARD_TEMPLATE_VALUE = 'custom';
 const DASHBOARD_SYSTEM_TEMPLATE_OPTIONS = Object.values(DASHBOARD_SYSTEM_TEMPLATES);

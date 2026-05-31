@@ -16,12 +16,11 @@ set(SOURCES
     "startup/boot_mode.cc"
     "startup/setup_flow.cc"
 
-    "power/shutdown_subsystems.cc"
-    "power/system_restart.cc"
-
-    "power/minute_tick.cc"
+    "power/shutdown.cc"
+    "power/minute_boundary_ticker.cc"
 
     "bsp/board.cc"
+    "bsp/battery_adc.cc"
     "bsp/board_power.cc"
     "bsp/charge_status.cc"
 
@@ -35,9 +34,7 @@ set(SOURCES
     "drivers/audio/audio_player.cc"
 
     "network/wifi.cc"
-    "network/wifi_internal.cc"
-    "network/wifi_modes.cc"
-    "network/wifi_reconnect.cc"
+    "network/wifi_reconnect_manager.cc"
     "network/captive_portal.cc"
     "network/cred_store.cc"
     "network/sntp.cc"
@@ -51,7 +48,7 @@ set(SOURCES
     "sync/sync_manifest.cc"
     "sync/sync_poll.cc"
 
-    "xiaozhi/api/activation_client.cc"
+    "xiaozhi/config/activation_client.cc"
     "xiaozhi/config/settings.cc"
     "xiaozhi/mcp/mcp_dispatcher.cc"
     "xiaozhi/mcp/mcp_tools.cc"
@@ -61,10 +58,6 @@ set(SOURCES
     "xiaozhi/protocol/websocket_protocol.cc"
     "xiaozhi/service/audio_service.cc"
     "xiaozhi/service/chat_service.cc"
-    "xiaozhi/service/chat_service_config.cc"
-    "xiaozhi/service/chat_service_control.cc"
-    "xiaozhi/service/chat_service_state.cc"
-    "xiaozhi/service/chat_service_conversation.cc"
     "xiaozhi/service/message_handler.cc"
 
     "scenes/splash/splash_scene.cc"
@@ -73,11 +66,7 @@ set(SOURCES
     "scenes/frame/frame_scene.cc"
     "scenes/settings/settings_scene.cc"
     "scenes/settings/settings_page_base.cc"
-    "scenes/settings/pages/confirm_action_page.cc"
-    "scenes/settings/pages/volume_page.cc"
-    "scenes/settings/pages/device_info_page.cc"
-    "scenes/settings/pages/restart_device_page.cc"
-    "scenes/settings/pages/factory_reset_page.cc"
+    "scenes/settings/settings_pages.cc"
 
     "ui/status_bar.cc"
     "ui/frame_view.cc"

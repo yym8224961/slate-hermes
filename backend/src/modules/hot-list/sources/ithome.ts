@@ -1,6 +1,6 @@
 import { defineTextSource } from '../source-factory';
-import { stripHtml } from '../html';
-import { absoluteUrl, compactHot } from '../text';
+import { stripHtml } from '../html-utils';
+import { absoluteUrl, compactHot } from '../hot-list.utils';
 
 export const ithomeSource = defineTextSource({
   id: 'ithome',

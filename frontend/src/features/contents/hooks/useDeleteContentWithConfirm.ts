@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import type { ContentSummaryT } from 'shared';
-import { useConfirmAction } from '@/components/feedback/mutation-feedback';
-import { useDeleteContent } from '@/features/contents/query/content-list-queries';
+import { useConfirmAction } from '@/hooks/useMutationAction';
+import { useDeleteContent } from '@/features/contents/query/content-mutation-queries';
 
 export function useDeleteContentWithConfirm({
   gid,

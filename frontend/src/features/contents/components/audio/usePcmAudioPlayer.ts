@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { pcm16LeToAudioBuffer, stopAudioSource } from '@/lib/audio';
+import { pcm16LeToAudioBuffer, stopAudioSource } from '@/features/contents/lib/audio';
 import { CONTENT_AUDIO_SAMPLE_RATE, resumeSharedAudioContext } from './sharedAudioContext';
 
 interface UsePcmAudioPlayerOptions {

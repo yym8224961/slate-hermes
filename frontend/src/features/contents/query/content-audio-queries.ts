@@ -1,7 +1,7 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import type { ContentMutationResponseT, GenerateContentTtsRequestT } from 'shared';
 import { API_PREFIX, api } from '@/lib/http';
-import { useInvalidateGroupContent } from './cache';
+import { useInvalidateContentDependencies } from './content-cache-helpers';
 import { contentKeys } from './keys';
 
 export function useContentAudio(contentId: string, etag: string | null, enabled = true) {
@@ -19,7 +19,7 @@ export function useContentAudio(contentId: string, etag: string | null, enabled 
 }
 
 export function useDeleteContentAudio(gid: string) {
-  const invalidate = useInvalidateGroupContent(gid);
+  const invalidate = useInvalidateContentDependencies(gid);
   return useMutation({
     mutationFn: async (contentId: string) => {
       await api.delete(`${API_PREFIX}/contents/${contentId}/audio`);
@@ -31,7 +31,7 @@ export function useDeleteContentAudio(gid: string) {
 }
 
 export function useGenerateContentTts(gid: string) {
-  const invalidate = useInvalidateGroupContent(gid);
+  const invalidate = useInvalidateContentDependencies(gid);
   return useMutation({
     mutationFn: async ({
       contentId,

@@ -1,5 +1,5 @@
 import { defineJsonSource } from '../source-factory';
-import { compactHot } from '../text';
+import { compactHot } from '../hot-list.utils';
 
 interface KrResponse {
   data?: {

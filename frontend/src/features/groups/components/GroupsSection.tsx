@@ -8,15 +8,15 @@ import {
 } from '@/features/groups/query/group-queries';
 import { CreateGroupDialog } from '@/features/groups/components/CreateGroupDialog';
 import { GroupCardSortable } from '@/features/groups/components/GroupCard';
-import { useConfirmAction } from '@/components/feedback/mutation-feedback';
-import { useToast } from '@/components/feedback/Toast';
+import { useConfirmAction } from '@/hooks/useMutationAction';
+import { useToast } from '@/components/feedback/toast-context';
 import { Section } from '@/components/layout/Section';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Spinner } from '@/components/ui/Spinner';
-import { SortableGrid } from '@/components/ui/SortableGrid';
+import { SortableGrid } from '@/components/dnd/SortableGrid';
 import { getApiErrorMessage } from '@/lib/api-errors';
-import { useDndOrder } from '@/hooks/dnd/useDndOrder';
+import { useDndOrder } from '@/components/dnd/useDndOrder';
 
 interface GroupsSectionProps {
   groups: GroupSummaryT[] | undefined;

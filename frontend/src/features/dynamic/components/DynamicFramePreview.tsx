@@ -1,5 +1,5 @@
 import { Spinner } from '@/components/ui/Spinner';
-import { FrameBitmapPreview } from '@/features/contents/components/bitmap/FrameBitmapPreview';
+import { FrameBitmapPreview } from '@/components/eink/FrameBitmapPreview';
 
 export function DynamicFramePreview({
   data,
@@ -14,7 +14,7 @@ export function DynamicFramePreview({
 }) {
   const showPlaceholder = !data;
   return (
-    <div className="bg-paper border border-ink relative overflow-hidden aspect-[4/3]">
+    <div className="frame-preview-surface">
       <FrameBitmapPreview data={data} caption={caption} />
       {showPlaceholder && !pending && (
         <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">

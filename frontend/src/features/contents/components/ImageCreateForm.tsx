@@ -1,31 +1,20 @@
-import type { FormEvent } from 'react';
-import { useToast } from '@/components/feedback/Toast';
+import type { FormEvent, ReactNode } from 'react';
+import { useToast } from '@/components/feedback/toast-context';
 import { FormActions } from '@/components/ui/FormActions';
+import { ImageFormBody } from '@/features/contents/components/image-form/ImageFormBody';
 import { useGenerateContentTts } from '@/features/contents/query/content-audio-queries';
-import { useCreateImageContent } from '@/features/contents/query/content-list-queries';
-import { ImageFormBody } from '@/features/contents/components/image-editor/ImageFormBody';
+import { useCreateImageContent } from '@/features/contents/query/content-mutation-queries';
 import { useImageContentForm } from '@/features/contents/hooks/useImageContentForm';
-import { TYPE_META, type AllContentType } from '@/features/contents/model/content-type-meta';
 import { getApiErrorMessage } from '@/lib/api-errors';
-import { ContentTypePicker } from './ContentTypePicker';
 
 interface ImageCreateFormProps {
   gid: string;
-  type: AllContentType;
-  onTypeChange: (type: AllContentType) => void;
-  onResetType: () => void;
+  header?: ReactNode;
   onDone: () => void;
   onEditCreatedImage?: (contentId: string) => void;
 }
 
-export function ImageCreateForm({
-  gid,
-  type,
-  onTypeChange,
-  onResetType,
-  onDone,
-  onEditCreatedImage,
-}: ImageCreateFormProps) {
+export function ImageCreateForm({ gid, header, onDone, onEditCreatedImage }: ImageCreateFormProps) {
   const createImage = useCreateImageContent(gid);
   const generateTts = useGenerateContentTts(gid);
   const toast = useToast();
@@ -35,7 +24,7 @@ export function ImageCreateForm({
   async function submitContent() {
     if (!form.image.file) return;
     try {
-      const fd = await form.form.buildFormData();
+      const fd = await form.buildFormData();
       const created = await createImage.mutateAsync(fd);
       if (form.audio.wantsTts) {
         try {
@@ -70,20 +59,12 @@ export function ImageCreateForm({
         isEdit={false}
         gridClassName="lg:grid-cols-2"
         showSafeArea={Boolean(form.image.file)}
-        beforeFields={
-          <div className="space-y-3">
-            <ContentTypePicker value={type} onChange={onTypeChange} onBack={onResetType} />
-            <p className="font-sans text-[12px] text-stone leading-relaxed">
-              {TYPE_META[type].description}
-            </p>
-            <div className="border-t border-line" />
-          </div>
-        }
+        beforeFields={header}
         actions={
           <FormActions
             onCancel={onDone}
             submitLabel="创建"
-            disabled={!form.form.canCreate}
+            disabled={!form.canCreate}
             submitting={submitting}
           />
         }

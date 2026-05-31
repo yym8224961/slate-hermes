@@ -131,10 +131,17 @@ void StyleBubble(lv_obj_t* bubble) {
 }
 }  // namespace
 
+xiaozhi::ChatService* ChatScene::Service(SceneContext& ctx) {
+    if (!service_ && ctx.chat_service)
+        service_ = ctx.chat_service();
+    return service_;
+}
+
 void ChatScene::EnsureServiceStarted(SceneContext& ctx) {
     if (service_entered_)
         return;
-    if (!xiaozhi::ChatService::Get().Start(ctx.audio)) {
+    auto* service = Service(ctx);
+    if (!service || !service->IsStarted()) {
         if (!root_ || !status_bar_ || !hint_label_)
             return;
         status_bar_->SetCaption("小智异常");
@@ -145,7 +152,7 @@ void ChatScene::EnsureServiceStarted(SceneContext& ctx) {
         lv_label_set_text(hint_label_, "双击确认 返回");
         return;
     }
-    xiaozhi::ChatService::Get().EnterMode();
+    service->EnterMode();
     service_entered_ = true;
 }
 
@@ -183,7 +190,8 @@ void ChatScene::OnExit(SceneContext& ctx) {
         rendered_messages_key_.clear();
     });
     if (service_entered_) {
-        xiaozhi::ChatService::Get().LeaveMode();
+        if (auto* service = Service(ctx))
+            service->LeaveMode();
         service_entered_ = false;
     }
 }
@@ -268,25 +276,30 @@ void ChatScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         case UiEventKind::kButtonShort:
             switch (e.u.button.btn) {
                 case ButtonId::kEnter:
-                    xiaozhi::ChatService::Get().ToggleChat();
+                    if (auto* service = Service(ctx))
+                        service->ToggleChat();
                     break;
                 case ButtonId::kUp:
-                    xiaozhi::ChatService::Get().AdjustVolume(+1);
+                    if (auto* service = Service(ctx))
+                        service->AdjustVolume(+1);
                     break;
                 case ButtonId::kDown:
-                    xiaozhi::ChatService::Get().AdjustVolume(-1);
+                    if (auto* service = Service(ctx))
+                        service->AdjustVolume(-1);
                     break;
             }
             break;
         case UiEventKind::kButtonDouble:
             if (e.u.button.btn == ButtonId::kEnter) {
-                xiaozhi::ChatService::Get().LeaveMode();
+                if (auto* service = Service(ctx))
+                    service->LeaveMode();
                 ctx.stack->RequestPop();
             }
             break;
         case UiEventKind::kButtonLong:
             if (e.u.button.btn == ButtonId::kEnter) {
-                xiaozhi::ChatService::Get().StopConversation(true);
+                if (auto* service = Service(ctx))
+                    service->StopConversation(true);
                 ctx.stack->RequestPush(std::make_unique<SettingsScene>());
             }
             break;
@@ -319,8 +332,10 @@ void ChatScene::Render(SceneContext& ctx, bool full) {
 void ChatScene::RenderContent() {
     if (!root_ || !status_bar_ || !system_label_ || !code_label_ || !hint_label_)
         return;
+    if (!service_)
+        return;
 
-    const auto snap = xiaozhi::ChatService::Get().Snapshot();
+    const auto snap = service_->Snapshot();
     UpdateStatusBarTitle(snap);
     HideContentViews();
 
@@ -335,8 +350,7 @@ void ChatScene::RenderContent() {
                 break;
             case xiaozhi::ChatState::kAwaitingActivation:
                 RenderSystemMessage(
-                    snap.activation_message.empty() ? "请在小智控制台输入激活码"
-                                                    : DisplayText(snap.activation_message),
+                    snap.activation_message.empty() ? "请在小智控制台输入激活码" : DisplayText(snap.activation_message),
                     true, snap.activation_code);
                 break;
             case xiaozhi::ChatState::kReadyIdle:
@@ -354,7 +368,8 @@ void ChatScene::RenderContent() {
                 RenderChatMessages(snap);
                 break;
             case xiaozhi::ChatState::kError:
-                RenderSystemMessage("小智暂不可用\n\n" + util::TrimForScreen(util::SanitizeForScreen(snap.error), 72), false, "");
+                RenderSystemMessage("小智暂不可用\n\n" + util::TrimForScreen(util::SanitizeForScreen(snap.error), 72),
+                                    false, "");
                 break;
         }
     }
@@ -364,7 +379,6 @@ void ChatScene::RenderContent() {
         lv_obj_clear_flag(hint_label_, LV_OBJ_FLAG_HIDDEN);
         lv_label_set_text(hint_label_, "上/下 调音量   长按确认 设置   双击确认 返回");
     }
-    rendered_state_ = snap.state;
 }
 
 void ChatScene::HideContentViews() {
@@ -391,7 +405,7 @@ void ChatScene::RenderSystemMessage(const std::string& text, bool show_code, con
 
 void ChatScene::RenderChatMessages(const xiaozhi::ChatSnapshot& snap) {
     lv_obj_clear_flag(chat_area_, LV_OBJ_FLAG_HIDDEN);
-    const bool        state_changed = rendered_state_ != snap.state;
+    const bool        state_changed = rendered_state_ != static_cast<int>(snap.state);
     const std::string messages_key  = MessagesKey(snap);
     const bool        should_rebuild =
         state_changed || rendered_message_count_ != snap.messages.size() || rendered_messages_key_ != messages_key;
@@ -408,6 +422,8 @@ void ChatScene::RenderChatMessages(const xiaozhi::ChatSnapshot& snap) {
 
     if (chat_content_ && lv_obj_get_child_cnt(chat_content_) == 0)
         ShowEmptyChatHint();
+
+    rendered_state_ = static_cast<int>(snap.state);
 }
 
 void ChatScene::ClearChatMessages() {

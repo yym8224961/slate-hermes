@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Solar } from 'lunar-typescript';
 import { pickTraditionalFestival } from './traditional-festivals';
-import { datePartsInTz, utcOffsetMin } from './timezone';
+import { datePartsInTz, daysInMonth, utcOffsetMin } from './timezone';
 
 export interface CalendarDayData {
   lunar: string;
@@ -124,8 +124,4 @@ export function findNextSolarTerm(
 
 function monthKey(year: number, month: number): string {
   return `${year}-${String(month).padStart(2, '0')}`;
-}
-
-function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
 }

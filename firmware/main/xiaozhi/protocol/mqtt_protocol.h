@@ -52,6 +52,8 @@ class MqttProtocol : public Protocol {
     bool        SendText(const std::string& text) override;
     bool        SendTextLocked(const std::string& text, bool report_error);
     std::string GetHelloMessage() const;
+    bool        HandleMqttMessagePayload(const std::string& payload);
+    bool        HandleUdpPacket(const std::string& data);
     void        ParseServerHello(const cJSON* root);
     std::string DecodeHexString(const std::string& hex) const;
 };

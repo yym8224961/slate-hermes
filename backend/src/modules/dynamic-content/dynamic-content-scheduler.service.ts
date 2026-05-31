@@ -4,7 +4,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { formatError } from '../../common/utils/error-format';
 import { WorkerLoop } from '../../common/worker/worker-loop';
 import { DynamicContentRendererService } from './dynamic-content-renderer.service';
-import { claimLeaseJobs } from './lease-claim';
+import { claimLeaseJobs } from '../../common/worker/lease-claim';
 
 const WORKER_INTERVAL_MS = 10_000;
 const WORKER_BATCH_SIZE = 5;

@@ -8,7 +8,7 @@ import { DragHandle } from '@/components/ui/DragHandle';
 import { IconBlock } from '@/components/ui/IconBlock';
 import { formatBytes } from '@/lib/format';
 import { cn } from '@/lib/cn';
-import { useSortableStyle } from '@/hooks/dnd/useSortableStyle';
+import { useSortableStyle } from '@/components/dnd/useSortableStyle';
 import { appRoutes } from '@/app/routes';
 
 export const GroupCardSortable = memo(function GroupCardSortable({

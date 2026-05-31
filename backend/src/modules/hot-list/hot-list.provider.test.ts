@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { toPrismaInputJson } from '../../common/db/prisma-json';
 import { HotListProvider } from './hot-list.provider';
 import type { HotListItem, HotListSource } from './hot-list.types';
 
@@ -92,12 +93,39 @@ describe('HotListProvider', () => {
 
     const data = await provider.fetchData(config, { now: new Date('2026-05-17T04:00:00.000Z') });
 
-    expect(data.items.map((item) => item.url)).toEqual([
-      'https://www.v2ex.com/t/1',
-      undefined,
-      undefined,
-      undefined,
-    ]);
+    expect(data.items[0]).toHaveProperty('url', 'https://www.v2ex.com/t/1');
+    expect(data.items[1]).not.toHaveProperty('url');
+    expect(data.items[2]).not.toHaveProperty('url');
+    expect(data.items[3]).not.toHaveProperty('url');
+  });
+
+  it('omits absent optional fields so returned data can be stored as JSON', async () => {
+    const source: HotListSource = {
+      id: 'weibo',
+      label: '微博',
+      fetch: async (): Promise<HotListItem[]> => [
+        {
+          rank: 1,
+          title: '只有标题',
+          hot: undefined,
+          desc: undefined,
+          author: undefined,
+          url: undefined,
+          timestamp: undefined,
+        },
+      ],
+    };
+    const provider = new HotListProvider([source]);
+    const config = provider.validateConfig({
+      type: 'hot_list',
+      source: 'weibo',
+      refresh_interval_sec: 600,
+    });
+
+    const data = await provider.fetchData(config, { now: new Date('2026-05-17T04:00:00.000Z') });
+
+    expect(data.items[0]).toEqual({ rank: 1, title: '只有标题' });
+    expect(() => toPrismaInputJson(data)).not.toThrow();
   });
 
   it('applies per-content last-data fallback when concurrent fetches share one failed request', async () => {

@@ -3,16 +3,14 @@
 #include <driver/gpio.h>
 
 #include "bsp/config.h"
-#include "bsp/gpio_util.h"
+#include "utils/gpio_util.h"
 
 namespace {
-constexpr gpio_num_t kLedPin  = GPIO_NUM_3;  // 板上唯一一颗绿色 LED，低有效
+constexpr gpio_num_t kLedPin = GPIO_NUM_3;  // 板上唯一一颗绿色 LED，低有效
 }  // namespace
 
 BoardPowerBsp::BoardPowerBsp(int audioPowerPin, int audioAmpPin, int vbatPowerPin)
-    : audioPowerPin_(audioPowerPin),
-      audioAmpPin_(audioAmpPin),
-      vbatPowerPin_(vbatPowerPin) {
+    : audioPowerPin_(audioPowerPin), audioAmpPin_(audioAmpPin), vbatPowerPin_(vbatPowerPin) {
     // VBAT_PWR(GPIO17): 系统软锁存,拉高=自锁,拉低=断电(关机唯一手段)
     // Audio_PWR(GPIO42): AVDD_3V3 rail,关掉 = I²C 死(R45/R46 上拉在这条 rail)
     // Audio_AMP(GPIO46): PA U5 数字使能 + ES8311 PA_PIN。
@@ -25,9 +23,7 @@ BoardPowerBsp::BoardPowerBsp(int audioPowerPin, int audioAmpPin, int vbatPowerPi
     gpio_config_t cfg = {};
     cfg.intr_type     = GPIO_INTR_DISABLE;
     cfg.mode          = GPIO_MODE_OUTPUT;
-    cfg.pin_bit_mask  = (1ULL << audioPowerPin_)
-                      | (1ULL << audioAmpPin_)
-                      | (1ULL << vbatPowerPin_);
+    cfg.pin_bit_mask  = (1ULL << audioPowerPin_) | (1ULL << audioAmpPin_) | (1ULL << vbatPowerPin_);
     cfg.pull_up_en    = GPIO_PULLUP_DISABLE;
     cfg.pull_down_en  = GPIO_PULLDOWN_DISABLE;
     ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_config(&cfg));
@@ -50,10 +46,18 @@ void BoardPowerBsp::InitLed() {
     GpioWriteHold(kLedPin, 1);
 }
 
-void BoardPowerBsp::PowerAudioOn()  { GpioWriteHold(audioPowerPin_, 1); }
-void BoardPowerBsp::PowerAudioOff() { GpioWriteHold(audioPowerPin_, 0); }
-void BoardPowerBsp::VbatPowerOn()   { GpioWriteHold(vbatPowerPin_, 1); }
-void BoardPowerBsp::VbatPowerOff()  { GpioWriteHold(vbatPowerPin_, 0); }
+void BoardPowerBsp::PowerAudioOn() {
+    GpioWriteHold(audioPowerPin_, 1);
+}
+void BoardPowerBsp::PowerAudioOff() {
+    GpioWriteHold(audioPowerPin_, 0);
+}
+void BoardPowerBsp::VbatPowerOn() {
+    GpioWriteHold(vbatPowerPin_, 1);
+}
+void BoardPowerBsp::VbatPowerOff() {
+    GpioWriteHold(vbatPowerPin_, 0);
+}
 
 extern "C" void BoardI2cForcePowerOn() {
     GpioWriteHold(AUDIO_PWR_PIN, AUDIO_PWR_FORCE_LEVEL);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { DASHBOARD_CUSTOM_STARTER_TEMPLATE } from 'shared';
-import { computeETag } from '../../common/etag/etag.util';
+import { computeETag } from '../../common/utils/etag';
 import { InternalError } from '../../common/errors';
 import { DynamicContentService } from '../dynamic-content/dynamic-content.service';
 import { ContentsService } from './contents.service';

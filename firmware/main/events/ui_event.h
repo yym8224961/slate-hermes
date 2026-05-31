@@ -4,10 +4,32 @@
 #include <cstdint>
 #include <type_traits>
 
-#include "events/boot_stage.h"
-#include "events/group_sync_status.h"
-
 enum class ButtonId : uint8_t { kEnter = 0, kUp, kDown };
+
+// boot 阶段枚举;splash 用此切文案。顺序对应 splash 状态机典型路径。
+enum class BootStage : uint8_t {
+    kInitializing = 0,
+    kProvisioning,       // 无 cred,captive portal 模式
+    kWifiConnecting,     // 试连 STA(载荷带 ssid)
+    kWifiFailed,         // 试连超时/认证失败
+    kSntp,               // 等系统时间对齐
+    kRegistering,        // 调 /devices
+    kServerUnreachable,  // 服务器 30s 无响应
+    kAwaitingPair,       // 注册完毕,等待 Web 端 claim(载荷带 pair_code)
+    kAwaitingGroup,      // 已 bound,等待管理端分配内容组
+    kNetError,           // 其它网络异常
+};
+
+enum class GroupSyncStatusMode : uint8_t {
+    kCycleTarget = 0,          // 已拿到主动切换目标
+    kCycleCacheHit,            // 主动切换目标命中本地缓存
+    kCycleDownloading,         // 正在下载主动切换目标
+    kCurrentGroupUpdating,     // 后台刷新正在更新当前内容组
+    kInitialGroupDownloading,  // 启动/普通同步正在下载目标内容组
+    kTargetGroupSaving,        // 下载后正在保存目标内容组缓存
+    kCurrentGroupSaving,       // 下载后正在保存当前内容组缓存
+    kCycleFailed,              // 主动切换失败，保留当前内容组
+};
 
 namespace evt {
 namespace limits {
@@ -106,7 +128,7 @@ struct UiEvent {
         struct {
             uint32_t token;
         } xiaozhi_channel;
-        U() {
+        U() : group{} {
         }
     } u;
 

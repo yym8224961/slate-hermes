@@ -16,10 +16,11 @@ import { AudioModule } from './modules/audio/audio.module';
 import { AiModule } from './modules/ai/ai.module';
 import { TtsModule } from './modules/tts/tts.module';
 import { DynamicContentModule } from './modules/dynamic-content/dynamic-content.module';
-import { AppExceptionFilter } from './common/filters/app-exception.filter';
-import { RequestIdInterceptor } from './common/interceptors/request-id.interceptor';
-import { ZodValidationPipe } from './common/pipes/zod-validation.pipe';
-import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { AppExceptionFilter } from './common/nest/filters/app-exception.filter';
+import { RequestIdInterceptor } from './common/nest/interceptors/request-id.interceptor';
+import { ZodValidationPipe } from './common/nest/pipes/zod-validation.pipe';
+import { JwtAuthGuard } from './common/nest/guards/jwt-auth.guard';
+import { RateLimitGuard } from './common/rate-limit/rate-limit-guard';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
     { provide: APP_INTERCEPTOR, useClass: RequestIdInterceptor },
     { provide: APP_PIPE, useClass: ZodValidationPipe },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RateLimitGuard },
   ],
 })
 export class AppModule {}

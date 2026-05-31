@@ -4,7 +4,7 @@ import { FRAME_BYTES } from 'shared';
 import { BlobService } from '../../infra/blob/blob.service';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { toPrismaInputJson } from '../../common/db/prisma-json';
-import { computeETag } from '../../common/etag/etag.util';
+import { computeETag } from '../../common/utils/etag';
 import { NotFoundError, ValidationError } from '../../common/errors';
 import { formatError } from '../../common/utils/error-format';
 import { KeyedPromiseQueue } from '../../common/worker/keyed-promise-queue';
@@ -12,17 +12,8 @@ import { GroupsService } from '../groups/groups.service';
 import { DynamicFrameRendererService } from './rendering/dynamic-frame-renderer.service';
 import { DynamicContentRegistry } from './dynamic-content-registry';
 import { DynamicAudioService } from './audio/dynamic-audio.service';
-import { nextLocalMidnight, timezoneFromConfig } from './timezone';
-import {
-  canReuseDynamicData,
-  isCalendarLikeDynamicType,
-  isRefreshIntervalDynamicType,
-  refreshIntervalSec,
-} from './dynamic-type-policy';
-
-const REFRESH_LEAD_MS = 90_000;
-const MIN_REFRESH_DUE_DELAY_MS = 10_000;
-const CALENDAR_WAKE_LAG_MS = 60_000;
+import { canReuseDynamicData } from './dynamic-data-reuse-policy';
+import { computeDynamicRefreshSchedule } from './dynamic-refresh-policy';
 
 const DYNAMIC_RENDER_CONTENT_SELECT = {
   id: true,
@@ -255,8 +246,12 @@ export class DynamicContentRendererService {
       renderedAt: now,
     });
     const imageEtag = computeETag(rendered);
-    const nextRunAt = this.computeNextRunAt(content.dynamicType, config, now);
-    const refreshDueAt = this.computeRefreshDueAt(content.dynamicType, nextRunAt, now);
+    const schedule = computeDynamicRefreshSchedule({
+      dynamicType: content.dynamicType,
+      config,
+      now,
+      defaultTtlSec: this.registry.defaultTtlSec(content.dynamicType),
+    });
 
     if (!opts.force && imageEtag === content.imageEtag) {
       await this.prisma.content.update({
@@ -264,8 +259,8 @@ export class DynamicContentRendererService {
         data: {
           dynamicData: data == null ? Prisma.JsonNull : toPrismaInputJson(data),
           dynamicLastRunAt: now,
-          dynamicNextRunAt: nextRunAt,
-          dynamicRefreshDueAt: refreshDueAt,
+          dynamicNextRunAt: schedule.nextRunAt,
+          dynamicRefreshDueAt: schedule.refreshDueAt,
           dynamicRefreshLeaseUntil: null,
           dynamicRefreshAttempts: 0,
           dynamicLastError: fetchErrorMessage ? fetchErrorMessage.slice(0, 512) : null,
@@ -294,8 +289,8 @@ export class DynamicContentRendererService {
           imageSize: rendered.byteLength,
           dynamicData: data == null ? Prisma.JsonNull : toPrismaInputJson(data),
           dynamicLastRunAt: now,
-          dynamicNextRunAt: nextRunAt,
-          dynamicRefreshDueAt: refreshDueAt,
+          dynamicNextRunAt: schedule.nextRunAt,
+          dynamicRefreshDueAt: schedule.refreshDueAt,
           dynamicRefreshLeaseUntil: null,
           dynamicRefreshAttempts: 0,
           dynamicLastError: fetchErrorMessage ? fetchErrorMessage.slice(0, 512) : null,
@@ -384,33 +379,6 @@ export class DynamicContentRendererService {
     } catch (err) {
       this.logger.error(`markError failed content=${content.id}`, err);
     }
-  }
-
-  private computeNextRunAt(dynamicType: string, config: unknown, now: Date): Date | null {
-    if (dynamicType === 'weather' || isRefreshIntervalDynamicType(dynamicType)) {
-      const configured = refreshIntervalSec(config);
-      if (configured !== null) return new Date(now.getTime() + configured * 1000);
-    }
-    if (isCalendarLikeDynamicType(dynamicType)) {
-      const midnight = nextLocalMidnight(now, timezoneFromConfig(config));
-      return new Date(midnight.getTime() + CALENDAR_WAKE_LAG_MS);
-    }
-    const ttl = this.registry.defaultTtlSec(dynamicType);
-    if (ttl === null) return null;
-    return new Date(now.getTime() + ttl * 1000);
-  }
-
-  private computeRefreshDueAt(dynamicType: string, nextRunAt: Date | null, now: Date): Date | null {
-    if (!nextRunAt) return null;
-    if (isCalendarLikeDynamicType(dynamicType)) {
-      const dueMs = nextRunAt.getTime() - CALENDAR_WAKE_LAG_MS;
-      if (dueMs <= now.getTime()) return new Date(now.getTime() + MIN_REFRESH_DUE_DELAY_MS);
-      return new Date(dueMs);
-    }
-    if (dynamicType === 'weather' || isRefreshIntervalDynamicType(dynamicType)) return nextRunAt;
-    const dueMs = nextRunAt.getTime() - REFRESH_LEAD_MS;
-    if (dueMs <= now.getTime()) return new Date(now.getTime() + MIN_REFRESH_DUE_DELAY_MS);
-    return new Date(dueMs);
   }
 }
 

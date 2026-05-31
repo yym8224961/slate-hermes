@@ -116,10 +116,6 @@ export function weekdayFor(year: number, month: number, day: number): number {
   return new Date(Date.UTC(year, month - 1, day)).getUTCDay();
 }
 
-export function daysInMonth(year: number, month: number): number {
-  return new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
-
 export function dateParts(
   date: Date,
   timeZone: string

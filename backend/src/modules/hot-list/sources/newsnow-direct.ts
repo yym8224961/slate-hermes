@@ -1,5 +1,11 @@
 import crypto from 'node:crypto';
-import { fetchArrayBuffer, fetchJson, fetchResponse, fetchText, DESKTOP_UA } from '../fetch';
+import {
+  fetchArrayBuffer,
+  fetchJson,
+  fetchResponse,
+  fetchText,
+  DESKTOP_UA,
+} from '../../../common/http/fetch';
 import type { HotListItem, HotListSource } from '../hot-list.types';
 import {
   firstMatch,
@@ -8,8 +14,15 @@ import {
   jsonFromScript,
   parseRss,
   stripHtml,
-} from '../html';
-import { absoluteUrl, compactHot, decodeGbk, normalizeTimestamp, withRanks } from '../text';
+} from '../html-utils';
+import {
+  absoluteUrl,
+  compactHot,
+  decodeGbk,
+  normalizeTimestamp,
+  withRanks,
+} from '../hot-list.utils';
+import { defineDirectSource } from '../source-factory';
 
 type NewsNowDirectSourceId =
   | '36kr-quick'
@@ -606,11 +619,7 @@ export const NEWSNOW_DIRECT_SOURCES: readonly HotListSource[] = [
 ];
 
 function source(def: NewsNowDirectSourceDef): HotListSource {
-  return {
-    id: def.id,
-    label: def.label,
-    fetch: (ctx) => def.fetch(ctx.signal),
-  };
+  return defineDirectSource(def);
 }
 
 function rssSource(id: NewsNowDirectSourceId, label: string, url: string): HotListSource {

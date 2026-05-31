@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { SearchDropdown } from '@/components/ui/SearchDropdown';
-import type { City } from '@/features/dynamic/data/cities';
 import {
   useWeatherCitySearch,
   type WeatherCityResult,
 } from '@/features/dynamic/hooks/useWeatherCitySearch';
+import type { City } from '@/features/dynamic/model/cities';
 import { useCities } from '@/features/dynamic/hooks/useCities';
 
 type CityResult = { source: 'remote'; city: WeatherCityResult } | { source: 'local'; city: City };

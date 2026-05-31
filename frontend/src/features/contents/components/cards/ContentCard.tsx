@@ -2,16 +2,16 @@ import { memo } from 'react';
 import { AlertCircle, RefreshCw } from 'lucide-react';
 import type { ContentDetailT } from 'shared';
 import { DragHandle } from '@/components/ui/DragHandle';
-import { useRefreshDynamicContent } from '@/features/contents/query/content-dynamic-queries';
-import { useContentImage } from '@/features/contents/query/content-list-queries';
-import { useMutationAction } from '@/components/feedback/mutation-feedback';
+import { useRefreshDynamicContent } from '@/features/dynamic/query/dynamic-content-queries';
+import { useContentImage } from '@/features/contents/query/content-image-queries';
+import { useMutationAction } from '@/hooks/useMutationAction';
 import { AudioPlayPreview } from '../audio/AudioPlayPreview';
 import { AudioStatusBadge } from './AudioStatusBadge';
 import { ContentCardActions } from './ContentCardActions';
 import { ContentCardShell } from './ContentCardShell';
 import { useDeleteContentWithConfirm } from '@/features/contents/hooks/useDeleteContentWithConfirm';
-import { FrameBitmapPreview } from '@/features/contents/components/bitmap/FrameBitmapPreview';
-import { useSortableStyle } from '@/hooks/dnd/useSortableStyle';
+import { FrameBitmapPreview } from '@/components/eink/FrameBitmapPreview';
+import { useSortableStyle } from '@/components/dnd/useSortableStyle';
 
 interface ContentCardProps {
   gid: string;

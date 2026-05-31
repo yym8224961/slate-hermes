@@ -1,6 +1,6 @@
 import { defineTextSource } from '../source-factory';
-import { jsonFromScript } from '../html';
-import { compactHot } from '../text';
+import { jsonFromScript } from '../html-utils';
+import { compactHot } from '../hot-list.utils';
 
 interface BaiduItem {
   word?: string;

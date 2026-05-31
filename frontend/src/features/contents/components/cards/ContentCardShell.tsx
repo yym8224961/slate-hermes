@@ -35,7 +35,7 @@ export function ContentCardShell({
       style={style}
       className={cn('craft-card flex flex-col overflow-hidden', isDragging && 'opacity-90')}
     >
-      <div className="aspect-[4/3] bg-cream relative overflow-hidden border-b border-ink">
+      <div className="content-card-media">
         {loading ? (
           <div className="absolute inset-0 flex items-center justify-center">
             <Spinner />

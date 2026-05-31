@@ -4,7 +4,8 @@ import { ImageRendererModule } from '../image-renderer/image-renderer.module';
 import { AudioModule } from '../audio/audio.module';
 import { TtsModule } from '../tts/tts.module';
 import { DynamicContentModule } from '../dynamic-content/dynamic-content.module';
-import { ContentsController } from './contents.controller';
+import { ContentsMutationController } from './contents-mutation.controller';
+import { ContentsReadController } from './contents-read.controller';
 import { ContentsReadService } from './contents-read.service';
 import { ContentsService } from './contents.service';
 import { ContentAudioBlobService } from './content-audio-blob.service';
@@ -13,7 +14,7 @@ import { MultipartParser } from './multipart-parser';
 
 @Module({
   imports: [GroupsModule, ImageRendererModule, AudioModule, TtsModule, DynamicContentModule],
-  controllers: [ContentsController],
+  controllers: [ContentsMutationController, ContentsReadController],
   providers: [
     ContentsService,
     ContentsReadService,

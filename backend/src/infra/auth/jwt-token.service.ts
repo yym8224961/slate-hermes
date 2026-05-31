@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import jwt, { type SignOptions } from 'jsonwebtoken';
 import { AppConfig } from '../config/app.config';
-import type { WebUserContext } from '../../common/decorators/current-user.decorator';
+import type { WebUserContext } from '../../common/nest/auth-context';
 
 export interface JwtPayload {
   sub: string;

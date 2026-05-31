@@ -1,16 +1,107 @@
 #include "network/wifi.h"
 
 #include <esp_log.h>
+#include <esp_mac.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/event_groups.h>
 #include <freertos/task.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 
-#include "network/wifi_internal.h"
 #include "utils/time_utils.h"
+
+namespace {
+constexpr char kTag[]                 = "Wifi";
+constexpr int  kWifiBitConnected      = BIT0;
+constexpr int  kWifiBitConnectionFail = BIT1;
+
+EventGroupHandle_t& WifiEventGroup() {
+    static EventGroupHandle_t s_event_group = nullptr;
+    return s_event_group;
+}
+
+void EnsureWifiEventGroup() {
+    auto& event_group = WifiEventGroup();
+    if (!event_group)
+        event_group = xEventGroupCreate();
+    configASSERT(event_group != nullptr);
+}
+
+bool FillStaConfig(wifi_config_t& wc, const std::string& ssid, const std::string& password, std::string* reason) {
+    wc = {};
+    if (ssid.empty()) {
+        if (reason)
+            *reason = "SSID 不能为空";
+        return false;
+    }
+    if (ssid.size() > sizeof(wc.sta.ssid)) {
+        if (reason)
+            *reason = "SSID 过长";
+        return false;
+    }
+    if (password.size() >= sizeof(wc.sta.password)) {
+        if (reason)
+            *reason = "Wi-Fi 密码过长";
+        return false;
+    }
+    if (!password.empty() && password.size() < 8) {
+        if (reason)
+            *reason = "Wi-Fi 密码至少 8 位；开放网络请留空";
+        return false;
+    }
+    std::memcpy(wc.sta.ssid, ssid.data(), ssid.size());
+    std::memcpy(wc.sta.password, password.data(), password.size());
+    wc.sta.threshold.authmode = WIFI_AUTH_OPEN;
+    wc.sta.pmf_cfg.capable    = true;
+    wc.sta.pmf_cfg.required   = false;
+    return true;
+}
+
+std::string DisconnectReasonZh(int reason) {
+    switch (reason) {
+        case 1:
+            return "未指定原因";
+        case 2:
+            return "auth 失败";
+        case 3:
+            return "路由器主动断开(auth)";
+        case 4:
+            return "associate 超时";
+        case 5:
+            return "AP 客户端过多";
+        case 6:
+            return "未认证";
+        case 7:
+            return "未关联";
+        case 8:
+            return "本机断开(assoc-leave,常见于配置切换)";
+        case 14:
+            return "MIC 失败,密码错";
+        case 15:
+            return "4-way handshake 超时(密码错)";
+        case 200:
+            return "信号弱或路由器无 beacon";
+        case 201:
+            return "未找到该 SSID";
+        case 202:
+            return "认证失败,密码错";
+        case 203:
+            return "associate 失败";
+        case 204:
+            return "握手超时";
+        case 205:
+            return "连接失败";
+        default: {
+            char buf[48];
+            std::snprintf(buf, sizeof(buf), "连接失败 (reason=%d)", reason);
+            return buf;
+        }
+    }
+}
+}  // namespace
 
 Wifi& Wifi::Get() {
     static Wifi w;
@@ -25,8 +116,8 @@ void Wifi::EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data
             auto*      d              = static_cast<wifi_event_sta_disconnected_t*>(data);
             const bool want_reconnect = self->want_reconnect_.load(std::memory_order_acquire);
             const int  fail_count     = self->fail_count_.load(std::memory_order_acquire);
-            ESP_LOGW(wifi_internal::kTag, "STA disconnected: reason=%d want_reconnect=%d fail_count=%d/%d",
-                     d->reason, want_reconnect, fail_count, self->max_fast_fail_);
+            ESP_LOGW(kTag, "STA disconnected: reason=%d want_reconnect=%d fail_count=%d/%d", d->reason, want_reconnect,
+                     fail_count, self->max_fast_fail_);
             self->last_disconnect_reason_.store(d->reason, std::memory_order_release);
             DisconnectCb on_disconnect;
             {
@@ -38,7 +129,7 @@ void Wifi::EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data
 
             if (!want_reconnect) {
                 self->state_.store(State::Disconnected);
-                xEventGroupSetBits(wifi_internal::EventGroup(), wifi_internal::BIT_FAIL);
+                xEventGroupSetBits(WifiEventGroup(), kWifiBitConnectionFail);
                 return;
             }
 
@@ -46,20 +137,20 @@ void Wifi::EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data
                 self->fail_count_.fetch_add(1, std::memory_order_acq_rel);
                 esp_err_t e = esp_wifi_connect();
                 if (e != ESP_OK) {
-                    ESP_LOGW(wifi_internal::kTag, "ESP wifi_connect retry failed: %s", esp_err_to_name(e));
+                    ESP_LOGW(kTag, "ESP wifi_connect retry failed: %s", esp_err_to_name(e));
                 }
                 return;
             }
 
             self->state_.store(State::Disconnected);
-            xEventGroupSetBits(wifi_internal::EventGroup(), wifi_internal::BIT_FAIL);
-            self->ScheduleSlowReconnect();
+            xEventGroupSetBits(WifiEventGroup(), kWifiBitConnectionFail);
+            self->reconnect_.Schedule();
             return;
         }
 
         if (id == WIFI_EVENT_SCAN_DONE) {
-            if (self->slow_scan_pending_.exchange(false, std::memory_order_acq_rel)) {
-                self->HandleSlowScanResult();
+            if (self->reconnect_.ConsumeSlowScanPending()) {
+                self->reconnect_.HandleSlowScanResult();
             }
             return;
         }
@@ -72,10 +163,10 @@ void Wifi::EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data
         std::snprintf(ip, sizeof(ip), IPSTR, IP2STR(&e->ip_info.ip));
         self->SetIpString(ip);
         self->fail_count_.store(0, std::memory_order_release);
-        self->backoff_idx_.store(0, std::memory_order_release);
-        self->StopSlowReconnect();
+        self->reconnect_.ResetBackoff();
+        self->reconnect_.Stop();
         self->state_.store(State::Connected);
-        xEventGroupSetBits(wifi_internal::EventGroup(), wifi_internal::BIT_CONNECTED);
+        xEventGroupSetBits(WifiEventGroup(), kWifiBitConnected);
         return;
     }
 }
@@ -114,14 +205,14 @@ void Wifi::Init() {
     cfg.nvs_enable         = false;
     ESP_ERROR_CHECK(esp_wifi_init(&cfg));
 
-    wifi_internal::EnsureEventGroup();
+    EnsureWifiEventGroup();
     inited_ = true;
 }
 
 bool Wifi::Connect(const std::string& ssid, const std::string& password, int timeout_ms) {
     Init();
     if (ssid.empty()) {
-        ESP_LOGW(wifi_internal::kTag, "Connect: empty SSID");
+        ESP_LOGW(kTag, "Connect: empty SSID");
         return false;
     }
     if (mode_.load(std::memory_order_acquire) == Mode::AccessPoint)
@@ -130,8 +221,8 @@ bool Wifi::Connect(const std::string& ssid, const std::string& password, int tim
         StartStationInternal();
 
     wifi_config_t wc = {};
-    if (!wifi_internal::FillStaConfig(wc, ssid, password, nullptr)) {
-        ESP_LOGW(wifi_internal::kTag, "Connect: invalid Wi-Fi credentials ssid_len=%u password_len=%u",
+    if (!FillStaConfig(wc, ssid, password, nullptr)) {
+        ESP_LOGW(kTag, "Connect: invalid Wi-Fi credentials ssid_len=%u password_len=%u",
                  static_cast<unsigned>(ssid.size()), static_cast<unsigned>(password.size()));
         return false;
     }
@@ -139,25 +230,24 @@ bool Wifi::Connect(const std::string& ssid, const std::string& password, int tim
 
     state_.store(State::Connecting);
     fail_count_.store(0, std::memory_order_release);
-    backoff_idx_.store(0, std::memory_order_release);
+    reconnect_.ResetBackoff();
     want_reconnect_.store(true, std::memory_order_release);
 
-    xEventGroupClearBits(wifi_internal::EventGroup(), wifi_internal::BIT_CONNECTED | wifi_internal::BIT_FAIL);
+    xEventGroupClearBits(WifiEventGroup(), kWifiBitConnected | kWifiBitConnectionFail);
     esp_wifi_disconnect();
     esp_wifi_connect();
 
-    EventBits_t bits = xEventGroupWaitBits(wifi_internal::EventGroup(),
-                                           wifi_internal::BIT_CONNECTED | wifi_internal::BIT_FAIL, pdFALSE, pdFALSE,
-                                           pdMS_TO_TICKS(timeout_ms));
-    if (bits & wifi_internal::BIT_CONNECTED) {
+    EventBits_t bits = xEventGroupWaitBits(WifiEventGroup(), kWifiBitConnected | kWifiBitConnectionFail, pdFALSE,
+                                           pdFALSE, pdMS_TO_TICKS(timeout_ms));
+    if (bits & kWifiBitConnected) {
         esp_wifi_set_ps(WIFI_PS_MIN_MODEM);
         return true;
     }
 
-    ESP_LOGW(wifi_internal::kTag, "STA connect timeout/fail (last_reason=%d), disabling auto-reconnect",
+    ESP_LOGW(kTag, "STA connect timeout/fail (last_reason=%d), disabling auto-reconnect",
              last_disconnect_reason_.load(std::memory_order_acquire));
     want_reconnect_.store(false, std::memory_order_release);
-    StopSlowReconnect();
+    reconnect_.Stop();
     state_.store(State::Disconnected);
     return false;
 }
@@ -170,16 +260,16 @@ bool Wifi::TryConnect(const std::string& ssid, const std::string& password, int 
     }
     if (mode_.load(std::memory_order_acquire) != Mode::AccessPoint) {
         out_reason = "TryConnect 必须在配网模式下调用";
-        ESP_LOGE(wifi_internal::kTag, "TryConnect called without AP mode");
+        ESP_LOGE(kTag, "TryConnect called without AP mode");
         return false;
     }
     want_reconnect_.store(false, std::memory_order_release);
     fail_count_.store(0, std::memory_order_release);
     last_disconnect_reason_.store(0, std::memory_order_release);
-    StopSlowReconnect();
+    reconnect_.Stop();
 
     wifi_config_t wc = {};
-    if (!wifi_internal::FillStaConfig(wc, ssid, password, &out_reason))
+    if (!FillStaConfig(wc, ssid, password, &out_reason))
         return false;
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wc));
 
@@ -196,48 +286,47 @@ bool Wifi::TryConnect(const std::string& ssid, const std::string& password, int 
             break;
         const int wait_ms = std::min(budget_left, kPerAttemptTimeoutMs);
 
-        xEventGroupClearBits(wifi_internal::EventGroup(), wifi_internal::BIT_CONNECTED | wifi_internal::BIT_FAIL);
+        xEventGroupClearBits(WifiEventGroup(), kWifiBitConnected | kWifiBitConnectionFail);
         esp_err_t err = esp_wifi_connect();
         if (err != ESP_OK) {
-            ESP_LOGW(wifi_internal::kTag, "ESP wifi_connect attempt %d failed: %s", attempt, esp_err_to_name(err));
+            ESP_LOGW(kTag, "ESP wifi_connect attempt %d failed: %s", attempt, esp_err_to_name(err));
             vTaskDelay(pdMS_TO_TICKS(300));
             continue;
         }
 
-        EventBits_t bits = xEventGroupWaitBits(wifi_internal::EventGroup(),
-                                               wifi_internal::BIT_CONNECTED | wifi_internal::BIT_FAIL, pdFALSE, pdFALSE,
-                                               pdMS_TO_TICKS(wait_ms));
+        EventBits_t bits = xEventGroupWaitBits(WifiEventGroup(), kWifiBitConnected | kWifiBitConnectionFail, pdFALSE,
+                                               pdFALSE, pdMS_TO_TICKS(wait_ms));
 
-        if (bits & wifi_internal::BIT_CONNECTED) {
+        if (bits & kWifiBitConnected) {
             esp_wifi_disconnect();
             state_.store(State::Idle);
-            xEventGroupClearBits(wifi_internal::EventGroup(), wifi_internal::BIT_CONNECTED | wifi_internal::BIT_FAIL);
+            xEventGroupClearBits(WifiEventGroup(), kWifiBitConnected | kWifiBitConnectionFail);
             return true;
         }
-        if (bits & wifi_internal::BIT_FAIL) {
+        if (bits & kWifiBitConnectionFail) {
             last_reason = last_disconnect_reason_.load(std::memory_order_acquire);
-            ESP_LOGW(wifi_internal::kTag, "TryConnect attempt %d failed: reason=%d", attempt, last_reason);
+            ESP_LOGW(kTag, "TryConnect attempt %d failed: reason=%d", attempt, last_reason);
             vTaskDelay(pdMS_TO_TICKS(300));
         } else {
-            ESP_LOGW(wifi_internal::kTag, "TryConnect attempt %d timeout (%dms)", attempt, wait_ms);
+            ESP_LOGW(kTag, "TryConnect attempt %d timeout (%dms)", attempt, wait_ms);
             esp_wifi_disconnect();
             vTaskDelay(pdMS_TO_TICKS(200));
         }
     }
 
     if (last_reason != 0) {
-        out_reason = wifi_internal::DisconnectReasonZh(last_reason);
+        out_reason = DisconnectReasonZh(last_reason);
     } else {
         out_reason = "连接超时,可能信号弱或路由器无响应";
     }
     esp_wifi_disconnect();
-    ESP_LOGW(wifi_internal::kTag, "TryConnect all attempts failed: %s", out_reason.c_str());
+    ESP_LOGW(kTag, "TryConnect all attempts failed: %s", out_reason.c_str());
     return false;
 }
 
 void Wifi::Disconnect() {
     want_reconnect_.store(false, std::memory_order_release);
-    StopSlowReconnect();
+    reconnect_.Stop();
     if (mode_.load(std::memory_order_acquire) == Mode::Station)
         esp_wifi_disconnect();
     state_.store(State::Disconnected);
@@ -270,10 +359,26 @@ void Wifi::ClearIpString() {
     SetIpString("");
 }
 
+bool Wifi::ReconnectAllowed() const {
+    return want_reconnect_.load(std::memory_order_acquire);
+}
+
+bool Wifi::StationModeActive() const {
+    return mode_.load(std::memory_order_acquire) == Mode::Station;
+}
+
+void Wifi::MarkSlowReconnectConnecting() {
+    state_.store(State::Connecting);
+}
+
+void Wifi::ResetFastFailCount() {
+    fail_count_.store(0, std::memory_order_release);
+}
+
 bool Wifi::StartAp(const std::string& ssid_prefix) {
     Init();
     if (mode_.load(std::memory_order_acquire) == Mode::AccessPoint) {
-        ESP_LOGW(wifi_internal::kTag, "StartAp called but already in AP mode");
+        ESP_LOGW(kTag, "StartAp called but already in AP mode");
         return true;
     }
     StartApInternal(ssid_prefix);
@@ -287,4 +392,77 @@ void Wifi::StopAp() {
 void Wifi::OnDisconnected(DisconnectCb cb) {
     std::lock_guard<std::mutex> lock(callback_mutex_);
     on_disconnect_ = std::move(cb);
+}
+
+void Wifi::StartStationInternal() {
+    sta_netif_ = esp_netif_create_default_wifi_sta();
+    RegisterEventHandlers();
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    mode_.store(Mode::Station, std::memory_order_release);
+}
+
+void Wifi::StopStationInternal() {
+    if (mode_.load(std::memory_order_acquire) != Mode::Station)
+        return;
+    reconnect_.Stop();
+    UnregisterEventHandlers();
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    if (sta_netif_) {
+        esp_netif_destroy_default_wifi(sta_netif_);
+        sta_netif_ = nullptr;
+    }
+    state_.store(State::Idle);
+    want_reconnect_.store(false, std::memory_order_release);
+    ClearIpString();
+    mode_.store(Mode::Off, std::memory_order_release);
+}
+
+void Wifi::StartApInternal(const std::string& ssid_prefix) {
+    if (mode_.load(std::memory_order_acquire) == Mode::Station)
+        StopStationInternal();
+
+    ap_netif_  = esp_netif_create_default_wifi_ap();
+    sta_netif_ = esp_netif_create_default_wifi_sta();
+    RegisterEventHandlers();
+
+    uint8_t mac[6] = {0};
+    esp_read_mac(mac, ESP_MAC_WIFI_SOFTAP);
+    char ssid[32];
+    std::snprintf(ssid, sizeof(ssid), "%s-%02X%02X", ssid_prefix.c_str(), mac[4], mac[5]);
+
+    wifi_config_t apc = {};
+    std::strncpy(reinterpret_cast<char*>(apc.ap.ssid), ssid, sizeof(apc.ap.ssid) - 1);
+    apc.ap.ssid_len        = std::strlen(ssid);
+    apc.ap.channel         = 6;
+    apc.ap.max_connection  = 4;
+    apc.ap.authmode        = WIFI_AUTH_OPEN;
+    apc.ap.beacon_interval = 100;
+
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_APSTA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &apc));
+    ESP_ERROR_CHECK(esp_wifi_start());
+    mode_.store(Mode::AccessPoint, std::memory_order_release);
+}
+
+void Wifi::StopApInternal() {
+    if (mode_.load(std::memory_order_acquire) != Mode::AccessPoint)
+        return;
+    reconnect_.Stop();
+    UnregisterEventHandlers();
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    if (ap_netif_) {
+        esp_netif_destroy_default_wifi(ap_netif_);
+        ap_netif_ = nullptr;
+    }
+    if (sta_netif_) {
+        esp_netif_destroy_default_wifi(sta_netif_);
+        sta_netif_ = nullptr;
+    }
+    state_.store(State::Idle);
+    want_reconnect_.store(false, std::memory_order_release);
+    ClearIpString();
+    mode_.store(Mode::Off, std::memory_order_release);
 }

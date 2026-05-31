@@ -1,6 +1,6 @@
 import { Wifi } from 'lucide-react';
 import type { DeviceSummaryT } from 'shared';
-import { rssiLabel } from '@/lib/format';
+import { rssiLabel } from '@/features/devices/lib/rssi';
 import { BatteryLevelIcon } from './BatteryLevelIcon';
 import { DeviceMetaCard } from './DeviceMetaCard';
 

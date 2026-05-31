@@ -5,16 +5,14 @@
 #include <vector>
 
 #include "drivers/audio/audio_player.h"
-#include "scenes/splash/splash_scene.h"
-#include "storage/cache/cache.h"
 #include "drivers/display/epd_ssd1683.h"
 #include "events/event_bus.h"
-#include "ui/frame_view.h"
-#include "power/power_state.h"
 #include "scenes/core/scene_stack.h"
 #include "scenes/settings/settings_scene.h"
+#include "scenes/splash/splash_scene.h"
+#include "storage/cache/cache.h"
+#include "ui/frame_view.h"
 #include "ui/status_bar.h"
-#include "sync/sync_service.h"
 #include "ui/theme.h"
 #include "utils/utf8_utils.h"
 
@@ -83,8 +81,9 @@ std::string FormatGroupSyncCaption(const UiEvent& e) {
 }
 }  // namespace
 
-FrameScene::FrameScene(const char* gid, int content_count) : gid_(gid ? gid : ""), content_count_(content_count) {
-    idx_ = power_state::GetCurrentFrameSeq();
+FrameScene::FrameScene(SceneContext& ctx, const char* gid, int content_count)
+    : gid_(gid ? gid : ""), content_count_(content_count) {
+    idx_ = ctx.current_frame_seq ? ctx.current_frame_seq() : 0;
     if (content_count_ <= 0)
         content_count_ = 0;
     if (content_count_ > 0 && (idx_ < 0 || idx_ >= content_count_))
@@ -275,10 +274,8 @@ void FrameScene::CycleGroup(SceneContext& ctx, bool next) {
         status_bar_->SetCaption("切换内容组…");
         SyncRender(ctx, /*force_full*/ false);
     }
-    if (next)
-        SyncService::Get().CycleNext();
-    else
-        SyncService::Get().CyclePrev();
+    if (ctx.cycle_group)
+        ctx.cycle_group(next);
 }
 
 void FrameScene::HandleGroupSyncStatus(SceneContext& ctx, const UiEvent& e) {
@@ -293,7 +290,8 @@ void FrameScene::RebindGroup(SceneContext& ctx, const char* gid, int content_cou
     gid_           = gid ? gid : "";
     content_count_ = content_count > 0 ? content_count : 0;
     idx_           = 0;
-    power_state::ClearCurrentFrame();
+    if (ctx.clear_current_frame)
+        ctx.clear_current_frame();
     first_loaded_ = false;
 }
 
@@ -342,7 +340,8 @@ void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full, AudioBeh
         }
     }
 
-    power_state::SetCurrentFrameFromMeta(idx, meta);
+    if (ctx.set_current_frame_from_meta)
+        ctx.set_current_frame_from_meta(idx, meta);
 }
 
 void FrameScene::ApplyEmptyState() {

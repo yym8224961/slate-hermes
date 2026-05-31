@@ -9,7 +9,7 @@ import { bulkSetGroupSortOrder } from '../../common/db/bulk-sort-order';
 import { validateOrderSet } from '../../common/db/order-validation';
 import { nextGroupSortOrder } from '../../common/db/sort-order';
 import type { PrismaClientLike } from '../../common/db/prisma-utils';
-import { audioBlobContentId } from '../audio/audio-blob-id';
+import { audioBlobContentId } from '../../infra/blob/content-audio-blobs';
 import { computeGroupEtags, computeGroupManifestEtag } from './group-etag';
 
 interface GroupListEntry {

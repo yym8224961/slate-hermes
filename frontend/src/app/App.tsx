@@ -1,16 +1,13 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Layout } from '@/components/layout/Layout';
-import { RequireAuth } from '@/components/layout/RequireAuth';
+import { RequireAuth } from '@/features/auth/components/RequireAuth';
 import { ErrorBoundary } from '@/components/feedback/ErrorBoundary';
 import { Spinner } from '@/components/ui/Spinner';
 import { appRoutes, routePaths } from './routes';
 
-const LoginPage = lazy(() =>
-  import('@/pages/auth/LoginPage').then((module) => ({ default: module.LoginPage }))
-);
-const RegisterPage = lazy(() =>
-  import('@/pages/auth/RegisterPage').then((module) => ({ default: module.RegisterPage }))
+const AuthPage = lazy(() =>
+  import('@/pages/auth/AuthPage').then((module) => ({ default: module.AuthPage }))
 );
 const DashboardPage = lazy(() =>
   import('@/pages/dashboard/DashboardPage').then((module) => ({ default: module.DashboardPage }))
@@ -47,8 +44,8 @@ export function App() {
       <ScrollToTop />
       <Suspense fallback={<RouteFallback />}>
         <Routes>
-          <Route path={routePaths.login} element={<LoginPage />} />
-          <Route path={routePaths.register} element={<RegisterPage />} />
+          <Route path={routePaths.login} element={<AuthPage mode="login" />} />
+          <Route path={routePaths.register} element={<AuthPage mode="register" />} />
 
           <Route
             element={

@@ -67,16 +67,28 @@ struct FrameMeta {
 bool WriteFrameMeta(const std::string& gid, int idx, const FrameMeta& meta);
 bool ReadFrameMeta(const std::string& gid, int idx, FrameMeta& out);
 
-// Per-group staging area for multi-file frame updates. Writers can download all
-// required frame files into the stage and only publish them after the batch is
-// complete, so a failed sync does not partially overwrite the committed cache.
-bool BeginFrameStage(const std::string& gid);
-void CleanupFrameStage(const std::string& gid);
-bool StagedFrameImageExists(const std::string& gid, int idx, const std::string& expected_etag);
-bool WriteStagedFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag);
-bool StagedFrameAudioExists(const std::string& gid, int idx, const std::string& expected_etag);
-bool WriteStagedFrameAudio(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag);
-bool WriteStagedFrameMeta(const std::string& gid, int idx, const FrameMeta& meta);
-bool CommitStagedFrame(const std::string& gid, int idx, const std::string& image_etag, const std::string& audio_etag);
+class CacheWriter {
+   public:
+    explicit CacheWriter(std::string gid);
+    ~CacheWriter();
+
+    CacheWriter(const CacheWriter&)            = delete;
+    CacheWriter& operator=(const CacheWriter&) = delete;
+
+    bool Begin();
+    bool FrameImageExists(int idx, const std::string& expected_etag) const;
+    bool WriteFrameImage(int idx, const std::vector<uint8_t>& bytes, const std::string& etag);
+    bool FrameAudioExists(int idx, const std::string& expected_etag) const;
+    bool WriteFrameAudio(int idx, const std::vector<uint8_t>& bytes, const std::string& etag);
+    bool WriteFrameMeta(int idx, const FrameMeta& meta);
+    bool CommitFrame(int idx, const std::string& image_etag, const std::string& audio_etag);
+    bool Commit();
+    void Rollback();
+
+   private:
+    std::string gid_;
+    bool        begun_     = false;
+    bool        committed_ = false;
+};
 
 }  // namespace cache

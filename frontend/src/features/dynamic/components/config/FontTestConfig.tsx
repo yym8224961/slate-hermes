@@ -2,7 +2,7 @@ import { FONT_TEST_FONTS, FontTestFontId, type DynamicConfigT, type FontTestFont
 import { Select, SelectItem } from '@/components/ui/Select';
 import { Checkbox } from '@/components/ui/Checkbox';
 import type { DynamicConfigChange } from '@/features/dynamic/model/config-types';
-import { createSafeParseGuard } from '@/lib/zod-utils';
+import { createSafeParseGuard } from '@/features/dynamic/lib/zod-utils';
 
 const isFontTestFontId = createSafeParseGuard<FontTestFontIdT>(FontTestFontId);
 

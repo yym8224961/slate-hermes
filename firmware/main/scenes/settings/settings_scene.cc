@@ -4,15 +4,12 @@
 #include <memory>
 #include <utility>
 
-#include "scenes/settings/pages/device_info_page.h"
 #include "drivers/display/epd_ssd1683.h"
 #include "events/event_bus.h"
-#include "scenes/settings/pages/factory_reset_page.h"
 #include "ui/menu_list.h"
-#include "scenes/settings/pages/restart_device_page.h"
 #include "scenes/core/scene_stack.h"
 #include "ui/theme.h"
-#include "scenes/settings/pages/volume_page.h"
+#include "scenes/settings/settings_pages.h"
 
 namespace {
 constexpr char kTag[] = "Settings";

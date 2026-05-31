@@ -122,6 +122,23 @@ body {
     background: var(--color-cream);
     cursor: pointer;
   }
+
+  .frame-preview-surface {
+    position: relative;
+    overflow: hidden;
+    aspect-ratio: 4 / 3;
+    background: var(--color-paper);
+    border: 1px solid var(--color-ink);
+  }
+
+  .content-card-media {
+    position: relative;
+    overflow: hidden;
+    aspect-ratio: 4 / 3;
+    background: var(--color-cream);
+    border-bottom: 1px solid var(--color-ink);
+  }
+
   /* 状态方块：在线=实心墨，离线=空框，警告=实心砖红 */
   .dot { display: inline-block; width: 8px; height: 8px; }
   .dot-online  { background: var(--color-ink); border: 1.2px solid var(--color-ink); }

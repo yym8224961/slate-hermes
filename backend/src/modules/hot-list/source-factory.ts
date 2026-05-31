@@ -1,6 +1,7 @@
-import { fetchJson, fetchText } from './fetch';
+import { hotListSourceLabel, type CurrentHotListSourceIdT } from 'shared';
+import { fetchJson, fetchText } from '../../common/http/fetch';
 import type { HotListItem, HotListSource, HotListSourceFetchCtx } from './hot-list.types';
-import { withRanks } from './text';
+import { withRanks } from './hot-list.utils';
 
 type FetchOptions = NonNullable<Parameters<typeof fetchJson>[1]>;
 type SourceId = HotListSource['id'];
@@ -8,6 +9,12 @@ type HotListItemInput = Omit<HotListItem, 'rank'> | HotListItem;
 type SourceRequestOptions =
   | Omit<FetchOptions, 'signal'>
   | ((ctx: HotListSourceFetchCtx) => Omit<FetchOptions, 'signal'>);
+
+interface DefineDirectSourceConfig<TId extends CurrentHotListSourceIdT = CurrentHotListSourceIdT> {
+  id: TId;
+  label?: string;
+  fetch(signal: AbortSignal): Promise<HotListItem[]>;
+}
 
 interface DefineSourceConfig<T> {
   id: SourceId;
@@ -34,6 +41,16 @@ export function defineSource<T>(config: DefineSourceConfig<T>): HotListSource {
       const items = config.map(await config.load(ctx));
       return config.ranked === false ? (items as HotListItem[]) : withRanks(items);
     },
+  };
+}
+
+export function defineDirectSource<TId extends CurrentHotListSourceIdT>(
+  config: DefineDirectSourceConfig<TId>
+): HotListSource {
+  return {
+    id: config.id,
+    label: config.label ?? hotListSourceLabel(config.id),
+    fetch: (ctx) => config.fetch(ctx.signal),
   };
 }
 

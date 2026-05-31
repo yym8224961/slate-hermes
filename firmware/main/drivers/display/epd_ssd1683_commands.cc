@@ -73,7 +73,7 @@ void EpdSsd1683::EpdDisplayFull() {
 
     EpdSendCommand(0x10);
     for (int y = 0; y < kHeight; ++y) {
-        const uint8_t* src = tx_buf_ + y * bpr;
+        const uint8_t* src = snapshot_ + y * bpr;
         uint8_t*       dst = line;
         for (int xb = 0; xb < bpr; ++xb) {
             uint8_t a, b;
@@ -101,8 +101,8 @@ void EpdSsd1683::EpdDisplayPartial() {
     EpdSendCommand(0x10);
     ReadBusy();  // 跟参考实现对齐:0x10 之后等 BUSY 回 HIGH
     for (int y = 0; y < kHeight; ++y) {
-        const uint8_t* prev = prev_tx_buf_ + y * bpr;
-        const uint8_t* now  = tx_buf_ + y * bpr;
+        const uint8_t* prev = prev_snapshot_ + y * bpr;
+        const uint8_t* now  = snapshot_ + y * bpr;
         for (int xb = 0; xb < bpr; ++xb) {
             epd::PackPartial1bppTo2683(prev[xb], now[xb], line[2 * xb + 0], line[2 * xb + 1]);
         }

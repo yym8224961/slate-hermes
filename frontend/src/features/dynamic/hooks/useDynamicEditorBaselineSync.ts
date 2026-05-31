@@ -13,6 +13,13 @@ interface DynamicEditorState {
   configKey: string;
 }
 
+interface BaselineInput {
+  contentId: string;
+  serverType: DynamicTypeT;
+  serverFrameName: string | null;
+  serverConfig: DynamicConfigT;
+}
+
 type BaselineAction =
   | { type: 'SET_BASELINE'; baseline: DynamicEditorBaseline }
   | { type: 'SERVER_UPDATED_CLEAN'; serverBaseline: DynamicEditorBaseline }
@@ -59,12 +66,11 @@ export function useDynamicEditorBaselineSync({
   setFrameName: (frameName: string) => void;
   setConfig: (config: DynamicConfigT) => void;
 }) {
-  const initialBaseline = useMemo(
-    () => createDynamicEditorBaseline(contentId, serverType, serverFrameName, serverConfig),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    []
+  const [baseline, dispatch] = useReducer(
+    baselineReducer,
+    { contentId, serverType, serverFrameName, serverConfig },
+    createBaselineFromInput
   );
-  const [baseline, dispatch] = useReducer(baselineReducer, initialBaseline);
   const serverBaseline = useMemo(
     () => createDynamicEditorBaseline(contentId, serverType, serverFrameName, serverConfig),
     [contentId, serverConfig, serverFrameName, serverType]
@@ -104,6 +110,15 @@ export function useDynamicEditorBaselineSync({
     setBaseline: (nextBaseline: DynamicEditorBaseline) =>
       dispatch({ type: 'SET_BASELINE', baseline: nextBaseline }),
   };
+}
+
+function createBaselineFromInput({
+  contentId,
+  serverType,
+  serverFrameName,
+  serverConfig,
+}: BaselineInput): DynamicEditorBaseline {
+  return createDynamicEditorBaseline(contentId, serverType, serverFrameName, serverConfig);
 }
 
 function baselineReducer(

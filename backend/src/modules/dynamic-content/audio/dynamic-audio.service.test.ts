@@ -5,7 +5,8 @@ import type { BlobService } from '../../../infra/blob/blob.service';
 import type { PrismaService } from '../../../infra/prisma/prisma.service';
 import type { GroupsService } from '../../groups/groups.service';
 import type { TtsService } from '../../tts/tts.service';
-import { buildDynamicAudioTextForContent, DynamicAudioService } from './dynamic-audio.service';
+import { DynamicAudioService } from './dynamic-audio.service';
+import { buildDynamicAudioTextForContent } from './dynamic-audio-text';
 
 describe('DynamicAudioService', () => {
   it('stops its worker loop on module destroy', () => {

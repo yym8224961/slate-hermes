@@ -321,16 +321,16 @@ poll body 可选：
 
 ## 鉴权矩阵
 
-`JwtAuthGuard` 是全局 guard，默认所有端点都要求 JWT。例外由 `@Public()` 和局部 guard 实现：
+`JwtAuthGuard` 和 `RateLimitGuard` 是全局 guard。默认所有端点都要求 JWT；例外由 `@Public()` 和局部 guard 实现，限流由 `@RateLimit(...)` 元数据启用：
 
 | 端点类型 | guard |
 | --- | --- |
 | Web 管理 | 全局 `JwtAuthGuard` |
-| 注册、登录 | `@Public()` + `AuthRateLimitGuard` |
-| 设备注册 | `@Public()` + `DeviceRegisterRateLimitGuard` |
+| 注册、登录 | `@Public()` + `@RateLimit(authRateLimit)` |
+| 设备注册 | `@Public()` + `@RateLimit(deviceRegisterRateLimit)` |
 | 设备 current 协议 | `@Public()` + `DeviceAuthGuard` |
 | 内容读取 / binary / manifest | `@Public()` + `JwtOrDeviceAuthGuard` |
-| dashboard ingest | `@Public()` + `IngestLimitGuard` |
+| dashboard ingest | `@Public()` + `@RateLimit(ingestRateLimit)` + `IngestPayloadSizeGuard` |
 | `/healthz` | `@Public()` |
 
 device secret 必须是 64 字符 hex bearer token；JWT 与 device secret 不会互相误判。

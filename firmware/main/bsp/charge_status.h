@@ -3,6 +3,8 @@
 #include <driver/gpio.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include <freertos/task.h>
+#include <atomic>
 #include <cstdint>
 #include <functional>
 
@@ -24,13 +26,17 @@ class ChargeStatus {
     };
 
     void     Init(gpio_num_t detect_gpio, gpio_num_t full_gpio, int64_t now_ms);
-    void     Tick(int64_t now_ms);
+    void     StartTick();
+    void     StopTick();
     Snapshot Get() const;
     // 回调在 Tick() 调用方上下文同步执行;只做 evt::Post 这类轻量转发。
     void OnStateChanged(std::function<void(const Snapshot&)> cb);
 
    private:
-    void UpdateSnapshot(State state, bool power_present, bool no_battery);
+    static void TickTaskEntry(void* arg);
+    void        TickTaskLoop();
+    void        Tick(int64_t now_ms);
+    void        UpdateSnapshot(State state, bool power_present, bool no_battery);
 
     gpio_num_t detect_gpio_ = GPIO_NUM_NC;
     gpio_num_t full_gpio_   = GPIO_NUM_NC;
@@ -45,7 +51,9 @@ class ChargeStatus {
     Snapshot                             snapshot_{State::kNoPower, false, false, false, false};
     std::function<void(const Snapshot&)> on_state_changed_;
     SemaphoreHandle_t                    callback_mutex_ = nullptr;
-    SemaphoreHandle_t                    tick_mutex_     = nullptr;
+    std::atomic<bool>                    tick_running_{false};
+    TaskHandle_t                         tick_task_ = nullptr;
+    SemaphoreHandle_t                    tick_exit_ = nullptr;
 
     static constexpr int kPowerPresentHoldMs = 1000;
     static constexpr int kStableHighMs       = 400;

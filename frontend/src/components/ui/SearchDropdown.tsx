@@ -8,7 +8,7 @@ import {
   type MutableRefObject,
   type ReactNode,
 } from 'react';
-import { inputCls } from '@/lib/styles';
+import { inputCls } from '@/components/ui/styles/form';
 import { cn } from '@/lib/cn';
 
 interface SearchDropdownProps<Item> {

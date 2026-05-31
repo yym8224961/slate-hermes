@@ -6,12 +6,12 @@
 
 #include "bsp/board.h"
 #include "bsp/charge_status.h"
-#include "utils/json_utils.h"
-#include "storage/nvs/volume_store.h"
 #include "network/wifi.h"
+#include "storage/nvs/volume_store.h"
+#include "utils/json_utils.h"
+#include "xiaozhi/config/settings.h"
 #include "xiaozhi/service/audio_service.h"
 #include "xiaozhi/service/chat_service.h"
-#include "xiaozhi/config/settings.h"
 
 namespace xiaozhi::mcp {
 namespace {

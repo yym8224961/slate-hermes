@@ -6,6 +6,7 @@
 
 #include "bsp/config.h"
 #include "utils/scoped_mutex_lock.h"
+#include "utils/time_utils.h"
 
 namespace {
 constexpr char kTag[] = "Charge";
@@ -33,11 +34,11 @@ void ChargeStatus::Init(gpio_num_t detect_gpio, gpio_num_t full_gpio, int64_t no
             configASSERT(callback_mutex_ != nullptr);
         }
     }
-    if (!tick_mutex_) {
-        tick_mutex_ = xSemaphoreCreateMutex();
-        if (!tick_mutex_) {
-            ESP_LOGE(kTag, "Failed to create tick mutex");
-            configASSERT(tick_mutex_ != nullptr);
+    if (!tick_exit_) {
+        tick_exit_ = xSemaphoreCreateBinary();
+        if (!tick_exit_) {
+            ESP_LOGE(kTag, "Failed to create tick exit semaphore");
+            configASSERT(tick_exit_ != nullptr);
         }
     }
 
@@ -53,6 +54,30 @@ void ChargeStatus::Init(gpio_num_t detect_gpio, gpio_num_t full_gpio, int64_t no
     Tick(now_ms);
 }
 
+void ChargeStatus::StartTick() {
+    if (tick_running_.exchange(true, std::memory_order_acq_rel))
+        return;
+    if (tick_exit_) {
+        while (xSemaphoreTake(tick_exit_, 0) == pdTRUE) {
+        }
+    }
+    BaseType_t ok = xTaskCreatePinnedToCore(&ChargeStatus::TickTaskEntry, "charge_tick", 3 * 1024, this, 1,
+                                            &tick_task_, 0);
+    if (ok != pdPASS) {
+        tick_running_.store(false, std::memory_order_release);
+        tick_task_ = nullptr;
+        ESP_LOGE(kTag, "charge_tick task create failed");
+    }
+}
+
+void ChargeStatus::StopTick() {
+    if (!tick_running_.exchange(false, std::memory_order_acq_rel))
+        return;
+    if (tick_exit_) {
+        xSemaphoreTake(tick_exit_, pdMS_TO_TICKS(1000));
+    }
+}
+
 void ChargeStatus::OnStateChanged(std::function<void(const Snapshot&)> cb) {
     if (callback_mutex_)
         xSemaphoreTake(callback_mutex_, portMAX_DELAY);
@@ -61,10 +86,25 @@ void ChargeStatus::OnStateChanged(std::function<void(const Snapshot&)> cb) {
         xSemaphoreGive(callback_mutex_);
 }
 
-void ChargeStatus::Tick(int64_t now_ms) {
-    if (tick_mutex_)
-        xSemaphoreTake(tick_mutex_, portMAX_DELAY);
+void ChargeStatus::TickTaskEntry(void* arg) {
+    static_cast<ChargeStatus*>(arg)->TickTaskLoop();
+}
 
+void ChargeStatus::TickTaskLoop() {
+    // 500 ms 而不是 200 ms：充电 IC 状态变化以秒计，kStableHighMs=400/kAltWindowMs=1500
+    // 仍然能正常去抖,但任务唤醒次数减半,light-sleep 期间收益更明显。
+    const TickType_t poll = pdMS_TO_TICKS(500);
+    while (tick_running_.load(std::memory_order_acquire)) {
+        Tick(time_utils::NowMs());
+        vTaskDelay(poll);
+    }
+    tick_task_ = nullptr;
+    if (tick_exit_)
+        xSemaphoreGive(tick_exit_);
+    vTaskDelete(nullptr);
+}
+
+void ChargeStatus::Tick(int64_t now_ms) {
     const bool charging_detected = gpio_get_level(detect_gpio_) == CHARGE_DETECT_CHARGING_LEVEL;
     const bool full_high         = gpio_get_level(full_gpio_) == 1;
 
@@ -123,9 +163,6 @@ void ChargeStatus::Tick(int64_t now_ms) {
     }
 
     UpdateSnapshot(state, power_present, no_battery);
-
-    if (tick_mutex_)
-        xSemaphoreGive(tick_mutex_);
 }
 
 void ChargeStatus::UpdateSnapshot(State state, bool power_present, bool no_battery) {

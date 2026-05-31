@@ -1,13 +1,12 @@
 import { useCallback, useMemo, useState } from 'react';
 import { DynamicConfig, type DynamicConfigT, type DynamicTypeT } from 'shared';
-import { usePreviewDynamicContent } from '@/features/contents/query/content-dynamic-queries';
 import { defaultConfig } from '@/features/dynamic/model/default-config';
 import {
   defaultDynamicFrameName,
   effectiveDynamicFrameName,
   effectiveDynamicStatusBarText,
   frameNameForSyncedDynamicConfigChange,
-} from '@/features/dynamic/model/frame-name';
+} from '@/features/dynamic/model/display-name';
 import { dynamicConfigKey } from '@/features/dynamic/model/json-parse';
 import { useDynamicPreview } from './useDynamicPreview';
 
@@ -38,13 +37,12 @@ export function useDynamicContentForm({
   const [dashboardData, setDashboardData] = useState<Record<string, unknown> | null>(
     initialDashboardData
   );
-  const preview = usePreviewDynamicContent(contentId);
-  const { livePreviewData, invalidatePreview } = useDynamicPreview({
+  const { livePreviewData, previewPending, invalidatePreview } = useDynamicPreview({
+    contentId,
     type,
     config,
     frameName,
     dashboardData,
-    preview,
   });
   const configKey = useMemo(() => (config ? dynamicConfigKey(config) : ''), [config]);
   const hasDashboardData = dashboardData !== null && Object.keys(dashboardData).length > 0;
@@ -115,7 +113,7 @@ export function useDynamicContentForm({
     setDashboardData,
     hasDashboardData,
     canSubmit: !!(type && config && (type !== 'dashboard' || dashboardDataSatisfied)),
-    preview,
+    previewPending,
     livePreviewData,
     caption: effectiveDynamicStatusBarText(type, config, frameName),
     invalidatePreview,

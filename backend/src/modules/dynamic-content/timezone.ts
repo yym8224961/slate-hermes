@@ -11,17 +11,20 @@ export function timezoneFromConfig(config: unknown): string {
 export function datePartsInTz(
   date: Date,
   timeZone: string
-): { year: number; month: number; day: number } {
+): { year: number; month: number; day: number; weekday: number } {
   const parts = getDateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
+    weekday: 'short',
   }).formatToParts(date);
+  const weekday = parts.find((part) => part.type === 'weekday')?.value ?? 'Sun';
   return {
     year: Number(parts.find((part) => part.type === 'year')?.value ?? 1970),
     month: Number(parts.find((part) => part.type === 'month')?.value ?? 1),
     day: Number(parts.find((part) => part.type === 'day')?.value ?? 1),
+    weekday: weekdayIndex(weekday),
   };
 }
 
@@ -117,6 +120,23 @@ export function nextLocalMidnight(now: Date, timeZone: string): Date {
     throw new Error(`failed to compute next local midnight for time zone ${timeZone}`);
   }
   return midnight;
+}
+
+export function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+function weekdayIndex(value: string): number {
+  const map: Record<string, number> = {
+    Sun: 0,
+    Mon: 1,
+    Tue: 2,
+    Wed: 3,
+    Thu: 4,
+    Fri: 5,
+    Sat: 6,
+  };
+  return map[value] ?? 0;
 }
 
 function offsetsAround(utcMs: number, timeZone: string): Set<number> {

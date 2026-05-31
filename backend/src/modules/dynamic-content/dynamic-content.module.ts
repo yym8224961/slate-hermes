@@ -20,11 +20,9 @@ import { DynamicContentRendererService } from './dynamic-content-renderer.servic
 import { DynamicContentService } from './dynamic-content.service';
 import { DynamicContentSchedulerService } from './dynamic-content-scheduler.service';
 import { WeatherCityController } from './weather-city.controller';
-import { WeatherCitySearchRateLimitGuard } from './weather-city-search-rate-limit.guard';
 import { DashboardIngestController } from './ingest/dashboard-ingest.controller';
 import { IngestPayloadSizeGuard } from './ingest/ingest-payload-size.guard';
 import { IngestPayloadSizePipe } from './ingest/ingest-payload-size.pipe';
-import { IngestRateLimitGuard } from './ingest/ingest-rate-limit.guard';
 import { DynamicPreviewController } from './dynamic-preview.controller';
 
 /**
@@ -60,10 +58,8 @@ import { DynamicPreviewController } from './dynamic-preview.controller';
     DashboardProvider,
     FontTestProvider,
     DynamicContentSchedulerService,
-    WeatherCitySearchRateLimitGuard,
     IngestPayloadSizeGuard,
     IngestPayloadSizePipe,
-    IngestRateLimitGuard,
   ],
   exports: [
     DynamicContentRegistry,

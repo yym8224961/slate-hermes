@@ -1,8 +1,8 @@
 import { Module } from '@nestjs/common';
-import { AudioService } from './audio.service';
+import { AudioTranscoderService } from './audio-transcoder.service';
 
 @Module({
-  providers: [AudioService],
-  exports: [AudioService],
+  providers: [AudioTranscoderService],
+  exports: [AudioTranscoderService],
 })
 export class AudioModule {}

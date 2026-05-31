@@ -1,8 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Copy } from 'lucide-react';
-import { fieldBaseCls } from '@/lib/styles';
+import { fieldBaseCls } from '@/components/ui/styles/form';
 import { cn } from '@/lib/cn';
-import { absoluteContentDataUrl } from '@/features/contents/query/api-paths';
+import { API_PREFIX } from '@/lib/http';
 
 export function DashboardPushPanel({
   contentId,
@@ -12,6 +12,7 @@ export function DashboardPushPanel({
   data: Record<string, unknown>;
 }) {
   const [copied, setCopied] = useState(false);
+  const copiedTimerRef = useRef<number | null>(null);
   const url = useMemo(() => absoluteContentDataUrl(contentId), [contentId]);
   const examplePayload = useMemo(() => {
     return { version: 1, data };
@@ -25,8 +26,18 @@ export function DashboardPushPanel({
   function copy() {
     void navigator.clipboard.writeText(url);
     setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+    copiedTimerRef.current = window.setTimeout(() => {
+      copiedTimerRef.current = null;
+      setCopied(false);
+    }, 1500);
   }
+
+  useEffect(() => {
+    return () => {
+      if (copiedTimerRef.current !== null) window.clearTimeout(copiedTimerRef.current);
+    };
+  }, []);
 
   return (
     <div className="space-y-3">
@@ -64,4 +75,10 @@ export function DashboardPushPanel({
       </p>
     </div>
   );
+}
+
+function absoluteContentDataUrl(contentId: string): string {
+  const path = `${API_PREFIX}/contents/${contentId}/data`;
+  if (typeof window === 'undefined') return path;
+  return new URL(path, window.location.origin).toString();
 }

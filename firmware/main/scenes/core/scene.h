@@ -7,8 +7,17 @@
 
 #include <lvgl.h>
 #include <functional>
+#include <string>
 
 #include "bsp/charge_status.h"
+
+namespace cache {
+struct FrameMeta;
+}
+
+namespace xiaozhi {
+class ChatService;
+}
 
 class StatusBar;
 class EpdSsd1683;
@@ -27,6 +36,12 @@ struct SceneContext {
     std::function<ChargeStatus::Snapshot()> read_charge;
     std::function<bool()>                   wifi_connected;
     std::function<int()>                    wifi_rssi;
+
+    std::function<int()>                                       current_frame_seq;
+    std::function<void()>                                      clear_current_frame;
+    std::function<void(int seq, const cache::FrameMeta& meta)> set_current_frame_from_meta;
+    std::function<void(bool next)>                             cycle_group;
+    std::function<xiaozhi::ChatService*()>                     chat_service;
 };
 
 class Scene {

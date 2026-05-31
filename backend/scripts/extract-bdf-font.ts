@@ -1,23 +1,7 @@
 #!/usr/bin/env bun
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-
-interface GlyphDsc {
-  bitmap_index: number;
-  adv_w: number;
-  box_w: number;
-  box_h: number;
-  ofs_x: number;
-  ofs_y: number;
-}
-
-interface ExtractedFont {
-  name: string;
-  lineHeight: number;
-  baseLine: number;
-  glyphs: Record<string, GlyphDsc>;
-  bitmapBase64: string;
-}
+import type { ExtractedFont, GlyphDsc } from './extracted-font';
 
 interface BdfGlyph {
   encoding: number;

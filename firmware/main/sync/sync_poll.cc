@@ -21,7 +21,7 @@ api::Telemetry BuildTelemetry(const std::string& current_group, const std::strin
     uint8_t        pct = 0;
     if (Board::Get().ReadBattery(&mv, &pct)) {
         tel.battery_pct = pct;
-        evt::PostBatteryUpdated(mv, pct, 0);
+        evt::PostBatteryUpdated(mv, pct, evt::kNoWait);
     }
     tel.rssi_dbm            = Wifi::Get().GetRssi();
     tel.fw_version          = CONFIG_APP_PROJECT_VER;
@@ -43,8 +43,44 @@ api::Telemetry BuildTelemetry(const std::string& current_group, const std::strin
 
 }  // namespace
 
+bool SyncService::ClearSelectedGroup() {
+    ClearCurrentGroup();
+    power_state::ClearCurrentFrame();
+    return cache::WriteStateMeta("", "");
+}
+
+bool SyncService::SyncBackground(const api::DeviceState& state, const api::Telemetry& telemetry, bool& group_changed) {
+    if (!state.has_group)
+        return ClearSelectedGroup();
+
+    if (telemetry.manifest_etag != state.manifest_etag) {
+        return SyncManifestAndFrames(state.group_id, state.manifest_etag, state.group_name, state.content_count,
+                                     SyncReason::kBackgroundRefresh, group_changed);
+    }
+
+    if (!state.has_current_content) {
+        ESP_LOGW(kTag, "Background refresh missing current_content; keep cached frame schedule");
+        power_state::RestoreCurrentFrameScheduleFromCache();
+        return telemetry.current_content_seq < 0;
+    }
+
+    const bool ok = SyncCurrentContent(state.group_id, state.current_content, group_changed);
+    if (ok && group_changed) {
+        PostSyncedGroupReady(state.group_id, state.group_name, state.content_count, /*content_changed=*/true);
+    }
+    return ok;
+}
+
+bool SyncService::SyncUserActive(const api::DeviceState& state, bool& group_changed) {
+    if (!state.has_group)
+        return ClearSelectedGroup();
+
+    return SyncManifestAndFrames(state.group_id, state.manifest_etag, state.group_name, state.content_count,
+                                 SyncReason::kUserActive, group_changed);
+}
+
 void SyncService::SyncOnce(SyncMode mode) {
-    std::string telemetry_group = GetCurrentGroupLocked();
+    std::string telemetry_group = CurrentGroupSnapshot();
     if (mode == SyncMode::kBackgroundRefresh) {
         power_state::RestoreCurrentFrameScheduleFromCache();
         std::string gid, etag;
@@ -52,7 +88,7 @@ void SyncService::SyncOnce(SyncMode mode) {
             telemetry_group = gid;
     }
 
-    evt::PostSyncStarted(0);
+    evt::PostSyncStarted(evt::kNoWait);
 
     api::Telemetry tel = BuildTelemetry(telemetry_group, wake_reason_);
     if (ShouldStop())
@@ -63,7 +99,7 @@ void SyncService::SyncOnce(SyncMode mode) {
         if (ShouldStop())
             return;
         ESP_LOGW(kTag, "Poll failed (offline?)");
-        evt::PostSyncFinished(false, false, 0);
+        evt::PostSyncFinished(false, false, evt::kNoWait);
         return;
     }
     if (ShouldStop())
@@ -74,10 +110,10 @@ void SyncService::SyncOnce(SyncMode mode) {
     const BoundState next_bound = state.bound ? BoundState::kBound : BoundState::kUnbound;
     if (next_bound != prev_bound) {
         if (state.bound) {
-            evt::PostSimple(UiEventKind::kBound, 0);
+            evt::PostSimple(UiEventKind::kBound, evt::kNoWait);
         } else {
             ESP_LOGW(kTag, "Unbound");
-            evt::PostUnbound(state.pair_code, 0);
+            evt::PostUnbound(state.pair_code, evt::kNoWait);
         }
         was_bound_.store(next_bound);
         if (state.bound) {
@@ -88,51 +124,20 @@ void SyncService::SyncOnce(SyncMode mode) {
     }
 
     if (!state.bound) {
-        evt::PostBootStage(BootStage::kAwaitingPair, nullptr, state.pair_code.c_str(), 0);
+        evt::PostBootStage(BootStage::kAwaitingPair, nullptr, state.pair_code.c_str(), evt::kNoWait);
     } else if (!state.has_group) {
-        evt::PostBootStage(BootStage::kAwaitingGroup, nullptr, nullptr, 0);
+        evt::PostBootStage(BootStage::kAwaitingGroup, nullptr, nullptr, evt::kNoWait);
     }
 
-    bool group_changed = false;
-    bool sync_ok       = true;
-    if (mode == SyncMode::kBackgroundRefresh && state.has_group && state.has_current_content) {
-        if (tel.manifest_etag != state.manifest_etag) {
-            sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, state.group_name, state.content_count,
-                                            SyncReason::kBackgroundRefresh, group_changed);
-        } else {
-            sync_ok = SyncCurrentContent(state.group_id, state.current_content, group_changed);
-            if (sync_ok && group_changed) {
-                PostSyncedGroupReady(state.group_id, state.group_name, state.content_count,
-                                     /*content_changed=*/true);
-            }
-        }
-    } else if (mode == SyncMode::kBackgroundRefresh && state.has_group) {
-        if (tel.manifest_etag != state.manifest_etag) {
-            sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, state.group_name, state.content_count,
-                                            SyncReason::kBackgroundRefresh, group_changed);
-        } else {
-            ESP_LOGW(kTag, "Background refresh missing current_content; keep cached frame schedule");
-            power_state::RestoreCurrentFrameScheduleFromCache();
-            sync_ok = tel.current_content_seq < 0;
-        }
-    } else if (mode == SyncMode::kBackgroundRefresh) {
-        ClearCurrentGroupLocked();
-        power_state::ClearCurrentFrame();
-        sync_ok = cache::WriteStateMeta("", "");
-    } else if (state.has_group) {
-        sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, state.group_name, state.content_count,
-                                        SyncReason::kUserActive, group_changed);
-    } else {
-        ClearCurrentGroupLocked();
-        power_state::ClearCurrentFrame();
-        sync_ok = cache::WriteStateMeta("", "");
-    }
+    bool       group_changed = false;
+    const bool sync_ok       = mode == SyncMode::kBackgroundRefresh ? SyncBackground(state, tel, group_changed)
+                                                                    : SyncUserActive(state, group_changed);
 
-    evt::PostSyncFinished(sync_ok, group_changed, 0);
+    evt::PostSyncFinished(sync_ok, group_changed, evt::kNoWait);
 }
 
 void SyncService::DoCycle(const std::string& direction) {
-    evt::PostSyncStarted(0);
+    evt::PostSyncStarted(evt::kNoWait);
 
     api::DeviceState state;
     if (ShouldStop())
@@ -141,7 +146,7 @@ void SyncService::DoCycle(const std::string& direction) {
         if (ShouldStop())
             return;
         ESP_LOGW(kTag, "CycleGroup(%s) failed (offline?)", direction.c_str());
-        evt::PostSyncFinished(false, false, 0);
+        evt::PostSyncFinished(false, false, evt::kNoWait);
         evt::PostGroupSyncStatus(GroupSyncStatusMode::kCycleFailed, "", "");
         return;
     }
@@ -155,12 +160,10 @@ void SyncService::DoCycle(const std::string& direction) {
         sync_ok = SyncManifestAndFrames(state.group_id, state.manifest_etag, state.group_name, state.content_count,
                                         SyncReason::kCycle, group_changed);
     } else {
-        ClearCurrentGroupLocked();
-        power_state::ClearCurrentFrame();
-        sync_ok = cache::WriteStateMeta("", "");
+        sync_ok = ClearSelectedGroup();
     }
 
-    evt::PostSyncFinished(sync_ok, group_changed, 0);
+    evt::PostSyncFinished(sync_ok, group_changed, evt::kNoWait);
     if (!sync_ok)
         evt::PostGroupSyncStatus(GroupSyncStatusMode::kCycleFailed, state.group_id, state.group_name);
 }

@@ -8,9 +8,9 @@ import {
   type DynamicConfigT,
   type DynamicTypeT,
 } from 'shared';
-import { useUpdateDynamicContent } from '@/features/contents/query/content-dynamic-queries';
-import { useContentImage } from '@/features/contents/query/content-list-queries';
-import { useToast } from '@/components/feedback/Toast';
+import { useUpdateDynamicContent } from '@/features/dynamic/query/dynamic-content-queries';
+import { useContentImage } from '@/features/contents/query/content-image-queries';
+import { useToast } from '@/components/feedback/toast-context';
 import { FormActions } from '@/components/ui/FormActions';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { getApiErrorMessage } from '@/lib/api-errors';
@@ -136,7 +136,7 @@ export function DynamicContentEditor({
               savedData={savedPreview.data}
               savedPending={savedPreviewEnabled && savedPreview.isPending}
               liveData={form.livePreviewData}
-              livePending={form.preview.isPending}
+              livePending={form.previewPending}
               hasConfig={!!form.config}
               caption={form.caption}
             />

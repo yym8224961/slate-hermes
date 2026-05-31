@@ -20,7 +20,6 @@
 
 #include <esp_event.h>
 #include <esp_netif.h>
-#include <esp_timer.h>
 #include <esp_wifi.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -32,7 +31,11 @@
 #include <mutex>
 #include <string>
 
+#include "network/wifi_reconnect_manager.h"
+
 class Wifi {
+    friend class WifiReconnectManager;
+
    public:
     enum class State {
         Idle,          // 还没连过
@@ -101,15 +104,10 @@ class Wifi {
     static void EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data);
     void        SetIpString(const char* ip);
     void        ClearIpString();
-
-    // 慢速重连子系统:fast retry 用完 → 启 timer → DoSlowScan → SCAN_DONE → 找 AP → connect。
-    // 找不到 → 递增 backoff_idx_ 再 ScheduleSlowReconnect 一次。
-    void        EnsureReconnectTimer();
-    void        ScheduleSlowReconnect();
-    void        StopSlowReconnect();
-    void        DoSlowScanReconnect();
-    void        HandleSlowScanResult();
-    static void OnSlowReconnectTimer(void* arg);
+    bool        ReconnectAllowed() const;
+    bool        StationModeActive() const;
+    void        MarkSlowReconnectConnecting();
+    void        ResetFastFailCount();
 
     // 仅 Init 调一次的底座
     std::mutex init_mutex_;
@@ -127,18 +125,14 @@ class Wifi {
     esp_event_handler_instance_t handler_ip_   = nullptr;
 
     // STA 状态
-    std::atomic<State> state_{State::Idle};
-    std::atomic<int>   fail_count_{0};
-    int                max_fast_fail_ = 5;
-    std::atomic<bool>  want_reconnect_{false};
-    mutable std::mutex callback_mutex_;
-    DisconnectCb       on_disconnect_;
-    mutable std::mutex ip_mutex_;
-    char               ip_str_[INET6_ADDRSTRLEN] = {0};
-    std::atomic<int>   last_disconnect_reason_{0};
-
-    // 慢速重连
-    esp_timer_handle_t  reconnect_timer_ = nullptr;
-    std::atomic<size_t> backoff_idx_{0};
-    std::atomic<bool>   slow_scan_pending_{false};  // 区分本次 SCAN_DONE 是不是我们发起的
+    std::atomic<State>   state_{State::Idle};
+    std::atomic<int>     fail_count_{0};
+    int                  max_fast_fail_ = 5;
+    std::atomic<bool>    want_reconnect_{false};
+    mutable std::mutex   callback_mutex_;
+    DisconnectCb         on_disconnect_;
+    mutable std::mutex   ip_mutex_;
+    char                 ip_str_[INET6_ADDRSTRLEN] = {0};
+    std::atomic<int>     last_disconnect_reason_{0};
+    WifiReconnectManager reconnect_{this};
 };

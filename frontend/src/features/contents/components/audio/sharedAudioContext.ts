@@ -3,9 +3,15 @@ import { onSessionEnded } from '@/features/auth/lib/session-events';
 export const CONTENT_AUDIO_SAMPLE_RATE = 16000;
 
 let sharedAudioContext: AudioContext | null = null;
+let unsubscribeSessionEnded: (() => void) | null = null;
+
+export function ensureSharedAudioContextSessionCleanup(): void {
+  unsubscribeSessionEnded ??= onSessionEnded(closeSharedAudioContext);
+}
 
 export function getSharedAudioContext(): AudioContext | null {
   if (typeof window === 'undefined' || typeof AudioContext === 'undefined') return null;
+  ensureSharedAudioContextSessionCleanup();
   if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
     sharedAudioContext = new AudioContext({ sampleRate: CONTENT_AUDIO_SAMPLE_RATE });
   }
@@ -27,11 +33,10 @@ export function closeSharedAudioContext(): void {
   if (ctx && ctx.state !== 'closed') void ctx.close().catch(() => {});
 }
 
-const unsubscribeSessionEnded = onSessionEnded(closeSharedAudioContext);
-
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
-    unsubscribeSessionEnded();
+    unsubscribeSessionEnded?.();
+    unsubscribeSessionEnded = null;
     closeSharedAudioContext();
   });
 }

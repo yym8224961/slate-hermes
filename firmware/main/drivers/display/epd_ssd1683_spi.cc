@@ -7,7 +7,7 @@
 #include <freertos/task.h>
 
 #include "bsp/config.h"
-#include "bsp/gpio_util.h"
+#include "utils/gpio_util.h"
 #include "utils/time_utils.h"
 
 namespace {

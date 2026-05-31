@@ -1,13 +1,10 @@
 #include "bsp/board.h"
 
-#include <esp_adc/adc_cali.h>
-#include <esp_adc/adc_cali_scheme.h>
-#include <esp_adc/adc_oneshot.h>
 #include <esp_log.h>
-#include <esp_rom_sys.h>
 
 #include <sdkconfig.h>
 
+#include "bsp/battery_adc.h"
 #include "bsp/board_power.h"
 #include "drivers/input/button.h"
 #include "bsp/charge_status.h"
@@ -82,46 +79,7 @@ void Board::InitI2c() {
 void Board::InitChargeStatus() {
     charge_->Init(static_cast<gpio_num_t>(CHARGE_DETECT_GPIO), static_cast<gpio_num_t>(CHARGE_FULL_GPIO),
                   time_utils::NowMs());
-    if (!charge_tick_exit_) {
-        charge_tick_exit_ = xSemaphoreCreateBinary();
-        if (!charge_tick_exit_) {
-            ESP_LOGE(kTag, "charge_tick exit semaphore create failed");
-            return;
-        }
-    }
-    charge_tick_running_.store(true, std::memory_order_release);
-    BaseType_t ok =
-        xTaskCreatePinnedToCore(&Board::ChargeTickTaskEntry, "charge_tick", 3 * 1024, this, 1, &charge_tick_task_, 0);
-    if (ok != pdPASS) {
-        charge_tick_running_.store(false, std::memory_order_release);
-        charge_tick_task_ = nullptr;
-        ESP_LOGE(kTag, "charge_tick task create failed");
-    }
-}
-
-void Board::StopChargeTickTask() {
-    if (!charge_tick_running_.exchange(false, std::memory_order_acq_rel))
-        return;
-    // 让 task 自己跑完当前周期后退出,避免硬删带锁/带 I²C 状态时 leak。
-    if (charge_tick_exit_) {
-        xSemaphoreTake(charge_tick_exit_, pdMS_TO_TICKS(1000));
-    }
-}
-
-void Board::ChargeTickTaskEntry(void* arg) {
-    auto* self = static_cast<Board*>(arg);
-    // 500 ms 而不是 200 ms：充电 IC 状态变化以秒计，kStableHighMs=400/kAltWindowMs=1500
-    // 仍然能正常去抖,但任务唤醒次数减半,light-sleep 期间收益更明显。
-    const TickType_t poll = pdMS_TO_TICKS(500);
-    while (self->charge_tick_running_.load(std::memory_order_acquire)) {
-        self->charge_->Tick(time_utils::NowMs());
-        vTaskDelay(poll);
-    }
-    self->charge_tick_task_ = nullptr;
-    if (self->charge_tick_exit_) {
-        xSemaphoreGive(self->charge_tick_exit_);
-    }
-    vTaskDelete(nullptr);
+    charge_->StartTick();
 }
 
 void Board::InitEpd() {
@@ -141,31 +99,12 @@ void Board::InitButtons() {
 }
 
 void Board::InitBatteryAdc() {
-    // 一次性创建 ADC handle + 校准 handle。原代码用 static 局部变量+无锁,
-    // 多 task 同时调 ReadBattery 会两次 adc_oneshot_new_unit 导致 abort。
-    // 这里集中初始化,ReadBattery 只读不写。
-    adc_oneshot_unit_init_cfg_t init_cfg = {
-        .unit_id = ADC_UNIT_1, .clk_src = ADC_RTC_CLK_SRC_DEFAULT, .ulp_mode = ADC_ULP_MODE_DISABLE};
-    if (adc_oneshot_new_unit(&init_cfg, &adc_handle_) != ESP_OK) {
-        ESP_LOGE(kTag, "ADC oneshot_new_unit failed");
-        return;
-    }
-    adc_oneshot_chan_cfg_t ch = {.atten = ADC_ATTEN_DB_12, .bitwidth = ADC_BITWIDTH_12};
-    if (adc_oneshot_config_channel(adc_handle_, ADC_CHANNEL_3, &ch) != ESP_OK) {
-        ESP_LOGE(kTag, "ADC oneshot_config_channel failed");
-        return;
-    }
-    adc_cali_curve_fitting_config_t cali = {
-        .unit_id = ADC_UNIT_1, .chan = ADC_CHANNEL_3, .atten = ADC_ATTEN_DB_12, .bitwidth = ADC_BITWIDTH_12};
-    if (adc_cali_create_scheme_curve_fitting(&cali, &cali_handle_) != ESP_OK) {
-        ESP_LOGE(kTag, "ADC cali_create_scheme_curve_fitting failed");
-        return;
-    }
-    adc_ready_.store(true);
+    battery_adc_ = std::make_unique<BatteryAdc>();
+    battery_adc_->Init();
 }
 
 bool Board::ReadBattery(uint16_t* voltage_mv, uint8_t* percent) {
-    if (!adc_ready_.load())
+    if (!battery_adc_)
         return false;
 
     // 先看充电状态机:无电池时电压采样不可信,直接返失败。
@@ -173,30 +112,5 @@ bool Board::ReadBattery(uint16_t* voltage_mv, uint8_t* percent) {
         return false;
     }
 
-    int sum = 0;
-    int n   = 0;
-    for (int i = 0; i < 10; ++i) {
-        int raw = 0, mv = 0;
-        if (adc_oneshot_read(adc_handle_, ADC_CHANNEL_3, &raw) != ESP_OK)
-            continue;
-        if (adc_cali_raw_to_voltage(cali_handle_, raw, &mv) != ESP_OK)
-            continue;
-        sum += mv * 2;  // 板上 1:2 分压,×2 还原电池电压
-        n++;
-        if (i != 9)
-            esp_rom_delay_us(100);
-    }
-    if (n == 0) {
-        ESP_LOGW(kTag, "ReadBattery: all ADC reads failed");
-        return false;
-    }
-    int avg = sum / n;
-    // 二阶多项式拟合:4200mV→100,3800mV→67,3300mV→0(单节锂电放电曲线)
-    int p = (-1 * avg * avg + 9016 * avg - 19189000) / 10000;
-    p     = p > 100 ? 100 : (p < 0 ? 0 : p);
-    if (voltage_mv)
-        *voltage_mv = static_cast<uint16_t>(avg);
-    if (percent)
-        *percent = static_cast<uint8_t>(p);
-    return true;
+    return battery_adc_->Read(voltage_mv, percent);
 }

@@ -1,5 +1,5 @@
-// 统一的 Select 组件 — Radix Select 包一层,trigger / content / item 都
-// 走 lib/styles.ts 里的常量,与 Input 同款 affordance。
+// 统一的 Select 组件 — Radix Select 包一层，trigger / content / item
+// 与 Input 使用同款 affordance。
 //
 // 单值受控用法:
 //   <Select value={v} onValueChange={setV} placeholder="未选">

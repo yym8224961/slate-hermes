@@ -92,14 +92,12 @@ export function useImageContentForm(content?: ContentDetailT) {
       setOffset,
       reset: resetCrop,
     },
-    form: {
-      frameName,
-      setFrameName,
-      hasImagePatch,
-      canCreate,
-      canEdit,
-      reset,
-      buildFormData,
-    },
+    frameName,
+    setFrameName,
+    hasImagePatch,
+    canCreate,
+    canEdit,
+    reset,
+    buildFormData,
   };
 }

@@ -1,6 +1,6 @@
 # Slate / Firmware
 
-ESP-IDF 5.5.x 固件，目标芯片 ESP32-S3。当前只支持 **ZecTrix_Note4_V1.0**（极趣实验室「Ai 便利贴」）：4.2 英寸黑白墨水屏、ES8311 音频、MEMS 麦、4 个按键、单节锂电池。
+ESP-IDF 5.5.x 固件，目标芯片 ESP32-S3。当前只支持 **ZecTrix_Note4_V1.0**（极趣实验室「Ai 便利贴」）：4.2 英寸黑白墨水屏、ES8311 音频、MEMS 麦、3 个按键（确认 / 上 / 下）、单节锂电池。
 
 本目录是独立 ESP-IDF 工程，不属于 Bun workspace。
 

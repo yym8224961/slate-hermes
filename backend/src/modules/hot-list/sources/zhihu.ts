@@ -1,5 +1,5 @@
 import { defineJsonSource } from '../source-factory';
-import { compactHot, parseChineseNumber } from '../text';
+import { compactHot, parseChineseNumber } from '../hot-list.utils';
 
 interface ZhihuResponse {
   data?: Array<{

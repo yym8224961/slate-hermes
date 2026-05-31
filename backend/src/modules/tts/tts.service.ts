@@ -3,12 +3,12 @@ import { DEFAULT_TTS_VOICE, TTS_VOICES, isTtsVoice, type TtsVoiceT } from 'share
 import { AppError, NotImplementedError, ValidationError } from '../../common/errors';
 import { fetchWithTimeout } from '../../common/http/fetch';
 import { parseSseJson } from '../../common/http/sse';
-import { AudioService } from '../audio/audio.service';
+import { AudioTranscoderService } from '../audio/audio-transcoder.service';
 import { TtsConfig } from './tts.config';
 
 const SOURCE_SAMPLE_RATE = 24000;
 const REQUEST_TIMEOUT_MS = 60_000;
-const MAX_TTS_TEXT_CHARS = 500;
+export const MAX_TTS_TEXT_CHARS = 500;
 const MAX_TTS_STYLE_CHARS = 500;
 const MAX_TTS_PCM_BYTES = 5 * 1024 * 1024;
 
@@ -36,7 +36,7 @@ interface ChatCompletionChunk {
 export class TtsService {
   constructor(
     private readonly config: TtsConfig,
-    private readonly audio: AudioService
+    private readonly audio: AudioTranscoderService
   ) {}
 
   voices(): TtsVoiceT[] {

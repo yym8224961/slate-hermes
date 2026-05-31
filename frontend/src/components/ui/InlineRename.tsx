@@ -1,7 +1,7 @@
 import { Check, Pencil } from 'lucide-react';
 import type { KeyboardEventHandler, ReactNode } from 'react';
 import { cn } from '@/lib/cn';
-import { inputCls } from '@/lib/styles';
+import { inputCls } from '@/components/ui/styles/form';
 
 export function InlineRename({
   editing,

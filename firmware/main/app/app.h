@@ -2,7 +2,7 @@
 
 // 顶层 App。把所有子系统按依赖顺序串起来：
 //   Storage → Board → Audio → EventBus → SceneStack → ui_loop task →
-//   Inputs(按键/充电→EventBus) → MinuteTick → Network → SleepManager → PM
+//   Inputs(按键/充电→EventBus) → MinuteBoundaryTicker → Network → SleepManager → PM
 //
 // Run() 等同 vTaskDelete(NULL)：把 main task 的 8 KB 栈让出来，
 // 由各后台 task（ui_loop / sync / charge_tick / audio / epd_refresh）继续跑。
@@ -14,7 +14,7 @@
 #include "drivers/input/up_down_combo.h"
 #include "events/event_bus.h"
 #include "network/cred_store.h"
-#include "power/minute_tick.h"
+#include "power/minute_boundary_ticker.h"
 #include "power/sleep_manager.h"
 #include "scenes/core/scene_stack.h"
 #include "startup/boot_mode.h"
@@ -35,7 +35,7 @@ class App {
     void InitSceneStack();
     void StartUiLoop();
     void AttachInputs();
-    void StartMinuteTick();
+    void StartMinuteBoundaryTicker();
     bool InitWifiAndSync(cred::Credentials& creds, bool background_refresh);
     bool ReadBattery(int* mv, int* pct);
     void StartSleep();
@@ -55,7 +55,7 @@ class App {
 
     SceneStack                     scene_stack_;
     SleepManager                   sleep_mgr_;
-    MinuteTick                     minute_tick_;
+    MinuteBoundaryTicker           minute_ticker_;
     UpDownComboController          up_down_combo_;
     std::unique_ptr<CaptivePortal> portal_;
     std::atomic<bool>              ui_loop_running_{false};

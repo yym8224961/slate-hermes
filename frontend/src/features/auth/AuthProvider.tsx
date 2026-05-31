@@ -8,11 +8,11 @@ import { resetUnauthorizedState, setUnauthorizedHandler } from '@/features/auth/
 import { AUTH_TOKEN_STORAGE_KEY, tokenStorage } from '@/features/auth/lib/auth-storage';
 import { API_PREFIX, api } from '@/lib/http';
 import { notifySessionEnded } from '@/features/auth/lib/session-events';
-import { meQueryKey, useMe } from '@/features/auth/query/auth-queries';
+import { meQueryKey, useMe, type CurrentUser } from '@/features/auth/query/auth-queries';
 import { appRoutes } from '@/app/routes';
 import type { LoginRequestT, LoginResponseT, RegisterRequestT, RegisterResponseT } from 'shared';
 import { AuthContext } from './model/auth-context';
-import { safeRedirectPath } from './redirect';
+import { safeRedirectPath } from './lib/redirect';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(tokenStorage.get());
@@ -20,6 +20,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
   const me = useMe(!!token);
   const user = token ? (me.data ?? null) : null;
+
+  const handleAuthSuccess = useCallback(
+    (data: { token: string; user: CurrentUser }, redirectTo: string) => {
+      tokenStorage.set(data.token);
+      resetUnauthorizedState();
+      setToken(data.token);
+      qc.setQueryData(meQueryKey, data.user);
+      navigate(safeRedirectPath(redirectTo), { replace: true });
+    },
+    [navigate, qc]
+  );
 
   const clearLocalSession = useCallback(() => {
     setToken(null);
@@ -29,7 +40,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     return setUnauthorizedHandler(() => {
-      tokenStorage.clear({ resetUnauthorized: false });
+      tokenStorage.clear();
       clearLocalSession();
       if (window.location.pathname !== appRoutes.login)
         navigate(appRoutes.login, { replace: true });
@@ -56,31 +67,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(
     async (creds: LoginRequestT, redirectTo: string = appRoutes.home) => {
       const { data } = await api.post<LoginResponseT>(`${API_PREFIX}/sessions`, creds);
-      tokenStorage.set(data.token);
-      resetUnauthorizedState();
-      setToken(data.token);
-      qc.setQueryData(meQueryKey, data.user);
-      navigate(safeRedirectPath(redirectTo), { replace: true });
+      handleAuthSuccess(data, redirectTo);
     },
-    [navigate, qc]
+    [handleAuthSuccess]
   );
 
   const register = useCallback(
     async (creds: RegisterRequestT, redirectTo: string = appRoutes.home) => {
       const { data } = await api.post<RegisterResponseT>(`${API_PREFIX}/users`, creds);
-      tokenStorage.set(data.token);
-      resetUnauthorizedState();
-      setToken(data.token);
-      qc.setQueryData(meQueryKey, data.user);
-      navigate(safeRedirectPath(redirectTo), { replace: true });
+      handleAuthSuccess(data, redirectTo);
     },
-    [navigate, qc]
+    [handleAuthSuccess]
   );
 
   const logout = useCallback(() => {
     // 先把本地态清掉并跳登录页，再后台 best-effort 撤销 session：
     // 服务端 logout 现在还是占位 no-op，等失败也不影响用户体验。
     const existingToken = tokenStorage.get();
+    resetUnauthorizedState();
     tokenStorage.clear();
     clearLocalSession();
     navigate(appRoutes.login, { replace: true });

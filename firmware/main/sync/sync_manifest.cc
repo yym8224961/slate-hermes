@@ -21,7 +21,7 @@ bool SyncService::HandleCachedManifestHit(const std::string& gid, const std::str
     if (!cache::WriteStateMeta(gid, expected_etag))
         return false;
     cache::TouchGroup(gid);
-    SetCurrentGroupLocked(gid);
+    SetCurrentGroup(gid);
     if (reason == SyncReason::kCycle && previous_current != gid)
         evt::PostGroupSyncStatus(GroupSyncStatusMode::kCycleCacheHit, gid, status_name);
     if (previous_current != gid || selected_group_id != gid)
@@ -37,7 +37,7 @@ bool SyncService::HandleNotModifiedManifest(const std::string& gid, const cache:
     if (!cache::WriteStateMeta(gid, cached_meta.manifest_etag))
         return false;
     cache::TouchGroup(gid);
-    SetCurrentGroupLocked(gid);
+    SetCurrentGroup(gid);
     if (reason == SyncReason::kCycle && first_seen)
         evt::PostGroupSyncStatus(GroupSyncStatusMode::kCycleCacheHit, gid, status_name);
     if (first_seen) {
@@ -47,16 +47,17 @@ bool SyncService::HandleNotModifiedManifest(const std::string& gid, const cache:
     return true;
 }
 
-bool SyncService::DownloadFramesToStage(const std::string& gid, const api::Manifest& manifest,
-                                        const std::string& status_name, const std::string& previous_current,
-                                        const std::string& selected_group_id, SyncReason reason, int& total_updates) {
+bool SyncService::DownloadFramesToStage(cache::CacheWriter& writer, const std::string& gid,
+                                        const api::Manifest& manifest, const std::string& status_name,
+                                        const std::string& previous_current, const std::string& selected_group_id,
+                                        SyncReason reason, int& total_updates) {
     total_updates = 0;
     for (const auto& f : manifest.contents) {
         if (f.id.empty() || f.image_etag.empty())
             continue;
-        if (!cache::StagedFrameImageExists(gid, f.seq, f.image_etag))
+        if (!writer.FrameImageExists(f.seq, f.image_etag))
             ++total_updates;
-        if (!f.audio_etag.empty() && !cache::StagedFrameAudioExists(gid, f.seq, f.audio_etag))
+        if (!f.audio_etag.empty() && !writer.FrameAudioExists(f.seq, f.audio_etag))
             ++total_updates;
     }
 
@@ -66,7 +67,7 @@ bool SyncService::DownloadFramesToStage(const std::string& gid, const api::Manif
         reason != SyncReason::kCycle && (previous_current == gid || selected_group_id == gid);
     const GroupSyncStatusMode progress_mode = reason == SyncReason::kCycle ? GroupSyncStatusMode::kCycleDownloading
                                               : current_group_update       ? GroupSyncStatusMode::kCurrentGroupUpdating
-                                                                           : GroupSyncStatusMode::kInitialGroupDownloading;
+                                                                     : GroupSyncStatusMode::kInitialGroupDownloading;
     const std::string         progress_name = !manifest.group_name.empty() ? manifest.group_name : status_name;
     auto                      post_progress = [&]() {
         const uint8_t cur = ClampProgressCount(done);
@@ -94,7 +95,7 @@ bool SyncService::DownloadFramesToStage(const std::string& gid, const api::Manif
             complete = false;
             continue;
         }
-        if (!cache::StagedFrameImageExists(gid, f.seq, f.image_etag)) {
+        if (!writer.FrameImageExists(f.seq, f.image_etag)) {
             bool          nm               = false;
             const int64_t image_started_ms = time_utils::NowMs();
             const auto    image_if_none    = ExistingImageEtag(gid, f.seq, f.image_etag);
@@ -103,7 +104,7 @@ bool SyncService::DownloadFramesToStage(const std::string& gid, const api::Manif
                 if (nm) {
                     ESP_LOGW(kTag, "Frame %d image returned unexpected 304", f.seq);
                     complete = false;
-                } else if (!cache::WriteStagedFrameImage(gid, f.seq, download_buf_, f.image_etag)) {
+                } else if (!writer.WriteFrameImage(f.seq, download_buf_, f.image_etag)) {
                     ESP_LOGW(kTag, "Frame %d image write failed", f.seq);
                     complete = false;
                 }
@@ -117,7 +118,7 @@ bool SyncService::DownloadFramesToStage(const std::string& gid, const api::Manif
         }
         if (ShouldStop())
             return false;
-        if (!f.audio_etag.empty() && !cache::StagedFrameAudioExists(gid, f.seq, f.audio_etag)) {
+        if (!f.audio_etag.empty() && !writer.FrameAudioExists(f.seq, f.audio_etag)) {
             bool          nm               = false;
             const int64_t audio_started_ms = time_utils::NowMs();
             const auto    audio_if_none    = ExistingAudioEtag(gid, f.seq, f.audio_etag);
@@ -126,7 +127,7 @@ bool SyncService::DownloadFramesToStage(const std::string& gid, const api::Manif
                 if (nm) {
                     ESP_LOGW(kTag, "Frame %d audio returned unexpected 304", f.seq);
                     complete = false;
-                } else if (!cache::WriteStagedFrameAudio(gid, f.seq, download_buf_, f.audio_etag)) {
+                } else if (!writer.WriteFrameAudio(f.seq, download_buf_, f.audio_etag)) {
                     ESP_LOGW(kTag, "Frame %d audio write failed", f.seq);
                     complete = false;
                 }
@@ -139,8 +140,8 @@ bool SyncService::DownloadFramesToStage(const std::string& gid, const api::Manif
             post_progress();
         }
 
-        if (cache::StagedFrameImageExists(gid, f.seq, f.image_etag) &&
-            (f.audio_etag.empty() || cache::StagedFrameAudioExists(gid, f.seq, f.audio_etag))) {
+        if (writer.FrameImageExists(f.seq, f.image_etag) &&
+            (f.audio_etag.empty() || writer.FrameAudioExists(f.seq, f.audio_etag))) {
             cache::FrameMeta fm;
             fm.status_bar_text = f.device_status_bar_text;
             fm.content_etag    = f.content_etag;
@@ -148,7 +149,7 @@ bool SyncService::DownloadFramesToStage(const std::string& gid, const api::Manif
             fm.audio_etag      = f.audio_etag;
             fm.has_ttl         = f.has_next_wake_sec && f.next_wake_sec >= 0;
             fm.ttl_sec         = f.next_wake_sec > 0 ? static_cast<uint32_t>(f.next_wake_sec) : 0;
-            if (!cache::WriteStagedFrameMeta(gid, f.seq, fm)) {
+            if (!writer.WriteFrameMeta(f.seq, fm)) {
                 ESP_LOGW(kTag, "Frame %d meta write failed", f.seq);
                 complete = false;
             }
@@ -159,7 +160,7 @@ bool SyncService::DownloadFramesToStage(const std::string& gid, const api::Manif
     return complete;
 }
 
-bool SyncService::CommitStagedFrames(const std::string& gid, const api::Manifest& manifest,
+bool SyncService::CommitStagedFrames(cache::CacheWriter& writer, const std::string& gid, const api::Manifest& manifest,
                                      const std::string& group_name, const std::string& selected_group_id,
                                      bool current_group_update, SyncReason reason, int total_updates,
                                      int old_content_count) {
@@ -171,9 +172,9 @@ bool SyncService::CommitStagedFrames(const std::string& gid, const api::Manifest
     if (total > 0)
         evt::PostGroupSyncStatus(saving_mode, gid, synced_name, 0, ClampProgressCount(total));
     for (const auto& f : manifest.contents) {
-        if (!cache::CommitStagedFrame(gid, f.seq, f.image_etag, f.audio_etag)) {
+        if (!writer.CommitFrame(f.seq, f.image_etag, f.audio_etag)) {
             ESP_LOGW(kTag, "Frame %d stage commit failed", f.seq);
-            cache::CleanupFrameStage(gid);
+            writer.Rollback();
             return false;
         }
         ++saved;
@@ -181,12 +182,12 @@ bool SyncService::CommitStagedFrames(const std::string& gid, const api::Manifest
     }
     if (!cache::WriteManifest(gid, manifest.manifest_etag, manifest.contents.size(), synced_name)) {
         ESP_LOGW(kTag, "Manifest write failed, not committing state");
-        cache::CleanupFrameStage(gid);
+        writer.Rollback();
         return false;
     }
     if (!cache::WriteStateMeta(gid, manifest.manifest_etag)) {
         ESP_LOGW(kTag, "State write failed, not switching group");
-        cache::CleanupFrameStage(gid);
+        writer.Rollback();
         return false;
     }
     cache::TouchGroup(gid);
@@ -198,8 +199,8 @@ bool SyncService::CommitStagedFrames(const std::string& gid, const api::Manifest
     for (int idx = total; idx < old_content_count; ++idx) {
         cache::DeleteFrameFiles(gid, idx);
     }
-    cache::CleanupFrameStage(gid);
-    SetCurrentGroupLocked(gid);
+    writer.Commit();
+    SetCurrentGroup(gid);
     if (reason == SyncReason::kCycle && total_updates == 0)
         evt::PostGroupSyncStatus(GroupSyncStatusMode::kCycleCacheHit, gid, synced_name);
     PostSyncedGroupReady(gid, synced_name, static_cast<int>(manifest.contents.size()), /*content_changed=*/true);
@@ -217,7 +218,7 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
         return false;
     }
 
-    const std::string previous_current = GetCurrentGroupLocked();
+    const std::string previous_current = CurrentGroupSnapshot();
     std::string       selected_group_id, selected_etag;
     cache::ReadStateMeta(selected_group_id, selected_etag);
 
@@ -253,25 +254,27 @@ bool SyncService::SyncManifestAndFrames(const std::string& gid, const std::strin
 
     int old_content_count = 0;
     cache::ReadManifestContentCount(gid, old_content_count);
-    if (!cache::BeginFrameStage(gid)) {
+    cache::CacheWriter writer(gid);
+    if (!writer.Begin()) {
         ESP_LOGW(kTag, "Frame stage init failed");
         return false;
     }
 
     int total_updates = 0;
-    if (!DownloadFramesToStage(gid, mf, status_name, previous_current, selected_group_id, reason, total_updates)) {
+    if (!DownloadFramesToStage(writer, gid, mf, status_name, previous_current, selected_group_id, reason,
+                               total_updates)) {
         ESP_LOGW(kTag, "Manifest sync incomplete, not committing state");
-        cache::CleanupFrameStage(gid);
+        writer.Rollback();
         return false;
     }
     if (ShouldStop()) {
-        cache::CleanupFrameStage(gid);
+        writer.Rollback();
         return false;
     }
 
     const bool current_group_update =
         reason != SyncReason::kCycle && (previous_current == gid || selected_group_id == gid);
-    if (!CommitStagedFrames(gid, mf, group_name, selected_group_id, current_group_update, reason, total_updates,
+    if (!CommitStagedFrames(writer, gid, mf, group_name, selected_group_id, current_group_update, reason, total_updates,
                             old_content_count)) {
         return false;
     }

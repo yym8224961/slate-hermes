@@ -1,6 +1,6 @@
 import type { Logger } from '@nestjs/common';
-import { BlobService, type BlobKind } from '../../infra/blob/blob.service';
 import { formatError } from '../../common/utils/error-format';
+import { BlobService, type BlobKind } from '../../infra/blob/blob.service';
 
 interface BlobRollbackOperation {
   groupId: string;
@@ -39,7 +39,6 @@ export class BlobRollbackPlan {
           op.contentId,
           op.kind,
           op.previousBytes,
-          true,
           this.logger
         ).catch((err: unknown) => {
           this.logger.warn(
@@ -57,10 +56,8 @@ async function restoreBlob(
   contentId: string,
   kind: BlobKind,
   previousBytes: Buffer | null,
-  touched: boolean,
   logger: Logger
 ): Promise<void> {
-  if (!touched) return;
   try {
     if (previousBytes) await blob.write(groupId, contentId, kind, previousBytes);
     else await blob.delete(groupId, contentId, kind);

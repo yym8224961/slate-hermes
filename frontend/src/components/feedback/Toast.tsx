@@ -1,4 +1,3 @@
-/* eslint-disable react-refresh/only-export-components */
 // 全局 toast — Radix Toast 风格化。两种语调：
 //   info（默认）：奶米底 + 砖红边
 //   error：     砖红底 + 白字
@@ -9,26 +8,13 @@
 //
 // 在 app 根挂 <ToastProvider /> 一次。
 
-import {
-  createContext,
-  memo,
-  useCallback,
-  useContext,
-  useMemo,
-  useState,
-  type ReactNode,
-} from 'react';
+import { memo, useCallback, useMemo, useState, type ReactNode } from 'react';
 import * as RT from '@radix-ui/react-toast';
 import { CheckCircle2, AlertCircle, Info } from 'lucide-react';
 import { cn } from '@/lib/cn';
+import { ToastCtx, type ToastApi } from './toast-context';
 
 type Tone = 'success' | 'error' | 'info';
-
-export interface ToastApi {
-  success: (msg: string, hint?: string) => void;
-  error: (msg: string, hint?: string) => void;
-  info: (msg: string, hint?: string) => void;
-}
 
 interface ToastItem {
   id: string;
@@ -38,13 +24,6 @@ interface ToastItem {
 }
 
 const MAX_TOASTS = 4;
-const ToastCtx = createContext<ToastApi | null>(null);
-
-export function useToast(): ToastApi {
-  const ctx = useContext(ToastCtx);
-  if (!ctx) throw new Error('useToast outside ToastProvider');
-  return ctx;
-}
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);

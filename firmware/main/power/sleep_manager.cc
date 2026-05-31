@@ -15,9 +15,9 @@
 #include "drivers/display/epd_ssd1683.h"
 #include "drivers/display/framebuffer_ops.h"
 #include "events/event_bus.h"
-#include "bsp/gpio_util.h"
 #include "power/power_state.h"
-#include "power/shutdown_subsystems.h"
+#include "power/shutdown.h"
+#include "utils/gpio_util.h"
 #include "utils/time_utils.h"
 
 namespace {
@@ -111,13 +111,11 @@ void SleepManager::OnEvent(const UiEvent& e) {
                 last_active_ms_.store(time_utils::NowMs());
             }
             break;
-        case UiEventKind::kBound:
-            {
-                std::lock_guard<std::mutex> lock(unbound_mutex_);
-                unbound_state_.unbound  = false;
-                unbound_state_.since_ms = 0;
-            }
-            break;
+        case UiEventKind::kBound: {
+            std::lock_guard<std::mutex> lock(unbound_mutex_);
+            unbound_state_.unbound  = false;
+            unbound_state_.since_ms = 0;
+        } break;
         case UiEventKind::kUnbound:
             // 仅首次进入 unbound 时记录起始 ts,重复事件不重置(否则 2h 兜底永不触发)。
             if (MarkUnboundIfNeeded(time_utils::NowMs())) {
@@ -125,12 +123,10 @@ void SleepManager::OnEvent(const UiEvent& e) {
                          (long long)(kUnboundGraceMs / (60 * 60 * 1000)));
             }
             break;
-        case UiEventKind::kBatteryUpdated:
-            {
-                std::lock_guard<std::mutex> lock(unbound_mutex_);
-                unbound_state_.battery_pct = ClampBatteryPct(e.u.battery.pct);
-            }
-            break;
+        case UiEventKind::kBatteryUpdated: {
+            std::lock_guard<std::mutex> lock(unbound_mutex_);
+            unbound_state_.battery_pct = ClampBatteryPct(e.u.battery.pct);
+        } break;
         default:
             break;
     }
@@ -205,7 +201,7 @@ SleepManager::SleepDecision SleepManager::TryEnterDeepSleep() {
     ESP_LOGW(kTag, "EnterDeepSleep: shutting down peripherals");
 
     // 1) 停后台 task,避免在 rail 关闭后还有 I²C / 网络写操作，并等待已有 EPD 刷新完成。
-    const bool epd_ready = system_shutdown::WaitForEpdAndShutdown(kEpdFlushTimeoutMs);
+    const bool epd_ready = power_shutdown::WaitForEpdAndShutdown(kEpdFlushTimeoutMs);
 
     // 2) 不主动制造一轮全刷。墨水屏内容本来可保留；
     //    静态帧 idle 进睡眠时如果这里再全刷一次，会白白耗电。

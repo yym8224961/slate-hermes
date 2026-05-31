@@ -8,7 +8,7 @@
 #include "events/event_bus.h"
 #include "utils/mac_utils.h"
 #include "network/sntp.h"
-#include "power/system_restart.h"
+#include "power/shutdown.h"
 #include "network/wifi.h"
 
 namespace {
@@ -60,7 +60,7 @@ bool TryConnectAndSetup(cred::Credentials& c) {
         }
         if (!saved) {
             ESP_LOGE(kTag, "Fatal: SaveSecret failed, restarting");
-            system_restart::GracefulRestart();
+            power_shutdown::GracefulRestart();
         }
         c.device_id     = rr.id;
         c.device_secret = rr.device_secret;

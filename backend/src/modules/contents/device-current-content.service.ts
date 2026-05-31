@@ -4,7 +4,7 @@ import type { ContentSummaryT } from 'shared';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 import { formatError } from '../../common/utils/error-format';
 import { DynamicContentRendererService } from '../dynamic-content/dynamic-content-renderer.service';
-import type { DevicePollSnapshot } from '../devices/devices.service';
+import type { DevicePollSnapshot } from '../devices/device-types';
 import { contentToSummary } from './content-presenter';
 import { CONTENT_SELECT, type ContentSelectRow } from './content-select';
 

@@ -53,10 +53,13 @@ class SyncService {
     void SyncOnce(SyncMode mode);
     void Trigger(SyncMode mode);
     void DoCycle(const std::string& direction);
+    bool SyncBackground(const api::DeviceState& state, const api::Telemetry& telemetry, bool& group_changed);
+    bool SyncUserActive(const api::DeviceState& state, bool& group_changed);
     bool ShouldStop() const;
     bool SyncManifestAndFrames(const std::string& gid, const std::string& expected_etag, const std::string& group_name,
                                int expected_content_count, SyncReason reason, bool& group_changed);
     bool SyncCurrentContent(const std::string& gid, const api::ContentMeta& content, bool& changed);
+    bool ClearSelectedGroup();
     bool HandleCachedManifestHit(const std::string& gid, const std::string& expected_etag,
                                  const std::string& status_name, int content_count, const std::string& previous_current,
                                  const std::string& selected_group_id, SyncReason reason);
@@ -64,16 +67,16 @@ class SyncService {
                                    const std::string& status_name, int expected_content_count,
                                    const std::string& previous_current, const std::string& selected_group_id,
                                    SyncReason reason);
-    bool DownloadFramesToStage(const std::string& gid, const api::Manifest& manifest, const std::string& status_name,
-                               const std::string& previous_current, const std::string& selected_group_id,
-                               SyncReason reason, int& total_updates);
-    bool CommitStagedFrames(const std::string& gid, const api::Manifest& manifest, const std::string& group_name,
-                            const std::string& selected_group_id, bool current_group_update, SyncReason reason,
-                            int total_updates, int old_content_count);
+    bool DownloadFramesToStage(cache::CacheWriter& writer, const std::string& gid, const api::Manifest& manifest,
+                               const std::string& status_name, const std::string& previous_current,
+                               const std::string& selected_group_id, SyncReason reason, int& total_updates);
+    bool CommitStagedFrames(cache::CacheWriter& writer, const std::string& gid, const api::Manifest& manifest,
+                            const std::string& group_name, const std::string& selected_group_id,
+                            bool current_group_update, SyncReason reason, int total_updates, int old_content_count);
     void PostSyncedGroupReady(const std::string& gid, const std::string& name, int content_count, bool content_changed);
-    std::string GetCurrentGroupLocked() const;
-    void        SetCurrentGroupLocked(const std::string& gid);
-    void        ClearCurrentGroupLocked();
+    std::string CurrentGroupSnapshot() const;
+    void        SetCurrentGroup(const std::string& gid);
+    void        ClearCurrentGroup();
 
     std::atomic<bool>    running_{false};
     mutable std::mutex   task_mutex_;

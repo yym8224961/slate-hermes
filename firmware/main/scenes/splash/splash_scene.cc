@@ -7,11 +7,11 @@
 #include <cstring>
 #include <memory>
 
-#include "network/cred_store.h"
 #include "drivers/display/epd_ssd1683.h"
 #include "events/event_bus.h"
-#include "scenes/frame/frame_scene.h"
+#include "network/cred_store.h"
 #include "scenes/core/scene_stack.h"
+#include "scenes/frame/frame_scene.h"
 #include "scenes/settings/settings_scene.h"
 #include "ui/theme.h"
 
@@ -119,7 +119,7 @@ void SplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
     }
 
     if (e.kind == UiEventKind::kCachedGroupReady || e.kind == UiEventKind::kSyncedGroupReady) {
-        ctx.stack->RequestReplace(std::make_unique<FrameScene>(e.u.group.gid, e.u.group.content_count));
+        ctx.stack->RequestReplace(std::make_unique<FrameScene>(ctx, e.u.group.gid, e.u.group.content_count));
         return;
     }
 
@@ -166,8 +166,8 @@ void SplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
                 return;
             last_progress_current_ = cur;
             last_progress_tick_    = now;
-            progress_cur_   = e.u.group_sync.current;
-            progress_total_ = e.u.group_sync.total;
+            progress_cur_          = e.u.group_sync.current;
+            progress_total_        = e.u.group_sync.total;
             std::strncpy(progress_name_, e.u.group_sync.name, sizeof(progress_name_) - 1);
             progress_name_[sizeof(progress_name_) - 1] = '\0';
             if (state_ != State::kProvisioning) {

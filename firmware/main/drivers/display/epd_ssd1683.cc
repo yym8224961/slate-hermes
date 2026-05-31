@@ -11,7 +11,7 @@
 
 #include "bsp/config.h"
 #include "drivers/display/framebuffer_ops.h"
-#include "bsp/gpio_util.h"
+#include "utils/gpio_util.h"
 
 namespace {
 constexpr char kTag[] = "Epd";
@@ -82,11 +82,10 @@ EpdSsd1683::~EpdSsd1683() {
         refresh_exit_ = nullptr;
     }
     heap_caps_free(buffer_);
-    heap_caps_free(prev_buffer_);
-    heap_caps_free(tx_buf_);
-    heap_caps_free(prev_tx_buf_);
+    heap_caps_free(snapshot_);
+    heap_caps_free(prev_snapshot_);
     heap_caps_free(lvgl_render_buf_);
-    buffer_ = prev_buffer_ = tx_buf_ = prev_tx_buf_ = lvgl_render_buf_ = nullptr;
+    buffer_ = snapshot_ = prev_snapshot_ = lvgl_render_buf_ = nullptr;
 }
 
 void EpdSsd1683::Init() {
@@ -108,18 +107,16 @@ void EpdSsd1683::Init() {
         esp_restart();
     }
 
-    buffer_      = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
-    prev_buffer_ = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
-    tx_buf_      = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
-    prev_tx_buf_ = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
-    if (!buffer_ || !prev_buffer_ || !tx_buf_ || !prev_tx_buf_) {
+    buffer_        = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
+    snapshot_      = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
+    prev_snapshot_ = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
+    if (!buffer_ || !snapshot_ || !prev_snapshot_) {
         ESP_LOGE(kTag, "Failed to allocate framebuffers; restarting");
         esp_restart();
     }
     memset(buffer_, 0xFF, kBufferLen);
-    memset(prev_buffer_, 0xFF, kBufferLen);
-    memset(tx_buf_, 0xFF, kBufferLen);
-    memset(prev_tx_buf_, 0xFF, kBufferLen);
+    memset(snapshot_, 0xFF, kBufferLen);
+    memset(prev_snapshot_, 0xFF, kBufferLen);
     epd_line_.resize(((kWidth + 7) >> 3) * 2);
 
     dirty_mutex_ = xSemaphoreCreateMutex();
@@ -177,7 +174,7 @@ void EpdSsd1683::LvglFlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t*
     for (int yy = 0; yy < h; ++yy) {
         const uint16_t* row = src + (yy + (y1 - area->y1)) * sw + (x1 - area->x1);
         for (int xx = 0; xx < w; ++xx) {
-            bool white = epd::Rgb565IsWhite(row[xx], self->bw_threshold_);
+            bool white = epd::Rgb565IsWhite(row[xx], kBwThreshold);
             epd::SetPx1(self->buffer_, kWidth, x1 + xx, y1 + yy, white);
         }
     }
@@ -267,8 +264,8 @@ void EpdSsd1683::SeedPreviousRaw1bpp(int x, int y, int w, int h, const uint8_t* 
 
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
     epd::Copy1bppInto(buffer_, kWidth, kHeight, x, y, w, h, data);
-    epd::Copy1bppInto(prev_buffer_, kWidth, kHeight, x, y, w, h, data);
-    prev_buffer_synced_ = true;
+    epd::Copy1bppInto(prev_snapshot_, kWidth, kHeight, x, y, w, h, data);
+    prev_snapshot_synced_ = true;
     xSemaphoreGive(dirty_mutex_);
 }
 
@@ -280,9 +277,9 @@ bool EpdSsd1683::ReadPreviousRaw1bpp(int x, int y, int w, int h, uint8_t* out, s
         return false;
 
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-    const bool synced = prev_buffer_synced_;
+    const bool synced = prev_snapshot_synced_;
     if (synced) {
-        epd::Copy1bppFrom(prev_buffer_, kWidth, kHeight, x, y, w, h, out);
+        epd::Copy1bppFrom(prev_snapshot_, kWidth, kHeight, x, y, w, h, out);
     }
     xSemaphoreGive(dirty_mutex_);
     return synced;
@@ -299,116 +296,154 @@ void EpdSsd1683::RefreshTaskEntry(void* arg) {
     static_cast<EpdSsd1683*>(arg)->RefreshTaskLoop();
 }
 
-void EpdSsd1683::RefreshTaskLoop() {
+bool EpdSsd1683::RefreshTaskShouldStop() {
+    xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+    const bool should_stop = refresh_task_stop_;
+    xSemaphoreGive(dirty_mutex_);
+    return should_stop;
+}
+
+void EpdSsd1683::DebounceRefreshNotify() {
     constexpr TickType_t kDebounceMs    = 50;   // 每来一次新 notify，续 50 ms
     constexpr TickType_t kDebounceMaxMs = 500;  // 兜底：总等待最多 500 ms，防止 LVGL 永不静默
+
+    // Sliding debounce：在 50 ms 窗口内吸收所有新 notify，每来一次重置窗口，
+    // 直到 50 ms 没有新 notify 才进入真正的刷新。这一步把 LVGL 把整屏
+    // invalidate 分成多个 chunk 多次调用 flush_cb 的"碎片"合并成一轮刷新。
+    const TickType_t first_tick = xTaskGetTickCount();
+    const TickType_t hard_max   = first_tick + pdMS_TO_TICKS(kDebounceMaxMs);
+    TickType_t       deadline   = first_tick + pdMS_TO_TICKS(kDebounceMs);
+    while (true) {
+        const TickType_t now = xTaskGetTickCount();
+        if (now >= deadline || now >= hard_max)
+            break;
+        const TickType_t wait = (deadline < hard_max ? deadline : hard_max) - now;
+        if (ulTaskNotifyTake(pdTRUE, wait) > 0) {
+            deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kDebounceMs);
+        }
+    }
+}
+
+bool EpdSsd1683::TakeRefreshRequest(bool& urgent, bool& force_full) {
+    // read-and-clear at start:防止 refresh_task 跑刷新期间又有
+    // RequestUrgentXxxRefresh 设 flag 时,本轮完成时把它误清。
+    xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+    if (refresh_task_stop_) {
+        refresh_in_progress_ = false;
+        xSemaphoreGive(dirty_mutex_);
+        return false;
+    }
+    urgent              = urgent_refresh_;
+    urgent_refresh_     = false;
+    force_full          = force_full_refresh_;
+    force_full_refresh_ = false;
+    if (pending_) {
+        pending_ = false;
+        dirty_   = {0, 0, 0, 0};
+    }
+    xSemaphoreGive(dirty_mutex_);
+    return true;
+}
+
+bool EpdSsd1683::ThrottleRefreshSampling(bool urgent, bool force_full) {
+    if (urgent || force_full)
+        return true;
+
+    // 周期性采样:LVGL 自驱(动画/滚动)flush 触发 notify,但没设 urgent flag。
+    // sample_interval_ms_ 节流防止过频刷新损伤 EPD。
+    const TickType_t now_t = xTaskGetTickCount();
+    const TickType_t mn    = pdMS_TO_TICKS(sample_interval_ms_);
+    const TickType_t el    = (last_sample_tick_ == 0) ? mn : (now_t - last_sample_tick_);
+    if (el < mn) {
+        vTaskDelay(mn - el);
+        return false;
+    }
+    return true;
+}
+
+bool EpdSsd1683::CaptureRefreshSnapshot(bool force_full, epd::DiffResult& diff, bool& prev_synced) {
+    xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+    memcpy(snapshot_, buffer_, kBufferLen);
+    prev_synced = prev_snapshot_synced_;
+    xSemaphoreGive(dirty_mutex_);
+    last_sample_tick_ = xTaskGetTickCount();
+
+    diff = epd::Diff(prev_snapshot_, snapshot_, kBufferLen);
+    if (diff.bits == 0 && !force_full) {
+        MarkRefreshIdle();
+        return false;
+    }
+    return true;
+}
+
+bool EpdSsd1683::ShouldUseFullRefresh(const epd::DiffResult& diff, bool force_full, bool prev_synced) const {
+    // 决策 full vs partial:force_full / 累积 partial >= 阈值 / 差异 ≥ 30%(大改动
+    // partial 出来会一片错乱) → 必须 full;首次未 sync 也要 full。timer wake
+    // 会先用 SeedPreviousRaw1bpp 把 prev_snapshot 跟物理屏幕对齐,不需要额外越过。
+    constexpr float kForceFullDiffRatio = 0.30f;
+    return force_full || partial_since_full_ >= kPartialBeforeFullCleanup || diff.ratio >= kForceFullDiffRatio ||
+           !prev_synced;
+}
+
+void EpdSsd1683::RunRefresh(bool full_refresh) {
+    // 两条路径都先调 EpdInit() 做硬 reset + 寄存器初始化:
+    // 1) full 路径里 EpdDisplayFull 自己会发 0xA5 切到 full 模式;
+    // 2) partial 路径靠 EpdInit 把 EPD 拉回默认/partial 模式,否则上一轮
+    //    full 留下的 0xA5 LUT 会让本轮 partial 视觉上变成全刷闪一下。
+    EpdInit();
+    if (full_refresh) {
+        EpdDisplayFull();
+        partial_since_full_ = 0;
+        return;
+    }
+
+    partial_since_full_++;
+    EpdDisplayPartial();
+}
+
+void EpdSsd1683::FinishRefreshSnapshot() {
+    xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+    memcpy(prev_snapshot_, snapshot_, kBufferLen);
+    prev_snapshot_synced_ = true;
+    refresh_in_progress_  = false;
+    xSemaphoreGive(dirty_mutex_);
+}
+
+void EpdSsd1683::MarkRefreshIdle() {
+    xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
+    refresh_in_progress_ = false;
+    xSemaphoreGive(dirty_mutex_);
+}
+
+void EpdSsd1683::RefreshTaskLoop() {
     while (true) {
         // 第一次阻塞等 notify。来源:flush_cb / RequestUrgentXxxRefresh / 周期采样(已废)。
         if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY) == 0)
             continue;
 
-        xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-        bool should_stop = refresh_task_stop_;
-        xSemaphoreGive(dirty_mutex_);
-        if (should_stop)
+        if (RefreshTaskShouldStop())
             break;
 
-        // Sliding debounce：在 50 ms 窗口内吸收所有新 notify，每来一次重置窗口，
-        // 直到 50 ms 没有新 notify 才进入真正的刷新。这一步把 LVGL 把整屏
-        // invalidate 分成多个 chunk 多次调用 flush_cb 的"碎片"合并成一轮刷新。
-        TickType_t first_tick = xTaskGetTickCount();
-        TickType_t hard_max   = first_tick + pdMS_TO_TICKS(kDebounceMaxMs);
-        TickType_t deadline   = first_tick + pdMS_TO_TICKS(kDebounceMs);
-        while (true) {
-            TickType_t now = xTaskGetTickCount();
-            if (now >= deadline || now >= hard_max)
-                break;
-            TickType_t wait = (deadline < hard_max ? deadline : hard_max) - now;
-            if (ulTaskNotifyTake(pdTRUE, wait) > 0) {
-                // 又一次 notify（更多 flush_cb 或新的 Request）→ 续 50 ms。
-                deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kDebounceMs);
-            }
-        }
+        DebounceRefreshNotify();
 
-        // read-and-clear at start:防止 refresh_task 跑刷新期间又有
-        // RequestUrgentXxxRefresh 设 flag 时,本轮完成时把它误清。
-        xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-        should_stop = refresh_task_stop_;
-        if (should_stop) {
-            refresh_in_progress_ = false;
-            xSemaphoreGive(dirty_mutex_);
+        bool urgent     = false;
+        bool force_full = false;
+        if (!TakeRefreshRequest(urgent, force_full))
             break;
-        }
-        bool urgent         = urgent_refresh_;
-        urgent_refresh_     = false;
-        bool force_full     = force_full_refresh_;
-        force_full_refresh_ = false;
-        if (pending_) {
-            pending_ = false;
-            dirty_   = {0, 0, 0, 0};
-        }
-        xSemaphoreGive(dirty_mutex_);
 
-        if (!urgent && !force_full) {
-            // 周期性采样:LVGL 自驱(动画/滚动)flush 触发 notify,但没设 urgent flag。
-            // sample_interval_ms_ 节流防止过频刷新损伤 EPD。
-            TickType_t now_t = xTaskGetTickCount();
-            TickType_t mn    = pdMS_TO_TICKS(sample_interval_ms_);
-            TickType_t el    = (last_sample_tick_ == 0) ? mn : (now_t - last_sample_tick_);
-            if (el < mn) {
-                vTaskDelay(mn - el);
-                continue;
-            }
-        }
-
-        xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-        memcpy(tx_buf_, buffer_, kBufferLen);
-        memcpy(prev_tx_buf_, prev_buffer_, kBufferLen);
-        bool prev_synced = prev_buffer_synced_;
-        xSemaphoreGive(dirty_mutex_);
-        last_sample_tick_ = xTaskGetTickCount();
-
-        epd::DiffResult d = epd::Diff(prev_tx_buf_, tx_buf_, kBufferLen);
-        if (d.bits == 0 && !force_full) {
-            xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-            refresh_in_progress_ = false;
-            xSemaphoreGive(dirty_mutex_);
+        if (!ThrottleRefreshSampling(urgent, force_full))
             continue;
-        }
 
-        // 决策 full vs partial:force_full / 累积 partial >= 阈值 / 差异 ≥ 30%(大改动
-        // partial 出来会一片错乱) → 必须 full;首次未 sync 也要 full。timer wake
-        // 会先用 SeedPreviousRaw1bpp 把 prev_buffer 跟物理屏幕对齐,不需要额外越过。
-        // 两条路径都先调 EpdInit() 做硬 reset + 寄存器初始化:
-        // 1) full 路径里 EpdDisplayFull 自己会发 0xA5 切到 full 模式;
-        // 2) partial 路径靠 EpdInit 把 EPD 拉回默认/partial 模式,否则上一轮
-        //    full 留下的 0xA5 LUT 会让本轮 partial 视觉上变成全刷闪一下。
-        constexpr float kForceFullDiffRatio = 0.30f;
-        bool            do_full             = force_full || partial_since_full_ >= kPartialBeforeFullCleanup ||
-                       d.ratio >= kForceFullDiffRatio || !prev_synced;
+        epd::DiffResult diff        = {};
+        bool            prev_synced = false;
+        if (!CaptureRefreshSnapshot(force_full, diff, prev_synced))
+            continue;
 
-        if (do_full) {
-            EpdInit();
-            EpdDisplayFull();
-            partial_since_full_ = 0;
-        } else {
-            partial_since_full_++;
-            // 跟参考实现对齐:每次 PARTIAL 也先做完整 EpdInit(含 PowerOn + RESET +
-            // 重发初始化命令),跟末尾 EpdTurnOnDisplay 内的 EpdPowerOff 配对。
-            // 之前为了省 ~40 ms 让 partial → partial 不重 init，但 EpdTurnOnDisplay
-            // 末尾仍 PowerOff,导致下一轮 partial 命令送到已断电的 controller,
-            // 表现为"屏幕变更黑一点但图没切"。
-            EpdInit();
-            EpdDisplayPartial();
-        }
+        RunRefresh(ShouldUseFullRefresh(diff, force_full, prev_synced));
 
         // force_full_refresh_ 已在 start 处清(read-and-clear)。这里不要重设,
         // 否则会覆盖全刷期间又有新 RequestUrgentFullRefresh 设的 true。
-        xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
-        memcpy(prev_buffer_, tx_buf_, kBufferLen);
-        prev_buffer_synced_  = true;
-        refresh_in_progress_ = false;
-        xSemaphoreGive(dirty_mutex_);
+        FinishRefreshSnapshot();
     }
     if (refresh_exit_)
         xSemaphoreGive(refresh_exit_);

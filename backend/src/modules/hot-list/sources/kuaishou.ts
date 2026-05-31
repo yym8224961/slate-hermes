@@ -1,6 +1,6 @@
 import type { HotListSource } from '../hot-list.types';
-import { fetchText } from '../fetch';
-import { compactHot, withRanks } from '../text';
+import { fetchText } from '../../../common/http/fetch';
+import { compactHot, withRanks } from '../hot-list.utils';
 
 const APOLLO_STATE_PREFIX = 'window.__APOLLO_STATE__=';
 

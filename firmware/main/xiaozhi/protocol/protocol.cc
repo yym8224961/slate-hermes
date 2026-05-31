@@ -9,12 +9,12 @@
 
 #include "events/event_bus.h"
 #include "utils/json_utils.h"
+#include "xiaozhi/config/settings.h"
 #include "xiaozhi/mcp/mcp_dispatcher.h"
 #include "xiaozhi/mcp/mcp_tools.h"
-#include "xiaozhi/service/chat_service.h"
 #include "xiaozhi/protocol/mqtt_protocol.h"
-#include "xiaozhi/config/settings.h"
 #include "xiaozhi/protocol/websocket_protocol.h"
+#include "xiaozhi/service/chat_service.h"
 
 namespace {
 constexpr char kTag[]               = "XiaoProto";

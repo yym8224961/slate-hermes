@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { Loader2, Pause, Play } from 'lucide-react';
 import { useContentAudio } from '@/features/contents/query/content-audio-queries';
-import { useToast } from '@/components/feedback/Toast';
+import { useToast } from '@/components/feedback/toast-context';
 import { cn } from '@/lib/cn';
 import { usePcmAudioPlayer } from './usePcmAudioPlayer';
 

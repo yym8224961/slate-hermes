@@ -1,6 +1,7 @@
 import { Body, Controller, Param, Post, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
-import { CurrentUser, type WebUserContext } from '../../common/decorators/current-user.decorator';
+import { CurrentUser } from '../../common/nest/decorators/auth-context.decorators';
+import type { WebUserContext } from '../../common/nest/auth-context';
 import { PreviewDynamicContentDto } from './dto/preview-dynamic-content.dto';
 import { DynamicContentService } from './dynamic-content.service';
 

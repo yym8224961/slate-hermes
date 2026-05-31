@@ -3,7 +3,6 @@ import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useGroups } from '@/features/groups/query/group-queries';
 import { DevicesSection } from '@/features/devices/components/DevicesSection';
 import { GroupsSection } from '@/features/groups/components/GroupsSection';
-import { dashboardGreeting } from './greeting';
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -22,4 +21,14 @@ export function DashboardPage() {
       <GroupsSection groups={groups.data} isPending={groups.isPending} />
     </div>
   );
+}
+
+function dashboardGreeting(date = new Date()): string {
+  const hour = date.getHours();
+  if (hour < 6) return '夜深了';
+  if (hour < 11) return '早上好';
+  if (hour < 14) return '中午好';
+  if (hour < 18) return '下午好';
+  if (hour < 22) return '晚上好';
+  return '夜深了';
 }

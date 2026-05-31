@@ -6,7 +6,7 @@ import { PrismaService } from '../../infra/prisma/prisma.service';
 import { lockGroupRow } from '../../common/db/row-locks';
 import { formatError } from '../../common/utils/error-format';
 import { GroupsService } from '../groups/groups.service';
-import { deleteContentAudioBlob, readContentAudioBlob } from '../audio/content-audio-blobs';
+import { deleteContentAudioBlob, readContentAudioBlob } from '../../infra/blob/content-audio-blobs';
 
 @Injectable()
 export class ContentAudioBlobService {
