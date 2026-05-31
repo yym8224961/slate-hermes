@@ -213,6 +213,15 @@ bool EpdSsd1683::IsRefreshPending() {
     return b;
 }
 
+bool EpdSsd1683::WaitForRefreshIdle(int timeout_ms) {
+    int waited = 0;
+    while (IsRefreshPending() && waited < timeout_ms) {
+        vTaskDelay(pdMS_TO_TICKS(50));
+        waited += 50;
+    }
+    return !IsRefreshPending();
+}
+
 void EpdSsd1683::RequestUrgentPartialRefresh() {
     // 设标志位 + notify,立即返回。不在这里等 LVGL,因为 flush_cb 也会 notify;
     // RefreshTaskLoop 头部的 sliding debounce（50 ms 内有新 notify 就续 50 ms，

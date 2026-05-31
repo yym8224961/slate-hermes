@@ -92,7 +92,11 @@ export function contentToDetail(
   };
 }
 
-function nextWakeSec(nextRunAt: Date | null): number | null {
+// 动态帧的唤醒下限：固件侧也有 60s 地板。这里把「已到期/时钟漂移」导致的 <=0 抬到
+// 60s，避免下发 0 让固件按最小间隔反复空醒（静态帧 nextRunAt 为 null，仍返回 null 不配定时）。
+export const MIN_DYNAMIC_WAKE_SEC = 60;
+
+export function nextWakeSec(nextRunAt: Date | null, nowMs: number = Date.now()): number | null {
   if (!nextRunAt) return null;
-  return Math.max(Math.ceil((nextRunAt.getTime() - Date.now()) / 1000), 0);
+  return Math.max(Math.ceil((nextRunAt.getTime() - nowMs) / 1000), MIN_DYNAMIC_WAKE_SEC);
 }

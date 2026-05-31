@@ -40,6 +40,9 @@ class App {
     bool ReadBattery(int* mv, int* pct);
     void StartSleep();
     void FinalizePm();
+    // 按当前供电/模式决定是否启用自动 light sleep，并应用 PM 配置。充电状态变化时重调。
+    void ConfigurePm(bool light_sleep_enable);
+    bool ShouldEnableLightSleep(bool power_present) const;
 
     void StartPortal();
     void PostWakeupKeyEvent(uint64_t ext1_mask);

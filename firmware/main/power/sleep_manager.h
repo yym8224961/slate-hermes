@@ -33,6 +33,10 @@ class SleepManager {
     // 电量低于此阈值时强制允许 deep sleep,无视 unbound 状态。
     static constexpr int kLowBatteryPct = 20;
 
+    // 看门狗：语音/同步等 blocker 连续阻止深睡超过此时长时，强制走一次带守卫的
+    // 深睡尝试（内部会停掉语音/同步）。兜底「会话/下载卡死 → 永不睡 → 耗光电池」。
+    static constexpr int64_t kMaxBlockedMs = 15LL * 60 * 1000;
+
     struct SleepDecision {
         SleepOutcome outcome;
         uint32_t     configured_next_wake_sec;
@@ -65,6 +69,8 @@ class SleepManager {
 
     std::atomic<bool>    enabled_{false};
     std::atomic<int64_t> last_active_ms_{0};
+    // blocker(语音/同步)开始连续阻止深睡的时刻；0 表示当前未被阻止。看门狗据此计时。
+    std::atomic<int64_t> blocked_since_ms_{0};
     std::atomic<bool>    paused_{false};
     int                  idle_timeout_min_ = 5;
     int64_t              unbound_grace_ms_ = kUnboundGraceMs;

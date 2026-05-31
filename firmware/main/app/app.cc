@@ -268,6 +268,9 @@ void App::UiLoopTask() {
             continue;
         scene_stack_.Dispatch(e);
         sleep_mgr_.OnEvent(e);
+        // 供电状态变化时重配 light sleep：插 USB 关、拔掉(电池)开。
+        if (e.kind == UiEventKind::kChargeChanged)
+            ConfigurePm(ShouldEnableLightSleep(e.u.charge.present));
         scene_stack_.ApplyPending();
     }
     vTaskDelete(nullptr);
@@ -366,16 +369,28 @@ void App::StartSleep() {
     PostChargeSnapshot(snap);
 }
 
-void App::FinalizePm() {
-    // light_sleep_enable=false：USB CDC/JTAG 在用时 ESP32-S3 不允许 CPU power down，
-    // sleep_cpu_configure 会打 E 级 log。DFS（80~240 MHz）仍开，空闲时降频省电。
-    // 阶段 4 进 deep sleep 替代 light sleep。
+bool App::ShouldEnableLightSleep(bool power_present) const {
+    // 仅「电池供电 + 非配网门户」时开自动 light sleep：
+    //   - USB 供电：关，避免影响 CDC/JTAG 控制台（sleep_cpu_configure 会打 E 级 log）；
+    //     且充电时本就暂停深睡，省电意义小。
+    //   - 配网门户(SoftAP)：关，AP 模式需保持响应，light sleep 会拖累配网。
+    // 音频播放/对话期间由 AudioPlayer 持有 NO_LIGHT_SLEEP 锁，避免 I2S 欠载卡顿。
+    return !power_present && decision_.mode != boot_mode::Mode::kPortal;
+}
+
+void App::ConfigurePm(bool light_sleep_enable) {
+    // DFS（80~240 MHz）始终开；light_sleep_enable 按供电/模式动态切换。
     esp_pm_config_t pm = {
         .max_freq_mhz       = 240,
         .min_freq_mhz       = 80,
-        .light_sleep_enable = false,
+        .light_sleep_enable = light_sleep_enable,
     };
     ESP_ERROR_CHECK(esp_pm_configure(&pm));
+}
+
+void App::FinalizePm() {
+    const bool power_present = Board::Get().charge()->Get().power_present;
+    ConfigurePm(ShouldEnableLightSleep(power_present));
 }
 
 void App::Init() {
@@ -394,7 +409,10 @@ void App::Init() {
     policy.idle_timeout_min = CONFIG_SLATE_IDLE_DEEP_SLEEP_MIN;
     policy.disabled         = (decision_.mode == boot_mode::Mode::kPortal);
     sleep_mgr_.Init(policy);
-    sleep_mgr_.SetSleepBlocker([]() { return xiaozhi::ChatService::Get().BlocksSleep(); });
+    // 阻止深睡的两个来源：语音会话活动中、以及一次 sync 突发(大文件下载)进行中。
+    // 任一持续阻塞超过 SleepManager 看门狗上限时会被强制打断回睡，避免卡死耗光电池。
+    sleep_mgr_.SetSleepBlocker(
+        []() { return xiaozhi::ChatService::Get().BlocksSleep() || SyncService::Get().IsBusy(); });
     power_shutdown::SetPreShutdownHook([]() { xiaozhi::ChatService::Get().SuspendForSleep(); });
 
     StartUiLoop();
@@ -411,6 +429,8 @@ void App::Init() {
             const bool net_ok = InitWifiAndSync(creds, true);
             if (!net_ok) {
                 ESP_LOGW(kTag, "Background refresh network setup failed -> deep sleep");
+                // 联系不上服务器：递增退避计数，下次 timer wake 间隔指数拉长，避免空醒。
+                power_state::RecordTimerWakeResult(false);
                 evt::PostSimple(UiEventKind::kBgRefreshDone, portMAX_DELAY);
             }
             break;

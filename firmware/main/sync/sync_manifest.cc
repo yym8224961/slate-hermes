@@ -147,8 +147,10 @@ bool SyncService::DownloadFramesToStage(cache::CacheWriter& writer, const std::s
             fm.content_etag    = f.content_etag;
             fm.image_etag      = f.image_etag;
             fm.audio_etag      = f.audio_etag;
-            fm.has_ttl         = f.has_next_wake_sec && f.next_wake_sec >= 0;
-            fm.ttl_sec         = f.next_wake_sec > 0 ? static_cast<uint32_t>(f.next_wake_sec) : 0;
+            // next_wake_sec<=0 视为非动态帧(不配 RTC timer)：0 曾被当成动态并被 60s
+            // 地板顶起来反复空醒。真正需要定时刷新的帧后端会给 >0 的秒数。
+            fm.has_ttl         = f.has_next_wake_sec && f.next_wake_sec > 0;
+            fm.ttl_sec         = fm.has_ttl ? static_cast<uint32_t>(f.next_wake_sec) : 0;
             if (!writer.WriteFrameMeta(f.seq, fm)) {
                 ESP_LOGW(kTag, "Frame %d meta write failed", f.seq);
                 complete = false;
@@ -294,8 +296,9 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
     next_meta.content_etag    = f.content_etag;
     next_meta.image_etag      = f.image_etag;
     next_meta.audio_etag      = f.audio_etag;
-    next_meta.has_ttl         = f.has_next_wake_sec && f.next_wake_sec >= 0;
-    next_meta.ttl_sec         = f.next_wake_sec > 0 ? static_cast<uint32_t>(f.next_wake_sec) : 0;
+    // 同上：next_wake_sec<=0 当非动态帧，避免 0 被 60s 地板顶起来反复空醒。
+    next_meta.has_ttl         = f.has_next_wake_sec && f.next_wake_sec > 0;
+    next_meta.ttl_sec         = next_meta.has_ttl ? static_cast<uint32_t>(f.next_wake_sec) : 0;
 
     if (old_meta_ok && !f.content_etag.empty() && old_meta.content_etag == f.content_etag &&
         cache::FrameImageExists(gid, f.seq, f.image_etag) &&

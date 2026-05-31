@@ -1,6 +1,8 @@
 #include "bsp/board.h"
 
+#include <driver/rtc_io.h>
 #include <esp_log.h>
+#include <esp_sleep.h>
 
 #include <sdkconfig.h>
 
@@ -16,6 +18,26 @@
 namespace {
 constexpr char     kTag[]          = "Board";
 constexpr uint16_t kNavLongPressMs = 1000;
+
+// deep sleep 唤醒(非 cold boot)后，睡前用 rtc_gpio_hold_en 锁住的 EXT1 唤醒源
+// (GPIO0/18/2)仍处于 RTC IO + hold 态。显式释放并交还数字 IO 矩阵，iot_button /
+// charge_status 才能正常驱动这些脚。原先隐式依赖 ESP_SLEEP_GPIO_RESET_WORKAROUND，
+// 这里与睡眠侧(sleep_manager.cc::PrepareWakeupGpio)对称地显式释放。
+// VBAT_PWR(GPIO17) 不在此释放：它是供电自锁，断电窗口=变砖，交由 board_power 的
+// VbatPowerOn 接管(先驱动高再切域)。
+void ReleaseDeepSleepWakeHolds() {
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED)
+        return;  // cold boot：无遗留 hold
+    const gpio_num_t pins[] = {
+        static_cast<gpio_num_t>(BOOT_BUTTON_GPIO),
+        static_cast<gpio_num_t>(DOWN_BUTTON_GPIO),
+        static_cast<gpio_num_t>(CHARGE_DETECT_GPIO),
+    };
+    for (gpio_num_t pin : pins) {
+        rtc_gpio_hold_dis(pin);
+        rtc_gpio_deinit(pin);
+    }
+}
 }  // namespace
 
 Board& Board::Get() {
@@ -24,6 +46,7 @@ Board& Board::Get() {
 }
 
 void Board::Init() {
+    ReleaseDeepSleepWakeHolds();
     InitPower();
     InitI2c();
     InitChargeStatus();

@@ -28,6 +28,9 @@ class EpdSsd1683 {
     void Init();
 
     bool IsRefreshPending();
+    // 阻塞轮询直到刷新结束或超时。返回 true=已空闲，false=超时仍 pending。
+    // 进深睡 / 关 rail / 后台刷新结束前用它确保不在刷新中途切断 EPD 电源。
+    bool WaitForRefreshIdle(int timeout_ms);
     void RequestUrgentPartialRefresh();  // partial(~1s 残影)
     void RequestUrgentFullRefresh();     // full(~5s 干净)
 

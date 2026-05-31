@@ -13,7 +13,7 @@ import { DynamicFrameRendererService } from './rendering/dynamic-frame-renderer.
 import { DynamicContentRegistry } from './dynamic-content-registry';
 import { DynamicAudioService } from './audio/dynamic-audio.service';
 import { canReuseDynamicData } from './dynamic-data-reuse-policy';
-import { computeDynamicRefreshSchedule } from './dynamic-refresh-policy';
+import { computeDynamicRefreshSchedule, computeErrorBackoffAt } from './dynamic-refresh-policy';
 
 const DYNAMIC_RENDER_CONTENT_SELECT = {
   id: true,
@@ -27,6 +27,7 @@ const DYNAMIC_RENDER_CONTENT_SELECT = {
   dynamicConfig: true,
   dynamicData: true,
   dynamicLastRunAt: true,
+  dynamicRefreshAttempts: true,
 } as const satisfies Prisma.ContentSelect;
 
 type DynamicRenderContentRow = Prisma.ContentGetPayload<{
@@ -364,16 +365,25 @@ export class DynamicContentRendererService {
   }
 
   private async markError(
-    content: Pick<DynamicRenderContentRow, 'id'>,
+    content: Pick<DynamicRenderContentRow, 'id' | 'dynamicRefreshAttempts'>,
     message: string,
     now: Date
   ): Promise<void> {
     try {
+      // 失败时按累计失败次数指数退避推进 dynamicNextRunAt/refreshDueAt。否则 nextRunAt
+      // 停在过去 → nextWakeSec 返回 0 → 设备每最小间隔空醒重试，持续失败时耗电。
+      // 渲染成功路径会把 attempts 清零（见 doRender 的 update），退避自然复位。
+      const attempts = content.dynamicRefreshAttempts + 1;
+      const backoffAt = computeErrorBackoffAt(attempts, now);
       await this.prisma.content.update({
         where: { id: content.id },
         data: {
           dynamicLastError: message.slice(0, 512),
           dynamicLastRunAt: now,
+          dynamicRefreshAttempts: attempts,
+          dynamicRefreshLeaseUntil: null,
+          dynamicNextRunAt: backoffAt,
+          dynamicRefreshDueAt: backoffAt,
         },
       });
     } catch (err) {

@@ -32,12 +32,7 @@ bool WaitForEpdAndShutdown(int epd_timeout_ms) {
     if (!epd)
         return true;
 
-    int waited = 0;
-    while (epd->IsRefreshPending() && waited < epd_timeout_ms) {
-        vTaskDelay(pdMS_TO_TICKS(50));
-        waited += 50;
-    }
-    return !epd->IsRefreshPending();
+    return epd->WaitForRefreshIdle(epd_timeout_ms);
 }
 
 [[noreturn]] void GracefulRestart(int pre_delay_ms, int epd_timeout_ms) {

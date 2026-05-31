@@ -4,6 +4,19 @@ const REFRESH_LEAD_MS = 90_000;
 const MIN_REFRESH_DUE_DELAY_MS = 10_000;
 const CALENDAR_WAKE_LAG_MS = 60_000;
 
+// 渲染/拉取失败后的指数退避基数与上限。失败时必须把 dynamicNextRunAt 推到未来，
+// 否则 nextWakeSec 会返回 0，设备按最小间隔反复空醒重试，持续失败时耗电。
+const ERROR_BACKOFF_BASE_SEC = 60;
+const ERROR_BACKOFF_MAX_SEC = 3600;
+
+// attempts 为「已累计的连续失败次数」（含本次）。1→60s,2→120s,...,封顶 1h。
+// 非有限值(undefined/NaN)按首次失败处理，避免算出 Invalid Date。
+export function computeErrorBackoffAt(attempts: number, now: Date): Date {
+  const n = Number.isFinite(attempts) ? Math.max(1, Math.floor(attempts)) : 1;
+  const delaySec = Math.min(ERROR_BACKOFF_BASE_SEC * 2 ** (n - 1), ERROR_BACKOFF_MAX_SEC);
+  return new Date(now.getTime() + delaySec * 1000);
+}
+
 export type DynamicSchedulePolicy = 'calendar' | 'refresh_interval' | 'registry_ttl';
 
 export interface DynamicRefreshSchedule {

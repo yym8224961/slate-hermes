@@ -48,7 +48,12 @@ void ClearCurrentFrame();
 bool RestoreCurrentFrameScheduleFromCache();
 
 // 当前动态帧的下次 RTC timer wakeup 间隔（秒）。0 表示当前帧没有动态刷新间隔。
+// 已叠加不可达退避：连续 timer wake 联系不上服务器时指数拉长，封顶 ~1h。
 uint32_t ComputeNextWakeSec();
+
+// 记录一次 timer wake 的同步结果。success=true 清零退避计数；false 递增（封顶）。
+// 由后台刷新路径调用：网络建立失败 / sync 完成(ok 或失败) 时各上报一次。
+void RecordTimerWakeResult(bool success);
 
 // 睡前最后一次刷到物理屏上的状态栏 1bpp 快照。用于 timer wake 后重建
 // prev_buffer_ 的 0~24 行，让后台 partial refresh 的 old/new 输入真实一致。

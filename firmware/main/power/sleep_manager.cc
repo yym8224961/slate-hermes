@@ -161,22 +161,47 @@ bool SleepManager::BlocksSleep() const {
 void SleepManager::Tick(int64_t now_ms) {
     if (!enabled_.load())
         return;
-    if (paused_.load())
+    // 充电 / unbound 宽限是合法的「先别睡」，不计入看门狗（它们不是卡死），重置计时。
+    if (paused_.load()) {
+        blocked_since_ms_.store(0);
         return;
-    if (BlocksSleep())
+    }
+    if (InUnboundGrace(now_ms)) {
+        blocked_since_ms_.store(0);
         return;
-    if (InUnboundGrace(now_ms))
-        return;
-    const int64_t idle_ms      = now_ms - last_active_ms_.load();
-    const int64_t threshold_ms = static_cast<int64_t>(idle_timeout_min_) * 60 * 1000;
-    if (idle_ms < threshold_ms)
-        return;
-    ESP_LOGW(kTag, "Idle %lldms >= %lldms -> entering deep sleep", (long long)idle_ms, (long long)threshold_ms);
+    }
+
+    bool forced = false;
+    if (BlocksSleep()) {
+        int64_t since = blocked_since_ms_.load();
+        if (since == 0) {
+            blocked_since_ms_.store(now_ms);
+            since = now_ms;
+        }
+        if (now_ms - since < kMaxBlockedMs)
+            return;  // 给语音/同步收尾时间
+        // 看门狗超时：强制走一次带守卫的深睡尝试。TryEnterDeepSleep → WaitForEpdAndShutdown
+        // 会停掉语音(SuspendForSleep)与同步(SyncService::Stop)，打断卡死的 blocker。
+        ESP_LOGW(kTag, "Sleep blocked %lldms (>=%lldms) -> forcing deep sleep attempt", (long long)(now_ms - since),
+                 (long long)kMaxBlockedMs);
+        forced = true;
+    } else {
+        blocked_since_ms_.store(0);
+        const int64_t idle_ms      = now_ms - last_active_ms_.load();
+        const int64_t threshold_ms = static_cast<int64_t>(idle_timeout_min_) * 60 * 1000;
+        if (idle_ms < threshold_ms)
+            return;
+        ESP_LOGW(kTag, "Idle %lldms >= %lldms -> entering deep sleep", (long long)idle_ms, (long long)threshold_ms);
+    }
+
     const auto decision = TryEnterDeepSleep();
     if (decision.outcome != SleepOutcome::kSlept) {
         // TryEnterDeepSleep can be refused by charge/unbound/disabled guards. Treat
         // that refusal as activity so Tick() does not spin the full sleep path every second.
         last_active_ms_.store(now_ms);
+        // 强制尝试被拒：重置看门狗计时，给 blocker 再一个完整窗口，避免每秒重复强制。
+        if (forced)
+            blocked_since_ms_.store(0);
     }
 }
 

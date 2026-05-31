@@ -23,6 +23,15 @@ RTC_DATA_ATTR bool     s_frame_dynamic         = false;
 RTC_DATA_ATTR uint32_t s_frame_server_sync_sec = 0;
 RTC_DATA_ATTR int      s_current_frame_seq     = 0;
 
+// 连续 timer wake 未能联系上服务器(WiFi/后端不可达,或 sync 失败)的次数。
+// 用于指数退避下次 RTC timer 间隔,避免网络长期不可用时每 60s 空醒耗电。
+// 成功同步清零;cold boot 清零;深睡跨越保留(退避需跨唤醒累计)。
+RTC_DATA_ATTR uint32_t s_timer_wake_fail_count = 0;
+
+// 退避位移上限:60s << 6 ≈ 64min,与下方 kMaxBackoffWakeSec 共同封顶。
+constexpr uint32_t kMaxBackoffShift   = 6;
+constexpr uint64_t kMaxBackoffWakeSec = 3600;
+
 constexpr uint32_t     kStatusBarSnapshotMagic                             = 0x53544231u;  // "STB1"
 RTC_DATA_ATTR uint32_t s_status_bar_magic                                  = 0;
 RTC_DATA_ATTR uint32_t s_status_bar_hash                                   = 0;
@@ -56,6 +65,7 @@ void Init(bool cold_boot) {
     s_frame_dynamic         = false;
     s_frame_server_sync_sec = 0;
     s_current_frame_seq     = 0;
+    s_timer_wake_fail_count = 0;
     s_status_bar_magic      = 0;
     s_status_bar_hash       = 0;
     std::memset(s_status_bar_snapshot, 0, sizeof(s_status_bar_snapshot));
@@ -92,6 +102,11 @@ void SetCurrentFrameFromMeta(int seq, const cache::FrameMeta& meta) {
     schedule.server_sync_sec = meta.ttl_sec;
     SetCurrentFrameSchedule(schedule);
     SetCurrentFrameSeq(seq);
+    // flash 去重：current_frame_seq 仅在与已持久化值不同时才写。后台定时刷新每次唤醒
+    // 都展示同一帧，旧实现每次都写 LittleFS，长期磨损 flash；读取不伤寿命，先读再判。
+    int persisted = 0;
+    if (cache::ReadCurrentFrameSeq(persisted) && persisted == seq)
+        return;
     cache::WriteCurrentFrameSeq(seq);
 }
 
@@ -145,8 +160,20 @@ uint32_t ComputeNextWakeSec() {
     if (!dynamic) {
         return 0;
     }
-    const uint32_t next = NormalizeDynamicWakeSec(server_sync_sec);
-    return next;
+    const uint32_t next  = NormalizeDynamicWakeSec(server_sync_sec);
+    const uint32_t shift = s_timer_wake_fail_count > kMaxBackoffShift ? kMaxBackoffShift : s_timer_wake_fail_count;
+    // 不可达退避:连续 timer wake 失败时指数拉长下次唤醒,封顶 kMaxBackoffWakeSec。
+    const uint64_t backed = static_cast<uint64_t>(next) << shift;
+    return static_cast<uint32_t>(backed > kMaxBackoffWakeSec ? kMaxBackoffWakeSec : backed);
+}
+
+void RecordTimerWakeResult(bool success) {
+    ScopedMutexLock lock(StateMutex());
+    if (success) {
+        s_timer_wake_fail_count = 0;
+    } else if (s_timer_wake_fail_count < kMaxBackoffShift) {
+        ++s_timer_wake_fail_count;
+    }
 }
 
 bool SaveStatusBarSnapshot(const uint8_t* data, size_t len) {

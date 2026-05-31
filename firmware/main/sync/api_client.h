@@ -91,6 +91,10 @@ class ApiClient {
     void SetSecret(const std::string& secret);
     void SetUnauthorizedHandler(UnauthorizedCb cb);
 
+    // 关闭并释放持久 HTTP 连接(回收 mbedTLS 内存)。在一次 sync 突发结束后调用,
+    // 这样连接只在单次突发内(poll/cycle → manifest → 各帧 image/audio)被复用。
+    void ResetConnection();
+
     bool Register(RegisterResult& out);
     bool Poll(const Telemetry& tel, DeviceState& out);
     bool CycleGroup(const std::string& direction, DeviceState& out);
@@ -112,6 +116,11 @@ class ApiClient {
     bool DownloadBinary(const std::string& path, const std::string& if_none_match, std::vector<uint8_t>& out,
                         bool& not_modified);
 
+    // 复用 conn_。conn_base_url_ 与请求 base 不一致时重建。调用者需持 conn_mutex_。
+    esp_http_client_handle_t EnsureClientLocked(const std::string& base_url);
+    // 销毁 conn_(连接进入异常态时调用,强制下次重建)。调用者需持 conn_mutex_。
+    void DropConnectionLocked();
+
     std::string server_url_;
     std::string mac_;
     std::string secret_;
@@ -120,6 +129,12 @@ class ApiClient {
     UnauthorizedCb     unauthorized_cb_;
     std::atomic<int>   consecutive_401_{0};
     std::atomic<bool>  warned_http_auth_{false};
+
+    // 持久 HTTP 连接:在一次 sync 突发内复用,避免每请求重做 TLS 握手。
+    // conn_mutex_ 串行化整个请求事务并保护 conn_/conn_base_url_。
+    std::mutex               conn_mutex_;
+    esp_http_client_handle_t conn_ = nullptr;
+    std::string              conn_base_url_;
 };
 
 ApiClient& DefaultClient();
@@ -128,6 +143,7 @@ void Init(const std::string& server_url, const std::string& mac, const std::stri
 void SetServerUrl(const std::string& url);
 void SetSecret(const std::string& secret);
 void SetUnauthorizedHandler(UnauthorizedCb cb);
+void ResetConnection();
 
 bool Register(RegisterResult& out);
 bool Poll(const Telemetry& tel, DeviceState& out);

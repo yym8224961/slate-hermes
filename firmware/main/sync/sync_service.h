@@ -43,6 +43,13 @@ class SyncService {
     // 当前已就绪的 group_id(Scene::OnEnter 时读)
     std::string CurrentGroupId() const;
 
+    // 是否正在执行一次 sync 突发(poll/cycle → manifest → 拉帧)。SleepManager 用它阻止
+    // idle deep sleep 在大文件下载中途打断同步。只在单轮 SyncOnce/DoCycle 期间为真,
+    // 突发之间(轮询间隔)为假,因此不会让设备永不睡(卡死由看门狗兜底)。
+    bool IsBusy() const {
+        return in_flight_.load(std::memory_order_acquire);
+    }
+
    private:
     SyncService() = default;
     static void TaskEntry(void* arg);
@@ -79,6 +86,7 @@ class SyncService {
     void        ClearCurrentGroup();
 
     std::atomic<bool>    running_{false};
+    std::atomic<bool>    in_flight_{false};
     mutable std::mutex   task_mutex_;
     mutable std::mutex   current_group_mutex_;
     EventGroupHandle_t   event_group_ = nullptr;

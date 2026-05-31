@@ -17,6 +17,7 @@
 #include <driver/i2s_std.h>
 #include <esp_codec_dev.h>
 #include <esp_codec_dev_defaults.h>
+#include <esp_pm.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -60,6 +61,10 @@ class AudioPlayer {
     // 的 enable→DAC start→PA on 时序在喇叭上的"啵"声。
     bool EnsureCodecOpen();
     void CleanupInitResources();
+    // 音频活跃期持有 NO_LIGHT_SLEEP 锁，防止自动 light sleep 停时钟导致 I2S 欠载卡顿。
+    // acquire/release 必须配对；内部判空，PM 锁创建失败时为 no-op。
+    void AcquireAudioPmLock();
+    void ReleaseAudioPmLock();
 
     bool              initialized_ = false;
     std::atomic<bool> codec_opened_{false};  // lazy 标志
@@ -86,4 +91,6 @@ class AudioPlayer {
     std::atomic<bool> stop_flag_{false};
     std::atomic<bool> chat_active_{false};
     TaskHandle_t      task_ = nullptr;
+
+    esp_pm_lock_handle_t no_light_sleep_lock_ = nullptr;
 };

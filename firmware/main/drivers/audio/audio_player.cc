@@ -174,8 +174,26 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     // 即使 Init 中途失败，未初始化实例的默认值也保持与 volume_store 默认值一致。
     volume_.store(vol::ToCodec(vol::GetAlbum()), std::memory_order_relaxed);
 
+    // NO_LIGHT_SLEEP 锁:播放/对话期间持有,防止自动 light sleep 停时钟使 I2S DMA 欠载
+    // 而卡顿。创建失败不致命(退化为无锁,等价旧行为),acquire/release 内部判空。
+    esp_err_t pm_err = esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "audio", &no_light_sleep_lock_);
+    if (pm_err != ESP_OK) {
+        ESP_LOGW(kTag, "audio PM lock create failed: %s", esp_err_to_name(pm_err));
+        no_light_sleep_lock_ = nullptr;
+    }
+
     initialized_ = true;
     return true;
+}
+
+void AudioPlayer::AcquireAudioPmLock() {
+    if (no_light_sleep_lock_)
+        esp_pm_lock_acquire(no_light_sleep_lock_);
+}
+
+void AudioPlayer::ReleaseAudioPmLock() {
+    if (no_light_sleep_lock_)
+        esp_pm_lock_release(no_light_sleep_lock_);
 }
 
 void AudioPlayer::CleanupInitResources() {
@@ -341,14 +359,18 @@ bool AudioPlayer::BeginChat(int codec_volume) {
         return false;
     }
     SetChatVolume(chat_volume_.load(std::memory_order_relaxed));
+    // 对话期间(双工 I2S)禁 light sleep；与 EndChat 的 release 配对(由 chat_active_ 守卫)。
+    AcquireAudioPmLock();
     return true;
 }
 
 void AudioPlayer::EndChat(int album_codec_volume) {
     if (!initialized_)
         return;
-    chat_active_.store(false, std::memory_order_relaxed);
+    const bool was_active = chat_active_.exchange(false, std::memory_order_relaxed);
     SetVolume(album_codec_volume);
+    if (was_active)
+        ReleaseAudioPmLock();
 }
 
 void AudioPlayer::SetChatVolume(int codec_volume) {
@@ -428,6 +450,9 @@ void AudioPlayer::TaskLoop() {
             continue;
         }
 
+        // 本段播放期间禁 light sleep（与下方 free(buf) 后的 release 配对）。
+        AcquireAudioPmLock();
+
         // 中断当前播放后，直接接续写新 PCM 会“啵”：旧 PCM 最后样本和新 PCM 第一
         // 样本之间 DC 跳变，被 PA 直接放大。先 set_out_vol(0) 数字静音，等 DAC
         // 收敛再写新 PCM 同时恢复音量，衔接平滑。
@@ -494,6 +519,7 @@ void AudioPlayer::TaskLoop() {
         }
 
         free(buf);
+        ReleaseAudioPmLock();
         // 若 stop_flag_=true 是因为新 Play 设的,notify_ 已被 Give 一次,
         // 下轮 loop 立即取到新 buf。
     }

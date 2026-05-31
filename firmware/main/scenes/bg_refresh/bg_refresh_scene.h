@@ -37,6 +37,7 @@ class BgRefreshScene : public Scene {
     bool ResolveCurrentFrame(std::string& gid, int& seq, int& content_count);
     bool RenderChangedFrame(SceneContext& ctx);
     void StartWatcher(EpdSsd1683* epd);
+    void StartDeadlineWatchdog();
     void Finish();
 
     State                              state_                  = State::kWaiting;
