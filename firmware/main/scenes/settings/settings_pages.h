@@ -44,10 +44,10 @@ class VolumePage : public SettingsPageBase {
     void OnEvent(SceneContext& ctx, const UiEvent& e) override;
 
    private:
-    void        RedrawValue();
-    void        ApplyLevel(SceneContext& ctx);
-    void        SaveLevel(SceneContext& ctx);
-    void        PlayTestTone(SceneContext& ctx);
+    void RedrawValue();
+    void ApplyLevel(SceneContext& ctx);
+    void SaveLevel(SceneContext& ctx);
+    void PlayTestTone(SceneContext& ctx);
 
     lv_obj_t*            bar_track_   = nullptr;
     lv_obj_t*            bar_fill_    = nullptr;

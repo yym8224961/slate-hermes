@@ -58,7 +58,6 @@ export function ImageCreateForm({ gid, header, onDone, onEditCreatedImage }: Ima
         form={form}
         isEdit={false}
         gridClassName="lg:grid-cols-2"
-        showSafeArea={Boolean(form.image.file)}
         beforeFields={header}
         actions={
           <FormActions

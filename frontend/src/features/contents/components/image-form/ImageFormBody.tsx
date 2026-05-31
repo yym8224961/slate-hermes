@@ -21,7 +21,6 @@ interface ImageFormBodyProps {
   audioError?: string | null;
   frameNamePlaceholder?: string;
   frameNameAutoFocus?: boolean;
-  showSafeArea?: boolean;
   gridClassName?: string;
   beforeFields?: ReactNode;
   actions: ReactNode;
@@ -39,7 +38,6 @@ export function ImageFormBody({
   audioError,
   frameNamePlaceholder = '如：挖掘机',
   frameNameAutoFocus,
-  showSafeArea = true,
   gridClassName,
   beforeFields,
   actions,
@@ -63,7 +61,6 @@ export function ImageFormBody({
           offset={form.crop.offset}
           onOffsetChange={form.crop.setOffset}
           statusCaption={form.frameName.trim() || null}
-          showSafeArea={showSafeArea}
         />
       </div>
 

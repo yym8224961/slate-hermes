@@ -17,7 +17,6 @@ interface PreviewCanvasProps {
   canvasRef: RefObject<HTMLCanvasElement | null>;
   statusCaption?: string | null;
   showStatusBar?: boolean;
-  showSafeArea?: boolean;
 }
 
 export function PreviewCanvas({
@@ -32,7 +31,6 @@ export function PreviewCanvas({
   canvasRef,
   statusCaption,
   showStatusBar = true,
-  showSafeArea = false,
 }: PreviewCanvasProps) {
   const pan = usePreviewCanvasRenderer({
     imageFile,
@@ -78,7 +76,7 @@ export function PreviewCanvas({
         onPointerUp={pan.onPointerUp}
         onPointerCancel={pan.onPointerUp}
       />
-      {showStatusBar && <StatusBarOverlay caption={statusCaption} showSafeArea={showSafeArea} />}
+      {showStatusBar && <StatusBarOverlay caption={statusCaption} />}
     </div>
   );
 }

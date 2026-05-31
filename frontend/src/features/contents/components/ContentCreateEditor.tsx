@@ -7,6 +7,7 @@ import { DASHBOARD_CUSTOM_STARTER_TEST_DATA } from 'shared/dynamic/test-fixtures
 import { PageHeader } from '@/components/layout/PageHeader';
 import { TYPE_META, type AllContentType } from '@/features/contents/model/content-type-meta';
 import { DynamicCreateForm } from '@/features/dynamic/components/DynamicCreateForm';
+import { DynamicFramePreview } from '@/features/dynamic/components/DynamicFramePreview';
 import { useDynamicContentForm } from '@/features/dynamic/hooks/useDynamicContentForm';
 import { ContentTypeCardGrid, ContentTypePicker } from './ContentTypePicker';
 import { ImageCreateForm } from './ImageCreateForm';
@@ -59,8 +60,18 @@ export function ContentCreateEditor({ gid, onDone, onEditCreatedImage }: Content
 
       <div className="mt-6 fade-up fade-up-1">
         {!type ? (
-          <div className="max-w-3xl">
-            <ContentTypeCardGrid onChange={handleTypeChange} />
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+            <div className="order-2 min-w-0 lg:order-1">
+              <p className="font-mono text-[10px] leading-5 text-stone uppercase tracking-[0.18em] ml-0.5 mb-2">
+                设备预览
+              </p>
+              <DynamicFramePreview data={null} pending={false} hasConfig={false} />
+            </div>
+            <div className="order-1 min-w-0 lg:order-2 lg:mt-7">
+              <div className="max-w-3xl">
+                <ContentTypeCardGrid onChange={handleTypeChange} />
+              </div>
+            </div>
           </div>
         ) : type === 'image' ? (
           <ImageCreateForm

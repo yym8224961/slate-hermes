@@ -40,6 +40,28 @@ export function useUpdateImageContent(gid: string) {
   });
 }
 
+export function usePatchContentFrameName(gid: string) {
+  const invalidate = useInvalidateContentDependencies(gid);
+  return useMutation({
+    mutationFn: async ({
+      contentId,
+      frameName,
+    }: {
+      contentId: string;
+      frameName: string | null;
+    }) => {
+      const { data } = await api.patch<ContentMutationResponseT>(
+        `${API_PREFIX}/contents/${contentId}`,
+        { frame_name: frameName }
+      );
+      return data;
+    },
+    onSuccess: (data) => {
+      invalidate(data.id);
+    },
+  });
+}
+
 export function useDeleteContent(gid: string) {
   const invalidate = useInvalidateContentDependencies(gid);
   return useMutation({

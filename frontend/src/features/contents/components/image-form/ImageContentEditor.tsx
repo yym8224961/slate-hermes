@@ -11,7 +11,10 @@ import { Image as ImageIcon } from 'lucide-react';
 import type { ContentDetailT } from 'shared';
 import { useGenerateContentTts } from '@/features/contents/query/content-audio-queries';
 import { useContentImage } from '@/features/contents/query/content-image-queries';
-import { useUpdateImageContent } from '@/features/contents/query/content-mutation-queries';
+import {
+  usePatchContentFrameName,
+  useUpdateImageContent,
+} from '@/features/contents/query/content-mutation-queries';
 import { useToast } from '@/components/feedback/toast-context';
 import { FormActions } from '@/components/ui/FormActions';
 import { PageHeader } from '@/components/layout/PageHeader';
@@ -28,8 +31,10 @@ interface ImageContentEditorProps {
 
 export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorProps) {
   const updateImageContent = useUpdateImageContent(gid);
+  const patchFrameName = usePatchContentFrameName(gid);
   const generateTts = useGenerateContentTts(gid);
-  const submitting = updateImageContent.isPending || generateTts.isPending;
+  const submitting =
+    updateImageContent.isPending || patchFrameName.isPending || generateTts.isPending;
   const toast = useToast();
   const form = useImageContentForm(content);
 
@@ -38,9 +43,14 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
 
   async function submitContent() {
     try {
-      const fd = await form.buildFormData();
-      if (form.hasImagePatch) {
+      if (form.hasFilePatch) {
+        const fd = await form.buildFormData();
         await updateImageContent.mutateAsync({ contentId: content.id, form: fd });
+      } else if (form.frameNameChanged) {
+        await patchFrameName.mutateAsync({
+          contentId: content.id,
+          frameName: form.frameName.trim() || null,
+        });
       }
       if (form.audio.wantsTts) {
         try {
@@ -49,7 +59,7 @@ export function ImageContentEditor({ gid, content, onDone }: ImageContentEditorP
             body: { text: form.audio.trimmedTtsText, voice: form.audio.ttsVoice },
           });
         } catch (err) {
-          const title = form.hasImagePatch ? '图片/名称已保存，TTS 生成失败' : 'TTS 生成失败';
+          const title = form.hasContentPatch ? '内容已保存，TTS 生成失败' : 'TTS 生成失败';
           toast.error(title, `${getApiErrorMessage(err)}。可调整 TTS 文案后重新保存。`);
           return;
         }

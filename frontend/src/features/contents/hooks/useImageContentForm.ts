@@ -29,10 +29,11 @@ export function useImageContentForm(content?: ContentDetailT) {
       content?.audio_status === 'failed' ||
       trimmedTtsText !== existingTtsText ||
       audio.ttsVoice !== content?.audio_voice);
-  const hasImagePatch = !!imageFile || !!audio.audioFile || frameNameChanged;
+  const hasFilePatch = !!imageFile || !!audio.audioFile;
+  const hasContentPatch = hasFilePatch || frameNameChanged;
   const canCreate = !!imageFile && (audio.audioMode !== 'tts' || trimmedTtsText.length > 0);
   const canEdit =
-    (hasImagePatch || wantsTts) && (audio.audioMode !== 'tts' || trimmedTtsText.length > 0);
+    (hasContentPatch || wantsTts) && (audio.audioMode !== 'tts' || trimmedTtsText.length > 0);
 
   const onImagePick = useCallback(
     (file: File | null) => {
@@ -94,7 +95,9 @@ export function useImageContentForm(content?: ContentDetailT) {
     },
     frameName,
     setFrameName,
-    hasImagePatch,
+    frameNameChanged,
+    hasContentPatch,
+    hasFilePatch,
     canCreate,
     canEdit,
     reset,

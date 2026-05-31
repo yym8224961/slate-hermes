@@ -9,7 +9,6 @@ interface FrameBitmapPreviewProps {
   caption?: string | null;
   className?: string;
   showStatusBar?: boolean;
-  showSafeArea?: boolean;
 }
 
 export function FrameBitmapPreview({
@@ -17,7 +16,6 @@ export function FrameBitmapPreview({
   caption,
   className,
   showStatusBar = true,
-  showSafeArea,
 }: FrameBitmapPreviewProps) {
   const canvasRef = useContentBitmap(data);
 
@@ -30,7 +28,7 @@ export function FrameBitmapPreview({
         className="block h-full w-full"
         style={{ imageRendering: 'pixelated' }}
       />
-      {showStatusBar && <StatusBarOverlay caption={caption} showSafeArea={showSafeArea} />}
+      {showStatusBar && <StatusBarOverlay caption={caption} />}
     </div>
   );
 }
