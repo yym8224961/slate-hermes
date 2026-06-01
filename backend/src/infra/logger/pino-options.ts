@@ -4,18 +4,6 @@ import { AppConfig } from '../config/app.config';
 import { safeRequestId } from '../../common/http/request-id';
 
 export function buildLoggerParams(config: AppConfig): Params {
-  const prettyTransport = config.isProd
-    ? undefined
-    : {
-        target: 'pino-pretty',
-        options: {
-          colorize: true,
-          translateTime: 'HH:MM:ss.l',
-          ignore: 'pid,hostname',
-          singleLine: true,
-        },
-      };
-
   return {
     pinoHttp: {
       level: config.logLevel,
@@ -40,7 +28,15 @@ export function buildLoggerParams(config: AppConfig): Params {
         'req.query.api_key',
         'req.query.apiKey',
       ],
-      transport: prettyTransport,
+      transport: {
+        target: 'pino-pretty',
+        options: {
+          colorize: true,
+          translateTime: 'HH:MM:ss.l',
+          ignore: 'pid,hostname',
+          singleLine: true,
+        },
+      },
     },
   };
 }
