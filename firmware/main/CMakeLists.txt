@@ -65,6 +65,7 @@ set(SOURCES
     "scenes/bg_refresh/bg_refresh_scene.cc"
     "scenes/xiaozhi/xiaozhi_scene.cc"
     "scenes/frame/frame_scene.cc"
+    "scenes/todo/todo_scene.cc"
     "scenes/settings/settings_scene.cc"
     "scenes/settings/settings_page_base.cc"
     "scenes/settings/settings_pages.cc"

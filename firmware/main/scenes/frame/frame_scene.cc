@@ -10,6 +10,7 @@
 #include "events/ui_event_log.h"
 #include "scenes/core/scene_stack.h"
 #include "scenes/settings/settings_scene.h"
+#include "scenes/todo/todo_scene.h"
 #include "scenes/splash/splash_scene.h"
 #include "storage/cache/cache.h"
 #include "ui/frame_view.h"
@@ -163,9 +164,19 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
                     PrevFrame(ctx);
                     break;
                 case ButtonId::kDown:
-                case ButtonId::kEnter:
-                    ESP_LOGD(kTag, "button short btn=%s action=next_frame", evt::log::ButtonName(e.u.button.btn));
+                    ESP_LOGD(kTag, "button short btn=down action=next_frame");
                     NextFrame(ctx);
+                    break;
+                case ButtonId::kEnter:
+                    // 待办页(idx=4)按确认键进入交互模式
+                    if (idx_ == 4) {
+                        ESP_LOGD(kTag, "button short btn=enter action=todo_interact");
+                        ctx.stack->RequestPush(
+                            std::make_unique<TodoScene>(ctx, "fqfo730iqrgqfyu3c1kxan2q"));
+                    } else {
+                        ESP_LOGD(kTag, "button short btn=enter action=next_frame");
+                        NextFrame(ctx);
+                    }
                     break;
             }
             break;
