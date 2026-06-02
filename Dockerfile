@@ -63,10 +63,13 @@ COPY backend/tsconfig.json ./backend/
 # 7. 运行时资产（矢量字体 + 1bpp 位图字库，变更极少，单独成层）
 COPY backend/assets ./backend/assets
 
-# 8. backend 源码(改动最频繁,~300K,放最后让其他层全部命中缓存)
+# 8. backend 脚本（可选临时 job、调试和一次性维护任务）
+COPY backend/scripts ./backend/scripts
+
+# 9. backend 源码(改动最频繁,~300K,放最后让其他层全部命中缓存)
 COPY backend/src ./backend/src
 
-# 9. entrypoint
+# 10. entrypoint
 COPY entrypoint.sh ./
 RUN chmod +x /app/entrypoint.sh
 
@@ -75,6 +78,6 @@ USER bun
 EXPOSE 3001
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget --spider -q "http://127.0.0.1:${PORT}/healthz" || exit 1
+  CMD [ "${SLATE_RUN_MODE:-server}" != "server" ] || wget --spider -q "http://127.0.0.1:${PORT}/healthz" || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]

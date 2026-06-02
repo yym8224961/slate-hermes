@@ -17,10 +17,10 @@ import {
 import {
   DynamicFrameRendererService,
   type DynamicRenderContext,
-} from '../src/modules/dynamic-content/rendering/dynamic-frame-renderer.service';
-import { DynamicFrameFontService } from '../src/modules/dynamic-content/rendering/fonts/dynamic-frame-font.service';
-import { CalendarDataService } from '../src/modules/dynamic-content/calendar-data.service';
-import { DailyCalendarProvider } from '../src/modules/dynamic-content/providers/daily-calendar.provider';
+} from '../../src/modules/dynamic-content/rendering/dynamic-frame-renderer.service';
+import { DynamicFrameFontService } from '../../src/modules/dynamic-content/rendering/fonts/dynamic-frame-font.service';
+import { CalendarDataService } from '../../src/modules/dynamic-content/calendar-data.service';
+import { DailyCalendarProvider } from '../../src/modules/dynamic-content/providers/daily-calendar.provider';
 
 const outDir = process.argv[2] ?? '/private/tmp/slate-render-debug';
 const renderedAt = new Date('2026-05-17T04:00:00.000Z');

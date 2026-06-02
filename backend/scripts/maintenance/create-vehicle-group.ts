@@ -7,9 +7,9 @@ import sharp from 'sharp';
 import { FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
 import type { ContentDetailT, DitherMode, TtsVoiceT } from 'shared';
 import { API_DEFAULT_DITHER_MODE, DITHER_MODES, DEFAULT_TTS_VOICE, isTtsVoice } from 'shared';
-import type { ContentsReadService } from '../src/modules/contents/contents-read.service';
-import type { ContentsService } from '../src/modules/contents/contents.service';
-import type { ParsedContentUpload } from '../src/modules/contents/multipart-parser';
+import type { ContentsReadService } from '../../src/modules/contents/contents-read.service';
+import type { ContentsService } from '../../src/modules/contents/contents.service';
+import type { ParsedContentUpload } from '../../src/modules/contents/multipart-parser';
 import {
   createGroupScriptServices,
   deleteAllContents,
@@ -18,7 +18,7 @@ import {
   resolveUser,
   userDisplay,
   type UserSelectorArgs,
-} from './helpers/bootstrap-app';
+} from '../helpers/bootstrap-app';
 
 interface Args extends UserSelectorArgs {
   groupName: string;
@@ -157,7 +157,7 @@ function readThreshold(value: string, flag: string): number {
 
 function printHelpAndExit(): never {
   process.stdout.write(`Usage:
-  bun run scripts/create-vehicle-group.ts [--email <email> | --username <name> | --user-id <id>]
+  bun run scripts/maintenance/create-vehicle-group.ts [--email <email> | --username <name> | --user-id <id>]
 
 Options:
   --group-name <name>  Group name to create or update. Default: 工程车

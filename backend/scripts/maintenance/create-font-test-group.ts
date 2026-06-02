@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 import type { ContentDetailT, FontTestFontIdT } from 'shared';
 import { FONT_TEST_FONTS } from 'shared';
-import type { ContentsReadService } from '../src/modules/contents/contents-read.service';
-import type { ContentsService } from '../src/modules/contents/contents.service';
-import type { DynamicContentService } from '../src/modules/dynamic-content/dynamic-content.service';
+import type { ContentsReadService } from '../../src/modules/contents/contents-read.service';
+import type { ContentsService } from '../../src/modules/contents/contents.service';
+import type { DynamicContentService } from '../../src/modules/dynamic-content/dynamic-content.service';
 import {
   createGroupScriptServices,
   deleteAllContents,
@@ -12,7 +12,7 @@ import {
   resolveUser,
   userDisplay,
   type UserSelectorArgs,
-} from './helpers/bootstrap-app';
+} from '../helpers/bootstrap-app';
 
 interface Args extends UserSelectorArgs {
   groupName: string;
@@ -86,7 +86,7 @@ function parseArgs(argv: string[]): Args {
 
 function printHelpAndExit(): never {
   process.stdout.write(`Usage:
-  bun run scripts/create-font-test-group.ts [--email <email> | --username <name> | --user-id <id>]
+  bun run scripts/maintenance/create-font-test-group.ts [--email <email> | --username <name> | --user-id <id>]
 
 Options:
   --group-name <name>  Group name to create or update. Default: 字体测试

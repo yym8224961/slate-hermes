@@ -191,7 +191,7 @@ async function main(): Promise<void> {
   const input = process.argv[2];
   const output = process.argv[3];
   if (!input || !output) {
-    throw new Error('usage: bun backend/scripts/extract-lvgl-font.ts <font.c> <out.json>');
+    throw new Error('usage: bun backend/scripts/fonts/extract-lvgl-font.ts <font.c> <out.json>');
   }
   const src = await readFile(resolve(input), 'utf8');
   const bpp = parseBpp(src);

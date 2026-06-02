@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 WORK_DIR="${SLATE_ZFULL_FONT_WORK_DIR:-/private/tmp/slate-zfull-font-test}"
 OUT_DIR="$ROOT/backend/assets/fonts/bitmap-1bpp"
 ZFULL_TTF="${ZFULL_TTF:-$ROOT/backend/assets/fonts/vector/Zfull-GB.ttf}"
@@ -12,7 +12,7 @@ mkdir -p "$WORK_DIR" "$OUT_DIR"
 
 usage() {
   printf '%s\n' \
-    "usage: backend/scripts/generate-zfull-font-assets.sh [--help]" \
+    "usage: backend/scripts/fonts/generate-zfull-font-assets.sh [--help]" \
     "" \
     "Generates backend 1bpp Zfull-GB JSON fonts." \
     "Environment:" \
@@ -104,5 +104,5 @@ for size in $ZFULL_SIZES; do
     --format lvgl \
     -o "$c_file" \
     --lv-font-name "ZfullGB_$size"
-  bun "$ROOT/backend/scripts/extract-lvgl-font.ts" "$c_file" "$out"
+  bun "$ROOT/backend/scripts/fonts/extract-lvgl-font.ts" "$c_file" "$out"
 done

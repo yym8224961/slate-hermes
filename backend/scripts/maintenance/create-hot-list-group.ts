@@ -8,9 +8,9 @@ import {
   type HotListSourceCatalogEntry,
   type HotListSourceIdT,
 } from 'shared';
-import type { ContentsReadService } from '../src/modules/contents/contents-read.service';
-import type { ContentsService } from '../src/modules/contents/contents.service';
-import type { DynamicContentService } from '../src/modules/dynamic-content/dynamic-content.service';
+import type { ContentsReadService } from '../../src/modules/contents/contents-read.service';
+import type { ContentsService } from '../../src/modules/contents/contents.service';
+import type { DynamicContentService } from '../../src/modules/dynamic-content/dynamic-content.service';
 import {
   createGroupScriptServices,
   deleteAllContents,
@@ -19,7 +19,7 @@ import {
   resolveUser,
   userDisplay,
   type UserSelectorArgs,
-} from './helpers/bootstrap-app';
+} from '../helpers/bootstrap-app';
 
 interface Args extends UserSelectorArgs {
   groupName: string;
@@ -112,7 +112,7 @@ function readPositiveInt(value: string, flag: string): number {
 
 function printHelpAndExit(): never {
   process.stdout.write(`Usage:
-  bun run scripts/create-hot-list-group.ts [--email <email> | --username <name> | --user-id <id>]
+  bun run scripts/maintenance/create-hot-list-group.ts [--email <email> | --username <name> | --user-id <id>]
 
 Options:
   --group-name <name>             Group name to create or update. Default: 热榜

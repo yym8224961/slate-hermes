@@ -29,49 +29,43 @@ import {
   formatScriptError,
   readScriptErrorBody,
   truncateScriptLogText,
-} from './helpers/script-logger';
+} from '../helpers/script-logger';
+import { readPositiveIntEnv, requireEnv, stripTrailingSlash } from '../lib/env';
+import type { SlateJob } from '../lib/job';
 
 const logger = createScriptLogger('ClaudeCodeQuotaMonitor');
-const SLATE_API_BASE = stripTrailingSlash(env('SLATE_API_BASE'));
-const CONTENT_ID = env('CLAUDE_QUOTA_CONTENT_ID');
-const ANTHROPIC_API_BASE = stripTrailingSlash(
-  process.env.ANTHROPIC_API_BASE ?? 'https://api.anthropic.com'
-);
-const PLAN_LABEL = process.env.CLAUDE_PLAN_LABEL ?? 'Max 20x';
-const PUSH_INTERVAL_MS = readPositiveInt(process.env.CLAUDE_QUOTA_PUSH_INTERVAL_MS, 60_000);
-const CACHE_DIR = join(homedir(), '.cache', 'slate-claude-quota');
-const LOG_PATH = join(CACHE_DIR, 'push.log');
-const LAST_PUSH_TS = join(CACHE_DIR, 'last-push-ts');
-const PAYLOAD_PATH = join(CACHE_DIR, 'pending-payload.json');
 
-mkdirSync(CACHE_DIR, { recursive: true });
-
-if (process.argv[2] === '--push') {
-  await pushPendingPayload();
-  process.exit(0);
+interface ClaudeQuotaMonitorConfig {
+  slateAPIBase: string;
+  contentID: string;
+  anthropicAPIBase: string;
+  planLabel: string;
+  pushIntervalMs: number;
+  logPath: string;
+  lastPushTsPath: string;
+  payloadPath: string;
 }
 
-function env(key: string): string {
-  const v = process.env[key];
-  if (!v) {
-    logger.error(`Missing env ${key}.`);
-    process.exit(1);
-  }
-  return v;
+function readConfig(): ClaudeQuotaMonitorConfig {
+  const cacheDir = join(homedir(), '.cache', 'slate-claude-quota');
+  mkdirSync(cacheDir, { recursive: true });
+  return {
+    slateAPIBase: stripTrailingSlash(requireEnv('SLATE_API_BASE')),
+    contentID: requireEnv('CLAUDE_QUOTA_CONTENT_ID'),
+    anthropicAPIBase: stripTrailingSlash(
+      process.env.ANTHROPIC_API_BASE ?? 'https://api.anthropic.com'
+    ),
+    planLabel: process.env.CLAUDE_PLAN_LABEL ?? 'Max 20x',
+    pushIntervalMs: readPositiveIntEnv('CLAUDE_QUOTA_PUSH_INTERVAL_MS', 60_000),
+    logPath: join(cacheDir, 'push.log'),
+    lastPushTsPath: join(cacheDir, 'last-push-ts'),
+    payloadPath: join(cacheDir, 'pending-payload.json'),
+  };
 }
 
-function stripTrailingSlash(value: string): string {
-  return value.replace(/\/+$/, '');
-}
-
-function readPositiveInt(raw: string | undefined, fallback: number): number {
-  const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : fallback;
-}
-
-function log(msg: string) {
+function log(config: ClaudeQuotaMonitorConfig, msg: string) {
   try {
-    appendFileSync(LOG_PATH, `[${new Date().toISOString()}] ${msg}\n`);
+    appendFileSync(config.logPath, `[${new Date().toISOString()}] ${msg}\n`);
   } catch {
     // Logging must never break the statusLine command.
   }
@@ -172,9 +166,12 @@ interface UnifiedRateLimit {
   bindingWindow: string; // five_hour | seven_day | ...
 }
 
-async function probeUnifiedRateLimit(token: string): Promise<UnifiedRateLimit | null> {
+async function probeUnifiedRateLimit(
+  config: ClaudeQuotaMonitorConfig,
+  token: string
+): Promise<UnifiedRateLimit | null> {
   try {
-    const res = await fetch(`${ANTHROPIC_API_BASE}/v1/messages`, {
+    const res = await fetch(`${config.anthropicAPIBase}/v1/messages`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -316,12 +313,16 @@ interface QuotaData extends Record<string, unknown> {
   updated_label: string;
 }
 
-function buildQuotaDataFromLimits(limits: QuotaLimitSnapshot, apiStatus?: string): QuotaData {
+function buildQuotaDataFromLimits(
+  config: ClaudeQuotaMonitorConfig,
+  limits: QuotaLimitSnapshot,
+  apiStatus?: string
+): QuotaData {
   const primaryPercent = Math.round(clampPercent(limits.pct5h));
   const secondaryPercent = Math.round(clampPercent(limits.pct7d));
   return {
     service_label: 'Claude Code',
-    plan_label: PLAN_LABEL,
+    plan_label: config.planLabel,
     status_label: statusLabelForLimits(primaryPercent, secondaryPercent, apiStatus),
     primary_window_label: '5h窗口',
     primary_used_percent: primaryPercent,
@@ -333,18 +334,19 @@ function buildQuotaDataFromLimits(limits: QuotaLimitSnapshot, apiStatus?: string
   };
 }
 
-async function buildQuotaDataFromProbe(): Promise<QuotaData> {
+async function buildQuotaDataFromProbe(config: ClaudeQuotaMonitorConfig): Promise<QuotaData> {
   const token = resolveAuthToken();
-  const rl = await probeUnifiedRateLimit(token);
+  const rl = await probeUnifiedRateLimit(config, token);
 
   if (!rl) {
     return {
-      ...buildQuotaDataFromLimits({ pct5h: 0, reset5h: 0, pct7d: 0, reset7d: 0 }),
+      ...buildQuotaDataFromLimits(config, { pct5h: 0, reset5h: 0, pct7d: 0, reset7d: 0 }),
       status_label: '未知',
     };
   }
 
   return buildQuotaDataFromLimits(
+    config,
     {
       pct5h: rl.utilization5h * 100,
       reset5h: rl.reset5h,
@@ -359,16 +361,19 @@ function buildPayload(data: DashboardDataPayloadT): string {
   return JSON.stringify(IngestPayload.parse({ version: 1, data }));
 }
 
-function shouldPush(): boolean {
+function shouldPush(config: ClaudeQuotaMonitorConfig): boolean {
   try {
-    return Date.now() - Number(readFileSync(LAST_PUSH_TS, 'utf-8').trim()) >= PUSH_INTERVAL_MS;
+    return (
+      Date.now() - Number(readFileSync(config.lastPushTsPath, 'utf-8').trim()) >=
+      config.pushIntervalMs
+    );
   } catch {
     return true;
   }
 }
 
-async function pushPayloadBody(body: string) {
-  const url = `${SLATE_API_BASE}/api/v1/contents/${CONTENT_ID}/data`;
+async function pushPayloadBody(config: ClaudeQuotaMonitorConfig, body: string) {
+  const url = `${config.slateAPIBase}/api/v1/contents/${config.contentID}/data`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -386,16 +391,16 @@ async function pushPayloadBody(body: string) {
   );
 }
 
-async function push(data: DashboardDataPayloadT) {
-  await pushPayloadBody(buildPayload(data));
+async function push(config: ClaudeQuotaMonitorConfig, data: DashboardDataPayloadT) {
+  await pushPayloadBody(config, buildPayload(data));
 }
 
-async function pushPendingPayload() {
+async function pushPendingPayload(config: ClaudeQuotaMonitorConfig) {
   try {
-    await pushPayloadBody(readFileSync(PAYLOAD_PATH, 'utf-8'));
-    log('ok');
+    await pushPayloadBody(config, readFileSync(config.payloadPath, 'utf-8'));
+    log(config, 'ok');
   } catch (e) {
-    log(`error ${e}`);
+    log(config, `error ${e}`);
   }
 }
 
@@ -407,29 +412,56 @@ function spawnBackgroundPush() {
   child.unref();
 }
 
-function scheduleStatusLinePush(data: DashboardDataPayloadT, limits: QuotaLimitSnapshot) {
-  if (!shouldPush()) return;
-  writeFileSync(LAST_PUSH_TS, String(Date.now()));
-  writeFileSync(PAYLOAD_PATH, buildPayload(data));
+function scheduleStatusLinePush(
+  config: ClaudeQuotaMonitorConfig,
+  data: DashboardDataPayloadT,
+  limits: QuotaLimitSnapshot
+) {
+  if (!shouldPush(config)) return;
+  writeFileSync(config.lastPushTsPath, String(Date.now()));
+  writeFileSync(config.payloadPath, buildPayload(data));
   spawnBackgroundPush();
-  log(`push 5h=${Math.round(limits.pct5h)}% 7d=${Math.round(limits.pct7d)}%`);
+  log(config, `push 5h=${Math.round(limits.pct5h)}% 7d=${Math.round(limits.pct7d)}%`);
+}
+
+export async function runClaudeCodeQuotaMonitorJob(): Promise<void> {
+  const config = readConfig();
+  const quota = await buildQuotaDataFromProbe(config);
+  logger.info(`Claude Code quota data: ${truncateScriptLogText(JSON.stringify(quota), 1000)}`);
+  await push(config, quota);
 }
 
 async function main() {
+  const config = readConfig();
+  if (process.argv[2] === '--push') {
+    await pushPendingPayload(config);
+    return;
+  }
+
   const statusLineInput = await readStatusLineInput();
   const statusLineLimits = statusLineInput ? rateLimitsFromStatusLine(statusLineInput) : null;
   if (statusLineLimits) {
     process.stdout.write(formatStatusLine(statusLineLimits));
-    scheduleStatusLinePush(buildQuotaDataFromLimits(statusLineLimits), statusLineLimits);
+    scheduleStatusLinePush(
+      config,
+      buildQuotaDataFromLimits(config, statusLineLimits),
+      statusLineLimits
+    );
     return;
   }
 
-  const quota = await buildQuotaDataFromProbe();
-  logger.info(`Claude Code quota data: ${truncateScriptLogText(JSON.stringify(quota), 1000)}`);
-  await push(quota);
+  await runClaudeCodeQuotaMonitorJob();
 }
 
-main().catch((e) => {
-  logger.error(`Claude Code quota monitor failed: ${formatScriptError(e)}`);
-  process.exit(1);
-});
+export const job: SlateJob = {
+  id: 'claude-code-quota-monitor',
+  description: 'Fetch Claude Code quota usage and push it to a Slate dashboard frame.',
+  run: runClaudeCodeQuotaMonitorJob,
+};
+
+if (import.meta.main) {
+  main().catch((e) => {
+    logger.error(`Claude Code quota monitor failed: ${formatScriptError(e)}`);
+    process.exit(1);
+  });
+}

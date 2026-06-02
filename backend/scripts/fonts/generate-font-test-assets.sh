@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 PROBE_DIR="${SLATE_FONT_PROBE_DIR:-/private/tmp/slate-font-probe}"
 WORK_DIR="${SLATE_FONT_WORK_DIR:-/private/tmp/slate-font-test}"
 OUT_DIR="$ROOT/backend/assets/fonts/bitmap-1bpp"
@@ -34,7 +34,7 @@ convert_ttf() {
     node --stack-size=65500 "$LV_FONT_CONV_BIN" --no-compress --bpp 1 --size "$size" --font "$src" --autohint-off \
       -r 0x20-0x7F --format lvgl -o "$c_file" --lv-font-name "$name"
   fi
-  bun "$ROOT/backend/scripts/extract-lvgl-font.ts" "$c_file" "$OUT_DIR/$out.json"
+  bun "$ROOT/backend/scripts/fonts/extract-lvgl-font.ts" "$c_file" "$OUT_DIR/$out.json"
 }
 
 convert_ttf_full() {
@@ -44,10 +44,10 @@ convert_ttf_full() {
   local out="$4"
   local c_file="$WORK_DIR/$out.c"
   local ranges
-  ranges="$(bun "$ROOT/backend/scripts/font-ranges.ts" "$src")"
+  ranges="$(bun "$ROOT/backend/scripts/fonts/font-ranges.ts" "$src")"
   node --stack-size=65500 "$LV_FONT_CONV_BIN" --no-compress --bpp 1 --size "$size" --font "$src" --autohint-off \
     -r "$ranges" --format lvgl -o "$c_file" --lv-font-name "$name"
-  bun "$ROOT/backend/scripts/extract-lvgl-font.ts" "$c_file" "$OUT_DIR/$out.json"
+  bun "$ROOT/backend/scripts/fonts/extract-lvgl-font.ts" "$c_file" "$OUT_DIR/$out.json"
 }
 
 convert_ttf_demo() {
@@ -122,9 +122,9 @@ for item in 6x12:12 8x16:16 12x24:24 16x32:32 32x64:64; do
   convert_ttf_full "$PROBE_DIR/spleen/spleen-2.2.0/spleen-$name.otf" "$size" "Spleen_${name//x/_}" "spleen-$name"
 done
 
-bun "$ROOT/backend/scripts/extract-bdf-font.ts" "$PROBE_DIR/spleen/spleen-2.2.0/spleen-5x8.bdf" "$OUT_DIR/spleen-5x8.json"
+bun "$ROOT/backend/scripts/fonts/extract-bdf-font.ts" "$PROBE_DIR/spleen/spleen-2.2.0/spleen-5x8.bdf" "$OUT_DIR/spleen-5x8.json"
 if [[ -f "$SOURCE_HAN_SANS_C" ]]; then
-  bun "$ROOT/backend/scripts/extract-lvgl-font.ts" "$SOURCE_HAN_SANS_C" "$OUT_DIR/source-han-sans-16-slim.json"
+  bun "$ROOT/backend/scripts/fonts/extract-lvgl-font.ts" "$SOURCE_HAN_SANS_C" "$OUT_DIR/source-han-sans-16-slim.json"
 elif [[ -f "$OUT_DIR/source-han-sans-16-slim.json" ]]; then
   echo "warning: $SOURCE_HAN_SANS_C not found; keeping existing source-han-sans-16-slim.json" >&2
 else
@@ -132,4 +132,4 @@ else
   echo "set SLATE_SOURCE_HAN_SANS_C to a repo-local or absolute LVGL .c font source" >&2
   exit 1
 fi
-bash "$ROOT/backend/scripts/generate-zfull-font-assets.sh"
+bash "$ROOT/backend/scripts/fonts/generate-zfull-font-assets.sh"

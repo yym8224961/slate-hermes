@@ -77,7 +77,7 @@ async function main(): Promise<void> {
   const input = process.argv[2];
   const output = process.argv[3];
   if (!input || !output) {
-    throw new Error('usage: bun backend/scripts/extract-bdf-font.ts <font.bdf> <out.json>');
+    throw new Error('usage: bun backend/scripts/fonts/extract-bdf-font.ts <font.bdf> <out.json>');
   }
 
   const src = await readFile(resolve(input), 'utf8');

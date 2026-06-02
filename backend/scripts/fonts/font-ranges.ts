@@ -11,7 +11,7 @@ function toLvRange(token: string): string {
 
 const font = process.argv[2];
 if (!font) {
-  throw new Error('usage: bun backend/scripts/font-ranges.ts <font-file>');
+  throw new Error('usage: bun backend/scripts/fonts/font-ranges.ts <font-file>');
 }
 
 const charset = execFileSync('fc-query', [`--format=%{charset}`, resolve(font)], {

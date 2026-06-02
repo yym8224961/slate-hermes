@@ -62,7 +62,7 @@ slate/
 ├── firmware/       ESP-IDF 固件工程
 ├── compose.yml     单机自托管示例，内置 MySQL
 ├── Dockerfile      生产单镜像：backend + frontend dist
-├── entrypoint.sh   容器启动时执行 prisma migrate deploy 后启动 backend
+├── entrypoint.sh   容器入口：server 模式启动 backend，job 模式运行脚本
 └── package.json    Bun workspace 根配置
 ```
 
