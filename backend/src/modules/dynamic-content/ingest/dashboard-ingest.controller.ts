@@ -1,4 +1,4 @@
-import { Body, Controller, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
 import type { IngestResponseT } from 'shared';
 import { CurrentUser, Public } from '../../../common/nest/decorators/auth-context.decorators';
 import type { WebUserContext } from '../../../common/nest/auth-context';
@@ -34,6 +34,14 @@ export class DashboardIngestController {
   ): Promise<IngestResponseT> {
     const r = await this.dynamicContent.ingestDashboard(contentId, body);
     return ingestResponse(r);
+  }
+
+  // GET /api/v1/contents/:contentId/data —— capability URL 读取仪表板当前数据
+  // 用于设备端 TodoScene 拉取待办状态，无需认证
+  @Public()
+  @Get(':contentId/data')
+  async getData(@Param('contentId') contentId: string): Promise<Record<string, unknown> | null> {
+    return this.dynamicContent.getDashboardData(contentId);
   }
 
   @Post(':contentId/refresh')

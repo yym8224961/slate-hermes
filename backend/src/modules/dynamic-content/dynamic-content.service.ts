@@ -397,4 +397,21 @@ export class DynamicContentService {
       );
     }
   }
+  // GET /api/v1/contents/:contentId/data —— capability URL 读取仪表板数据
+  // 用于设备端 TodoScene 拉取当前待办状态
+  async getDashboardData(contentId: string): Promise<Record<string, unknown> | null> {
+    const content = await this.prisma.content.findUnique({
+      where: { id: contentId },
+      select: { dynamicData: true, dynamicType: true },
+    });
+
+    if (!content || content.dynamicType !== 'dashboard' || !content.dynamicData) {
+      return null;
+    }
+
+    if (typeof content.dynamicData === 'object' && content.dynamicData !== null) {
+      return content.dynamicData as Record<string, unknown>;
+    }
+    return null;
+  }
 }
