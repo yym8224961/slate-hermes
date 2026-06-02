@@ -1,0 +1,324 @@
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  DATABASE_URL: mysql://ci:ci@127.0.0.1:3306/ci
+  JWT_SECRET: ci_dummy_secret_long_enough_to_pass_validation
+  IMAGE: ghcr.io/${{ github.repository_owner }}/slate
+
+jobs:
+  prepare:
+    name: validate release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      minor_version: ${{ steps.version.outputs.minor_version }}
+      tag: ${{ steps.version.outputs.tag }}
+      notes_path: ${{ steps.changelog.outputs.notes_path }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        id: version
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then
+            echo "release.yml must run on a vX.Y.Z tag." >&2
+            exit 1
+          fi
+
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must match vX.Y.Z, got ${GITHUB_REF_NAME}." >&2
+            exit 1
+          fi
+
+          VERSION="${GITHUB_REF_NAME#v}"
+          MINOR_VERSION="$(echo "$VERSION" | awk -F. '{ print $1 "." $2 }')"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "minor_version=$MINOR_VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$GITHUB_REF_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release tag ordering
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          LATEST_TAG="$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          if [ "$LATEST_TAG" != "$RELEASE_TAG" ]; then
+            echo "Release tag must be the newest vX.Y.Z tag before publishing the latest image. Latest tag is ${LATEST_TAG}, got ${RELEASE_TAG}." >&2
+            exit 1
+          fi
+
+      - name: Validate repository versions
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          check_package_version() {
+            local file="$1"
+            local value
+            value="$(jq -r '.version' "$file")"
+            if [ "$value" != "$RELEASE_VERSION" ]; then
+              echo "$file version must be $RELEASE_VERSION, got $value." >&2
+              exit 1
+            fi
+          }
+
+          check_lock_workspace_version() {
+            local workspace="$1"
+            local value
+            value="$(
+              awk -v workspace="\"$workspace\":" '
+                /^[[:space:]]*"packages":[[:space:]]*\{/ { exit }
+                $0 ~ "^[[:space:]]*" workspace "[[:space:]]*\\{" { in_workspace = 1; next }
+                in_workspace && /^[[:space:]]*},/ { exit }
+                in_workspace && /^[[:space:]]*"version":[[:space:]]*"/ {
+                  gsub(/^[[:space:]]*"version":[[:space:]]*"/, "", $0)
+                  gsub(/".*$/, "", $0)
+                  print
+                  exit
+                }
+              ' bun.lock
+            )"
+            if [ "$value" != "$RELEASE_VERSION" ]; then
+              echo "bun.lock workspace $workspace version must be $RELEASE_VERSION, got ${value:-missing}." >&2
+              exit 1
+            fi
+          }
+
+          check_package_version package.json
+          check_package_version backend/package.json
+          check_package_version frontend/package.json
+          check_package_version shared/package.json
+
+          check_lock_workspace_version backend
+          check_lock_workspace_version frontend
+          check_lock_workspace_version shared
+
+          FW_VERSION="$(sed -n 's/^CONFIG_APP_PROJECT_VER="\([^"]*\)"/\1/p' firmware/sdkconfig.defaults | head -n 1)"
+          if [ "$FW_VERSION" != "$RELEASE_VERSION" ]; then
+            echo "firmware/sdkconfig.defaults CONFIG_APP_PROJECT_VER must be $RELEASE_VERSION, got $FW_VERSION." >&2
+            exit 1
+          fi
+
+      - name: Read tag changelog
+        id: changelog
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          if [ "$(git cat-file -t "$RELEASE_TAG")" != "tag" ]; then
+            echo "Release tag must be an annotated tag with a changelog body." >&2
+            exit 1
+          fi
+
+          NOTES_PATH="$RUNNER_TEMP/release-notes.md"
+          git for-each-ref "refs/tags/${RELEASE_TAG}" --format='%(contents:body)' > "$NOTES_PATH"
+
+          if ! awk 'NF { found = 1 } END { exit found ? 0 : 1 }' "$NOTES_PATH"; then
+            echo "Release tag body must contain at least one changelog item." >&2
+            exit 1
+          fi
+
+          echo "notes_path=$NOTES_PATH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release notes
+        uses: actions/upload-artifact@v7
+        with:
+          name: slate-release-notes
+          path: ${{ steps.changelog.outputs.notes_path }}
+          if-no-files-found: error
+
+  quality:
+    name: quality checks
+    runs-on: ubuntu-latest
+    needs: prepare
+    steps:
+      - uses: actions/checkout@v6
+      - uses: ./.github/actions/setup
+        with:
+          prisma: 'true'
+      - run: bun run format:check
+      - run: bun run lint
+      - run: bun run typecheck
+      - run: bun run --cwd backend test
+      - run: bun run --cwd frontend build
+
+  docker:
+    name: build + push release image
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - quality
+      - firmware
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=${{ needs.prepare.outputs.tag }}
+            type=raw,value=${{ needs.prepare.outputs.minor_version }}
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  firmware:
+    name: build release firmware
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - quality
+    outputs:
+      full_name: ${{ steps.package.outputs.full_name }}
+      ota_name: ${{ steps.package.outputs.ota_name }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: ESP-IDF build
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: 'v5.5.2'
+          target: esp32s3
+          path: 'firmware'
+          command: >-
+            idf.py build &&
+            idf.py merge-bin -o slate-full.bin &&
+            cp build/slate.bin build/slate-ota.bin
+
+      - name: Prepare firmware assets
+        id: package
+        env:
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          FULL_NAME="slate-zectrix-note4-${RELEASE_TAG}-full.bin"
+          OTA_NAME="slate-zectrix-note4-${RELEASE_TAG}-ota.bin"
+
+          cp firmware/build/slate-full.bin "$RUNNER_TEMP/$FULL_NAME"
+          cp firmware/build/slate-ota.bin "$RUNNER_TEMP/$OTA_NAME"
+
+          (
+            cd "$RUNNER_TEMP"
+            sha256sum "$FULL_NAME" "$OTA_NAME" > "slate-zectrix-note4-${RELEASE_TAG}-sha256.txt"
+          )
+
+          echo "full_name=$FULL_NAME" >> "$GITHUB_OUTPUT"
+          echo "ota_name=$OTA_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: slate-release-firmware
+          path: |
+            ${{ runner.temp }}/${{ steps.package.outputs.full_name }}
+            ${{ runner.temp }}/${{ steps.package.outputs.ota_name }}
+            ${{ runner.temp }}/slate-zectrix-note4-${{ needs.prepare.outputs.tag }}-sha256.txt
+          if-no-files-found: error
+
+  github-release:
+    name: publish GitHub Release
+    runs-on: ubuntu-latest
+    needs:
+      - prepare
+      - docker
+      - firmware
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Download release notes
+        uses: actions/download-artifact@v7
+        with:
+          name: slate-release-notes
+          path: ${{ runner.temp }}/release-notes
+
+      - name: Download firmware artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: slate-release-firmware
+          path: ${{ runner.temp }}/firmware
+
+      - name: Prepare deployment assets
+        run: |
+          set -euo pipefail
+
+          cp compose.yml "$RUNNER_TEMP/compose.yml"
+          cp .env.example "$RUNNER_TEMP/slate.env.example"
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+          NOTES_PATH: ${{ runner.temp }}/release-notes/release-notes.md
+          FIRMWARE_DIR: ${{ runner.temp }}/firmware
+          DEPLOY_DIR: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+
+          ASSETS=(
+            "$FIRMWARE_DIR/${{ needs.firmware.outputs.full_name }}"
+            "$FIRMWARE_DIR/${{ needs.firmware.outputs.ota_name }}"
+            "$FIRMWARE_DIR/slate-zectrix-note4-${RELEASE_TAG}-sha256.txt"
+            "$DEPLOY_DIR/compose.yml"
+            "$DEPLOY_DIR/slate.env.example"
+          )
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_TAG" \
+              --notes-file "$NOTES_PATH"
+            gh release upload "$RELEASE_TAG" "${ASSETS[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$RELEASE_TAG" "${ASSETS[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$RELEASE_TAG" \
+              --notes-file "$NOTES_PATH"
+          fi

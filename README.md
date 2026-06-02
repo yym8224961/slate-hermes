@@ -182,9 +182,11 @@ bun run --cwd frontend build
 
 生产镜像是单镜像：backend 直接运行 TypeScript，frontend 的 `dist/` 由 backend 同域静态托管，API 和 Web 共用一个端口。
 
+稳定版部署文件随 GitHub Release 上传；以下命令在首个正式 release 发布后可用。
+
 ```bash
-curl -fLO https://raw.githubusercontent.com/qiujun8023/slate/master/compose.yml
-curl -fLo .env.example https://raw.githubusercontent.com/qiujun8023/slate/master/.env.example
+curl -fLO https://github.com/qiujun8023/slate/releases/latest/download/compose.yml
+curl -fLo .env.example https://github.com/qiujun8023/slate/releases/latest/download/slate.env.example
 cp .env.example .env
 ```
 
@@ -222,8 +224,23 @@ docker compose up -d
 
 镜像 tag：
 
-- `latest` / `master`：master 最新构建
+- `latest`：最新稳定发布版本
+- `vX.Y.Z` / `X.Y`：指定稳定发布版本
+- `master`：master 最新构建
 - `sha-<short>`：按 commit 固定版本
+
+## 版本与发布
+
+稳定版本见 GitHub Releases。Slate 使用单一产品版本号：一个 `vX.Y.Z` tag 同时发布生产 Docker 镜像和固件产物。
+
+正式发布由 annotated tag 触发：
+
+```bash
+git tag -a v0.2.0
+git push origin v0.2.0
+```
+
+tag body 会作为 GitHub Release notes。详细流程见 [CONTRIBUTING.md](CONTRIBUTING.md#发布版本)，本地 AI 代理执行发版时还应遵守 [AGENTS.md](AGENTS.md)。
 
 ## CI
 
@@ -234,6 +251,7 @@ docker compose up -d
 | `ci.yml` | PR、push 到 `master`、手动触发 | format + lint、typecheck、backend test、frontend build |
 | `docker.yml` | push 到 `master`、手动触发 | buildx 构建 linux/amd64 + linux/arm64 并推送 GHCR |
 | `firmware.yml` | `firmware/**` 变化、手动触发 | ESP-IDF v5.5.2 构建并上传 `slate-full.bin` / `slate-ota.bin` |
+| `release.yml` | push `vX.Y.Z` tag | 校验版本，推送 release Docker tag，构建固件并创建 GitHub Release |
 
 ## 贡献
 
