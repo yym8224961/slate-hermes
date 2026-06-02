@@ -74,7 +74,7 @@ async function main(): Promise<void> {
 
   const intervalSeconds = readPositiveIntEnv(
     'SLATE_JOB_INTERVAL_SECONDS',
-    readPositiveIntEnv('INTERVAL_SECONDS', DEFAULT_INTERVAL_SECONDS)
+    DEFAULT_INTERVAL_SECONDS
   );
   const runOnce = readEnv('SLATE_JOB_RUN_ONCE') === '1';
 

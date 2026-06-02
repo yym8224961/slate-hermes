@@ -22,7 +22,7 @@ const WEEKDAY_INDEX: Record<string, number> = {
 };
 
 export function readScriptTimeZone(): string {
-  const timeZone = readEnv('SLATE_JOB_TIME_ZONE') || readEnv('TZ') || DEFAULT_SCRIPT_TIME_ZONE;
+  const timeZone = readEnv('SLATE_JOB_TIME_ZONE') || DEFAULT_SCRIPT_TIME_ZONE;
   validateTimeZone(timeZone);
   return timeZone;
 }

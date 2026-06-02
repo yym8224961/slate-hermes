@@ -39,6 +39,8 @@ SLATE_JOB=sub2api-usage-stats SLATE_JOB_INTERVAL_SECONDS=600 bun run scripts/job
 environment:
   - SLATE_RUN_MODE=job
   - SLATE_JOB=sub2api-usage-stats
+  - SLATE_JOB_INTERVAL_SECONDS=600
+  - SLATE_JOB_TIME_ZONE=Asia/Shanghai
   - SLATE_API_BASE=http://slate:3001
 ```
 
@@ -57,13 +59,15 @@ environment:
 所需环境变量：
 
 ```text
-SUB2API_BASE=https://sub2api.example.com
-SUB2API_EMAIL=you@example.com
-SUB2API_PASSWORD=change_me
-SUB2API_CONTENT_ID=slate_dashboard_content_id
-SLATE_API_BASE=http://slate:3001
+SLATE_RUN_MODE=job
+SLATE_JOB=sub2api-usage-stats
 SLATE_JOB_INTERVAL_SECONDS=600
 SLATE_JOB_TIME_ZONE=Asia/Shanghai
+SLATE_API_BASE=http://slate:3001
+SUB2API_BASE=https://sub2api.example.com
+SUB2API_CONTENT_ID=slate_dashboard_content_id
+SUB2API_EMAIL=you@example.com
+SUB2API_PASSWORD=change_me
 ```
 
 Sub2API 的 refresh token 是按会话单独存储和撤销的，多端登录可以并存。这个 job 不会每轮重新登录，正常情况下只在首次启动、refresh 失败或进程重启后用账号密码登录。
@@ -82,13 +86,13 @@ services:
     environment:
       SLATE_RUN_MODE: job
       SLATE_JOB: sub2api-usage-stats
-      SLATE_API_BASE: http://slate:3001
-      SUB2API_BASE: https://sub2api.example.com
-      SUB2API_EMAIL: you@example.com
-      SUB2API_PASSWORD: change_me
-      SUB2API_CONTENT_ID: slate_dashboard_content_id
       SLATE_JOB_INTERVAL_SECONDS: '600'
       SLATE_JOB_TIME_ZONE: Asia/Shanghai
+      SLATE_API_BASE: http://slate:3001
+      SUB2API_BASE: https://sub2api.example.com
+      SUB2API_CONTENT_ID: slate_dashboard_content_id
+      SUB2API_EMAIL: you@example.com
+      SUB2API_PASSWORD: change_me
 ```
 
 这些具体 job 的 compose 片段属于部署现场配置，不放进 release 文档或根 `compose.yml`。
