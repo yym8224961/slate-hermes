@@ -40,7 +40,7 @@ void SettingsScene::OnEnter(SceneContext& ctx) {
     auto*                       stack = ctx.stack;
     std::vector<MenuList::Item> items = {
         {"音量调节", [stack]() { stack->RequestPush(std::make_unique<VolumePage>()); }},
-        {"待办事项", [&ctx]() { stack->RequestPush(std::make_unique<TodoScene>(ctx, "todo_default")); }},
+        {"待办事项", [&ctx, stack]() { stack->RequestPush(std::make_unique<TodoScene>(ctx, "todo_default")); }},
         {"设备信息", [stack]() { stack->RequestPush(std::make_unique<DeviceInfoPage>()); }},
         {"重启设备", [stack]() { stack->RequestPush(std::make_unique<RestartDevicePage>()); }},
         {"恢复出厂", [stack]() { stack->RequestPush(std::make_unique<FactoryResetPage>()); }},
