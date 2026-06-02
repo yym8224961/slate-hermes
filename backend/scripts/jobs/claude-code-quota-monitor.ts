@@ -32,6 +32,13 @@ import {
 } from '../helpers/script-logger';
 import { readPositiveIntEnv, requireEnv, stripTrailingSlash } from '../lib/env';
 import type { SlateJob } from '../lib/job';
+import {
+  formatHourMinuteInTimeZone,
+  formatMonthDayMinuteInTimeZone,
+  readScriptTimeZone,
+  sameLocalDateInTimeZone,
+  weekdayIndexInTimeZone,
+} from '../lib/time';
 
 const logger = createScriptLogger('ClaudeCodeQuotaMonitor');
 
@@ -44,6 +51,7 @@ interface ClaudeQuotaMonitorConfig {
   logPath: string;
   lastPushTsPath: string;
   payloadPath: string;
+  timeZone: string;
 }
 
 function readConfig(): ClaudeQuotaMonitorConfig {
@@ -60,6 +68,7 @@ function readConfig(): ClaudeQuotaMonitorConfig {
     logPath: join(cacheDir, 'push.log'),
     lastPushTsPath: join(cacheDir, 'last-push-ts'),
     payloadPath: join(cacheDir, 'pending-payload.json'),
+    timeZone: readScriptTimeZone(),
   };
 }
 
@@ -239,10 +248,6 @@ async function probeUnifiedRateLimit(
 
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 
-function pad2(n: number): string {
-  return String(n).padStart(2, '0');
-}
-
 function readUnixSeconds(value: unknown): number {
   const n = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
@@ -252,27 +257,25 @@ function clampPercent(value: number): number {
   return Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
 }
 
-function formatReset5h(sec: number): string {
+function formatReset5h(sec: number, timeZone: string): string {
   if (!sec) return '--';
   const d = new Date(sec * 1000);
   const now = new Date();
-  const sameDay = d.toDateString() === now.toDateString();
-  return `${sameDay ? '' : '明 '}${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const sameDay = sameLocalDateInTimeZone(d, now, timeZone);
+  return `${sameDay ? '' : '明 '}${formatHourMinuteInTimeZone(d, timeZone)}`;
 }
 
-function formatReset7d(sec: number): string {
+function formatReset7d(sec: number, timeZone: string): string {
   if (!sec) return '--';
   const d = new Date(sec * 1000);
-  return `${WEEKDAYS[d.getDay()]} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return `${WEEKDAYS[weekdayIndexInTimeZone(d, timeZone)]} ${formatHourMinuteInTimeZone(
+    d,
+    timeZone
+  )}`;
 }
 
-function nowLabel(): string {
-  const d = new Date();
-  const mm = pad2(d.getMonth() + 1);
-  const dd = pad2(d.getDate());
-  const hh = pad2(d.getHours());
-  const mi = pad2(d.getMinutes());
-  return `${mm}-${dd} ${hh}:${mi}`;
+function nowLabel(timeZone: string): string {
+  return formatMonthDayMinuteInTimeZone(new Date(), timeZone);
 }
 
 function bar(pct: number): string {
@@ -280,8 +283,8 @@ function bar(pct: number): string {
   return '▓'.repeat(n) + '░'.repeat(10 - n);
 }
 
-function formatStatusLine(limits: QuotaLimitSnapshot): string {
-  return `5h ${bar(limits.pct5h)} ${Math.round(limits.pct5h)}% ${formatReset5h(limits.reset5h)} | 7d ${bar(limits.pct7d)} ${Math.round(limits.pct7d)}% ${formatReset7d(limits.reset7d)}`;
+function formatStatusLine(limits: QuotaLimitSnapshot, timeZone: string): string {
+  return `5h ${bar(limits.pct5h)} ${Math.round(limits.pct5h)}% ${formatReset5h(limits.reset5h, timeZone)} | 7d ${bar(limits.pct7d)} ${Math.round(limits.pct7d)}% ${formatReset7d(limits.reset7d, timeZone)}`;
 }
 
 function statusLabelForLimits(
@@ -326,11 +329,11 @@ function buildQuotaDataFromLimits(
     status_label: statusLabelForLimits(primaryPercent, secondaryPercent, apiStatus),
     primary_window_label: '5h窗口',
     primary_used_percent: primaryPercent,
-    primary_reset_at_label: formatReset5h(limits.reset5h),
+    primary_reset_at_label: formatReset5h(limits.reset5h, config.timeZone),
     secondary_window_label: '周限额',
     secondary_used_percent: secondaryPercent,
-    secondary_reset_at_label: formatReset7d(limits.reset7d),
-    updated_label: nowLabel(),
+    secondary_reset_at_label: formatReset7d(limits.reset7d, config.timeZone),
+    updated_label: nowLabel(config.timeZone),
   };
 }
 
@@ -441,7 +444,7 @@ async function main() {
   const statusLineInput = await readStatusLineInput();
   const statusLineLimits = statusLineInput ? rateLimitsFromStatusLine(statusLineInput) : null;
   if (statusLineLimits) {
-    process.stdout.write(formatStatusLine(statusLineLimits));
+    process.stdout.write(formatStatusLine(statusLineLimits, config.timeZone));
     scheduleStatusLinePush(
       config,
       buildQuotaDataFromLimits(config, statusLineLimits),

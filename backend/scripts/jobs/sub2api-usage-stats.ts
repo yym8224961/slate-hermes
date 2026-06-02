@@ -4,6 +4,11 @@ import { requireEnv, stripTrailingSlash } from '../lib/env';
 import { getJSON, postJSON } from '../lib/http';
 import type { SlateJob } from '../lib/job';
 import { pushDashboardData } from '../lib/slate-ingest';
+import {
+  formatHourMinuteInTimeZone,
+  formatMonthDayMinuteInTimeZone,
+  readScriptTimeZone,
+} from '../lib/time';
 
 const logger = createScriptLogger('Sub2APIUsageStats');
 const TOKEN_REFRESH_BUFFER_SECONDS = 120;
@@ -36,6 +41,7 @@ interface Sub2APIUsageStatsConfig {
   password: string;
   slateAPIBase: string;
   contentID: string;
+  timeZone: string;
 }
 
 // Sub2API GET /api/v1/usage/dashboard/stats 响应
@@ -81,6 +87,7 @@ function readConfig(): Sub2APIUsageStatsConfig {
     password: requireEnv('SUB2API_PASSWORD'),
     slateAPIBase: stripTrailingSlash(requireEnv('SLATE_API_BASE')),
     contentID: requireEnv('SUB2API_CONTENT_ID'),
+    timeZone: readScriptTimeZone(),
   };
 }
 
@@ -205,20 +212,12 @@ async function fetchUsageStats(config: Sub2APIUsageStatsConfig): Promise<UserDas
   }
 }
 
-function formatLastUpdatedLabel(): string {
-  const now = new Date();
-  const mm = String(now.getMonth() + 1).padStart(2, '0');
-  const dd = String(now.getDate()).padStart(2, '0');
-  const hh = String(now.getHours()).padStart(2, '0');
-  const mi = String(now.getMinutes()).padStart(2, '0');
-  return `${mm}-${dd} ${hh}:${mi}`;
+function formatLastUpdatedLabel(timeZone: string): string {
+  return formatMonthDayMinuteInTimeZone(new Date(), timeZone);
 }
 
-function formatLastUpdatedTimeLabel(): string {
-  const now = new Date();
-  const hh = String(now.getHours()).padStart(2, '0');
-  const mi = String(now.getMinutes()).padStart(2, '0');
-  return `${hh}:${mi}`;
+function formatLastUpdatedTimeLabel(timeZone: string): string {
+  return formatHourMinuteInTimeZone(new Date(), timeZone);
 }
 
 function cacheHitRatePercent(
@@ -236,7 +235,7 @@ function costPerMillionTokens(costUsd: number, tokenCount: number): number {
   return (costUsd / tokenCount) * 1_000_000;
 }
 
-function buildDashboardData(stats: UserDashboardStats): DashboardDataPayloadT {
+function buildDashboardData(stats: UserDashboardStats, timeZone: string): DashboardDataPayloadT {
   return {
     today_cost_usd: stats.today_actual_cost,
     today_request_count: stats.today_requests,
@@ -263,8 +262,8 @@ function buildDashboardData(stats: UserDashboardStats): DashboardDataPayloadT {
       stats.total_actual_cost,
       stats.total_tokens
     ),
-    last_updated_time_label: formatLastUpdatedTimeLabel(),
-    last_updated_label: formatLastUpdatedLabel(),
+    last_updated_time_label: formatLastUpdatedTimeLabel(timeZone),
+    last_updated_label: formatLastUpdatedLabel(timeZone),
     platform_breakdown: (stats.by_platform ?? [])
       .toSorted(
         (a, b) =>
@@ -288,7 +287,7 @@ export async function runSub2APIUsageStatsJob(): Promise<void> {
   await pushDashboardData({
     slateAPIBase: config.slateAPIBase,
     contentID: config.contentID,
-    data: buildDashboardData(stats),
+    data: buildDashboardData(stats, config.timeZone),
   });
 }
 

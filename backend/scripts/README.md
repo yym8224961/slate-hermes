@@ -63,13 +63,14 @@ SUB2API_PASSWORD=change_me
 SUB2API_CONTENT_ID=slate_dashboard_content_id
 SLATE_API_BASE=http://slate:3001
 SLATE_JOB_INTERVAL_SECONDS=600
+SLATE_JOB_TIME_ZONE=Asia/Shanghai
 ```
 
 Sub2API 的 refresh token 是按会话单独存储和撤销的，多端登录可以并存。这个 job 不会每轮重新登录，正常情况下只在首次启动、refresh 失败或进程重启后用账号密码登录。
 
-## Compose Env 边界
+## Compose 配置边界
 
-Slate 主服务只读取根 `.env`。临时 job sidecar 应读取独立 env 文件，避免外部系统账号密码混入主服务环境。
+临时 job sidecar 的配置直接写在部署现场 compose 的该 job service `environment` 中；不要把外部系统账号密码混入主服务环境，也不要把特定临时 job 放进 release 用根 `compose.yml`。
 
 示例：
 
@@ -78,25 +79,19 @@ services:
   slate-sub2api-usage-stats:
     image: ghcr.io/qiujun8023/slate:latest
     restart: unless-stopped
-    env_file:
-      - ./jobs/sub2api-usage-stats.env
     environment:
-      - SLATE_RUN_MODE=job
-      - SLATE_JOB=sub2api-usage-stats
-      - SLATE_API_BASE=http://slate:3001
+      SLATE_RUN_MODE: job
+      SLATE_JOB: sub2api-usage-stats
+      SLATE_API_BASE: http://slate:3001
+      SUB2API_BASE: https://sub2api.example.com
+      SUB2API_EMAIL: you@example.com
+      SUB2API_PASSWORD: change_me
+      SUB2API_CONTENT_ID: slate_dashboard_content_id
+      SLATE_JOB_INTERVAL_SECONDS: '600'
+      SLATE_JOB_TIME_ZONE: Asia/Shanghai
 ```
 
-`./jobs/sub2api-usage-stats.env` 示例：
-
-```text
-SUB2API_BASE=https://sub2api.example.com
-SUB2API_EMAIL=you@example.com
-SUB2API_PASSWORD=change_me
-SUB2API_CONTENT_ID=slate_dashboard_content_id
-SLATE_JOB_INTERVAL_SECONDS=600
-```
-
-这些具体 job 的 compose 片段和 env 文件属于部署现场配置，不放进根 `compose.yml`。
+这些具体 job 的 compose 片段属于部署现场配置，不放进 release 文档或根 `compose.yml`。
 
 ## Maintenance / Debug / Fonts
 
