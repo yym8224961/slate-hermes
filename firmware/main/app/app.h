@@ -49,7 +49,6 @@ class App {
     void PromoteToFrameSceneFromCache();
     bool HandleSecretInvalid(const UiEvent& e);
     bool HandleBackgroundRefreshDone(const UiEvent& e);
-    bool HandleXiaozhiChannelClosed(const UiEvent& e);
     bool HandleInitialGroupReady(const UiEvent& e);
     bool HandleEnterDoubleClick(const UiEvent& e);
 

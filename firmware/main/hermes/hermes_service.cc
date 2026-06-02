@@ -59,7 +59,7 @@
     59|    if (started_.load(std::memory_order_relaxed))
     60|        return true;
     61|
-    62|    saved_volume_ = vol::GetVolume();
+    62|    saved_volume_ = vol::Get();
     63|    {
     64|        std::lock_guard<std::mutex> lock(snapshot_mutex_);
     65|        snapshot_.volume = saved_volume_;
@@ -76,7 +76,7 @@
     76|    in_mode_.store(true, std::memory_order_relaxed);
     77|    {
     78|        std::lock_guard<std::mutex> lock(snapshot_mutex_);
-    79|        snapshot_.volume     = vol::GetVolume();
+    79|        snapshot_.volume     = vol::Get();
     80|        snapshot_.messages.clear();
     81|        snapshot_.error.clear();
     82|        snapshot_.record_sec = 0;
@@ -357,7 +357,7 @@
    357|void HermesService::SetVolume(int level) {
    358|    level = std::clamp(level, 0, vol::kMax);
    359|    saved_volume_ = level;
-   360|    vol::SetVolume(level);
+   360|    vol::Set(level);
    361|    if (player_)
    362|        player_->SetVolume(vol::ToCodec(level));
    363|    {
