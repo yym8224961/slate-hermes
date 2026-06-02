@@ -9,6 +9,7 @@
 #include "events/ui_event_log.h"
 #include "scenes/core/scene_stack.h"
 #include "scenes/settings/settings_pages.h"
+#include "scenes/todo/todo_scene.h"
 #include "ui/menu_list.h"
 #include "ui/theme.h"
 
@@ -33,11 +34,13 @@ void SettingsScene::OnEnter(SceneContext& ctx) {
 
     // 三段语义分组(MenuList 不显式画分隔,靠顺序传达):
     //   偏好    音量调节
+    //   工具    待办事项
     //   信息    设备信息
     //   危险    重启设备 / 恢复出厂(永远末尾,避免误触)
     auto*                       stack = ctx.stack;
     std::vector<MenuList::Item> items = {
         {"音量调节", [stack]() { stack->RequestPush(std::make_unique<VolumePage>()); }},
+        {"待办事项", [&ctx]() { stack->RequestPush(std::make_unique<TodoScene>(ctx, "todo_default")); }},
         {"设备信息", [stack]() { stack->RequestPush(std::make_unique<DeviceInfoPage>()); }},
         {"重启设备", [stack]() { stack->RequestPush(std::make_unique<RestartDevicePage>()); }},
         {"恢复出厂", [stack]() { stack->RequestPush(std::make_unique<FactoryResetPage>()); }},

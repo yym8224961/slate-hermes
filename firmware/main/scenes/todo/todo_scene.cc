@@ -21,10 +21,10 @@ constexpr char kTag[]            = "todo";
 constexpr int  kHttpTimeoutMs    = 8000;
 constexpr int  kMaxBodySize      = 4096;
 constexpr char kContentTypeJson[] = "application/json";
-constexpr const char* kCheckMark  = "\xE2\x9C\x93";  // ✓ UTF-8
-constexpr const char* kEmptyBox   = "\xE2\x96\xA1";  // □ UTF-8
+constexpr const char* kCheckMark  = "\xE2\x9C\x93";  // ✓
+constexpr const char* kEmptyBox   = "\xE2\x96\xA1";  // □
+constexpr const char* kNewMark    = "+";
 
-// 简单的 HTTP GET，不需要 auth（capability URL 模式）
 std::string HttpGet(const std::string& url) {
     esp_http_client_config_t cfg = {};
     cfg.url            = url.c_str();
@@ -33,27 +33,15 @@ std::string HttpGet(const std::string& url) {
     cfg.disable_auto_redirect = true;
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);
-    if (!client) {
-        ESP_LOGE(kTag, "http client init failed");
-        return "";
-    }
+    if (!client) return "";
 
     esp_http_client_set_method(client, HTTP_METHOD_GET);
     esp_err_t err = esp_http_client_perform(client);
-    if (err != ESP_OK) {
-        ESP_LOGE(kTag, "http GET failed err=%s", esp_err_to_name(err));
-        esp_http_client_cleanup(client);
-        return "";
-    }
+    if (err != ESP_OK) { esp_http_client_cleanup(client); return ""; }
 
     int status = esp_http_client_get_status_code(client);
-    if (status != 200) {
-        ESP_LOGW(kTag, "http GET status=%d", status);
-        esp_http_client_cleanup(client);
-        return "";
-    }
+    if (status != 200) { esp_http_client_cleanup(client); return ""; }
 
-    // Read body
     std::string body;
     body.reserve(kMaxBodySize);
     char buf[512];
@@ -63,12 +51,10 @@ std::string HttpGet(const std::string& url) {
         body += buf;
         if (body.size() > kMaxBodySize) break;
     }
-
     esp_http_client_cleanup(client);
     return body;
 }
 
-// POST data to capability URL
 bool HttpPost(const std::string& url, const std::string& json_body) {
     esp_http_client_config_t cfg = {};
     cfg.url            = url.c_str();
@@ -86,36 +72,48 @@ bool HttpPost(const std::string& url, const std::string& json_body) {
     int status = esp_http_client_get_status_code(client);
     esp_http_client_cleanup(client);
 
-    bool ok = (err == ESP_OK && status >= 200 && status < 300);
-    if (!ok) {
-        ESP_LOGW(kTag, "http POST failed err=%s status=%d", esp_err_to_name(err), status);
-    }
-    return ok;
+    return (err == ESP_OK && status >= 200 && status < 300);
+}
+
+void RefreshEpd() {
+    lv_refr_now(NULL);
+    if (auto* epd = Board::Get().epd())
+        epd->RequestUrgentFullRefresh();
 }
 
 }  // namespace
 
 TodoScene::TodoScene(SceneContext& ctx, std::string content_id)
     : content_id_(std::move(content_id)) {
+    offline_ = (content_id_ == "todo_default" || content_id_.empty());
 }
 
-TodoScene::~TodoScene() {
-}
+TodoScene::~TodoScene() {}
 
 void TodoScene::OnEnter(SceneContext& ctx) {
-    ESP_LOGI(kTag, "enter cid=%s", content_id_.c_str());
+    ESP_LOGI(kTag, "enter cid=%s offline=%d", content_id_.c_str(), offline_ ? 1 : 0);
 
     if (!ctx.epd->Lock(3000)) {
-        ESP_LOGW(kTag, "enter failed reason=epd_lock_timeout");
+        ESP_LOGW(kTag, "enter failed: epd lock timeout");
         return;
     }
 
-    // 从 Slate 后端拉取最新待办数据
-    if (!FetchTodoData()) {
-        ESP_LOGW(kTag, "fetch failed, using empty list");
-        items_.clear();
+    if (!offline_) {
+        if (!FetchTodoData()) {
+            ESP_LOGW(kTag, "fetch failed, using empty list");
+            items_.clear();
+        }
+    } else {
+        // Local mode: start with empty list + "新建" entry
+        if (items_.empty()) {
+            TodoItem ni;
+            ni.is_new = true;
+            ni.text   = "新建提醒...";
+            items_.push_back(ni);
+        }
     }
 
+    mode_  = Mode::kList;
     CreateLayout();
     RenderList();
 
@@ -127,15 +125,13 @@ void TodoScene::OnEnter(SceneContext& ctx) {
 
 void TodoScene::OnExit(SceneContext& ctx) {
     ESP_LOGI(kTag, "exit dirty=%d", dirty_ ? 1 : 0);
-
-    if (dirty_) {
-        // 回写状态到 Slate 后端
+    if (dirty_ && !offline_) {
         PushTodoState();
     }
-
     DestroyRoot(ctx, root_, [this]() {
         header_label_ = nullptr;
         hint_label_   = nullptr;
+        picker_label_ = nullptr;
         DestroyItemControls();
     });
 }
@@ -144,22 +140,51 @@ void TodoScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
     if (!root_) return;
 
     if (e.kind == UiEventKind::kButtonLong && e.u.button.btn == ButtonId::kEnter) {
-        // 长按确认 = 退出
-        ESP_LOGI(kTag, "exit via long press");
-        ctx.stack->RequestPop();
+        if (mode_ == Mode::kPicker) {
+            // Exit picker without selecting
+            mode_ = Mode::kList;
+            RenderList();
+            RefreshEpd();
+        } else {
+            ESP_LOGI(kTag, "exit via long press");
+            ctx.stack->RequestPop();
+        }
         return;
     }
 
     if (e.kind == UiEventKind::kButtonShort) {
         switch (e.u.button.btn) {
             case ButtonId::kUp:
-                MoveCursor(-1);
+                if (mode_ == Mode::kPicker) {
+                    if (preset_idx_ > 0) { preset_idx_--; RenderPresetPicker(); RefreshEpd(); }
+                } else {
+                    MoveCursor(-1);
+                }
                 break;
             case ButtonId::kDown:
-                MoveCursor(1);
+                if (mode_ == Mode::kPicker) {
+                    if (preset_idx_ < (int)kTodoPresets.size() - 1) { preset_idx_++; RenderPresetPicker(); RefreshEpd(); }
+                } else {
+                    MoveCursor(1);
+                }
                 break;
             case ButtonId::kEnter:
-                ToggleCurrent();
+                if (mode_ == Mode::kPicker) {
+                    SelectPreset(preset_idx_);
+                    mode_ = Mode::kList;
+                    RenderList();
+                    RefreshEpd();
+                } else {
+                    if (cursor_ >= 0 && cursor_ < (int)items_.size() && items_[cursor_].is_new) {
+                        // Enter preset picker
+                        mode_ = Mode::kPicker;
+                        preset_idx_ = 0;
+                        RenderPresetPicker();
+                        RefreshEpd();
+                    } else {
+                        ToggleCurrent();
+                    }
+                }
                 break;
             default:
                 break;
@@ -167,15 +192,11 @@ void TodoScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
     }
 }
 
-// ── 数据获取 ───────────────────────────────────────────────
+// ── Data ────────────────────────────────────────────────────────
 
 bool TodoScene::FetchTodoData() {
-    // 从 NVS 读取服务器地址
     cred::Credentials creds;
-    if (!cred::Load(creds) || creds.server_url.empty()) {
-        ESP_LOGW(kTag, "no server url in credentials");
-        return false;
-    }
+    if (!cred::Load(creds) || creds.server_url.empty()) return false;
 
     char url_buf[256];
     std::snprintf(url_buf, sizeof(url_buf),
@@ -183,12 +204,8 @@ bool TodoScene::FetchTodoData() {
                   creds.server_url.c_str(), content_id_.c_str());
 
     std::string body = HttpGet(std::string(url_buf));
-    if (body.empty()) {
-        ESP_LOGW(kTag, "fetch returned empty body");
-        return false;
-    }
+    if (body.empty()) return false;
 
-    // 解析 JSON
     cJSON* root = cJSON_Parse(body.c_str());
     if (!root) return false;
 
@@ -199,10 +216,8 @@ bool TodoScene::FetchTodoData() {
         for (int i = 0; i < count && i < kMaxVisibleItems; i++) {
             cJSON* item = cJSON_GetArrayItem(todos_arr, i);
             if (!item) continue;
-
             cJSON* text = cJSON_GetObjectItem(item, "text");
             cJSON* done = cJSON_GetObjectItem(item, "done");
-
             TodoItem t;
             t.text = text && cJSON_IsString(text) ? text->valuestring : "";
             t.done = done && cJSON_IsBool(done) ? cJSON_IsTrue(done) : false;
@@ -210,22 +225,26 @@ bool TodoScene::FetchTodoData() {
         }
     }
     cJSON_Delete(root);
+
+    // Always add "新建" at the end
+    TodoItem ni;
+    ni.is_new = true;
+    ni.text   = "新建提醒...";
+    items_.push_back(ni);
+
     return true;
 }
 
 bool TodoScene::PushTodoState() {
     cred::Credentials creds;
-    if (!cred::Load(creds) || creds.server_url.empty()) {
-        return false;
-    }
+    if (!cred::Load(creds) || creds.server_url.empty()) return false;
 
-    // 构建更新的 JSON
     cJSON* root = cJSON_CreateObject();
     cJSON_AddNumberToObject(root, "version", 1);
-
     cJSON* data = cJSON_CreateObject();
     cJSON* todos_arr = cJSON_CreateArray();
     for (const auto& item : items_) {
+        if (item.is_new) continue;  // skip the placeholder
         cJSON* obj = cJSON_CreateObject();
         cJSON_AddStringToObject(obj, "text", item.text.c_str());
         cJSON_AddBoolToObject(obj, "done", item.done);
@@ -245,55 +264,79 @@ bool TodoScene::PushTodoState() {
 
     bool ok = HttpPost(std::string(url_buf), std::string(json_str));
     cJSON_free(json_str);
-
-    if (ok) {
-        dirty_ = false;
-        ESP_LOGI(kTag, "state pushed ok items=%d", static_cast<int>(items_.size()));
-    }
+    if (ok) { dirty_ = false; }
     return ok;
 }
 
-// ── UI 渲染 ────────────────────────────────────────────────
+void TodoScene::AddItem(const std::string& text) {
+    // Find the "新建" placeholder
+    int insert_pos = items_.size();
+    for (int i = 0; i < (int)items_.size(); i++) {
+        if (items_[i].is_new) { insert_pos = i; break; }
+    }
+    TodoItem new_item;
+    new_item.text = text;
+    items_.insert(items_.begin() + insert_pos, new_item);
+    dirty_ = true;
+    cursor_ = insert_pos;
+    ESP_LOGI(kTag, "added item: %s at pos %d", text.c_str(), insert_pos);
+}
+
+void TodoScene::SelectPreset(int index) {
+    if (index >= 0 && index < (int)kTodoPresets.size()) {
+        AddItem(kTodoPresets[index]);
+    }
+}
+
+// ── UI ──────────────────────────────────────────────────────────
 
 void TodoScene::CreateLayout() {
     root_ = CreateFullscreenRoot();
 
-    // 标题
     header_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(header_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(header_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(header_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(header_label_, LV_HOR_RES - 32);
-    lv_obj_align(header_label_, LV_ALIGN_TOP_MID, 0, 28);
+    lv_obj_align(header_label_, LV_ALIGN_TOP_MID, 0, 24);
 
-    // 底部提示
+    picker_label_ = lv_label_create(root_);
+    lv_obj_set_style_text_font(picker_label_, &Zfull_16, 0);
+    lv_obj_set_style_text_color(picker_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(picker_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_add_flag(picker_label_, LV_OBJ_FLAG_HIDDEN);
+
     hint_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(hint_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(hint_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(hint_label_, "\xe2\x86\x91\xe2\x86\x93 选择  确认 \xe2\x9c\x93  长按退出");
+    lv_label_set_text(hint_label_, "↑↓ 选择  确认 ✓  长按退出");
     lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -16);
 }
 
 void TodoScene::RenderList() {
     char buf[128];
-    int  active_count = 0;
+    int active = 0, total = 0;
     for (const auto& item : items_) {
-        if (!item.done) active_count++;
+        if (!item.is_new) {
+            total++;
+            if (!item.done) active++;
+        }
     }
-    std::snprintf(buf, sizeof(buf), "待办事项 (%d/%d)",
-                  active_count, static_cast<int>(items_.size()));
+    std::snprintf(buf, sizeof(buf), "待办事项 (%d/%d)", active, total);
     lv_label_set_text(header_label_, buf);
+    lv_obj_clear_flag(header_label_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(picker_label_, LV_OBJ_FLAG_HIDDEN);
 
     DestroyItemControls();
+    lv_label_set_text(hint_label_, "↑↓ 选择  确认 ✓/新建  长按退出");
 
-    int count = std::min(static_cast<int>(items_.size()), kMaxVisibleItems);
+    int count = std::min((int)items_.size(), kMaxVisibleItems);
     item_ctrls_.reserve(count);
 
     for (int i = 0; i < count; i++) {
         const auto& item = items_[i];
-        bool is_cursor   = (i == cursor_);
-        bool is_done     = item.done;
+        bool is_cursor = (i == cursor_);
 
         lv_obj_t* label = lv_label_create(root_);
         lv_obj_set_style_text_font(label, &Zfull_16, 0);
@@ -301,15 +344,16 @@ void TodoScene::RenderList() {
         lv_label_set_long_mode(label, LV_LABEL_LONG_WRAP);
         lv_obj_set_width(label, LV_HOR_RES - 48);
 
-        // 格式: "> [✓/□] 待办文本"
-        const char* cursor_mark = is_cursor ? ">" : " ";
-        const char* check_mark  = is_done ? kCheckMark : kEmptyBox;
-        std::snprintf(buf, sizeof(buf), "%s %s %s",
-                      cursor_mark, check_mark, item.text.c_str());
+        if (item.is_new) {
+            const char* cm = is_cursor ? ">" : " ";
+            std::snprintf(buf, sizeof(buf), "%s [+ %s]", cm, item.text.c_str());
+        } else {
+            const char* cm = is_cursor ? ">" : " ";
+            const char* ck = item.done ? kCheckMark : kEmptyBox;
+            std::snprintf(buf, sizeof(buf), "%s %s %s", cm, ck, item.text.c_str());
+        }
         lv_label_set_text(label, buf);
-
-        int y = kItemYStart + i * kItemHeight;
-        lv_obj_set_pos(label, 16, y);
+        lv_obj_set_pos(label, 16, kItemYStart + i * kItemHeight);
 
         ItemControl ctrl;
         ctrl.label = label;
@@ -317,39 +361,67 @@ void TodoScene::RenderList() {
     }
 }
 
-void TodoScene::MoveCursor(int delta) {
-    if (items_.empty()) return;
-    int new_cursor = cursor_ + delta;
-    if (new_cursor < 0) new_cursor = static_cast<int>(items_.size()) - 1;
-    if (new_cursor >= static_cast<int>(items_.size())) new_cursor = 0;
-    if (new_cursor == cursor_) return;
+void TodoScene::RenderPresetPicker() {
+    lv_obj_add_flag(header_label_, LV_OBJ_FLAG_HIDDEN);
+    DestroyItemControls();
 
-    cursor_ = new_cursor;
-    RenderList();
-    // 刷新屏幕
-    lv_refr_now(NULL);
-    if (auto* epd = Board::Get().epd()) {
-        epd->RequestUrgentFullRefresh();
+    lv_label_set_text(picker_label_, "选择提醒类型:");
+    lv_obj_align(picker_label_, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_clear_flag(picker_label_, LV_OBJ_FLAG_HIDDEN);
+
+    lv_label_set_text(hint_label_, "↑↓ 选择  确认 确定  长按 取消");
+
+    int count = std::min((int)kTodoPresets.size(), kMaxVisibleItems);
+    picker_ctrls_.clear();
+    picker_ctrls_.reserve(count);
+
+    for (int i = 0; i < count; i++) {
+        bool is_cursor = (i == preset_idx_);
+
+        lv_obj_t* label = lv_label_create(root_);
+        lv_obj_set_style_text_font(label, &Zfull_16, 0);
+        lv_obj_set_style_text_color(label, lv_color_black(), 0);
+        lv_obj_set_width(label, LV_HOR_RES - 48);
+
+        char buf[128];
+        const char* cm = is_cursor ? ">" : " ";
+        std::snprintf(buf, sizeof(buf), "%s %s", cm, kTodoPresets[i].c_str());
+        lv_label_set_text(label, buf);
+        lv_obj_set_pos(label, 16, kPickerYStart + i * kItemHeight);
+
+        ItemControl ctrl;
+        ctrl.label = label;
+        picker_ctrls_.push_back(ctrl);
     }
 }
 
+void TodoScene::MoveCursor(int delta) {
+    if (items_.empty()) return;
+    int nc = cursor_ + delta;
+    if (nc < 0) nc = (int)items_.size() - 1;
+    if (nc >= (int)items_.size()) nc = 0;
+    if (nc == cursor_) return;
+    cursor_ = nc;
+    RenderList();
+    RefreshEpd();
+}
+
 void TodoScene::ToggleCurrent() {
-    if (items_.empty() || cursor_ >= static_cast<int>(items_.size())) return;
+    if (items_.empty() || cursor_ >= (int)items_.size()) return;
+    if (items_[cursor_].is_new) return;
     items_[cursor_].done = !items_[cursor_].done;
     dirty_ = true;
     RenderList();
-    lv_refr_now(NULL);
-    if (auto* epd = Board::Get().epd()) {
-        epd->RequestUrgentFullRefresh();
-    }
+    RefreshEpd();
 }
 
 void TodoScene::DestroyItemControls() {
     for (auto& ctrl : item_ctrls_) {
-        if (ctrl.label) {
-            lv_obj_del(ctrl.label);
-            ctrl.label = nullptr;
-        }
+        if (ctrl.label) { lv_obj_del(ctrl.label); ctrl.label = nullptr; }
     }
     item_ctrls_.clear();
+    for (auto& ctrl : picker_ctrls_) {
+        if (ctrl.label) { lv_obj_del(ctrl.label); ctrl.label = nullptr; }
+    }
+    picker_ctrls_.clear();
 }

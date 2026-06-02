@@ -15,8 +15,8 @@ namespace cache {
 struct FrameMeta;
 }
 
-namespace xiaozhi {
-class XiaozhiService;
+namespace hermes {
+class HermesService;
 }
 
 class StatusBar;
@@ -41,7 +41,7 @@ struct SceneContext {
     std::function<void()>                                      clear_current_frame;
     std::function<void(int seq, const cache::FrameMeta& meta)> set_current_frame_from_meta;
     std::function<void(bool next)>                             cycle_group;
-    std::function<xiaozhi::XiaozhiService*()>                  xiaozhi_service;
+    std::function<hermes::HermesService*()>                    hermes_service;
 };
 
 class Scene {

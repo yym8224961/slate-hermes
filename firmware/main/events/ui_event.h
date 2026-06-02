@@ -69,6 +69,8 @@ enum class UiEventKind : uint8_t {
     kBgRefreshDone,
     // Xiaozhi 子系统状态变化。Scene 收到后从 XiaozhiService 读取最新快照。
     kXiaozhiChanged,
+    // Hermes 子系统状态变化。Scene 收到后从 HermesService 读取最新快照。
+    kHermesChanged,
     // Xiaozhi 网络/服务端主动关闭。App 收到后转交 XiaozhiService 收束对应会话。
     kXiaozhiChannelClosed,  // u.xiaozhi_channel.token
 };

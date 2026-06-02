@@ -33,14 +33,13 @@
 #include "power/shutdown.h"
 #include "scenes/frame/frame_scene.h"
 #include "scenes/splash/splash_scene.h"
-#include "scenes/xiaozhi/xiaozhi_scene.h"
+#include "hermes/hermes_service.h"
+#include "scenes/hermes/hermes_scene.h"
 #include "startup/setup_flow.h"
 #include "storage/cache/cache.h"
 #include "sync/api_client.h"
 #include "sync/sync_service.h"
 #include "utils/time_utils.h"
-#include "xiaozhi/service/audio_service.h"
-#include "xiaozhi/service/xiaozhi_service.h"
 
 namespace {
 constexpr char kTag[] = "app";
@@ -148,7 +147,7 @@ void App::InitSceneStack() {
         else
             SyncService::Get().CyclePrev();
     };
-    ctx.xiaozhi_service = []() -> xiaozhi::XiaozhiService* { return &xiaozhi::XiaozhiService::Get(); };
+    ctx.hermes_service  = []() -> hermes::HermesService* { return &hermes::HermesService::Get(); };
 
     scene_stack_.SetContext(ctx);
 }
@@ -238,14 +237,6 @@ bool App::HandleBackgroundRefreshDone(const UiEvent& e) {
     return true;
 }
 
-bool App::HandleXiaozhiChannelClosed(const UiEvent& e) {
-    if (e.kind != UiEventKind::kXiaozhiChannelClosed)
-        return false;
-    ESP_LOGD(kTag, "xiaozhi channel closed token=%lu", static_cast<unsigned long>(e.u.xiaozhi_channel.token));
-    xiaozhi::XiaozhiService::Get().NotifyNetworkClosed(e.u.xiaozhi_channel.token);
-    return true;
-}
-
 bool App::HandleInitialGroupReady(const UiEvent& e) {
     if ((e.kind != UiEventKind::kCachedGroupReady && e.kind != UiEventKind::kSyncedGroupReady) ||
         !scene_stack_.Empty()) {
@@ -262,15 +253,15 @@ bool App::HandleEnterDoubleClick(const UiEvent& e) {
     if (e.kind != UiEventKind::kButtonDouble || e.u.button.btn != ButtonId::kEnter)
         return false;
     Scene* top = scene_stack_.Top();
-    ESP_LOGD(kTag, "button double btn=enter action=xiaozhi_or_delegate top=%s", top ? top->Name() : "(none)");
+    ESP_LOGD(kTag, "button double btn=enter action=hermes_or_delegate top=%s", top ? top->Name() : "(none)");
     if (top && top->IsSettings()) {
         scene_stack_.Dispatch(e);
         sleep_mgr_.OnEvent(e);
         scene_stack_.ApplyPending();
         return true;
     }
-    if (!top || std::strcmp(top->Name(), "xiaozhi") != 0) {
-        scene_stack_.Push(std::make_unique<XiaozhiScene>());
+    if (!top || std::strcmp(top->Name(), "hermes") != 0) {
+        scene_stack_.Push(std::make_unique<HermesScene>());
         scene_stack_.ApplyPending();
         sleep_mgr_.OnEvent(e);
         return true;
@@ -307,8 +298,8 @@ void App::UiLoopTask() {
                      scene_stack_.Top() ? scene_stack_.Top()->Name() : "(none)");
         }
         using Handler                                           = bool (App::*)(const UiEvent&);
-        static constexpr std::array<Handler, 5> kSystemHandlers = {
-            &App::HandleSecretInvalid,     &App::HandleBackgroundRefreshDone, &App::HandleXiaozhiChannelClosed,
+        static constexpr std::array<Handler, 4> kSystemHandlers = {
+            &App::HandleSecretInvalid,     &App::HandleBackgroundRefreshDone,
             &App::HandleInitialGroupReady, &App::HandleEnterDoubleClick,
         };
         bool handled = false;
@@ -478,7 +469,7 @@ void App::Init() {
     InitStorage();
     InitDevices();
     InitEventBus();
-    xiaozhi::XiaozhiService::Get().Start(&AudioPlayer::Get(), &xiaozhi::AudioService::Get());
+    hermes::HermesService::Get().Start(&AudioPlayer::Get());
     InitSceneStack();
 
     cred::Credentials creds;
@@ -497,9 +488,9 @@ void App::Init() {
     // 阻止深睡的两个来源：语音会话活动中、以及一次 sync 突发(大文件下载)进行中。
     // 任一持续阻塞超过 SleepManager 看门狗上限时会被强制打断回睡，避免卡死耗光电池。
     sleep_mgr_.SetSleepBlocker(
-        []() { return xiaozhi::XiaozhiService::Get().BlocksSleep() || SyncService::Get().IsBusy(); });
-    power_shutdown::SetPreShutdownHook([]() { xiaozhi::XiaozhiService::Get().SuspendForSleep(); });
+        []() { return hermes::HermesService::Get().BlocksSleep() || SyncService::Get().IsBusy(); });
 
+    power_shutdown::SetPreShutdownHook([]() { hermes::HermesService::Get().SuspendForSleep(); });
     StartUiLoop();
     AttachInputs();
     StartMinuteBoundaryTicker();

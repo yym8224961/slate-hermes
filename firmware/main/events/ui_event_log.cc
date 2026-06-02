@@ -60,6 +60,8 @@ const char* KindName(UiEventKind kind) {
             return "bg_refresh_done";
         case UiEventKind::kXiaozhiChanged:
             return "xiaozhi_changed";
+        case UiEventKind::kHermesChanged:
+            return "hermes_changed";
         case UiEventKind::kXiaozhiChannelClosed:
             return "xiaozhi_channel_closed";
     }

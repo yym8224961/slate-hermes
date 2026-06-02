@@ -25,8 +25,6 @@
 #include "ui/scrollbar.h"
 #include "ui/theme.h"
 #include "utils/mac_utils.h"
-#include "xiaozhi/config/settings.h"
-#include "xiaozhi/service/xiaozhi_service.h"
 
 namespace {
 constexpr char kDeviceInfoTag[]   = "device_info";
@@ -209,22 +207,10 @@ void VolumePage::RedrawValue() {
 }
 
 void VolumePage::ApplyLevel(SceneContext& ctx) {
-    if (ctx.xiaozhi_service) {
-        if (auto* service = ctx.xiaozhi_service()) {
-            service->PreviewVolume(level_);
-            return;
-        }
-    }
     AudioPlayer::Get().SetVolume(vol::ToCodec(level_));
 }
 
 void VolumePage::SaveLevel(SceneContext& ctx) {
-    if (ctx.xiaozhi_service) {
-        if (auto* service = ctx.xiaozhi_service()) {
-            service->SetVolume(level_);
-            return;
-        }
-    }
     vol::Set(level_);
     AudioPlayer::Get().SetVolume(vol::ToCodec(level_));
 }
@@ -464,7 +450,7 @@ FactoryResetPage::FactoryResetPage()
     : ConfirmActionPage("factory_reset", "恢复出厂",
                         "确认要恢复出厂吗？\n\n"
                         "Wi-Fi 配置、设备绑定\n"
-                        "小智配置及内容缓存\n"
+                        "AI配置及内容缓存\n"
                         "将全部清除\n"
                         "重启后进入配网模式") {
 }
@@ -475,7 +461,13 @@ void FactoryResetPage::Confirm(SceneContext&) {
     ESP_LOGW(kFactoryResetTag, "confirm action=factory_reset");
     cred::Clear();
     nvs_store::EraseNamespace(nvs_schema::kAudio);
-    xiaozhi::settings::ClearAll();
+    nvs_store::EraseNamespace(nvs_schema::kXiaozhi);
+    nvs_store::EraseNamespace(nvs_schema::kXiaozhiMqtt);
+    nvs_store::EraseNamespace(nvs_schema::kXiaozhiWs);
+    nvs_store::EraseNamespace(nvs_schema::kLegacyXiaozhi);
+    nvs_store::EraseNamespace(nvs_schema::kLegacyXiaozhiMqtt);
+    nvs_store::EraseNamespace(nvs_schema::kLegacyXiaozhiWs);
+    nvs_store::EraseNamespace(nvs_schema::kLegacy);
     cache::FormatAll();
     power_shutdown::GracefulRestart(200);
 }

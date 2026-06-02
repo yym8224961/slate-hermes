@@ -16,6 +16,7 @@ import { AudioModule } from './modules/audio/audio.module';
 import { AiModule } from './modules/ai/ai.module';
 import { TtsModule } from './modules/tts/tts.module';
 import { DynamicContentModule } from './modules/dynamic-content/dynamic-content.module';
+import { HermesModule } from './modules/hermes/hermes.module';
 import { AppExceptionFilter } from './common/nest/filters/app-exception.filter';
 import { RequestIdInterceptor } from './common/nest/interceptors/request-id.interceptor';
 import { ZodValidationPipe } from './common/nest/pipes/zod-validation.pipe';
@@ -36,6 +37,7 @@ import { RateLimitGuard } from './common/rate-limit/rate-limit-guard';
     TtsModule,
     DynamicContentModule,
     ContentsModule,
+    HermesModule,
     HealthModule,
     AuthModule,
     UsersModule,
