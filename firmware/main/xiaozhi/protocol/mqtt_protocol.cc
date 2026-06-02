@@ -13,7 +13,7 @@
 #include "xiaozhi/config/settings.h"
 
 namespace {
-constexpr char kTag[] = "XiaoMQTT";
+constexpr char kTag[] = "xiaozhi_mqtt";
 
 std::string JsonType(const cJSON* root) {
     cJSON* type = cJSON_GetObjectItem(root, "type");
@@ -47,7 +47,7 @@ bool MqttProtocol::Start() {
 }
 
 bool MqttProtocol::StartMqttClient(bool report_error) {
-    ESP_LOGI(kTag, "StartMqttClient begin report_error=%d", report_error ? 1 : 0);
+    ESP_LOGI(kTag, "start transport=mqtt report_error=%d", report_error ? 1 : 0);
     std::shared_ptr<Mqtt> old_mqtt;
     {
         std::lock_guard<std::mutex> lock(send_mutex_);
@@ -77,7 +77,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
             on_connected_();
     });
     mqtt->OnDisconnected([this]() {
-        ESP_LOGW(kTag, "MQTT disconnected");
+        ESP_LOGW(kTag, "disconnected transport=mqtt");
         if (on_disconnected_)
             on_disconnected_();
         if (event_group_)
@@ -85,7 +85,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
         if (*alive_)
             PostChannelClosedEvent();
     });
-    mqtt->OnError([this](const std::string& err) { ESP_LOGW(kTag, "MQTT error: %s", err.c_str()); });
+    mqtt->OnError([this](const std::string& err) { ESP_LOGW(kTag, "error transport=mqtt message=%s", err.c_str()); });
     mqtt->OnMessage([this](const std::string& topic, const std::string& payload) {
         (void)topic;
         if (HandleMqttMessagePayload(payload))
@@ -101,7 +101,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
     }
 
     if (!mqtt->Connect(host, port, cfg.client_id, cfg.username, cfg.password)) {
-        ESP_LOGW(kTag, "MQTT connect failed: last_error=%d", mqtt->GetLastError());
+        ESP_LOGW(kTag, "connect failed transport=mqtt last_error=%d", mqtt->GetLastError());
         if (report_error)
             SetError("连接小智服务器失败");
         return false;
@@ -112,7 +112,7 @@ bool MqttProtocol::StartMqttClient(bool report_error) {
         return false;
     }
     mqtt_ = std::move(mqtt);
-    ESP_LOGI(kTag, "StartMqttClient connected");
+    ESP_LOGI(kTag, "connected transport=mqtt");
     return true;
 }
 
@@ -133,7 +133,7 @@ bool MqttProtocol::SendTextLocked(const std::string& text, bool report_error) {
         return false;
     }
     if (!mqtt_->Publish(publish_topic_, text)) {
-        ESP_LOGW(kTag, "MQTT publish failed: connected=%d last_error=%d", mqtt_->IsConnected() ? 1 : 0,
+        ESP_LOGW(kTag, "publish failed transport=mqtt connected=%d last_error=%d", mqtt_->IsConnected() ? 1 : 0,
                  mqtt_->GetLastError());
         if (report_error)
             SetError("发送小智消息失败");
@@ -172,8 +172,8 @@ bool MqttProtocol::OpenAudioChannel() {
     if (bits & kServerGoodbyeEvent) {
         if (IsAudioChannelCloseRequested())
             return false;
-        ESP_LOGW(kTag, "MQTT server closed before hello: connected=%d", IsMqttConnected() ? 1 : 0);
-        ESP_LOGW(kTag, "Clear cached Xiaozhi MQTT config after pre-hello goodbye");
+        ESP_LOGW(kTag, "server closed phase=before_hello connected=%d", IsMqttConnected() ? 1 : 0);
+        ESP_LOGW(kTag, "config clear reason=pre_hello_goodbye");
         settings::ClearMqtt();
         SetError("小智服务器关闭连接");
         return false;
@@ -186,7 +186,7 @@ bool MqttProtocol::OpenAudioChannel() {
         return false;
     }
     if (!(bits & kServerHelloEvent)) {
-        ESP_LOGW(kTag, "MQTT server hello timeout: connected=%d", IsMqttConnected() ? 1 : 0);
+        ESP_LOGW(kTag, "hello timeout transport=mqtt connected=%d", IsMqttConnected() ? 1 : 0);
         SetError("小智服务器响应超时");
         return false;
     }
@@ -228,7 +228,7 @@ bool MqttProtocol::OpenAudioChannel() {
 }
 
 void MqttProtocol::CloseAudioChannel(bool send_goodbye) {
-    ESP_LOGI(kTag, "CloseAudioChannel begin goodbye=%d", send_goodbye ? 1 : 0);
+    ESP_LOGD(kTag, "audio channel close begin goodbye=%d", send_goodbye ? 1 : 0);
     MarkAudioChannelCloseRequested();
     if (event_group_)
         xEventGroupSetBits(event_group_, kChannelClosedEvent);
@@ -260,7 +260,7 @@ void MqttProtocol::CloseAudioChannel(bool send_goodbye) {
     mqtt.reset();
     if (notify_closed && on_audio_channel_closed_)
         on_audio_channel_closed_();
-    ESP_LOGI(kTag, "CloseAudioChannel end notify_closed=%d", notify_closed ? 1 : 0);
+    ESP_LOGD(kTag, "audio channel close done notify_closed=%d", notify_closed ? 1 : 0);
 }
 
 bool MqttProtocol::IsAudioChannelOpened() const {
@@ -298,13 +298,13 @@ bool MqttProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
 bool MqttProtocol::HandleMqttMessagePayload(const std::string& payload) {
     cJSON* root = cJSON_Parse(payload.c_str());
     if (!root) {
-        ESP_LOGW(kTag, "MQTT rx ignored: invalid JSON");
+        ESP_LOGW(kTag, "message ignored transport=mqtt reason=json_invalid");
         return false;
     }
 
     const std::string type = JsonType(root);
     if (type.empty()) {
-        ESP_LOGW(kTag, "MQTT rx ignored: missing type");
+        ESP_LOGW(kTag, "message ignored transport=mqtt reason=type_missing");
     } else if (type == "hello") {
         ParseServerHello(root);
     } else if (type == "goodbye") {
@@ -328,8 +328,9 @@ bool MqttProtocol::HandleUdpPacket(const std::string& data) {
     std::lock_guard<std::mutex> lock(crypto_mutex_);
     const size_t                nonce_len = aes_nonce_.size();
     if (nonce_len != kNonceSize || data.size() <= kNonceSize || data[0] != 0x01) {
-        ESP_LOGW(kTag, "UDP rx invalid packet: bytes=%u nonce_len=%u first=0x%02x", static_cast<unsigned>(data.size()),
-                 static_cast<unsigned>(nonce_len), data.empty() ? 0 : static_cast<unsigned char>(data[0]));
+        ESP_LOGW(kTag, "packet invalid transport=udp bytes=%u nonce_len=%u first=0x%02x",
+                 static_cast<unsigned>(data.size()), static_cast<unsigned>(nonce_len),
+                 data.empty() ? 0 : static_cast<unsigned char>(data[0]));
         return false;
     }
 
@@ -337,14 +338,14 @@ bool MqttProtocol::HandleUdpPacket(const std::string& data) {
     const uint32_t timestamp             = util::ReadBe32(data.data() + 8);
     const uint32_t sequence              = util::ReadBe32(data.data() + 12);
     if (sequence < remote_sequence_) {
-        ESP_LOGW(kTag, "UDP rx old sequence=%lu remote=%lu", static_cast<unsigned long>(sequence),
+        ESP_LOGW(kTag, "packet old transport=udp sequence=%lu remote=%lu", static_cast<unsigned long>(sequence),
                  static_cast<unsigned long>(remote_sequence_));
         return false;
     }
 
     const size_t payload_size = data.size() - kNonceSize;
     if (declared_payload_size != payload_size) {
-        ESP_LOGW(kTag, "UDP rx payload size mismatch declared=%u actual=%u", declared_payload_size,
+        ESP_LOGW(kTag, "payload size mismatch transport=udp declared=%u actual=%u", declared_payload_size,
                  static_cast<unsigned>(payload_size));
         return false;
     }
@@ -368,7 +369,7 @@ bool MqttProtocol::HandleUdpPacket(const std::string& data) {
     if (ret == 0 && on_incoming_audio_) {
         on_incoming_audio_(std::move(packet));
     } else if (ret != 0) {
-        ESP_LOGW(kTag, "UDP decrypt failed: ret=%d", ret);
+        ESP_LOGW(kTag, "decrypt failed transport=udp ret=%d", ret);
     }
     remote_sequence_ = sequence;
     return true;
@@ -400,7 +401,7 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
     };
     cJSON* transport = cJSON_GetObjectItem(root, "transport");
     if (!cJSON_IsString(transport) || std::strcmp(transport->valuestring, "udp") != 0) {
-        ESP_LOGW(kTag, "Server hello ignored: transport=%s",
+        ESP_LOGW(kTag, "server hello ignored reason=transport transport=%s",
                  cJSON_IsString(transport) ? transport->valuestring : "(missing)");
         fail("小智 MQTT 协议不匹配");
         return;
@@ -419,7 +420,7 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
         cJSON* frame_duration_item = cJSON_GetObjectItem(audio, "frame_duration");
         if (cJSON_IsNumber(sample_rate_item)) {
             if (!IsSupportedOpusSampleRate(sample_rate_item->valueint)) {
-                ESP_LOGW(kTag, "Server hello ignored: invalid sample_rate=%d", sample_rate_item->valueint);
+                ESP_LOGW(kTag, "server hello ignored reason=sample_rate sample_rate=%d", sample_rate_item->valueint);
                 fail("小智 MQTT 音频采样率不支持");
                 return;
             }
@@ -427,7 +428,8 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
         }
         if (cJSON_IsNumber(frame_duration_item)) {
             if (!IsSupportedOpusFrameDuration(frame_duration_item->valueint)) {
-                ESP_LOGW(kTag, "Server hello ignored: invalid frame_duration=%d", frame_duration_item->valueint);
+                ESP_LOGW(kTag, "server hello ignored reason=frame_duration frame_duration=%d",
+                         frame_duration_item->valueint);
                 fail("小智 MQTT 音频帧长不支持");
                 return;
             }
@@ -437,7 +439,7 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
 
     cJSON* udp = cJSON_GetObjectItem(root, "udp");
     if (!cJSON_IsObject(udp)) {
-        ESP_LOGW(kTag, "Server hello ignored: missing udp object");
+        ESP_LOGW(kTag, "server hello ignored reason=udp_missing");
         fail("小智 MQTT 缺少 UDP 配置");
         return;
     }
@@ -447,7 +449,7 @@ void MqttProtocol::ParseServerHello(const cJSON* root) {
     cJSON* nonce  = cJSON_GetObjectItem(udp, "nonce");
     if (!cJSON_IsString(server) || !server->valuestring || server->valuestring[0] == '\0' || !cJSON_IsNumber(port) ||
         port->valueint <= 0 || port->valueint > 65535 || !cJSON_IsString(key) || !cJSON_IsString(nonce)) {
-        ESP_LOGW(kTag, "Server hello ignored: invalid udp fields server=%d port=%d key=%d nonce=%d",
+        ESP_LOGW(kTag, "server hello ignored reason=udp_invalid server=%d port=%d key=%d nonce=%d",
                  cJSON_IsString(server) && server->valuestring && server->valuestring[0] != '\0' ? 1 : 0,
                  cJSON_IsNumber(port) && port->valueint > 0 && port->valueint <= 65535 ? 1 : 0,
                  cJSON_IsString(key) ? 1 : 0, cJSON_IsString(nonce) ? 1 : 0);

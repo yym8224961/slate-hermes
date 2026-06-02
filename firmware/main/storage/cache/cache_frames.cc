@@ -100,7 +100,7 @@ bool FrameImageExists(const std::string& gid, int idx, const std::string& expect
 bool WriteFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes, const std::string& etag) {
     (void)etag;
     if (bytes.size() != internal::kFrameImageBytes) {
-        ESP_LOGW(internal::kTag, "Refuse frame image idx=%d: %u B, expected %u B", idx,
+        ESP_LOGW(internal::kTag, "frame image refused idx=%d bytes=%u expected=%u", idx,
                  static_cast<unsigned>(bytes.size()), static_cast<unsigned>(internal::kFrameImageBytes));
         return false;
     }
@@ -193,7 +193,7 @@ bool StagedFrameImageExists(const std::string& gid, int idx, const std::string& 
 bool WriteStagedFrameImage(const std::string& gid, int idx, const std::vector<uint8_t>& bytes,
                            const std::string& etag) {
     if (bytes.size() != internal::kFrameImageBytes) {
-        ESP_LOGW(internal::kTag, "Refuse staged frame image idx=%d: %u B, expected %u B", idx,
+        ESP_LOGW(internal::kTag, "staged frame image refused idx=%d bytes=%u expected=%u", idx,
                  static_cast<unsigned>(bytes.size()), static_cast<unsigned>(internal::kFrameImageBytes));
         return false;
     }
@@ -239,24 +239,24 @@ bool CommitStagedFrame(const std::string& gid, int idx, const std::string& image
     const std::string staged_audio = internal::StageAudioPath(gid, idx);
     FrameMeta         staged_frame_meta;
     if (!ReadFrameMetaFile(staged_meta, staged_frame_meta)) {
-        ESP_LOGW(internal::kTag, "Missing staged meta for idx=%d", idx);
+        ESP_LOGW(internal::kTag, "staged meta missing idx=%d", idx);
         return false;
     }
     if (staged_frame_meta.image_etag != image_etag) {
-        ESP_LOGW(internal::kTag, "Staged image etag mismatch for idx=%d", idx);
+        ESP_LOGW(internal::kTag, "staged image etag mismatch idx=%d", idx);
         return false;
     }
     if (!internal::PathExists(staged_image) && !FrameImageExists(gid, idx, image_etag)) {
-        ESP_LOGW(internal::kTag, "Missing committed/staged image for idx=%d", idx);
+        ESP_LOGW(internal::kTag, "frame image missing idx=%d", idx);
         return false;
     }
     if (!audio_etag.empty()) {
         if (staged_frame_meta.audio_etag != audio_etag) {
-            ESP_LOGW(internal::kTag, "Staged audio etag mismatch for idx=%d", idx);
+            ESP_LOGW(internal::kTag, "staged audio etag mismatch idx=%d", idx);
             return false;
         }
         if (!internal::PathExists(staged_audio) && !FrameAudioExists(gid, idx, audio_etag)) {
-            ESP_LOGW(internal::kTag, "Missing committed/staged audio for idx=%d", idx);
+            ESP_LOGW(internal::kTag, "frame audio missing idx=%d", idx);
             return false;
         }
     }

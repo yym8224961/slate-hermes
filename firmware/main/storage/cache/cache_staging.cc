@@ -9,7 +9,7 @@
 namespace cache::staging {
 namespace {
 
-constexpr char kTag[] = "CacheStage";
+constexpr char kTag[] = "cache_stage";
 
 bool PathExists(const std::string& path) {
     struct stat st;
@@ -19,14 +19,14 @@ bool PathExists(const std::string& path) {
 bool RenameReplace(const std::string& from, const std::string& to) {
     if (rename(from.c_str(), to.c_str()) == 0)
         return true;
-    ESP_LOGW(kTag, "Rename %s -> %s failed: %d", from.c_str(), to.c_str(), errno);
+    ESP_LOGW(kTag, "rename failed from=%s to=%s errno=%d", from.c_str(), to.c_str(), errno);
     return false;
 }
 
 bool RemoveIfExists(const std::string& path) {
     if (unlink(path.c_str()) == 0 || errno == ENOENT)
         return true;
-    ESP_LOGW(kTag, "Unlink %s failed: %d", path.c_str(), errno);
+    ESP_LOGW(kTag, "unlink failed path=%s errno=%d", path.c_str(), errno);
     return false;
 }
 
@@ -34,14 +34,16 @@ void RollbackSwaps(std::vector<Swap>& swaps) {
     for (auto it = swaps.rbegin(); it != swaps.rend(); ++it) {
         if (it->installed) {
             if (rename(it->target.c_str(), it->staged.c_str()) != 0 && errno != ENOENT) {
-                ESP_LOGW(kTag, "Rollback move %s -> %s failed: %d", it->target.c_str(), it->staged.c_str(), errno);
+                ESP_LOGW(kTag, "rollback move failed from=%s to=%s errno=%d", it->target.c_str(), it->staged.c_str(),
+                         errno);
                 RemoveIfExists(it->target);
             }
             it->installed = false;
         }
         if (it->had_target) {
             if (rename(it->backup.c_str(), it->target.c_str()) != 0) {
-                ESP_LOGE(kTag, "Rollback restore %s -> %s failed: %d", it->backup.c_str(), it->target.c_str(), errno);
+                ESP_LOGE(kTag, "rollback restore failed from=%s to=%s errno=%d", it->backup.c_str(), it->target.c_str(),
+                         errno);
             }
             it->had_target = false;
         } else {
@@ -70,7 +72,7 @@ bool CommitSwaps(std::vector<Swap>& swaps) {
                 if (RenameReplace(swap.backup, swap.target)) {
                     swap.had_target = false;
                 } else {
-                    ESP_LOGE(kTag, "Restore %s after failed stage install failed", swap.target.c_str());
+                    ESP_LOGE(kTag, "stage restore failed target=%s", swap.target.c_str());
                 }
             }
             RollbackSwaps(swaps);

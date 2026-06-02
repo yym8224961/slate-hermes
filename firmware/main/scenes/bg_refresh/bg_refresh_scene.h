@@ -14,7 +14,7 @@ class BgRefreshScene : public Scene {
     ~BgRefreshScene() override;
 
     const char* Name() const override {
-        return "BgRefresh";
+        return "bg_refresh";
     }
     void      OnEnter(SceneContext& ctx) override;
     void      OnExit(SceneContext& ctx) override;

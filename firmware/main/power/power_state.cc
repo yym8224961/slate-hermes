@@ -13,7 +13,7 @@
 namespace power_state {
 namespace {
 
-constexpr char kTag[] = "PowerState";
+constexpr char kTag[] = "power_state";
 
 // 最小 wake 间隔：太短会把 deep sleep 的省电优势磨没。
 constexpr uint32_t kMinWakeIntervalSec = 60u;
@@ -186,7 +186,7 @@ bool SaveStatusBarSnapshot(const uint8_t* data, size_t len) {
     std::memcpy(s_status_bar_snapshot, data, epd::kStatusBarSnapshotBytes);
     s_status_bar_hash  = hash;
     s_status_bar_magic = kStatusBarSnapshotMagic;
-    ESP_LOGD(kTag, "Saved status bar snapshot hash=%08lx", static_cast<unsigned long>(hash));
+    ESP_LOGD(kTag, "saved status bar snapshot hash=%08lx", static_cast<unsigned long>(hash));
     return true;
 }
 

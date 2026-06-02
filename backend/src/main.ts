@@ -1,14 +1,16 @@
 import 'reflect-metadata';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { RequestMethod } from '@nestjs/common';
+import { Logger as NestLogger, RequestMethod } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
-import { Logger } from 'nestjs-pino';
+import { Logger as PinoLogger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import { AppConfig } from './infra/config/app.config';
+import { isStaticAssetPath } from './infra/assets/static-assets';
 
 const MODULE_DIR = import.meta.dirname ?? import.meta.dir;
+const bootstrapLogger = new NestLogger('Bootstrap');
 
 async function bootstrap(): Promise<void> {
   const app = await NestFactory.create<NestFastifyApplication>(
@@ -16,7 +18,7 @@ async function bootstrap(): Promise<void> {
     new FastifyAdapter({ trustProxy: 1, bodyLimit: 32 * 1024 * 1024 }),
     { bufferLogs: true }
   );
-  app.useLogger(app.get(Logger));
+  app.useLogger(app.get(PinoLogger));
 
   const config = app.get(AppConfig);
 
@@ -50,7 +52,7 @@ async function bootstrap(): Promise<void> {
       if (reply.statusCode !== 404) return payload;
       const path = (req.url.split('?')[0] ?? '') as string;
       if (path.startsWith('/api/') || path === '/healthz') return payload;
-      if (STATIC_ASSET_EXT_RE.test(path)) return payload;
+      if (isStaticAssetPath(path)) return payload;
       void reply.code(200).type('text/html; charset=utf-8');
       return indexHtml;
     });
@@ -61,12 +63,12 @@ async function bootstrap(): Promise<void> {
 }
 
 bootstrap().catch((err: unknown) => {
-  console.error('Backend bootstrap failed', err);
+  bootstrapLogger.error(
+    'Backend bootstrap failed.',
+    err instanceof Error ? err.stack : String(err)
+  );
   process.exitCode = 1;
 });
-
-const STATIC_ASSET_EXT_RE =
-  /\.(?:avif|bmp|css|gif|ico|jpeg|jpg|js|json|map|mjs|otf|png|svg|ttf|txt|wasm|webp|woff|woff2|xml)$/i;
 
 interface FastifyPluginRegistrar {
   register(plugin: unknown, opts?: unknown): Promise<unknown>;

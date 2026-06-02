@@ -150,14 +150,14 @@ export class DeviceFirmwareService {
       });
 
     if (outcome.isFirstRegister) {
-      this.logger.log(`device first registered: mac=${normalizedMac} id=${outcome.deviceId}`);
+      this.logger.log(`Device ${outcome.deviceId} was first registered from MAC ${normalizedMac}.`);
     } else if (outcome.reclaimed) {
       this.logger.log(
-        `device reclaimed (physical reset): mac=${normalizedMac} id=${outcome.deviceId} prev_owner=${maskId(outcome.previousOwnerUserId)}`
+        `Device ${outcome.deviceId} was reclaimed by physical reset from MAC ${normalizedMac}; previous owner was ${outcome.previousOwnerUserId ?? 'none'}.`
       );
     } else {
       this.logger.log(
-        `device re-registered (was unowned): mac=${normalizedMac} id=${outcome.deviceId}`
+        `Device ${outcome.deviceId} was re-registered from MAC ${normalizedMac} while unowned.`
       );
     }
     this.deviceSecrets.invalidateHash(outcome.previousSecretHash);
@@ -285,10 +285,4 @@ async function lockDeviceMacRow(tx: Prisma.TransactionClient, mac: string): Prom
   await tx.$queryRaw<Array<{ id: string }>>`
     SELECT id FROM \`devices\` WHERE mac = ${mac} FOR UPDATE
   `;
-}
-
-// 日志里保留 id 末四位，便于排查；不泄露完整 id。
-function maskId(id: string | null): string {
-  if (!id) return 'null';
-  return `***${id.slice(-4)}`;
 }

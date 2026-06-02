@@ -28,20 +28,15 @@ backend/
 │   ├── main.ts                  Fastify bootstrap、/api/v1 前缀、multipart、static dist、SPA fallback
 │   ├── app.module.ts            全局 filter / guard / pipe / interceptor 与业务模块装配
 │   ├── common/
-│   │   ├── auth/                bearer token 提取、device secret auth cache
 │   │   ├── db/                  行锁与批量 sort_order 更新 helper
-│   │   ├── decorators/          @Public、@CurrentUser、@CurrentDevice、@JsonBody
 │   │   ├── errors/              AppError 体系与 Prisma error map
-│   │   ├── etag/                ETag 计算与 304 响应 helper
-│   │   ├── filters/             统一错误 envelope
-│   │   ├── guards/              JWT、device secret、JWT-or-device
 │   │   ├── http/                fetch timeout、SSE parser、client IP
-│   │   ├── interceptors/        request id
-│   │   ├── pipes/               zod DTO 校验
+│   │   ├── nest/                @Public/@JsonBody、JWT/device guards、filter、request id、zod pipe
 │   │   ├── rate-limit/          固定窗口限速
-│   │   ├── utils/               cache、HTML 文本、intl、value helper
+│   │   ├── utils/               cache、ETag、HTML 文本、intl、value helper
 │   │   └── worker/              keyed promise queue、worker loop
 │   ├── infra/
+│   │   ├── auth/                JWT token service、device secret auth cache
 │   │   ├── assets/              运行时资产路径定位
 │   │   ├── blob/                image/audio blob 原子写入与清理
 │   │   ├── config/              env schema 与 AppConfig

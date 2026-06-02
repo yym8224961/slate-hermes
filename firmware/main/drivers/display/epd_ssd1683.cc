@@ -14,7 +14,7 @@
 #include "utils/gpio_util.h"
 
 namespace {
-constexpr char kTag[] = "Epd";
+constexpr char kTag[] = "epd";
 }
 namespace {
 class LvglPortLockGuard {
@@ -89,6 +89,9 @@ EpdSsd1683::~EpdSsd1683() {
 }
 
 void EpdSsd1683::Init() {
+    ESP_LOGD(kTag, "init begin spi=%d cs=%d dc=%d rst=%d busy=%d mosi=%d sclk=%d", static_cast<int>(spi_host_),
+             static_cast<int>(cs_), static_cast<int>(dc_), static_cast<int>(rst_), static_cast<int>(busy_),
+             static_cast<int>(mosi_), static_cast<int>(sclk_));
     SpiPortInit();
     SpiGpioInit();
     // 不在驱动初始化阶段主动刷新屏幕。EPD 物理画面可在断电后保留；
@@ -103,7 +106,7 @@ void EpdSsd1683::Init() {
     if (!lvgl_lock.locked()) {
         // Init 失败后续 Refresh 会读到半初始化的 lvgl_display_/buffer_ 段错误。
         // 直接重启，OOM/资源问题往往在重启后能恢复，比留下"看似活着的死设备"安全。
-        ESP_LOGE(kTag, "Failed to lock LVGL during init; restarting");
+        ESP_LOGE(kTag, "init failed reason=lvgl_lock action=restart");
         esp_restart();
     }
 
@@ -111,7 +114,7 @@ void EpdSsd1683::Init() {
     snapshot_      = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
     prev_snapshot_ = (uint8_t*)heap_caps_malloc(kBufferLen, MALLOC_CAP_SPIRAM);
     if (!buffer_ || !snapshot_ || !prev_snapshot_) {
-        ESP_LOGE(kTag, "Failed to allocate framebuffers; restarting");
+        ESP_LOGE(kTag, "init failed reason=framebuffer_alloc action=restart");
         esp_restart();
     }
     memset(buffer_, 0xFF, kBufferLen);
@@ -121,18 +124,18 @@ void EpdSsd1683::Init() {
 
     dirty_mutex_ = xSemaphoreCreateMutex();
     if (!dirty_mutex_) {
-        ESP_LOGE(kTag, "Failed to create dirty_mutex; restarting");
+        ESP_LOGE(kTag, "init failed reason=dirty_mutex_create action=restart");
         esp_restart();
     }
     refresh_exit_ = xSemaphoreCreateBinary();
     if (!refresh_exit_) {
-        ESP_LOGE(kTag, "Failed to create refresh_exit; restarting");
+        ESP_LOGE(kTag, "init failed reason=refresh_exit_create action=restart");
         esp_restart();
     }
 
     lvgl_display_ = lv_display_create(kWidth, kHeight);
     if (!lvgl_display_) {
-        ESP_LOGE(kTag, "Failed to create LVGL display; restarting");
+        ESP_LOGE(kTag, "init failed reason=lvgl_display_create action=restart");
         esp_restart();
     }
     lv_display_set_flush_cb(lvgl_display_, LvglFlushCb);
@@ -142,7 +145,7 @@ void EpdSsd1683::Init() {
     constexpr int kRender     = kWidth * kRenderRows * 2;
     lvgl_render_buf_          = (uint8_t*)heap_caps_malloc(kRender, MALLOC_CAP_SPIRAM);
     if (!lvgl_render_buf_) {
-        ESP_LOGE(kTag, "Failed to allocate render buffer; restarting");
+        ESP_LOGE(kTag, "init failed reason=render_buffer_alloc action=restart");
         esp_restart();
     }
     // Partial mode intentionally uses a single LVGL render buffer. The async EPD
@@ -151,10 +154,15 @@ void EpdSsd1683::Init() {
     lv_display_set_buffers(lvgl_display_, lvgl_render_buf_, NULL, kRender, LV_DISPLAY_RENDER_MODE_PARTIAL);
 
     StartRefreshTask();
+    ESP_LOGD(kTag, "init done display=%p", lvgl_display_);
 }
 
 bool EpdSsd1683::Lock(int t) {
-    return lvgl_port_lock(t);
+    const bool locked = lvgl_port_lock(t);
+    if (!locked) {
+        ESP_LOGW(kTag, "lvgl lock timeout timeout_ms=%d", t);
+    }
+    return locked;
 }
 void EpdSsd1683::Unlock() {
     lvgl_port_unlock();
@@ -194,8 +202,8 @@ void EpdSsd1683::LvglFlushCb(lv_display_t* disp, const lv_area_t* area, uint8_t*
         task      = self->refresh_task_;
         do_notify = (task != nullptr);
         // LVGL flush 高频,默认 ESP_LOGD 隐藏。需要诊断"残影 / partial 区不正确"
-        // 时,串口跑一次 esp_log_level_set("Epd", ESP_LOG_DEBUG) 打开。
-        ESP_LOGD(kTag, "Flush chunk=(%d,%d,%dx%d) accum_dirty=(%d,%d,%dx%d)", r.x, r.y, r.w, r.h, u.x, u.y, u.w, u.h);
+        // 时,串口跑一次 esp_log_level_set("epd", ESP_LOG_DEBUG) 打开。
+        ESP_LOGD(kTag, "flush chunk=(%d,%d,%dx%d) accum_dirty=(%d,%d,%dx%d)", r.x, r.y, r.w, r.h, u.x, u.y, u.w, u.h);
     }
 
     xSemaphoreGive(self->dirty_mutex_);
@@ -219,7 +227,13 @@ bool EpdSsd1683::WaitForRefreshIdle(int timeout_ms) {
         vTaskDelay(pdMS_TO_TICKS(50));
         waited += 50;
     }
-    return !IsRefreshPending();
+    const bool idle = !IsRefreshPending();
+    if (!idle) {
+        ESP_LOGW(kTag, "wait idle timeout waited_ms=%d timeout_ms=%d", waited, timeout_ms);
+    } else {
+        ESP_LOGD(kTag, "wait idle done waited_ms=%d", waited);
+    }
+    return idle;
 }
 
 void EpdSsd1683::RequestUrgentPartialRefresh() {
@@ -229,7 +243,11 @@ void EpdSsd1683::RequestUrgentPartialRefresh() {
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
     urgent_refresh_      = true;
     refresh_in_progress_ = true;
+    const bool pending   = pending_;
+    const bool force     = force_full_refresh_;
     xSemaphoreGive(dirty_mutex_);
+    ESP_LOGD(kTag, "refresh request type=partial pending=%d force_full=%d task=%p", pending ? 1 : 0, force ? 1 : 0,
+             refresh_task_);
     if (refresh_task_)
         xTaskNotifyGive(refresh_task_);
 }
@@ -239,12 +257,17 @@ void EpdSsd1683::RequestUrgentFullRefresh() {
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
     force_full_refresh_  = true;
     refresh_in_progress_ = true;
+    const bool pending   = pending_;
+    const bool urgent    = urgent_refresh_;
     xSemaphoreGive(dirty_mutex_);
+    ESP_LOGD(kTag, "refresh request type=full pending=%d urgent=%d task=%p", pending ? 1 : 0, urgent ? 1 : 0,
+             refresh_task_);
     if (refresh_task_)
         xTaskNotifyGive(refresh_task_);
 }
 
 void EpdSsd1683::WriteRaw1bpp(int x, int y, int w, int h, const uint8_t* data, size_t len) {
+    ESP_LOGD(kTag, "write raw x=%d y=%d w=%d h=%d len=%u", x, y, w, h, static_cast<unsigned>(len));
     if (!data || w <= 0 || h <= 0)
         return;
     const int src_bpr = (w + 7) >> 3;
@@ -258,6 +281,7 @@ void EpdSsd1683::WriteRaw1bpp(int x, int y, int w, int h, const uint8_t* data, s
         dirty_           = u;
         pending_         = true;
         last_flush_tick_ = xTaskGetTickCount();
+        ESP_LOGD(kTag, "write raw dirty=(%d,%d,%dx%d) accum=(%d,%d,%dx%d)", r.x, r.y, r.w, r.h, u.x, u.y, u.w, u.h);
         if (refresh_task_)
             xTaskNotifyGive(refresh_task_);
     }
@@ -298,7 +322,9 @@ void EpdSsd1683::StartRefreshTask() {
     BaseType_t ok = xTaskCreatePinnedToCore(RefreshTaskEntry, "epd_refresh", 8192, this, 3, &refresh_task_, 1);
     if (ok != pdPASS) {
         refresh_task_ = nullptr;
-        ESP_LOGE(kTag, "epd_refresh task create failed");
+        ESP_LOGE(kTag, "task create failed name=epd_refresh");
+    } else {
+        ESP_LOGD(kTag, "task created name=epd_refresh handle=%p", refresh_task_);
     }
 }
 void EpdSsd1683::RefreshTaskEntry(void* arg) {
@@ -322,15 +348,19 @@ void EpdSsd1683::DebounceRefreshNotify() {
     const TickType_t first_tick = xTaskGetTickCount();
     const TickType_t hard_max   = first_tick + pdMS_TO_TICKS(kDebounceMaxMs);
     TickType_t       deadline   = first_tick + pdMS_TO_TICKS(kDebounceMs);
+    unsigned         absorbed   = 0;
     while (true) {
         const TickType_t now = xTaskGetTickCount();
         if (now >= deadline || now >= hard_max)
             break;
         const TickType_t wait = (deadline < hard_max ? deadline : hard_max) - now;
         if (ulTaskNotifyTake(pdTRUE, wait) > 0) {
+            ++absorbed;
             deadline = xTaskGetTickCount() + pdMS_TO_TICKS(kDebounceMs);
         }
     }
+    ESP_LOGD(kTag, "debounce done absorbed=%u elapsed_ticks=%lu", absorbed,
+             static_cast<unsigned long>(xTaskGetTickCount() - first_tick));
 }
 
 bool EpdSsd1683::TakeRefreshRequest(bool& urgent, bool& force_full) {
@@ -340,6 +370,7 @@ bool EpdSsd1683::TakeRefreshRequest(bool& urgent, bool& force_full) {
     if (refresh_task_stop_) {
         refresh_in_progress_ = false;
         xSemaphoreGive(dirty_mutex_);
+        ESP_LOGD(kTag, "refresh request stop");
         return false;
     }
     urgent              = urgent_refresh_;
@@ -351,6 +382,7 @@ bool EpdSsd1683::TakeRefreshRequest(bool& urgent, bool& force_full) {
         dirty_   = {0, 0, 0, 0};
     }
     xSemaphoreGive(dirty_mutex_);
+    ESP_LOGD(kTag, "refresh request take urgent=%d force_full=%d", urgent ? 1 : 0, force_full ? 1 : 0);
     return true;
 }
 
@@ -364,6 +396,8 @@ bool EpdSsd1683::ThrottleRefreshSampling(bool urgent, bool force_full) {
     const TickType_t mn    = pdMS_TO_TICKS(sample_interval_ms_);
     const TickType_t el    = (last_sample_tick_ == 0) ? mn : (now_t - last_sample_tick_);
     if (el < mn) {
+        ESP_LOGD(kTag, "refresh throttle urgent=%d force_full=%d wait_ticks=%lu", urgent ? 1 : 0, force_full ? 1 : 0,
+                 static_cast<unsigned long>(mn - el));
         vTaskDelay(mn - el);
         return false;
     }
@@ -379,9 +413,13 @@ bool EpdSsd1683::CaptureRefreshSnapshot(bool force_full, epd::DiffResult& diff, 
 
     diff = epd::Diff(prev_snapshot_, snapshot_, kBufferLen);
     if (diff.bits == 0 && !force_full) {
+        ESP_LOGD(kTag, "snapshot unchanged force_full=0 prev_synced=%d", prev_synced ? 1 : 0);
         MarkRefreshIdle();
         return false;
     }
+    ESP_LOGD(kTag, "snapshot captured diff_bits=%u ratio=%d/1000 force_full=%d prev_synced=%d",
+             static_cast<unsigned>(diff.bits), static_cast<int>(diff.ratio * 1000.0f), force_full ? 1 : 0,
+             prev_synced ? 1 : 0);
     return true;
 }
 
@@ -390,11 +428,16 @@ bool EpdSsd1683::ShouldUseFullRefresh(const epd::DiffResult& diff, bool force_fu
     // partial 出来会一片错乱) → 必须 full;首次未 sync 也要 full。timer wake
     // 会先用 SeedPreviousRaw1bpp 把 prev_snapshot 跟物理屏幕对齐,不需要额外越过。
     constexpr float kForceFullDiffRatio = 0.30f;
-    return force_full || partial_since_full_ >= kPartialBeforeFullCleanup || diff.ratio >= kForceFullDiffRatio ||
-           !prev_synced;
+    const bool      full                = force_full || partial_since_full_ >= kPartialBeforeFullCleanup ||
+                      diff.ratio >= kForceFullDiffRatio || !prev_synced;
+    ESP_LOGD(kTag, "refresh decision full=%d force=%d partial_since_full=%d diff=%d/1000 prev_synced=%d", full ? 1 : 0,
+             force_full ? 1 : 0, partial_since_full_, static_cast<int>(diff.ratio * 1000.0f), prev_synced ? 1 : 0);
+    return full;
 }
 
 void EpdSsd1683::RunRefresh(bool full_refresh) {
+    const int64_t start_us = esp_timer_get_time();
+    ESP_LOGD(kTag, "refresh begin full=%d partial_since_full=%d", full_refresh ? 1 : 0, partial_since_full_);
     // 两条路径都先调 EpdInit() 做硬 reset + 寄存器初始化:
     // 1) full 路径里 EpdDisplayFull 自己会发 0xA5 切到 full 模式;
     // 2) partial 路径靠 EpdInit 把 EPD 拉回默认/partial 模式,否则上一轮
@@ -403,11 +446,15 @@ void EpdSsd1683::RunRefresh(bool full_refresh) {
     if (full_refresh) {
         EpdDisplayFull();
         partial_since_full_ = 0;
+        ESP_LOGI(kTag, "refresh done full=1 elapsed_ms=%lld",
+                 static_cast<long long>((esp_timer_get_time() - start_us) / 1000));
         return;
     }
 
     partial_since_full_++;
     EpdDisplayPartial();
+    ESP_LOGI(kTag, "refresh done full=0 partial_count=%d elapsed_ms=%lld", partial_since_full_,
+             static_cast<long long>((esp_timer_get_time() - start_us) / 1000));
 }
 
 void EpdSsd1683::FinishRefreshSnapshot() {
@@ -416,19 +463,23 @@ void EpdSsd1683::FinishRefreshSnapshot() {
     prev_snapshot_synced_ = true;
     refresh_in_progress_  = false;
     xSemaphoreGive(dirty_mutex_);
+    ESP_LOGD(kTag, "snapshot synced");
 }
 
 void EpdSsd1683::MarkRefreshIdle() {
     xSemaphoreTake(dirty_mutex_, portMAX_DELAY);
     refresh_in_progress_ = false;
     xSemaphoreGive(dirty_mutex_);
+    ESP_LOGD(kTag, "refresh idle");
 }
 
 void EpdSsd1683::RefreshTaskLoop() {
+    ESP_LOGD(kTag, "task start name=epd_refresh");
     while (true) {
         // 第一次阻塞等 notify。来源:flush_cb / RequestUrgentXxxRefresh / 周期采样(已废)。
         if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY) == 0)
             continue;
+        ESP_LOGD(kTag, "task notified name=epd_refresh");
 
         if (RefreshTaskShouldStop())
             break;
@@ -454,6 +505,7 @@ void EpdSsd1683::RefreshTaskLoop() {
         // 否则会覆盖全刷期间又有新 RequestUrgentFullRefresh 设的 true。
         FinishRefreshSnapshot();
     }
+    ESP_LOGD(kTag, "task exit name=epd_refresh");
     if (refresh_exit_)
         xSemaphoreGive(refresh_exit_);
     vTaskDelete(nullptr);

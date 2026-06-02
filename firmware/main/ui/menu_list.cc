@@ -12,12 +12,13 @@ namespace {
 // 右侧 thumb 几何定义在 theme.h,与 DeviceInfoPage 共用。
 }  // namespace
 
-MenuList::MenuList(lv_obj_t* parent, std::vector<Item> items, int initial_cursor)
-    : items_(std::move(items)) {
+MenuList::MenuList(lv_obj_t* parent, std::vector<Item> items, int initial_cursor) : items_(std::move(items)) {
     if (!items_.empty()) {
         cursor_ = initial_cursor;
-        if (cursor_ < 0) cursor_ = 0;
-        if (cursor_ >= static_cast<int>(items_.size())) cursor_ = static_cast<int>(items_.size()) - 1;
+        if (cursor_ < 0)
+            cursor_ = 0;
+        if (cursor_ >= static_cast<int>(items_.size()))
+            cursor_ = static_cast<int>(items_.size()) - 1;
     }
     root_ = lv_obj_create(parent);
     lv_obj_set_size(root_, LV_HOR_RES, LV_VER_RES - theme::kStatusBarHeight);
@@ -79,32 +80,37 @@ MenuList::MenuList(lv_obj_t* parent, std::vector<Item> items, int initial_cursor
 }
 
 bool MenuList::OnUp() {
-    if (items_.empty()) return false;
-    cursor_ = (cursor_ - 1 + static_cast<int>(items_.size())) % static_cast<int>(items_.size());
+    if (items_.empty())
+        return false;
+    cursor_             = (cursor_ - 1 + static_cast<int>(items_.size())) % static_cast<int>(items_.size());
     const bool scrolled = EnsureCursorVisible();
     Redraw();
     return scrolled;
 }
 
 bool MenuList::OnDown() {
-    if (items_.empty()) return false;
-    cursor_ = (cursor_ + 1) % static_cast<int>(items_.size());
+    if (items_.empty())
+        return false;
+    cursor_             = (cursor_ + 1) % static_cast<int>(items_.size());
     const bool scrolled = EnsureCursorVisible();
     Redraw();
     return scrolled;
 }
 
 void MenuList::OnEnter() {
-    if (cursor_ < 0 || cursor_ >= static_cast<int>(items_.size())) return;
+    if (cursor_ < 0 || cursor_ >= static_cast<int>(items_.size()))
+        return;
     auto& cb = items_[cursor_].on_enter;
-    if (cb) cb();
+    if (cb)
+        cb();
 }
 
 bool MenuList::EnsureCursorVisible() {
     const int total = static_cast<int>(items_.size());
     if (total <= kVisibleRows) {
         // 不滚动场景:viewport 永远 0。
-        if (viewport_top_ == 0) return false;
+        if (viewport_top_ == 0)
+            return false;
         viewport_top_ = 0;
         return true;
     }
@@ -116,8 +122,10 @@ bool MenuList::EnsureCursorVisible() {
     }
     // clamp:wrap-around 时 cursor 跳到极端可能算超界,这里夹紧。
     const int max_top = total - kVisibleRows;
-    if (viewport_top_ < 0) viewport_top_ = 0;
-    if (viewport_top_ > max_top) viewport_top_ = max_top;
+    if (viewport_top_ < 0)
+        viewport_top_ = 0;
+    if (viewport_top_ > max_top)
+        viewport_top_ = max_top;
     return viewport_top_ != prev;
 }
 
@@ -132,16 +140,15 @@ void MenuList::Redraw() {
         } else {
             lv_obj_add_flag(rows_[i], LV_OBJ_FLAG_HIDDEN);
         }
-        lv_obj_set_style_bg_opa(cursor_bars_[i],
-                                (i == cursor_) ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+        lv_obj_set_style_bg_opa(cursor_bars_[i], (i == cursor_) ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
     }
     if (thumb_) {
         // track 区域 = root 内对称 pad 之间 [kListPadTop, root_h - kListPadBot]。
         // 数学上 = kVisibleRows × kRowHeight,但用 pad 表达更直接体现"上下对称"。
         ui::PositionPagedScrollbar(thumb_,
-                                   {.y = theme::kScrollbarTrackPadTop,
-                                    .height = LV_VER_RES - theme::kStatusBarHeight -
-                                              theme::kScrollbarTrackPadTop - theme::kScrollbarTrackPadBottom},
+                                   {.y      = theme::kScrollbarTrackPadTop,
+                                    .height = LV_VER_RES - theme::kStatusBarHeight - theme::kScrollbarTrackPadTop -
+                                              theme::kScrollbarTrackPadBottom},
                                    kVisibleRows, total, viewport_top_);
     }
 }

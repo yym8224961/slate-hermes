@@ -10,6 +10,14 @@
  */
 
 import { IngestPayload, type DashboardDataPayloadT } from 'shared';
+import {
+  createScriptLogger,
+  formatScriptError,
+  readScriptErrorBody,
+  truncateScriptLogText,
+} from './helpers/script-logger';
+
+const logger = createScriptLogger('Sub2APIUsageStats');
 
 const SUB2API_BASE = stripTrailingSlash(env('SUB2API_BASE'));
 const SUB2API_TOKEN = env('SUB2API_TOKEN');
@@ -19,7 +27,7 @@ const CONTENT_ID = env('SUB2API_CONTENT_ID');
 function env(key: string): string {
   const v = process.env[key];
   if (!v) {
-    console.error(`Missing env: ${key}`);
+    logger.error(`Missing env ${key}.`);
     process.exit(1);
   }
   return v;
@@ -35,7 +43,7 @@ async function sub2apiFetch<T>(path: string): Promise<T> {
     headers: { Authorization: `Bearer ${SUB2API_TOKEN}` },
   });
   if (!res.ok) {
-    const body = await res.text();
+    const body = await readScriptErrorBody(res);
     throw new Error(`Sub2API ${path} ${res.status}: ${body}`);
   }
   const json = (await res.json()) as { code: number; data: T; message?: string };
@@ -166,12 +174,14 @@ async function pushDashboardData(data: DashboardDataPayloadT) {
   });
 
   if (!res.ok) {
-    const body = await res.text();
+    const body = await readScriptErrorBody(res);
     throw new Error(`Slate push failed ${res.status}: ${body}`);
   }
 
   const result = await res.json();
-  console.log('Pushed Sub2API usage stats to Slate:', JSON.stringify(result, null, 2));
+  logger.info(
+    `Slate accepted Sub2API usage stats push: ${truncateScriptLogText(JSON.stringify(result), 1000)}`
+  );
 }
 
 async function main() {
@@ -180,6 +190,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e);
+  logger.error(`Sub2API usage stats push failed: ${formatScriptError(e)}`);
   process.exit(1);
 });

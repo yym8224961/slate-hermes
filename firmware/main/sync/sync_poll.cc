@@ -59,7 +59,7 @@ bool SyncService::SyncBackground(const api::DeviceState& state, const api::Telem
     }
 
     if (!state.has_current_content) {
-        ESP_LOGW(kTag, "Background refresh missing current_content; keep cached frame schedule");
+        ESP_LOGW(kTag, "background refresh missing current_content action=keep_cached_schedule");
         power_state::RestoreCurrentFrameScheduleFromCache();
         return telemetry.current_content_seq < 0;
     }
@@ -80,6 +80,8 @@ bool SyncService::SyncUserActive(const api::DeviceState& state, bool& group_chan
 }
 
 void SyncService::SyncOnce(SyncMode mode) {
+    const int64_t started_ms = time_utils::NowMs();
+    ESP_LOGI(kTag, "sync start mode=%s", SyncModeName(mode));
     std::string telemetry_group = CurrentGroupSnapshot();
     if (mode == SyncMode::kBackgroundRefresh) {
         power_state::RestoreCurrentFrameScheduleFromCache();
@@ -98,7 +100,9 @@ void SyncService::SyncOnce(SyncMode mode) {
     if (!api::Poll(tel, state)) {
         if (ShouldStop())
             return;
-        ESP_LOGW(kTag, "Poll failed (offline?)");
+        ESP_LOGW(kTag, "poll failed reason=offline_or_server");
+        ESP_LOGI(kTag, "sync done mode=%s ok=0 group_changed=0 elapsed_ms=%lld", SyncModeName(mode),
+                 (long long)(time_utils::NowMs() - started_ms));
         evt::PostSyncFinished(false, false, evt::kNoWait);
         return;
     }
@@ -112,7 +116,7 @@ void SyncService::SyncOnce(SyncMode mode) {
         if (state.bound) {
             evt::PostSimple(UiEventKind::kBound, evt::kNoWait);
         } else {
-            ESP_LOGW(kTag, "Unbound");
+            ESP_LOGW(kTag, "device unbound");
             evt::PostUnbound(state.pair_code, evt::kNoWait);
         }
         was_bound_.store(next_bound);
@@ -133,10 +137,14 @@ void SyncService::SyncOnce(SyncMode mode) {
     const bool sync_ok       = mode == SyncMode::kBackgroundRefresh ? SyncBackground(state, tel, group_changed)
                                                                     : SyncUserActive(state, group_changed);
 
+    ESP_LOGI(kTag, "sync done mode=%s ok=%d group_changed=%d elapsed_ms=%lld", SyncModeName(mode), sync_ok ? 1 : 0,
+             group_changed ? 1 : 0, (long long)(time_utils::NowMs() - started_ms));
     evt::PostSyncFinished(sync_ok, group_changed, evt::kNoWait);
 }
 
 void SyncService::DoCycle(const std::string& direction) {
+    const int64_t started_ms = time_utils::NowMs();
+    ESP_LOGI(kTag, "cycle start direction=%s", direction.c_str());
     evt::PostSyncStarted(evt::kNoWait);
 
     api::DeviceState state;
@@ -145,7 +153,9 @@ void SyncService::DoCycle(const std::string& direction) {
     if (!api::CycleGroup(direction, state)) {
         if (ShouldStop())
             return;
-        ESP_LOGW(kTag, "CycleGroup(%s) failed (offline?)", direction.c_str());
+        ESP_LOGW(kTag, "cycle group failed direction=%s reason=offline_or_server", direction.c_str());
+        ESP_LOGI(kTag, "cycle done direction=%s ok=0 group_changed=0 elapsed_ms=%lld", direction.c_str(),
+                 (long long)(time_utils::NowMs() - started_ms));
         evt::PostSyncFinished(false, false, evt::kNoWait);
         evt::PostGroupSyncStatus(GroupSyncStatusMode::kCycleFailed, "", "");
         return;
@@ -166,4 +176,6 @@ void SyncService::DoCycle(const std::string& direction) {
     evt::PostSyncFinished(sync_ok, group_changed, evt::kNoWait);
     if (!sync_ok)
         evt::PostGroupSyncStatus(GroupSyncStatusMode::kCycleFailed, state.group_id, state.group_name);
+    ESP_LOGI(kTag, "cycle done direction=%s ok=%d group_changed=%d elapsed_ms=%lld", direction.c_str(), sync_ok ? 1 : 0,
+             group_changed ? 1 : 0, (long long)(time_utils::NowMs() - started_ms));
 }

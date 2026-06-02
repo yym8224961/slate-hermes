@@ -10,10 +10,10 @@
 #include <cerrno>
 #include <cstring>
 
+#include "storage/cache/cache_internal.h"
 #include "storage/cache/cache_io.h"
 #include "storage/cache/cache_json.h"
 #include "storage/cache/cache_paths.h"
-#include "storage/cache/cache_internal.h"
 
 namespace {
 
@@ -155,7 +155,7 @@ bool PruneOldGroups(const std::string& current_gid, const std::string& target_gi
     for (const auto& c : candidates) {
         if ((max_groups <= 0 || group_count <= max_groups) && free_bytes() >= min_free_bytes)
             break;
-        ESP_LOGI(internal::kTag, "Prune cached content group: %s", c.path.c_str());
+        ESP_LOGD(internal::kTag, "prune group path=%s", c.path.c_str());
         ok = internal::RemoveTree(c.path) && ok;
         --group_count;
     }

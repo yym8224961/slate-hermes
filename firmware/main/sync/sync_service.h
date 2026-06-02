@@ -57,9 +57,10 @@ class SyncService {
     int         NextIntervalSec() const;
     enum class SyncMode { kUserActive, kBackgroundRefresh };
     enum class SyncReason { kUserActive, kBackgroundRefresh, kCycle };
-    void SyncOnce(SyncMode mode);
-    void Trigger(SyncMode mode);
-    void DoCycle(const std::string& direction);
+    void               SyncOnce(SyncMode mode);
+    void               Trigger(SyncMode mode);
+    void               DoCycle(const std::string& direction);
+    static const char* SyncModeName(SyncMode mode);
     bool SyncBackground(const api::DeviceState& state, const api::Telemetry& telemetry, bool& group_changed);
     bool SyncUserActive(const api::DeviceState& state, bool& group_changed);
     bool ShouldStop() const;

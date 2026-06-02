@@ -11,12 +11,15 @@ constexpr bool FitsName(const char (&)[N]) {
     return N > 1 && N <= NVS_KEY_NAME_MAX_SIZE;
 }
 
-inline constexpr char kNet[]      = "slate.net";
-inline constexpr char kAudio[]    = "slate.audio";
-inline constexpr char kChat[]     = "slate.chat";
-inline constexpr char kChatMqtt[] = "slate.chat.mq";
-inline constexpr char kChatWs[]   = "slate.chat.ws";
-inline constexpr char kLegacy[]   = "slate";
+inline constexpr char kNet[]               = "slate.net";
+inline constexpr char kAudio[]             = "slate.audio";
+inline constexpr char kXiaozhi[]           = "slate.xiaozhi";
+inline constexpr char kXiaozhiMqtt[]       = "slate.xiao.mq";
+inline constexpr char kXiaozhiWs[]         = "slate.xiao.ws";
+inline constexpr char kLegacyXiaozhi[]     = "slate.chat";
+inline constexpr char kLegacyXiaozhiMqtt[] = "slate.chat.mq";
+inline constexpr char kLegacyXiaozhiWs[]   = "slate.chat.ws";
+inline constexpr char kLegacy[]            = "slate";
 
 namespace net {
 inline constexpr char kSsid[]   = "ssid";
@@ -30,9 +33,9 @@ namespace audio {
 inline constexpr char kVolume[] = "volume";
 }  // namespace audio
 
-namespace chat {
+namespace xiaozhi {
 inline constexpr char kUuid[] = "uuid";
-}  // namespace chat
+}  // namespace xiaozhi
 
 namespace mqtt {
 inline constexpr char kEndpoint[]  = "endpoint";
@@ -53,9 +56,12 @@ inline constexpr char kVersion[] = "version";
 
 SLATE_NVS_ASSERT_NAME(kNet);
 SLATE_NVS_ASSERT_NAME(kAudio);
-SLATE_NVS_ASSERT_NAME(kChat);
-SLATE_NVS_ASSERT_NAME(kChatMqtt);
-SLATE_NVS_ASSERT_NAME(kChatWs);
+SLATE_NVS_ASSERT_NAME(kXiaozhi);
+SLATE_NVS_ASSERT_NAME(kXiaozhiMqtt);
+SLATE_NVS_ASSERT_NAME(kXiaozhiWs);
+SLATE_NVS_ASSERT_NAME(kLegacyXiaozhi);
+SLATE_NVS_ASSERT_NAME(kLegacyXiaozhiMqtt);
+SLATE_NVS_ASSERT_NAME(kLegacyXiaozhiWs);
 SLATE_NVS_ASSERT_NAME(kLegacy);
 
 SLATE_NVS_ASSERT_NAME(net::kSsid);
@@ -66,7 +72,7 @@ SLATE_NVS_ASSERT_NAME(net::kDevSec);
 
 SLATE_NVS_ASSERT_NAME(audio::kVolume);
 
-SLATE_NVS_ASSERT_NAME(chat::kUuid);
+SLATE_NVS_ASSERT_NAME(xiaozhi::kUuid);
 
 SLATE_NVS_ASSERT_NAME(mqtt::kEndpoint);
 SLATE_NVS_ASSERT_NAME(mqtt::kClientId);

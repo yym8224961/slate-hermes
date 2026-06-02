@@ -46,7 +46,7 @@ export class DynamicContentRegistry implements OnModuleInit {
 
   onModuleInit(): void {
     this.registerAll();
-    this.logger.log(`已加载 动态内容类型: ${[...this.entries.keys()].join(', ')}`);
+    this.logger.log(`Loaded dynamic content types: ${[...this.entries.keys()].join(', ')}.`);
   }
 
   private registerAll(): void {

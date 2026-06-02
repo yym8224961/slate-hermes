@@ -56,7 +56,9 @@ export class DynamicContentRendererService {
   private readonly inflight = new Map<string, Promise<RenderDynamicContentResult>>();
   private readonly renderQueue = new KeyedPromiseQueue<RenderDynamicContentResult>({
     onPreviousError: (contentId, err) => {
-      this.logger.warn(`previous dynamic render failed content=${contentId}: ${formatError(err)}`);
+      this.logger.warn(
+        `Previous dynamic render failed for content ${contentId}: ${formatError(err)}`
+      );
     },
   });
 
@@ -221,7 +223,7 @@ export class DynamicContentRendererService {
       const message = err instanceof Error ? err.message : String(err);
       fetchErrorMessage = message;
       this.logger.warn(
-        `dynamic fetchData failed content=${contentId} type=${content.dynamicType}: ${message}`
+        `Dynamic data fetch failed for content ${contentId} of type ${content.dynamicType}: ${message}`
       );
       await this.markError(content, message, now);
       if (
@@ -302,7 +304,7 @@ export class DynamicContentRendererService {
       else {
         await this.blob.delete(content.groupId, content.id, 'image').catch((deleteErr: unknown) => {
           this.logger.warn(
-            `delete failed dynamic image after DB update rollback content=${contentId}: ${formatError(deleteErr)}`
+            `Failed to delete dynamic image after database update rollback for content ${contentId}: ${formatError(deleteErr)}`
           );
         });
       }
@@ -338,7 +340,7 @@ export class DynamicContentRendererService {
     try {
       return { changed: await this.dynamicAudio.sync(contentId, { now }), failed: false };
     } catch (err) {
-      this.logger.warn(`dynamic audio sync failed content=${contentId}: ${formatError(err)}`);
+      this.logger.warn(`Dynamic audio sync failed for content ${contentId}: ${formatError(err)}`);
       return { changed: false, failed: true };
     }
   }
@@ -358,7 +360,7 @@ export class DynamicContentRendererService {
       return row?.audioEtag ?? null;
     } catch (err) {
       this.logger.warn(
-        `read audio etag after sync failure failed content=${contentId}: ${formatError(err)}`
+        `Failed to read audio etag after dynamic audio sync failed for content ${contentId}: ${formatError(err)}`
       );
       return fallback;
     }
@@ -387,7 +389,9 @@ export class DynamicContentRendererService {
         },
       });
     } catch (err) {
-      this.logger.error(`markError failed content=${content.id}`, err);
+      this.logger.error(
+        `Failed to mark dynamic render error for content ${content.id}: ${formatError(err)}`
+      );
     }
   }
 }

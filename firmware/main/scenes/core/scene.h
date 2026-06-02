@@ -16,7 +16,7 @@ struct FrameMeta;
 }
 
 namespace xiaozhi {
-class ChatService;
+class XiaozhiService;
 }
 
 class StatusBar;
@@ -41,7 +41,7 @@ struct SceneContext {
     std::function<void()>                                      clear_current_frame;
     std::function<void(int seq, const cache::FrameMeta& meta)> set_current_frame_from_meta;
     std::function<void(bool next)>                             cycle_group;
-    std::function<xiaozhi::ChatService*()>                     chat_service;
+    std::function<xiaozhi::XiaozhiService*()>                  xiaozhi_service;
 };
 
 class Scene {
@@ -73,5 +73,7 @@ class Scene {
     bool      SyncRender(SceneContext& ctx, bool force_full = false, int timeout_ms = 500);
     bool      SyncRender(SceneContext& ctx, std::function<void()> before_refresh, bool force_full = false,
                          int timeout_ms = 500);
+    bool      SyncRenderIfChanged(SceneContext& ctx, std::function<bool()> update, bool force_full = false,
+                                  int timeout_ms = 500);
     bool      DestroyRoot(SceneContext& ctx, lv_obj_t*& root, std::function<void()> cleanup = {}, int timeout_ms = 500);
 };

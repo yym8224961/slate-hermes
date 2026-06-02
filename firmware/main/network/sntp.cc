@@ -12,7 +12,7 @@
 #include <ctime>
 
 namespace {
-constexpr char kTag[] = "Sntp";
+constexpr char kTag[] = "sntp";
 
 constexpr time_t kSyncedAfterEpoch = 1577836800;  // 2020-01-01 UTC
 constexpr long   kMaxClockDriftSec = 10;
@@ -54,8 +54,8 @@ bool ParseIsoUtc(const std::string& iso, time_t& out) {
     if (!ValidDateTime(year, month, day, hour, minute, second))
         return false;
 
-    int offset_sec = 0;
-    size_t pos = static_cast<size_t>(consumed);
+    int    offset_sec = 0;
+    size_t pos        = static_cast<size_t>(consumed);
     if (pos < iso.size() && iso[pos] == '.') {
         ++pos;
         while (pos < iso.size() && iso[pos] >= '0' && iso[pos] <= '9')
@@ -65,9 +65,9 @@ bool ParseIsoUtc(const std::string& iso, time_t& out) {
         if (iso[pos] == 'Z') {
             ++pos;
         } else if (iso[pos] == '+' || iso[pos] == '-') {
-            const int sign = iso[pos] == '+' ? 1 : -1;
-            int       tz_hour = 0;
-            int       tz_minute = 0;
+            const int sign        = iso[pos] == '+' ? 1 : -1;
+            int       tz_hour     = 0;
+            int       tz_minute   = 0;
             int       tz_consumed = 0;
             if (std::sscanf(iso.c_str() + pos + 1, "%2d:%2d%n", &tz_hour, &tz_minute, &tz_consumed) != 2 ||
                 tz_consumed != 5 || tz_hour < 0 || tz_hour > 23 || tz_minute < 0 || tz_minute > 59) {
@@ -83,7 +83,7 @@ bool ParseIsoUtc(const std::string& iso, time_t& out) {
         return false;
 
     const int64_t days = DaysFromCivil(year, static_cast<unsigned>(month), static_cast<unsigned>(day));
-    out = static_cast<time_t>(days * 86400 + hour * 3600 + minute * 60 + second - offset_sec);
+    out                = static_cast<time_t>(days * 86400 + hour * 3600 + minute * 60 + second - offset_sec);
     return out > kSyncedAfterEpoch;
 }
 }  // namespace
@@ -109,7 +109,7 @@ void ApplyServerTime(const std::string& iso) {
         return;
     time_t server = 0;
     if (!ParseIsoUtc(iso, server)) {
-        ESP_LOGW(kTag, "server_time parse failed: %s", iso.c_str());
+        ESP_LOGW(kTag, "server time parse failed value=%s", iso.c_str());
         return;
     }
     const time_t now  = time(nullptr);
@@ -120,7 +120,7 @@ void ApplyServerTime(const std::string& iso) {
     timeval tv{};
     tv.tv_sec = server;
     if (settimeofday(&tv, nullptr) != 0) {
-        ESP_LOGW(kTag, "settimeofday failed");
+        ESP_LOGW(kTag, "set time failed");
     }
 }
 

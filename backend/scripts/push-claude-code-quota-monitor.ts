@@ -24,7 +24,14 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { IngestPayload, type DashboardDataPayloadT } from 'shared';
+import {
+  createScriptLogger,
+  formatScriptError,
+  readScriptErrorBody,
+  truncateScriptLogText,
+} from './helpers/script-logger';
 
+const logger = createScriptLogger('ClaudeCodeQuotaMonitor');
 const SLATE_API_BASE = stripTrailingSlash(env('SLATE_API_BASE'));
 const CONTENT_ID = env('CLAUDE_QUOTA_CONTENT_ID');
 const ANTHROPIC_API_BASE = stripTrailingSlash(
@@ -47,7 +54,7 @@ if (process.argv[2] === '--push') {
 function env(key: string): string {
   const v = process.env[key];
   if (!v) {
-    console.error(`Missing env: ${key}`);
+    logger.error(`Missing env ${key}.`);
     process.exit(1);
   }
   return v;
@@ -78,7 +85,7 @@ function resolveAuthToken(): string {
 
   const credPath = join(homedir(), '.claude', '.credentials.json');
   if (!existsSync(credPath)) {
-    console.error('No ANTHROPIC_API_KEY set and ~/.claude/.credentials.json not found');
+    logger.error('No ANTHROPIC_API_KEY set and ~/.claude/.credentials.json was not found.');
     process.exit(1);
   }
 
@@ -86,12 +93,12 @@ function resolveAuthToken(): string {
     const creds = JSON.parse(readFileSync(credPath, 'utf-8'));
     const token = creds?.accessToken;
     if (!token) {
-      console.error('No accessToken in .credentials.json');
+      logger.error('No accessToken was found in .credentials.json.');
       process.exit(1);
     }
     return token;
   } catch (e) {
-    console.error('Failed to read .credentials.json:', e);
+    logger.error(`Failed to read .credentials.json: ${formatScriptError(e)}`);
     process.exit(1);
   }
 }
@@ -226,7 +233,7 @@ async function probeUnifiedRateLimit(token: string): Promise<UnifiedRateLimit | 
 
     return null;
   } catch (e) {
-    console.error('API probe failed:', e);
+    logger.warn(`Anthropic API probe failed: ${formatScriptError(e)}`);
     return null;
   }
 }
@@ -369,12 +376,14 @@ async function pushPayloadBody(body: string) {
   });
 
   if (!res.ok) {
-    const body = await res.text();
+    const body = await readScriptErrorBody(res);
     throw new Error(`Slate push failed ${res.status}: ${body}`);
   }
 
   const result = await res.json();
-  console.log('Pushed Claude Code quota to Slate:', JSON.stringify(result, null, 2));
+  logger.info(
+    `Slate accepted Claude Code quota push: ${truncateScriptLogText(JSON.stringify(result), 1000)}`
+  );
 }
 
 async function push(data: DashboardDataPayloadT) {
@@ -416,11 +425,11 @@ async function main() {
   }
 
   const quota = await buildQuotaDataFromProbe();
-  console.log('Quota data:', JSON.stringify(quota, null, 2));
+  logger.info(`Claude Code quota data: ${truncateScriptLogText(JSON.stringify(quota), 1000)}`);
   await push(quota);
 }
 
 main().catch((e) => {
-  console.error(e);
+  logger.error(`Claude Code quota monitor failed: ${formatScriptError(e)}`);
   process.exit(1);
 });

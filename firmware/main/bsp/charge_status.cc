@@ -9,7 +9,7 @@
 #include "utils/time_utils.h"
 
 namespace {
-constexpr char kTag[] = "Charge";
+constexpr char kTag[] = "charge";
 
 bool SameSnapshot(const ChargeStatus::Snapshot& a, const ChargeStatus::Snapshot& b) {
     return a.state == b.state && a.power_present == b.power_present && a.charging == b.charging && a.full == b.full &&
@@ -23,21 +23,21 @@ void ChargeStatus::Init(gpio_num_t detect_gpio, gpio_num_t full_gpio, int64_t no
     if (!snapshot_mutex_) {
         snapshot_mutex_ = xSemaphoreCreateMutex();
         if (!snapshot_mutex_) {
-            ESP_LOGE(kTag, "Failed to create snapshot mutex");
+            ESP_LOGE(kTag, "snapshot mutex create failed");
             configASSERT(snapshot_mutex_ != nullptr);
         }
     }
     if (!callback_mutex_) {
         callback_mutex_ = xSemaphoreCreateMutex();
         if (!callback_mutex_) {
-            ESP_LOGE(kTag, "Failed to create callback mutex");
+            ESP_LOGE(kTag, "callback mutex create failed");
             configASSERT(callback_mutex_ != nullptr);
         }
     }
     if (!tick_exit_) {
         tick_exit_ = xSemaphoreCreateBinary();
         if (!tick_exit_) {
-            ESP_LOGE(kTag, "Failed to create tick exit semaphore");
+            ESP_LOGE(kTag, "tick exit semaphore create failed");
             configASSERT(tick_exit_ != nullptr);
         }
     }
@@ -61,12 +61,12 @@ void ChargeStatus::StartTick() {
         while (xSemaphoreTake(tick_exit_, 0) == pdTRUE) {
         }
     }
-    BaseType_t ok = xTaskCreatePinnedToCore(&ChargeStatus::TickTaskEntry, "charge_tick", 3 * 1024, this, 1,
-                                            &tick_task_, 0);
+    BaseType_t ok =
+        xTaskCreatePinnedToCore(&ChargeStatus::TickTaskEntry, "charge_tick", 3 * 1024, this, 1, &tick_task_, 0);
     if (ok != pdPASS) {
         tick_running_.store(false, std::memory_order_release);
         tick_task_ = nullptr;
-        ESP_LOGE(kTag, "charge_tick task create failed");
+        ESP_LOGE(kTag, "task create failed name=charge_tick");
     }
 }
 

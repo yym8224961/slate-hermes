@@ -9,6 +9,7 @@
 
 #include "drivers/display/epd_ssd1683.h"
 #include "events/event_bus.h"
+#include "events/ui_event_log.h"
 #include "network/cred_store.h"
 #include "scenes/core/scene_stack.h"
 #include "scenes/frame/frame_scene.h"
@@ -16,7 +17,7 @@
 #include "ui/theme.h"
 
 namespace {
-constexpr char kTag[] = "SplashScene";
+constexpr char kTag[] = "splash";
 
 // SoftAP SSID 计算逻辑跟 captive_portal.cc HandleRoot 一致,保持一致避免文案
 // 跟实际 AP 名对不上。
@@ -56,8 +57,9 @@ SplashScene::State MapBootStage(BootStage s) {
 }  // namespace
 
 void SplashScene::OnEnter(SceneContext& ctx) {
+    ESP_LOGD(kTag, "enter");
     if (!ctx.epd->Lock(2000)) {
-        ESP_LOGW(kTag, "EPD lock timeout in OnEnter");
+        ESP_LOGW(kTag, "enter failed reason=epd_lock_timeout");
         return;
     }
 
@@ -71,9 +73,11 @@ void SplashScene::OnEnter(SceneContext& ctx) {
     lv_refr_now(NULL);
     ctx.epd->Unlock();
     ctx.epd->RequestUrgentFullRefresh();
+    ESP_LOGD(kTag, "enter done state=%d root=%p", static_cast<int>(state_), root_);
 }
 
 void SplashScene::OnExit(SceneContext& ctx) {
+    ESP_LOGD(kTag, "exit root=%p", root_);
     DestroyRoot(ctx, root_, [this]() {
         text_label_ = nullptr;
         code_label_ = nullptr;
@@ -111,14 +115,22 @@ void SplashScene::CreateLayout() {
 }
 
 void SplashScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
+    if (evt::log::DebugEnabled(kTag)) {
+        char detail[128];
+        evt::log::Describe(e, detail, sizeof(detail));
+        ESP_LOGD(kTag, "event kind=%s detail=%s state=%d root=%p", evt::log::KindName(e.kind), detail,
+                 static_cast<int>(state_), root_);
+    }
     // 应急逃生:长按 ENTER push 设置页 — 即使同步未完成、网络断开,
     // 用户仍能调音量 / 看设备信息 / 重新配网 / 恢复出厂。
     if (e.kind == UiEventKind::kButtonLong && e.u.button.btn == ButtonId::kEnter) {
+        ESP_LOGD(kTag, "button long btn=enter action=settings");
         ctx.stack->RequestPush(std::make_unique<SettingsScene>());
         return;
     }
 
     if (e.kind == UiEventKind::kCachedGroupReady || e.kind == UiEventKind::kSyncedGroupReady) {
+        ESP_LOGD(kTag, "group ready gid=%s name=%s count=%d", e.u.group.gid, e.u.group.name, e.u.group.content_count);
         ctx.stack->RequestReplace(std::make_unique<FrameScene>(ctx, e.u.group.gid, e.u.group.content_count));
         return;
     }

@@ -3,9 +3,9 @@
 #include <esp_littlefs.h>
 #include <esp_log.h>
 
+#include "storage/cache/cache_internal.h"
 #include "storage/cache/cache_io.h"
 #include "storage/cache/cache_paths.h"
-#include "storage/cache/cache_internal.h"
 
 namespace cache {
 
@@ -18,7 +18,7 @@ bool Init() {
 
     esp_err_t err = esp_vfs_littlefs_register(&cfg);
     if (err != ESP_OK) {
-        ESP_LOGE(internal::kTag, "Littlefs mount failed: %s", esp_err_to_name(err));
+        ESP_LOGE(internal::kTag, "littlefs mount failed err=%s", esp_err_to_name(err));
         return false;
     }
     size_t total = 0, used = 0;
@@ -29,14 +29,14 @@ bool Init() {
 
 bool FormatAll() {
     constexpr char kLabel[] = "storage";
-    ESP_LOGW(internal::kTag, "FormatAll: erasing all littlefs cache");
+    ESP_LOGW(internal::kTag, "format all action=erase_littlefs_cache");
     esp_err_t err = esp_vfs_littlefs_unregister(kLabel);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGW(internal::kTag, "Littlefs unregister failed (continuing): %s", esp_err_to_name(err));
+        ESP_LOGW(internal::kTag, "littlefs unregister failed err=%s action=continue", esp_err_to_name(err));
     }
     err = esp_littlefs_format(kLabel);
     if (err != ESP_OK) {
-        ESP_LOGE(internal::kTag, "Littlefs format failed: %s", esp_err_to_name(err));
+        ESP_LOGE(internal::kTag, "littlefs format failed err=%s", esp_err_to_name(err));
         return false;
     }
 
@@ -47,7 +47,7 @@ bool FormatAll() {
     cfg.dont_mount              = false;
     err                         = esp_vfs_littlefs_register(&cfg);
     if (err != ESP_OK) {
-        ESP_LOGE(internal::kTag, "Littlefs remount after format failed: %s", esp_err_to_name(err));
+        ESP_LOGE(internal::kTag, "littlefs remount failed err=%s", esp_err_to_name(err));
         return false;
     }
     internal::ResetStateCache();

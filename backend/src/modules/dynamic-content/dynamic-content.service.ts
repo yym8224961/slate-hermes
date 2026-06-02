@@ -35,11 +35,11 @@ export class DynamicContentService {
     ttlMs: DYNAMIC_MUTATION_TAIL_TTL_MS,
     onPreviousError: (contentId, err) => {
       this.logger.warn(
-        `previous dynamic mutation failed content=${contentId}: ${formatError(err)}`
+        `Previous dynamic mutation failed for content ${contentId}: ${formatError(err)}`
       );
     },
     onExpired: (contentId) => {
-      this.logger.warn(`dynamic mutation lock expired content=${contentId}`);
+      this.logger.warn(`Dynamic mutation lock expired for content ${contentId}.`);
     },
   });
 
@@ -358,7 +358,9 @@ export class DynamicContentService {
         select: { audioEtag: true },
       })
       .catch((staleErr: unknown) => {
-        this.logger.warn(`读取动态内容回滚状态失败 content=${contentId}: ${formatError(staleErr)}`);
+        this.logger.warn(
+          `Failed to read dynamic content rollback state for content ${contentId}: ${formatError(staleErr)}`
+        );
         return null;
       });
     let rollbackOk = true;
@@ -373,7 +375,9 @@ export class DynamicContentService {
       .catch((rollbackErr: unknown) => {
         rollbackOk = false;
         rollbackError = formatError(rollbackErr);
-        this.logger.warn(`创建动态内容失败后的 DB 回滚失败 content=${contentId}: ${rollbackError}`);
+        this.logger.warn(
+          `Database rollback failed after dynamic content creation failed for content ${contentId}: ${rollbackError}`
+        );
       });
     if (!rollbackOk) {
       throw new InternalError('创建动态内容失败，且 DB 回滚未完成', {
@@ -389,7 +393,7 @@ export class DynamicContentService {
     const failed = cleaned.filter((result) => result.status === 'rejected').length;
     if (failed > 0) {
       this.logger.warn(
-        `创建动态内容失败后的 blob 清理失败 content=${contentId}: ${failed} failure(s)`
+        `Blob cleanup failed after dynamic content creation failed for content ${contentId}: ${failed} operation(s) failed.`
       );
     }
   }

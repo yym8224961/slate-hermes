@@ -16,7 +16,7 @@ class FrameScene : public Scene {
     ~FrameScene() override;
 
     const char* Name() const override {
-        return "Frame";
+        return "frame";
     }
     void      OnEnter(SceneContext& ctx) override;
     void      OnExit(SceneContext& ctx) override;
@@ -38,6 +38,10 @@ class FrameScene : public Scene {
     void RebindGroup(SceneContext& ctx, const char* gid, int content_count);
     void ApplyEmptyState();
     void HandleGroupSyncStatus(SceneContext& ctx, const UiEvent& e);
+    void RefreshStatusBarForCharge(SceneContext& ctx, const UiEvent& e);
+    void RefreshStatusBarForBattery(SceneContext& ctx, const UiEvent& e);
+    void RefreshStatusBarForWifi(SceneContext& ctx, const UiEvent& e);
+    void RestoreStatusBarCaption(SceneContext& ctx);
 
     std::string gid_;
     int         content_count_           = 0;

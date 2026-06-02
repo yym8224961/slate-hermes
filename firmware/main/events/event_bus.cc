@@ -6,10 +6,11 @@
 #include <cstring>
 #include <string>
 
+#include "events/ui_event_log.h"
 #include "utils/utf8_utils.h"
 
 namespace {
-constexpr char        kTag[]    = "Event";
+constexpr char        kTag[]    = "event";
 QueueHandle_t         s_queue   = nullptr;
 constexpr UBaseType_t kQueueLen = 64;
 
@@ -24,7 +25,7 @@ void CopyEventText(char* out, size_t cap, const char* value) {
 int ClampContentCount(int content_count) {
     const int clamped = std::clamp(content_count, 0, evt::limits::kMaxGroupContentCount);
     if (clamped != content_count) {
-        ESP_LOGW(kTag, "content_count clamped: %d -> %d", content_count, clamped);
+        ESP_LOGW(kTag, "content count clamped from=%d to=%d", content_count, clamped);
     }
     return clamped;
 }
@@ -37,16 +38,29 @@ void Init() {
         return;
     s_queue = xQueueCreate(kQueueLen, sizeof(UiEvent));
     configASSERT(s_queue);
+    ESP_LOGD(kTag, "init queue_len=%u item_size=%u", static_cast<unsigned>(kQueueLen),
+             static_cast<unsigned>(sizeof(UiEvent)));
 }
 
 bool Post(const UiEvent& e, TickType_t timeout) {
     if (!s_queue) {
-        ESP_LOGW(kTag, "Post before Init, dropped kind=%d", static_cast<int>(e.kind));
+        ESP_LOGW(kTag, "post drop reason=not_init kind=%s", log::KindName(e.kind));
         return false;
     }
     if (xQueueSendToBack(s_queue, &e, timeout) != pdTRUE) {
-        ESP_LOGW(kTag, "Queue full, dropped kind=%d", static_cast<int>(e.kind));
+        char detail[128];
+        log::Describe(e, detail, sizeof(detail));
+        ESP_LOGW(kTag, "post drop kind=%s detail=%s waiting=%u spaces=%u timeout_ticks=%lu", log::KindName(e.kind),
+                 detail, static_cast<unsigned>(uxQueueMessagesWaiting(s_queue)),
+                 static_cast<unsigned>(uxQueueSpacesAvailable(s_queue)), static_cast<unsigned long>(timeout));
         return false;
+    }
+    if (log::DebugEnabled(kTag)) {
+        char detail[128];
+        log::Describe(e, detail, sizeof(detail));
+        ESP_LOGD(kTag, "post kind=%s detail=%s waiting=%u spaces=%u timeout_ticks=%lu", log::KindName(e.kind), detail,
+                 static_cast<unsigned>(uxQueueMessagesWaiting(s_queue)),
+                 static_cast<unsigned>(uxQueueSpacesAvailable(s_queue)), static_cast<unsigned long>(timeout));
     }
     return true;
 }
@@ -54,13 +68,25 @@ bool Post(const UiEvent& e, TickType_t timeout) {
 bool PostFromIsr(const UiEvent& e, BaseType_t* hpw) {
     if (!s_queue)
         return false;
-    return xQueueSendToBackFromISR(s_queue, &e, hpw) == pdTRUE;
+    const bool ok = xQueueSendToBackFromISR(s_queue, &e, hpw) == pdTRUE;
+    if (!ok) {
+        ESP_EARLY_LOGW(kTag, "ISR post drop kind=%d", static_cast<int>(e.kind));
+    }
+    return ok;
 }
 
 bool Wait(UiEvent* out, TickType_t timeout) {
     if (!s_queue || !out)
         return false;
-    return xQueueReceive(s_queue, out, timeout) == pdTRUE;
+    if (xQueueReceive(s_queue, out, timeout) != pdTRUE)
+        return false;
+    if (log::DebugEnabled(kTag)) {
+        char detail[128];
+        log::Describe(*out, detail, sizeof(detail));
+        ESP_LOGD(kTag, "wait got kind=%s detail=%s remaining=%u", log::KindName(out->kind), detail,
+                 static_cast<unsigned>(uxQueueMessagesWaiting(s_queue)));
+    }
+    return true;
 }
 
 bool PostSimple(UiEventKind kind, TickType_t timeout) {

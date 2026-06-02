@@ -4,15 +4,15 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
-#include "sync/api_client.h"
 #include "events/event_bus.h"
-#include "utils/mac_utils.h"
 #include "network/sntp.h"
-#include "power/shutdown.h"
 #include "network/wifi.h"
+#include "power/shutdown.h"
+#include "sync/api_client.h"
+#include "utils/mac_utils.h"
 
 namespace {
-constexpr char kTag[]                  = "SetupFlow";
+constexpr char kTag[]                  = "setup_flow";
 constexpr int  kSaveSecretRetryCount   = 3;
 constexpr int  kSaveSecretRetryDelayMs = 200;
 }  // namespace
@@ -22,7 +22,7 @@ namespace setup_flow {
 bool TryConnectAndSetup(cred::Credentials& c) {
     evt::PostBootStage(BootStage::kWifiConnecting, c.wifi_ssid.c_str());
     if (!Wifi::Get().Connect(c.wifi_ssid, c.wifi_pwd, 20000)) {
-        ESP_LOGW(kTag, "WiFi STA connect failed");
+        ESP_LOGW(kTag, "wifi connect failed mode=sta");
         evt::PostBootStage(BootStage::kWifiFailed);
         return false;
     }
@@ -38,13 +38,13 @@ bool TryConnectAndSetup(cred::Credentials& c) {
         waited += 200;
     }
     if (!sntp::TimeSynced())
-        ESP_LOGW(kTag, "SNTP not synced after %dms; HTTPS register may fail", kSntpWaitMs);
+        ESP_LOGW(kTag, "sntp sync timeout elapsed_ms=%d impact=https_register_may_fail", kSntpWaitMs);
 
     if (c.device_secret.empty()) {
         evt::PostBootStage(BootStage::kRegistering);
         api::RegisterResult rr;
         if (!api::Register(rr)) {
-            ESP_LOGW(kTag, "Register failed (server unreachable?)");
+            ESP_LOGW(kTag, "register failed reason=server_unreachable");
             evt::PostBootStage(BootStage::kServerUnreachable);
             return false;
         }
@@ -55,11 +55,11 @@ bool TryConnectAndSetup(cred::Credentials& c) {
                 saved = true;
                 break;
             }
-            ESP_LOGW(kTag, "SaveSecret failed attempt %d/%d", attempt, kSaveSecretRetryCount);
+            ESP_LOGW(kTag, "save secret failed attempt=%d total=%d", attempt, kSaveSecretRetryCount);
             vTaskDelay(pdMS_TO_TICKS(kSaveSecretRetryDelayMs));
         }
         if (!saved) {
-            ESP_LOGE(kTag, "Fatal: SaveSecret failed, restarting");
+            ESP_LOGE(kTag, "save secret fatal action=restart");
             power_shutdown::GracefulRestart();
         }
         c.device_id     = rr.id;

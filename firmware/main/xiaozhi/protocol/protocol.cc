@@ -14,10 +14,10 @@
 #include "xiaozhi/mcp/mcp_tools.h"
 #include "xiaozhi/protocol/mqtt_protocol.h"
 #include "xiaozhi/protocol/websocket_protocol.h"
-#include "xiaozhi/service/chat_service.h"
+#include "xiaozhi/service/xiaozhi_service.h"
 
 namespace {
-constexpr char kTag[]               = "XiaoProto";
+constexpr char kTag[]               = "xiaozhi_proto";
 constexpr int  kMcpAudioReadyPollMs = 10;
 constexpr int  kMcpAudioReadyWaitMs = 10000;
 
@@ -60,7 +60,7 @@ void Protocol::OnDisconnected(std::function<void()> cb) {
 
 void Protocol::SetError(const std::string& message) {
     error_occurred_.store(true, std::memory_order_release);
-    ESP_LOGW(kTag, "Network error: %s", message.c_str());
+    ESP_LOGW(kTag, "network error message=%s", message.c_str());
     if (on_network_error_) {
         on_network_error_(message);
     }
@@ -149,7 +149,7 @@ void Protocol::SendMcpMessage(const std::string& payload) {
     McpSendItem item{};
     item.data = static_cast<char*>(std::malloc(payload.size() + 1));
     if (!item.data) {
-        ESP_LOGW(kTag, "MCP tx dropped: alloc failed bytes=%u", static_cast<unsigned>(payload.size()));
+        ESP_LOGW(kTag, "mcp tx dropped reason=alloc_failed bytes=%u", static_cast<unsigned>(payload.size()));
         return;
     }
     std::memcpy(item.data, payload.data(), payload.size());
@@ -163,7 +163,8 @@ void Protocol::SendMcpMessage(const std::string& payload) {
     }
     if (!StartMcpSendTaskLocked() || !mcp_send_queue_ ||
         xQueueSendToBack(mcp_send_queue_, &item, pdMS_TO_TICKS(100)) != pdTRUE) {
-        ESP_LOGW(kTag, "MCP tx dropped: queue unavailable/full bytes=%u", static_cast<unsigned>(payload.size()));
+        ESP_LOGW(kTag, "mcp tx dropped reason=queue_unavailable_or_full bytes=%u",
+                 static_cast<unsigned>(payload.size()));
         std::free(item.data);
         return;
     }
@@ -175,7 +176,7 @@ bool Protocol::StartMcpSendTaskLocked() {
     if (!mcp_send_queue_) {
         mcp_send_queue_ = xQueueCreate(4, sizeof(McpSendItem));
         if (!mcp_send_queue_) {
-            ESP_LOGW(kTag, "MCP send queue create failed");
+            ESP_LOGW(kTag, "mcp send queue create failed");
             return false;
         }
     }
@@ -183,7 +184,7 @@ bool Protocol::StartMcpSendTaskLocked() {
         const BaseType_t ok =
             xTaskCreatePinnedToCore(&Protocol::McpSendTaskEntry, "xiaozhi_mcp_tx", 4096, this, 3, &mcp_send_task_, 0);
         if (ok != pdPASS) {
-            ESP_LOGW(kTag, "MCP send task create failed");
+            ESP_LOGW(kTag, "mcp send task create failed");
             vQueueDelete(mcp_send_queue_);
             mcp_send_queue_ = nullptr;
             return false;
@@ -220,10 +221,10 @@ void Protocol::StopMcpSendTask() {
         }
         if (sentinel_sent) {
             if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(2000)) == 0) {
-                ESP_LOGW(kTag, "MCP send task stop timed out");
+                ESP_LOGW(kTag, "mcp send task stop timeout");
             }
         } else {
-            ESP_LOGW(kTag, "MCP send task stop sentinel could not be queued");
+            ESP_LOGW(kTag, "mcp send task stop failed reason=sentinel_queue_failed");
         }
     }
 
@@ -231,7 +232,7 @@ void Protocol::StopMcpSendTask() {
         std::lock_guard<std::mutex> lock(mcp_mutex_);
         mcp_stop_waiter_ = nullptr;
         if (mcp_send_task_) {
-            ESP_LOGW(kTag, "MCP send task did not stop; keep queue alive");
+            ESP_LOGW(kTag, "mcp send task stop incomplete action=keep_queue_alive");
             return;
         }
         queue           = mcp_send_queue_;
@@ -292,7 +293,7 @@ void Protocol::McpSendTask() {
             session_id.empty()) {
             if (mcp_accepting_.load(std::memory_order_acquire) &&
                 !audio_channel_ready_.load(std::memory_order_acquire)) {
-                ESP_LOGW(kTag, "MCP tx dropped: audio channel not ready after %dms", waited_ms);
+                ESP_LOGW(kTag, "mcp tx dropped reason=audio_channel_not_ready elapsed_ms=%d", waited_ms);
             }
             std::free(item.data);
             continue;
@@ -314,7 +315,7 @@ bool Protocol::HandleMcpMessage(const cJSON* root) {
     mcp::Dispatcher dispatcher{
         [this](const std::string& payload) { SendMcpMessage(payload); },
         [] { return mcp::BuildDeviceStatusJson(); },
-        [](int level) { ChatService::Get().SetVolume(level); },
+        [](int level) { XiaozhiService::Get().SetVolume(level); },
     };
     return mcp::DispatchMessage(root, dispatcher);
 }

@@ -21,7 +21,7 @@
 #include "utils/time_utils.h"
 
 namespace {
-constexpr char kTag[] = "Sleep";
+constexpr char kTag[] = "sleep";
 
 // 进 deep sleep 前等 EPD 刷新结束的最大时长。低温或 full cleanup 可接近 5s；
 // 超时过短会在白相阶段切 EPD 电源，留下整屏白。
@@ -69,7 +69,7 @@ void SaveStatusBarSnapshot(EpdSsd1683* epd) {
     std::array<uint8_t, epd::kStatusBarSnapshotBytes> snapshot{};
     if (!epd->ReadPreviousRaw1bpp(0, 0, epd::kStatusBarSnapshotWidth, epd::kStatusBarSnapshotHeight, snapshot.data(),
                                   snapshot.size())) {
-        ESP_LOGW(kTag, "Status bar snapshot skipped: previous buffer not synced");
+        ESP_LOGW(kTag, "status snapshot skipped reason=previous_buffer_not_synced");
         power_state::ClearStatusBarSnapshot();
         return;
     }
@@ -88,6 +88,9 @@ void SleepManager::Init(Policy p) {
         unbound_state_ = {};
     }
     enabled_.store(!p.disabled);
+    ESP_LOGD(kTag, "init idle_min=%u disabled=%d unbound_grace_ms=%lld low_battery_pct=%d",
+             static_cast<unsigned>(idle_timeout_min_), p.disabled ? 1 : 0, static_cast<long long>(unbound_grace_ms_),
+             low_battery_pct_);
 }
 
 void SleepManager::SetSleepBlocker(std::function<bool()> blocks_sleep) {
@@ -103,9 +106,13 @@ void SleepManager::OnEvent(const UiEvent& e) {
         case UiEventKind::kButtonShort:
         case UiEventKind::kButtonLong:
         case UiEventKind::kButtonDouble:
+            ESP_LOGD(kTag, "activity kind=button event=%d btn=%d", static_cast<int>(e.kind),
+                     static_cast<int>(e.u.button.btn));
             last_active_ms_.store(time_utils::NowMs());
             break;
         case UiEventKind::kChargeChanged:
+            ESP_LOGD(kTag, "charge changed present=%d charging=%d full=%d no_battery=%d", e.u.charge.present ? 1 : 0,
+                     e.u.charge.charging ? 1 : 0, e.u.charge.full ? 1 : 0, e.u.charge.no_battery ? 1 : 0);
             paused_.store(e.u.charge.present);
             if (e.u.charge.present) {
                 last_active_ms_.store(time_utils::NowMs());
@@ -119,8 +126,7 @@ void SleepManager::OnEvent(const UiEvent& e) {
         case UiEventKind::kUnbound:
             // 仅首次进入 unbound 时记录起始 ts,重复事件不重置(否则 2h 兜底永不触发)。
             if (MarkUnboundIfNeeded(time_utils::NowMs())) {
-                ESP_LOGW(kTag, "Unbound -> deep sleep blocked for up to %lld h",
-                         (long long)(kUnboundGraceMs / (60 * 60 * 1000)));
+                ESP_LOGW(kTag, "unbound grace hours=%lld", (long long)(kUnboundGraceMs / (60 * 60 * 1000)));
             }
             break;
         case UiEventKind::kBatteryUpdated: {
@@ -177,13 +183,14 @@ void SleepManager::Tick(int64_t now_ms) {
         if (since == 0) {
             blocked_since_ms_.store(now_ms);
             since = now_ms;
+            ESP_LOGI(kTag, "sleep blocked begin");
         }
         if (now_ms - since < kMaxBlockedMs)
             return;  // 给语音/同步收尾时间
         // 看门狗超时：强制走一次带守卫的深睡尝试。TryEnterDeepSleep → WaitForEpdAndShutdown
         // 会停掉语音(SuspendForSleep)与同步(SyncService::Stop)，打断卡死的 blocker。
-        ESP_LOGW(kTag, "Sleep blocked %lldms (>=%lldms) -> forcing deep sleep attempt", (long long)(now_ms - since),
-                 (long long)kMaxBlockedMs);
+        ESP_LOGW(kTag, "sleep blocked timeout elapsed_ms=%lld limit_ms=%lld action=force_sleep",
+                 (long long)(now_ms - since), (long long)kMaxBlockedMs);
         forced = true;
     } else {
         blocked_since_ms_.store(0);
@@ -191,7 +198,8 @@ void SleepManager::Tick(int64_t now_ms) {
         const int64_t threshold_ms = static_cast<int64_t>(idle_timeout_min_) * 60 * 1000;
         if (idle_ms < threshold_ms)
             return;
-        ESP_LOGW(kTag, "Idle %lldms >= %lldms -> entering deep sleep", (long long)idle_ms, (long long)threshold_ms);
+        ESP_LOGI(kTag, "idle timeout idle_ms=%lld threshold_ms=%lld action=deep_sleep", (long long)idle_ms,
+                 (long long)threshold_ms);
     }
 
     const auto decision = TryEnterDeepSleep();
@@ -223,7 +231,7 @@ SleepManager::SleepDecision SleepManager::TryEnterDeepSleep() {
             paused_.store(true);
         return {SleepOutcome::kPausedByCharge, next_sec};
     }
-    ESP_LOGW(kTag, "EnterDeepSleep: shutting down peripherals");
+    ESP_LOGI(kTag, "deep sleep prepare");
 
     // 1) 停后台 task,避免在 rail 关闭后还有 I²C / 网络写操作，并等待已有 EPD 刷新完成。
     const bool epd_ready = power_shutdown::WaitForEpdAndShutdown(kEpdFlushTimeoutMs);
@@ -232,7 +240,7 @@ SleepManager::SleepDecision SleepManager::TryEnterDeepSleep() {
     //    静态帧 idle 进睡眠时如果这里再全刷一次，会白白耗电。
     if (auto* epd = Board::Get().epd()) {
         if (!epd_ready) {
-            ESP_LOGW(kTag, "EPD still pending after %dms; skip status bar snapshot", kEpdFlushTimeoutMs);
+            ESP_LOGW(kTag, "status snapshot skipped reason=epd_pending elapsed_ms=%d", kEpdFlushTimeoutMs);
             power_state::ClearStatusBarSnapshot();
         } else {
             SaveStatusBarSnapshot(epd);
@@ -265,10 +273,10 @@ SleepManager::SleepDecision SleepManager::TryEnterDeepSleep() {
     //    周期性联网只会空耗电；远端静态内容变化等用户按键/插电唤醒后再同步。
     if (next_sec > 0) {
         esp_sleep_enable_timer_wakeup(static_cast<uint64_t>(next_sec) * 1'000'000ULL);
-        ESP_LOGW(kTag, "ESP deep_sleep_start (mask=0x%llx, timer=%us)", (unsigned long long)kWakeupMask,
+        ESP_LOGI(kTag, "deep sleep start wake_mask=0x%llx timer_sec=%u", (unsigned long long)kWakeupMask,
                  static_cast<unsigned>(next_sec));
     } else {
-        ESP_LOGW(kTag, "ESP deep_sleep_start (mask=0x%llx, timer=off)", (unsigned long long)kWakeupMask);
+        ESP_LOGI(kTag, "deep sleep start wake_mask=0x%llx timer_sec=0", (unsigned long long)kWakeupMask);
     }
     esp_deep_sleep_start();
     __builtin_unreachable();

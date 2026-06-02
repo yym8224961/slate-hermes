@@ -42,7 +42,7 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
         return WORKER_INTERVAL_MS;
       },
       onError: (err) => {
-        this.logger.warn(`TTS worker tick failed: ${formatError(err)}`);
+        this.logger.warn(`Dynamic TTS worker tick failed: ${formatError(err)}`);
       },
       fallbackDelayMs: WORKER_INTERVAL_MS,
     });
@@ -138,7 +138,9 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
     const jobs = await this.claimPendingJobs(WORKER_BATCH_SIZE);
     for (const job of jobs) {
       await this.run(job).catch((err: unknown) => {
-        this.logger.warn(`TTS worker job failed content=${job.contentId}: ${formatError(err)}`);
+        this.logger.warn(
+          `Dynamic TTS worker job failed for content ${job.contentId} with voice ${job.voice}: ${formatError(err)}`
+        );
       });
     }
   }
@@ -253,13 +255,20 @@ export class DynamicAudioService implements OnModuleInit, OnModuleDestroy {
           audioAttempts: 0,
         },
       });
-      if (updated.count === 1) return;
+      if (updated.count === 1) {
+        this.logger.log(
+          `Dynamic TTS audio was generated for content ${input.contentId} with voice ${input.voice}.`
+        );
+        return;
+      }
       // CAS 失败：lease 已被其它 worker 抢走（120s 超时后）。如果 TTS 对相同 text/voice 是确定性
       // 的，对方写到同一路径同一字节；这种情况绝不能删，否则会把已经 ready 的 blob 抽走。
       await this.cleanupOrphanBlob(input.groupId, input.contentId, generatedEtag);
     } catch (err) {
       await this.cleanupOrphanBlob(input.groupId, input.contentId, pendingCleanupEtag);
-      this.logger.warn(`dynamic TTS failed content=${input.contentId}: ${formatError(err)}`);
+      this.logger.warn(
+        `Dynamic TTS generation failed for content ${input.contentId} with voice ${input.voice}: ${formatError(err)}`
+      );
       await this.markFailedOrRetry(input, err);
     } finally {
       await this.groups.recomputeManifestEtag(input.groupId);

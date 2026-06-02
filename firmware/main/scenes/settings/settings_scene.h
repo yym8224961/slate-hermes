@@ -21,7 +21,7 @@ class SettingsScene : public Scene {
     ~SettingsScene() override;
 
     const char* Name() const override {
-        return "Settings";
+        return "settings";
     }
     bool IsSettings() const override {
         return true;

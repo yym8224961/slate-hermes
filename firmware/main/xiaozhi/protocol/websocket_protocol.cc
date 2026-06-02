@@ -14,7 +14,7 @@
 #include "xiaozhi/config/settings.h"
 
 namespace {
-constexpr char kTag[] = "XiaoWS";
+constexpr char kTag[] = "xiaozhi_ws";
 
 constexpr size_t kBinaryProtocol2HeaderSize = 16;
 constexpr size_t kBinaryProtocol3HeaderSize = 4;
@@ -92,7 +92,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
     websocket->SetHeader("Client-Id", client_id.c_str());
     websocket->OnData([this](const char* data, size_t len, bool binary) { HandleIncomingData(data, len, binary); });
     websocket->OnDisconnected([this]() {
-        ESP_LOGW(kTag, "WS disconnected");
+        ESP_LOGW(kTag, "disconnected transport=websocket");
         bool notify_closed = false;
         {
             std::lock_guard<std::mutex> lock(channel_mutex_);
@@ -105,7 +105,7 @@ bool WebsocketProtocol::OpenAudioChannel() {
         if (notify_closed)
             PostChannelClosedEvent();
     });
-    websocket->OnError([this](int err) { ESP_LOGW(kTag, "WS error: %d", err); });
+    websocket->OnError([this](int err) { ESP_LOGW(kTag, "error transport=websocket err=%d", err); });
 
     if (!websocket->Connect(cfg.url.c_str())) {
         SetError("连接小智 WebSocket 失败");
@@ -132,7 +132,8 @@ bool WebsocketProtocol::OpenAudioChannel() {
         return close_failed_channel(nullptr);
     }
     if (!(bits & kServerHelloEvent)) {
-        ESP_LOGW(kTag, "WS server hello timeout: connected=%d", websocket_ && websocket_->IsConnected() ? 1 : 0);
+        ESP_LOGW(kTag, "hello timeout transport=websocket connected=%d",
+                 websocket_ && websocket_->IsConnected() ? 1 : 0);
         return close_failed_channel("小智 WebSocket 响应超时");
     }
     bool close_requested = false;
@@ -206,7 +207,8 @@ bool WebsocketProtocol::SendAudio(std::unique_ptr<AudioStreamPacket> packet) {
 bool WebsocketProtocol::SendText(const std::string& text) {
     std::lock_guard<std::mutex> lock(channel_mutex_);
     if (!websocket_ || !websocket_->IsConnected()) {
-        ESP_LOGW(kTag, "WS tx failed: disconnected bytes=%u", static_cast<unsigned>(text.size()));
+        ESP_LOGW(kTag, "text send failed transport=websocket reason=disconnected bytes=%u",
+                 static_cast<unsigned>(text.size()));
         return false;
     }
     const bool ok = websocket_->Send(text);
@@ -255,7 +257,7 @@ bool WebsocketProtocol::HandleIncomingBinary(const char* data, size_t len) {
 bool WebsocketProtocol::HandleIncomingText(const char* data, size_t len) {
     cJSON* root = cJSON_ParseWithLength(data, len);
     if (!root) {
-        ESP_LOGW(kTag, "WS rx ignored: invalid JSON");
+        ESP_LOGW(kTag, "message ignored transport=websocket reason=json_invalid");
         return false;
     }
     cJSON* type = cJSON_GetObjectItem(root, "type");
@@ -323,7 +325,7 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
     };
     cJSON* transport = cJSON_GetObjectItem(root, "transport");
     if (!cJSON_IsString(transport) || std::strcmp(transport->valuestring, "websocket") != 0) {
-        ESP_LOGW(kTag, "Server hello ignored: transport=%s",
+        ESP_LOGW(kTag, "server hello ignored reason=transport transport=%s",
                  cJSON_IsString(transport) ? transport->valuestring : "(missing)");
         fail("小智 WebSocket 协议不匹配");
         return;
@@ -343,7 +345,7 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
         cJSON* frame_duration_item = cJSON_GetObjectItem(audio, "frame_duration");
         if (cJSON_IsNumber(sample_rate_item)) {
             if (!IsSupportedOpusSampleRate(sample_rate_item->valueint)) {
-                ESP_LOGW(kTag, "Server hello ignored: invalid sample_rate=%d", sample_rate_item->valueint);
+                ESP_LOGW(kTag, "server hello ignored reason=sample_rate sample_rate=%d", sample_rate_item->valueint);
                 fail("小智 WebSocket 音频采样率不支持");
                 return;
             }
@@ -351,7 +353,8 @@ void WebsocketProtocol::ParseServerHello(const cJSON* root) {
         }
         if (cJSON_IsNumber(frame_duration_item)) {
             if (!IsSupportedOpusFrameDuration(frame_duration_item->valueint)) {
-                ESP_LOGW(kTag, "Server hello ignored: invalid frame_duration=%d", frame_duration_item->valueint);
+                ESP_LOGW(kTag, "server hello ignored reason=frame_duration frame_duration=%d",
+                         frame_duration_item->valueint);
                 fail("小智 WebSocket 音频帧长不支持");
                 return;
             }

@@ -7,7 +7,7 @@
 
 namespace sync_internal {
 
-inline constexpr char    kTag[]                = "Sync";
+inline constexpr char    kTag[]                = "sync";
 inline constexpr int     kBoundPollSec         = 60;
 inline constexpr int     kStopWaitMs           = 30000;
 inline constexpr int     kUnboundFastPollSec   = 10;

@@ -103,7 +103,7 @@ export class AiService {
       return HistoryTodayOptimized.parse(extractJsonObject(content));
     } catch (err) {
       this.logger.warn(
-        `AI history_today JSON invalid: ${err instanceof Error ? err.message : String(err)}`
+        `AI returned invalid history_today JSON with prompt version ${HISTORY_TODAY_PROMPT_VERSION}: ${formatShortError(err)}`
       );
       return null;
     }
@@ -139,13 +139,15 @@ export class AiService {
       body = await readResponseText(resp, MAX_AI_RESPONSE_BYTES);
     } catch (err) {
       if (!isRecoverableAiRequestError(err)) throw err;
-      this.logger.warn(`AI request failed: ${err instanceof Error ? err.message : String(err)}`);
+      this.logger.warn(`AI request to model ${this.config.model} failed: ${formatShortError(err)}`);
       return null;
     }
 
     const content = parseChatCompletionContent(body);
     if (!content) {
-      this.logger.warn(`AI request failed: AI 响应无有效内容: ${body.slice(0, 240)}`);
+      this.logger.warn(
+        `AI request to model ${this.config.model} returned no usable content: ${truncateLogText(body, 240)}`
+      );
       return null;
     }
     return content;
@@ -163,6 +165,15 @@ function isRecoverableAiRequestError(err: unknown): boolean {
   if (err instanceof AiResponseError) return true;
   if (!(err instanceof Error)) return true;
   return err.name === 'AbortError' || err.name === 'TimeoutError' || err instanceof TypeError;
+}
+
+function formatShortError(err: unknown): string {
+  return truncateLogText(err instanceof Error ? err.message : String(err), 512);
+}
+
+function truncateLogText(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}... [truncated ${value.length - maxChars} chars]`;
 }
 
 async function readResponseText(resp: Response, maxBytes: number): Promise<string> {

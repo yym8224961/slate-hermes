@@ -25,24 +25,25 @@
 
 #include "drivers/audio/audio_player.h"
 #include "events/event_bus.h"
+#include "events/ui_event_log.h"
 #include "network/captive_portal.h"
 #include "network/cred_store.h"
 #include "network/wifi.h"
 #include "power/power_state.h"
 #include "power/shutdown.h"
-#include "scenes/chat/chat_scene.h"
 #include "scenes/frame/frame_scene.h"
 #include "scenes/splash/splash_scene.h"
+#include "scenes/xiaozhi/xiaozhi_scene.h"
 #include "startup/setup_flow.h"
 #include "storage/cache/cache.h"
 #include "sync/api_client.h"
 #include "sync/sync_service.h"
 #include "utils/time_utils.h"
 #include "xiaozhi/service/audio_service.h"
-#include "xiaozhi/service/chat_service.h"
+#include "xiaozhi/service/xiaozhi_service.h"
 
 namespace {
-constexpr char kTag[] = "App";
+constexpr char kTag[] = "app";
 
 ButtonInput MakeButtonInput(Button* button) {
     if (!button)
@@ -62,12 +63,43 @@ void PostChargeSnapshot(const ChargeStatus::Snapshot& snap, TickType_t timeout =
 
 bool PostCachedGroupReadyIfAny() {
     cache::CachedGroupSummary summary;
-    if (!cache::ReadCachedGroupSummary(summary))
+    if (!cache::ReadCachedGroupSummary(summary)) {
+        ESP_LOGD(kTag, "cached group missing");
         return false;
+    }
 
+    ESP_LOGI(kTag, "cached group ready gid=%s name=%s count=%d", summary.gid.c_str(), summary.name.c_str(),
+             summary.content_count);
     evt::PostGroupReady(UiEventKind::kCachedGroupReady, summary.gid, summary.name, summary.content_count,
                         /*content_changed=*/false);
     return true;
+}
+
+const char* SleepOutcomeName(SleepManager::SleepOutcome outcome) {
+    switch (outcome) {
+        case SleepManager::SleepOutcome::kSlept:
+            return "slept";
+        case SleepManager::SleepOutcome::kPausedByCharge:
+            return "paused_by_charge";
+        case SleepManager::SleepOutcome::kDisabled:
+            return "disabled";
+        case SleepManager::SleepOutcome::kUnboundGrace:
+            return "unbound_grace";
+    }
+    return "unknown";
+}
+
+void ConfigureLogLevels() {
+    // esp_codec_dev prints normal I2S/codec setup details at INFO. Keep third-party
+    // style intact, but hide routine startup chatter from the default log stream.
+    esp_log_level_set("I2S_IF", ESP_LOG_WARN);
+    esp_log_level_set("Adev_Codec", ESP_LOG_WARN);
+    esp_log_level_set("ES8311", ESP_LOG_WARN);
+    esp_log_level_set("i2s_common", ESP_LOG_WARN);
+    esp_log_level_set("pm", ESP_LOG_WARN);
+    esp_log_level_set("button", ESP_LOG_WARN);
+    esp_log_level_set("LVGL", ESP_LOG_WARN);
+    esp_log_level_set("esp-x509-crt-bundle", ESP_LOG_WARN);
 }
 
 }  // namespace
@@ -116,7 +148,7 @@ void App::InitSceneStack() {
         else
             SyncService::Get().CyclePrev();
     };
-    ctx.chat_service = []() -> xiaozhi::ChatService* { return &xiaozhi::ChatService::Get(); };
+    ctx.xiaozhi_service = []() -> xiaozhi::XiaozhiService* { return &xiaozhi::XiaozhiService::Get(); };
 
     scene_stack_.SetContext(ctx);
 }
@@ -136,6 +168,7 @@ void App::StartUiLoop() {
     ui_loop_running_.store(true, std::memory_order_release);
     // ui_loop 8 KB：与 home_worker 一致；LVGL render+flush_cb 调用栈装得下，
     // esp_timer task / button cb task 装不下（栈 3584 B）。
+    ESP_LOGD(kTag, "task start name=ui_loop");
     BaseType_t ok = xTaskCreatePinnedToCore(&App::UiLoopEntry, "ui_loop", 8 * 1024, this, 5, nullptr, 0);
     configASSERT(ok == pdPASS);
 }
@@ -145,6 +178,7 @@ void App::UiLoopEntry(void* arg) {
 }
 
 void App::PostWakeupKeyEvent(uint64_t ext1_mask) {
+    ESP_LOGD(kTag, "wake key check ext1_mask=0x%llx", static_cast<unsigned long long>(ext1_mask));
     if (ext1_mask == 0)
         return;
     ButtonId btn;
@@ -154,10 +188,12 @@ void App::PostWakeupKeyEvent(uint64_t ext1_mask) {
         btn = ButtonId::kEnter;
     else
         return;
+    ESP_LOGI(kTag, "wake key btn=%s", evt::log::ButtonName(btn));
     evt::PostButton(UiEventKind::kButtonShort, btn);
 }
 
 void App::PromoteToFrameSceneFromCache() {
+    ESP_LOGD(kTag, "promote from cache");
     if (!PostCachedGroupReadyIfAny()) {
         scene_stack_.Push(std::make_unique<SplashScene>());
     }
@@ -166,6 +202,7 @@ void App::PromoteToFrameSceneFromCache() {
 bool App::HandleSecretInvalid(const UiEvent& e) {
     if (e.kind != UiEventKind::kSecretInvalid)
         return false;
+    ESP_LOGW(kTag, "secret invalid action=clear_and_restart");
     cred::ClearSecret();
     power_shutdown::GracefulRestart(200);
     while (true)
@@ -175,7 +212,10 @@ bool App::HandleSecretInvalid(const UiEvent& e) {
 bool App::HandleBackgroundRefreshDone(const UiEvent& e) {
     if (e.kind != UiEventKind::kBgRefreshDone)
         return false;
+    ESP_LOGI(kTag, "background refresh done");
     auto d = sleep_mgr_.TryEnterDeepSleep();
+    ESP_LOGI(kTag, "sleep decision outcome=%s next_sec=%u", SleepOutcomeName(d.outcome),
+             static_cast<unsigned>(d.configured_next_wake_sec));
     switch (d.outcome) {
         case SleepManager::SleepOutcome::kSlept:
             break;
@@ -190,7 +230,7 @@ bool App::HandleBackgroundRefreshDone(const UiEvent& e) {
             SyncService::Get().RequestUserActiveSync();
             break;
         case SleepManager::SleepOutcome::kDisabled:
-            ESP_LOGW(kTag, "Sleep disabled after background refresh; promote active");
+            ESP_LOGW(kTag, "sleep disabled action=promote_active");
             scene_stack_.Pop();
             PromoteToFrameSceneFromCache();
             break;
@@ -201,7 +241,8 @@ bool App::HandleBackgroundRefreshDone(const UiEvent& e) {
 bool App::HandleXiaozhiChannelClosed(const UiEvent& e) {
     if (e.kind != UiEventKind::kXiaozhiChannelClosed)
         return false;
-    xiaozhi::ChatService::Get().NotifyNetworkClosed(e.u.xiaozhi_channel.token);
+    ESP_LOGD(kTag, "xiaozhi channel closed token=%lu", static_cast<unsigned long>(e.u.xiaozhi_channel.token));
+    xiaozhi::XiaozhiService::Get().NotifyNetworkClosed(e.u.xiaozhi_channel.token);
     return true;
 }
 
@@ -210,6 +251,8 @@ bool App::HandleInitialGroupReady(const UiEvent& e) {
         !scene_stack_.Empty()) {
         return false;
     }
+    ESP_LOGI(kTag, "initial group ready gid=%s name=%s count=%d", e.u.group.gid, e.u.group.name,
+             e.u.group.content_count);
     scene_stack_.Push(std::make_unique<FrameScene>(scene_stack_.Context(), e.u.group.gid, e.u.group.content_count));
     scene_stack_.ApplyPending();
     return true;
@@ -219,14 +262,15 @@ bool App::HandleEnterDoubleClick(const UiEvent& e) {
     if (e.kind != UiEventKind::kButtonDouble || e.u.button.btn != ButtonId::kEnter)
         return false;
     Scene* top = scene_stack_.Top();
+    ESP_LOGD(kTag, "button double btn=enter action=xiaozhi_or_delegate top=%s", top ? top->Name() : "(none)");
     if (top && top->IsSettings()) {
         scene_stack_.Dispatch(e);
         sleep_mgr_.OnEvent(e);
         scene_stack_.ApplyPending();
         return true;
     }
-    if (!top || std::strcmp(top->Name(), "Xiaozhi") != 0) {
-        scene_stack_.Push(std::make_unique<ChatScene>());
+    if (!top || std::strcmp(top->Name(), "xiaozhi") != 0) {
+        scene_stack_.Push(std::make_unique<XiaozhiScene>());
         scene_stack_.ApplyPending();
         sleep_mgr_.OnEvent(e);
         return true;
@@ -235,12 +279,16 @@ bool App::HandleEnterDoubleClick(const UiEvent& e) {
 }
 
 void App::UiLoopTask() {
+    ESP_LOGD(kTag, "ui loop start mode=%s wake=%s", evt::log::BootModeName(decision_.mode),
+             evt::log::WakeCauseName(decision_.wake_cause));
     switch (decision_.mode) {
         case boot_mode::Mode::kPortal:
         case boot_mode::Mode::kFullActive:
+            ESP_LOGD(kTag, "initial scene scene=splash");
             scene_stack_.Push(std::make_unique<SplashScene>());
             break;
         case boot_mode::Mode::kBackgroundRefresh:
+            ESP_LOGD(kTag, "initial scene scene=bg_refresh");
             scene_stack_.Push(std::make_unique<BgRefreshScene>());
             break;
     }
@@ -252,6 +300,12 @@ void App::UiLoopTask() {
             sleep_mgr_.Tick(time_utils::NowMs());
             continue;
         }
+        if (evt::log::DebugEnabled(kTag)) {
+            char detail[128];
+            evt::log::Describe(e, detail, sizeof(detail));
+            ESP_LOGD(kTag, "event handle kind=%s detail=%s top=%s", evt::log::KindName(e.kind), detail,
+                     scene_stack_.Top() ? scene_stack_.Top()->Name() : "(none)");
+        }
         using Handler                                           = bool (App::*)(const UiEvent&);
         static constexpr std::array<Handler, 5> kSystemHandlers = {
             &App::HandleSecretInvalid,     &App::HandleBackgroundRefreshDone, &App::HandleXiaozhiChannelClosed,
@@ -261,29 +315,45 @@ void App::UiLoopTask() {
         for (Handler handler : kSystemHandlers) {
             if ((this->*handler)(e)) {
                 handled = true;
+                ESP_LOGD(kTag, "event handled scope=system kind=%s", evt::log::KindName(e.kind));
                 break;
             }
         }
-        if (handled)
+        if (handled) {
+            ESP_LOGD(kTag, "event done scope=system kind=%s top=%s", evt::log::KindName(e.kind),
+                     scene_stack_.Top() ? scene_stack_.Top()->Name() : "(none)");
             continue;
+        }
         scene_stack_.Dispatch(e);
         sleep_mgr_.OnEvent(e);
         // 供电状态变化时重配 light sleep：插 USB 关、拔掉(电池)开。
-        if (e.kind == UiEventKind::kChargeChanged)
+        if (e.kind == UiEventKind::kChargeChanged) {
+            ESP_LOGD(kTag, "power mode light_sleep=%d", ShouldEnableLightSleep(e.u.charge.present) ? 1 : 0);
             ConfigurePm(ShouldEnableLightSleep(e.u.charge.present));
+        }
         scene_stack_.ApplyPending();
+        ESP_LOGD(kTag, "event done kind=%s top=%s", evt::log::KindName(e.kind),
+                 scene_stack_.Top() ? scene_stack_.Top()->Name() : "(none)");
     }
+    ESP_LOGW(kTag, "ui loop exit");
     vTaskDelete(nullptr);
 }
 
 void App::AttachInputs() {
-    auto post_button = [](UiEventKind kind, ButtonId b) { return [kind, b]() { evt::PostButton(kind, b); }; };
+    ESP_LOGD(kTag, "input attach");
+    auto post_button = [](UiEventKind kind, ButtonId b) {
+        return [kind, b]() {
+            ESP_LOGD(kTag, "button event kind=%s btn=%s", evt::log::KindName(kind), evt::log::ButtonName(b));
+            evt::PostButton(kind, b);
+        };
+    };
 
     auto* board = &Board::Get();
 
     up_down_combo_.Install(
         MakeButtonInput(board->up_btn()), MakeButtonInput(board->down_btn()),
         [] {
+            ESP_LOGI(kTag, "button combo action=full_refresh combo=up_down");
             if (auto* epd = Board::Get().epd())
                 epd->RequestUrgentFullRefresh();
         },
@@ -304,10 +374,13 @@ void App::AttachInputs() {
 }
 
 void App::StartMinuteBoundaryTicker() {
+    ESP_LOGD(kTag, "ticker start name=minute_boundary");
     minute_ticker_.Start();
 }
 
 bool App::InitWifiAndSync(cred::Credentials& creds, bool background_refresh) {
+    ESP_LOGI(kTag, "network setup start background=%d ssid=%s has_secret=%d", background_refresh ? 1 : 0,
+             creds.wifi_ssid.c_str(), creds.device_secret.empty() ? 0 : 1);
     Wifi::Get().Init();
 
     // poll 收 401 → emit kSecretInvalid;UiLoop 拦下来在主线程清 NVS + esp_restart。
@@ -315,6 +388,7 @@ bool App::InitWifiAndSync(cred::Credentials& creds, bool background_refresh) {
 
     if (setup_flow::TryConnectAndSetup(creds)) {
         // 连上 → 状态栏立即显示 wifi 图标
+        ESP_LOGI(kTag, "network setup done sync_initial=%s", background_refresh ? "background_refresh" : "user_active");
         evt::PostWifiState(true, Wifi::Get().GetRssi());
 
         SyncService::Get().Start(decision_.wake_reason, background_refresh
@@ -322,6 +396,7 @@ bool App::InitWifiAndSync(cred::Credentials& creds, bool background_refresh) {
                                                             : SyncService::InitialSync::kUserActive);
         return true;
     } else {
+        ESP_LOGW(kTag, "network setup failed");
         return false;
     }
 }
@@ -333,7 +408,7 @@ void App::StartPortal() {
         std::string reason;
         if (!Wifi::Get().TryConnect(s.ssid, s.password, 10000, reason)) {
             out_error = reason;
-            ESP_LOGW(kTag, "TryConnect failed: %s", reason.c_str());
+            ESP_LOGW(kTag, "wifi try connect failed ssid=%s reason=%s", s.ssid.c_str(), reason.c_str());
             return false;
         }
         cred::Credentials c;
@@ -344,7 +419,7 @@ void App::StartPortal() {
         // → 走 register 流。设备命名留到 Web 端 PUT /devices/:id 完成绑定后再做。
         if (!cred::Save(c)) {
             out_error = "凭据保存失败,请重试";
-            ESP_LOGE(kTag, "Credential save failed");
+            ESP_LOGE(kTag, "credential save failed");
             return false;
         }
         return true;
@@ -366,6 +441,8 @@ void App::StartSleep() {
     // 这里主动 Post 一次让 SleepManager 同步初始 paused_ 状态,免得"开机就充电"
     // 场景被误判为闲置 5min 后睡。
     auto snap = Board::Get().charge()->Get();
+    ESP_LOGD(kTag, "sleep start charge_present=%d charging=%d full=%d no_battery=%d", snap.power_present ? 1 : 0,
+             snap.charging ? 1 : 0, snap.full ? 1 : 0, snap.no_battery ? 1 : 0);
     PostChargeSnapshot(snap);
 }
 
@@ -385,25 +462,33 @@ void App::ConfigurePm(bool light_sleep_enable) {
         .min_freq_mhz       = 80,
         .light_sleep_enable = light_sleep_enable,
     };
+    ESP_LOGD(kTag, "power management configure light_sleep=%d", light_sleep_enable ? 1 : 0);
     ESP_ERROR_CHECK(esp_pm_configure(&pm));
 }
 
 void App::FinalizePm() {
     const bool power_present = Board::Get().charge()->Get().power_present;
+    ESP_LOGD(kTag, "power management finalize power_present=%d", power_present ? 1 : 0);
     ConfigurePm(ShouldEnableLightSleep(power_present));
 }
 
 void App::Init() {
+    ConfigureLogLevels();
+    ESP_LOGI(kTag, "init begin");
     InitStorage();
     InitDevices();
     InitEventBus();
-    xiaozhi::ChatService::Get().Start(&AudioPlayer::Get(), &xiaozhi::AudioService::Get());
+    xiaozhi::XiaozhiService::Get().Start(&AudioPlayer::Get(), &xiaozhi::AudioService::Get());
     InitSceneStack();
 
     cred::Credentials creds;
     cred::Load(creds);
     power_state::Init(esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED);
     decision_ = boot_mode::Decide(creds);
+    ESP_LOGI(kTag, "boot decision mode=%s wake=%s reason=%s ext1=0x%llx first_register=%d",
+             evt::log::BootModeName(decision_.mode), evt::log::WakeCauseName(decision_.wake_cause),
+             decision_.wake_reason.c_str(), static_cast<unsigned long long>(decision_.ext1_mask),
+             decision_.first_register ? 1 : 0);
 
     SleepManager::Policy policy;
     policy.idle_timeout_min = CONFIG_SLATE_IDLE_DEEP_SLEEP_MIN;
@@ -412,8 +497,8 @@ void App::Init() {
     // 阻止深睡的两个来源：语音会话活动中、以及一次 sync 突发(大文件下载)进行中。
     // 任一持续阻塞超过 SleepManager 看门狗上限时会被强制打断回睡，避免卡死耗光电池。
     sleep_mgr_.SetSleepBlocker(
-        []() { return xiaozhi::ChatService::Get().BlocksSleep() || SyncService::Get().IsBusy(); });
-    power_shutdown::SetPreShutdownHook([]() { xiaozhi::ChatService::Get().SuspendForSleep(); });
+        []() { return xiaozhi::XiaozhiService::Get().BlocksSleep() || SyncService::Get().IsBusy(); });
+    power_shutdown::SetPreShutdownHook([]() { xiaozhi::XiaozhiService::Get().SuspendForSleep(); });
 
     StartUiLoop();
     AttachInputs();
@@ -422,13 +507,15 @@ void App::Init() {
 
     switch (decision_.mode) {
         case boot_mode::Mode::kPortal:
+            ESP_LOGD(kTag, "mode portal");
             Wifi::Get().Init();
             StartPortal();
             break;
         case boot_mode::Mode::kBackgroundRefresh: {
+            ESP_LOGD(kTag, "mode background_refresh");
             const bool net_ok = InitWifiAndSync(creds, true);
             if (!net_ok) {
-                ESP_LOGW(kTag, "Background refresh network setup failed -> deep sleep");
+                ESP_LOGW(kTag, "background refresh network failed action=deep_sleep");
                 // 联系不上服务器：递增退避计数，下次 timer wake 间隔指数拉长，避免空醒。
                 power_state::RecordTimerWakeResult(false);
                 evt::PostSimple(UiEventKind::kBgRefreshDone, portMAX_DELAY);
@@ -436,6 +523,7 @@ void App::Init() {
             break;
         }
         case boot_mode::Mode::kFullActive: {
+            ESP_LOGD(kTag, "mode full_active");
             const bool net_ok = InitWifiAndSync(creds, false);
             if (net_ok && !decision_.first_register) {
                 PostCachedGroupReadyIfAny();
@@ -444,7 +532,7 @@ void App::Init() {
                 }
             }
             if (!net_ok) {
-                ESP_LOGW(kTag, "Fallback to captive portal");
+                ESP_LOGW(kTag, "fallback action=captive_portal");
                 StartPortal();
                 sleep_mgr_.Disable();
             }
@@ -453,10 +541,12 @@ void App::Init() {
     }
 
     FinalizePm();
+    ESP_LOGI(kTag, "init done");
 }
 
 void App::Run() {
     // main task Init 完毕。释放栈，让 ui_loop / sync / charge_tick / audio / epd_refresh
     // 各自后台跑。直接 return 会被 IDF abort，必须 vTaskDelete。
+    ESP_LOGD(kTag, "task delete name=main");
     vTaskDelete(nullptr);
 }

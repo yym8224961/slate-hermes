@@ -26,12 +26,12 @@
 #include "ui/theme.h"
 #include "utils/mac_utils.h"
 #include "xiaozhi/config/settings.h"
-#include "xiaozhi/service/chat_service.h"
+#include "xiaozhi/service/xiaozhi_service.h"
 
 namespace {
-constexpr char kDeviceInfoTag[]   = "DeviceInfo";
-constexpr char kRestartTag[]      = "Restart";
-constexpr char kFactoryResetTag[] = "FactoryReset";
+constexpr char kDeviceInfoTag[]   = "device_info";
+constexpr char kRestartTag[]      = "restart";
+constexpr char kFactoryResetTag[] = "factory_reset";
 constexpr int  kBarWidth          = 280;
 constexpr int  kBarHeight         = 24;
 
@@ -169,8 +169,7 @@ void VolumePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
                         level_++;
                         dirty_ = true;
                         ApplyLevel(ctx);
-                        RedrawValue();
-                        SyncRender(ctx);
+                        SyncRender(ctx, [this]() { RedrawValue(); });
                     }
                     break;
                 case ButtonId::kDown:
@@ -178,8 +177,7 @@ void VolumePage::OnEvent(SceneContext& ctx, const UiEvent& e) {
                         level_--;
                         dirty_ = true;
                         ApplyLevel(ctx);
-                        RedrawValue();
-                        SyncRender(ctx);
+                        SyncRender(ctx, [this]() { RedrawValue(); });
                     }
                     break;
                 case ButtonId::kEnter:
@@ -211,8 +209,8 @@ void VolumePage::RedrawValue() {
 }
 
 void VolumePage::ApplyLevel(SceneContext& ctx) {
-    if (ctx.chat_service) {
-        if (auto* service = ctx.chat_service()) {
+    if (ctx.xiaozhi_service) {
+        if (auto* service = ctx.xiaozhi_service()) {
             service->PreviewVolume(level_);
             return;
         }
@@ -221,8 +219,8 @@ void VolumePage::ApplyLevel(SceneContext& ctx) {
 }
 
 void VolumePage::SaveLevel(SceneContext& ctx) {
-    if (ctx.chat_service) {
-        if (auto* service = ctx.chat_service()) {
+    if (ctx.xiaozhi_service) {
+        if (auto* service = ctx.xiaozhi_service()) {
             service->SetVolume(level_);
             return;
         }
@@ -319,10 +317,15 @@ void DeviceInfoPage::OnEvent(SceneContext& ctx, const UiEvent& e) {
         case UiEventKind::kBatteryUpdated:
         case UiEventKind::kWifiStateChanged:
         case UiEventKind::kMinuteTick:
-            if (Refresh(ctx)) {
-                UpdateThumb();
-                SyncRender(ctx);
-            }
+            SyncRenderIfChanged(
+                ctx,
+                [this, &ctx]() {
+                    const bool changed = Refresh(ctx);
+                    if (changed)
+                        UpdateThumb();
+                    return changed;
+                },
+                false);
             break;
         default:
             break;
@@ -341,9 +344,13 @@ void DeviceInfoPage::ScrollBy(SceneContext& ctx, int dy_view) {
         new_y = max_y;
     if (new_y == cur_y)
         return;
-    lv_obj_scroll_to_y(scroll_area_, new_y, LV_ANIM_OFF);
-    UpdateThumb();
-    SyncRender(ctx);
+    SyncRender(
+        ctx,
+        [this, new_y]() {
+            lv_obj_scroll_to_y(scroll_area_, new_y, LV_ANIM_OFF);
+            UpdateThumb();
+        },
+        false);
 }
 
 void DeviceInfoPage::UpdateThumb() {
@@ -404,7 +411,7 @@ bool DeviceInfoPage::Refresh(SceneContext& ctx) {
     size_t fs_total = 0;
     size_t fs_used  = 0;
     if (esp_littlefs_info("storage", &fs_total, &fs_used) != ESP_OK) {
-        ESP_LOGW(kDeviceInfoTag, "esp_littlefs_info failed");
+        ESP_LOGW(kDeviceInfoTag, "littlefs info failed");
     }
     const size_t fs_used_kb  = round_kb_100(fs_used);
     const size_t fs_total_kb = round_kb_100(fs_total);
@@ -439,7 +446,7 @@ bool DeviceInfoPage::Refresh(SceneContext& ctx) {
 }
 
 RestartDevicePage::RestartDevicePage()
-    : ConfirmActionPage("RestartDevice", "重启设备",
+    : ConfirmActionPage("restart_device", "重启设备",
                         "确认要重启设备吗？\n\n"
                         "Wi-Fi 配置和已下载\n"
                         "的内容缓存都保留\n"
@@ -449,12 +456,12 @@ RestartDevicePage::RestartDevicePage()
 RestartDevicePage::~RestartDevicePage() = default;
 
 void RestartDevicePage::Confirm(SceneContext&) {
-    ESP_LOGW(kRestartTag, "Long Enter -> restart device");
+    ESP_LOGW(kRestartTag, "confirm action=restart_device");
     power_shutdown::GracefulRestart(200);
 }
 
 FactoryResetPage::FactoryResetPage()
-    : ConfirmActionPage("FactoryReset", "恢复出厂",
+    : ConfirmActionPage("factory_reset", "恢复出厂",
                         "确认要恢复出厂吗？\n\n"
                         "Wi-Fi 配置、设备绑定\n"
                         "小智配置及内容缓存\n"
@@ -465,7 +472,7 @@ FactoryResetPage::FactoryResetPage()
 FactoryResetPage::~FactoryResetPage() = default;
 
 void FactoryResetPage::Confirm(SceneContext&) {
-    ESP_LOGW(kFactoryResetTag, "Long Enter -> factory reset: clear NVS + format littlefs + reboot");
+    ESP_LOGW(kFactoryResetTag, "confirm action=factory_reset");
     cred::Clear();
     nvs_store::EraseNamespace(nvs_schema::kAudio);
     xiaozhi::settings::ClearAll();

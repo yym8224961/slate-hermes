@@ -130,14 +130,14 @@ export class ImageRenderCacheService implements OnModuleInit, OnModuleDestroy {
         const code = (err as NodeJS.ErrnoException).code;
         if (code !== 'ENOENT' && code !== 'ENOTEMPTY') {
           this.logger.warn(
-            `image-render-cache gc failed to remove empty prefix ${prefix}: ${
-              err instanceof Error ? err.message : String(err)
-            }`
+            `Image render cache GC failed to remove empty prefix ${prefix}: ${formatCacheError(err)}`
           );
         }
       });
     }
-    this.logger.log(`image-render-cache gc removed ${removed} entries (older than ${maxAgeDays}d)`);
+    this.logger.log(
+      `Image render cache GC removed ${removed} entries older than ${maxAgeDays} day(s).`
+    );
     return { removed };
   }
 
@@ -146,11 +146,15 @@ export class ImageRenderCacheService implements OnModuleInit, OnModuleDestroy {
       void this.gc(GC_MAX_AGE_DAYS)
         .catch((err: unknown) => {
           this.logger.warn(
-            `image-render-cache gc failed: ${err instanceof Error ? err.message : String(err)}`
+            `Image render cache GC failed for root ${this.cacheRoot}: ${formatCacheError(err)}`
           );
         })
         .finally(() => this.scheduleGc(GC_INTERVAL_MS));
     }, delayMs);
     this.gcTimer.unref?.();
   }
+}
+
+function formatCacheError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

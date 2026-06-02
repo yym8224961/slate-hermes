@@ -32,7 +32,7 @@ export function loadWeatherIconMask(
   }
   const task = renderWeatherIconMask(normalized, size).catch((err: unknown) => {
     cache.delete(key);
-    logger.error(`Failed to load weather icon ${normalized} (${size}): ${formatError(err)}`);
+    logger.warn(`Weather icon ${normalized} failed to load at size ${size}: ${formatError(err)}`);
     return null;
   });
   setBoundedCache(cache, key, task, MAX_ICON_CACHE_ENTRIES);
@@ -40,7 +40,7 @@ export function loadWeatherIconMask(
 }
 
 function formatError(err: unknown): string {
-  if (err instanceof Error) return err.stack ?? err.message;
+  if (err instanceof Error) return err.message;
   return String(err);
 }
 

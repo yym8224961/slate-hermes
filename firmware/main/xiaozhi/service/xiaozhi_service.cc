@@ -1,4 +1,4 @@
-#include "xiaozhi/service/chat_service.h"
+#include "xiaozhi/service/xiaozhi_service.h"
 
 #include <cJSON.h>
 #include <esp_heap_caps.h>
@@ -12,21 +12,59 @@
 #include "xiaozhi/config/activation_client.h"
 #include "xiaozhi/config/settings.h"
 #include "xiaozhi/service/audio_service.h"
-#include "xiaozhi/service/chat_phase.h"
 #include "xiaozhi/service/message_handler.h"
+#include "xiaozhi/service/xiaozhi_phase.h"
 
 namespace {
-constexpr char kTag[] = "XiaoChat";
+constexpr char kTag[] = "xiaozhi_service";
+
+const char* XiaozhiStateName(xiaozhi::XiaozhiState state) {
+    switch (state) {
+        case xiaozhi::XiaozhiState::kCheckingConfig:
+            return "checking_config";
+        case xiaozhi::XiaozhiState::kAwaitingActivation:
+            return "awaiting_activation";
+        case xiaozhi::XiaozhiState::kReadyIdle:
+            return "ready_idle";
+        case xiaozhi::XiaozhiState::kConnecting:
+            return "connecting";
+        case xiaozhi::XiaozhiState::kListening:
+            return "listening";
+        case xiaozhi::XiaozhiState::kSpeaking:
+            return "speaking";
+        case xiaozhi::XiaozhiState::kStopping:
+            return "stopping";
+        case xiaozhi::XiaozhiState::kError:
+            return "error";
+    }
+    return "unknown";
+}
+
+const char* XiaozhiPhaseName(xiaozhi::XiaozhiPhase phase) {
+    switch (phase) {
+        case xiaozhi::XiaozhiPhase::kIdle:
+            return "idle";
+        case xiaozhi::XiaozhiPhase::kStarting:
+            return "starting";
+        case xiaozhi::XiaozhiPhase::kRunning:
+            return "running";
+        case xiaozhi::XiaozhiPhase::kStopping:
+            return "stopping";
+        case xiaozhi::XiaozhiPhase::kStartPending:
+            return "start_pending";
+    }
+    return "unknown";
+}
 }  // namespace
 
 namespace xiaozhi {
 
-ChatService& ChatService::Get() {
-    static ChatService s;
+XiaozhiService& XiaozhiService::Get() {
+    static XiaozhiService s;
     return s;
 }
 
-bool ChatService::Start(AudioPlayer* player, AudioService* audio) {
+bool XiaozhiService::Start(AudioPlayer* player, AudioService* audio) {
     if (!player || !audio)
         return false;
     player_ = player;
@@ -34,7 +72,7 @@ bool ChatService::Start(AudioPlayer* player, AudioService* audio) {
     if (!tasks_.config_done_notify) {
         tasks_.config_done_notify = xSemaphoreCreateBinary();
         if (!tasks_.config_done_notify) {
-            ESP_LOGE(kTag, "Config done semaphore create failed");
+            ESP_LOGE(kTag, "config done semaphore create failed");
             return false;
         }
     }
@@ -43,7 +81,7 @@ bool ChatService::Start(AudioPlayer* player, AudioService* audio) {
     if (!tasks_.conversation_done_notify) {
         tasks_.conversation_done_notify = xSemaphoreCreateBinary();
         if (!tasks_.conversation_done_notify) {
-            ESP_LOGE(kTag, "Conversation done semaphore create failed");
+            ESP_LOGE(kTag, "conversation done semaphore create failed");
             return false;
         }
     }
@@ -57,7 +95,7 @@ bool ChatService::Start(AudioPlayer* player, AudioService* audio) {
     return true;
 }
 
-void ChatService::EnterMode() {
+void XiaozhiService::EnterMode() {
     in_mode_.store(true, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
@@ -73,62 +111,62 @@ void ChatService::EnterMode() {
         std::lock_guard<std::mutex> task_lock(conversation_task_mutex_);
         has_conversation_task = HasConversationTaskLocked();
     }
-    const ChatPhase phase = chat_phase_.load(std::memory_order_relaxed);
+    const XiaozhiPhase phase = xiaozhi_phase_.load(std::memory_order_relaxed);
     if (has_conversation_task || ConversationBlocksSleep(phase)) {
-        SetState(ChatState::kStopping, "小智正在收尾...");
+        SetState(XiaozhiState::kStopping, "小智正在收尾...");
     } else if (settings::HasProtocolConfig()) {
-        SetState(ChatState::kReadyIdle, "小智待机");
+        SetState(XiaozhiState::kReadyIdle, "小智待机");
     } else {
         StartConfigTask();
     }
 }
 
-void ChatService::LeaveMode() {
+void XiaozhiService::LeaveMode() {
     in_mode_.store(false, std::memory_order_relaxed);
-    if (chat_phase_.load(std::memory_order_relaxed) == ChatPhase::kStartPending)
-        chat_phase_.store(ChatPhase::kStopping, std::memory_order_relaxed);
+    if (xiaozhi_phase_.load(std::memory_order_relaxed) == XiaozhiPhase::kStartPending)
+        xiaozhi_phase_.store(XiaozhiPhase::kStopping, std::memory_order_relaxed);
     StopConfigTask(true);
     StopConversation(true);
     const bool stopped = WaitForConversationStopped(3000);
     if (stopped)
-        chat_phase_.store(ChatPhase::kIdle, std::memory_order_relaxed);
-    ESP_LOGI(kTag, "LeaveMode wait stopped=%d", stopped ? 1 : 0);
+        xiaozhi_phase_.store(XiaozhiPhase::kIdle, std::memory_order_relaxed);
+    ESP_LOGD(kTag, "leave mode stopped=%d", stopped ? 1 : 0);
 }
 
-void ChatService::ToggleChat() {
-    const ChatState state = CurrentState();
-    ESP_LOGI(kTag, "ToggleChat state=%d", static_cast<int>(state));
+void XiaozhiService::ToggleXiaozhi() {
+    const XiaozhiState state = CurrentState();
+    ESP_LOGI(kTag, "toggle xiaozhi state=%s", XiaozhiStateName(state));
     switch (state) {
-        case ChatState::kReadyIdle:
-        case ChatState::kError:
+        case XiaozhiState::kReadyIdle:
+        case XiaozhiState::kError:
             if (settings::HasProtocolConfig()) {
                 StartConversationTask();
             } else {
                 StartConfigTask();
             }
             break;
-        case ChatState::kListening:
-        case ChatState::kConnecting:
+        case XiaozhiState::kListening:
+        case XiaozhiState::kConnecting:
             StopConversation(true);
             break;
-        case ChatState::kSpeaking:
+        case XiaozhiState::kSpeaking:
             InterruptSpeaking();
             break;
-        case ChatState::kStopping:
+        case XiaozhiState::kStopping:
             if (settings::HasProtocolConfig()) {
-                chat_phase_.store(ChatPhase::kStartPending, std::memory_order_relaxed);
-                SetState(ChatState::kStopping, "小智正在收尾...");
+                xiaozhi_phase_.store(XiaozhiPhase::kStartPending, std::memory_order_relaxed);
+                SetState(XiaozhiState::kStopping, "小智正在收尾...");
             }
             break;
-        case ChatState::kCheckingConfig:
-        case ChatState::kAwaitingActivation:
+        case XiaozhiState::kCheckingConfig:
+        case XiaozhiState::kAwaitingActivation:
             break;
     }
 }
 
-void ChatService::StopConversation(bool send_goodbye) {
-    ESP_LOGI(kTag, "StopConversation begin goodbye=%d", send_goodbye ? 1 : 0);
-    const bool was_running = SetStoppingIfMayRun(chat_phase_);
+void XiaozhiService::StopConversation(bool send_goodbye) {
+    ESP_LOGD(kTag, "stop conversation begin goodbye=%d", send_goodbye ? 1 : 0);
+    const bool was_running = SetStoppingIfMayRun(xiaozhi_phase_);
     bool       has_task    = false;
     {
         std::lock_guard<std::mutex> task_lock(conversation_task_mutex_);
@@ -141,32 +179,32 @@ void ChatService::StopConversation(bool send_goodbye) {
         protocol_.reset();
     }
     if (was_running || has_task || protocol) {
-        const ChatPhase phase = chat_phase_.load(std::memory_order_relaxed);
-        if (phase == ChatPhase::kIdle)
-            chat_phase_.store(ChatPhase::kStopping, std::memory_order_relaxed);
-        if (CurrentState() != ChatState::kError)
-            SetState(ChatState::kStopping, "小智正在收尾...");
+        const XiaozhiPhase phase = xiaozhi_phase_.load(std::memory_order_relaxed);
+        if (phase == XiaozhiPhase::kIdle)
+            xiaozhi_phase_.store(XiaozhiPhase::kStopping, std::memory_order_relaxed);
+        if (CurrentState() != XiaozhiState::kError)
+            SetState(XiaozhiState::kStopping, "小智正在收尾...");
     }
     pending_listen_after_playback_.store(false, std::memory_order_relaxed);
     if (protocol)
         protocol->CloseAudioChannel(send_goodbye);
     EndAudioSession();
-    ESP_LOGI(kTag, "StopConversation end was_running=%d has_task=%d had_protocol=%d", was_running ? 1 : 0,
+    ESP_LOGD(kTag, "stop conversation done was_running=%d has_task=%d had_protocol=%d", was_running ? 1 : 0,
              has_task ? 1 : 0, protocol ? 1 : 0);
 }
 
-void ChatService::AdjustVolume(int delta) {
+void XiaozhiService::AdjustVolume(int delta) {
     const int level = std::clamp(settings::GetVolume() + delta, 0, vol::kMax);
     SetVolume(level);
 }
 
-void ChatService::PreviewVolume(int level) {
+void XiaozhiService::PreviewVolume(int level) {
     level = std::clamp(level, 0, vol::kMax);
     if (player_)
         player_->SetVolume(vol::ToCodec(level));
 }
 
-void ChatService::SetVolume(int level) {
+void XiaozhiService::SetVolume(int level) {
     level = std::clamp(level, 0, vol::kMax);
     settings::SetVolume(level);
     PreviewVolume(level);
@@ -177,15 +215,15 @@ void ChatService::SetVolume(int level) {
     PostChanged();
 }
 
-bool ChatService::BlocksSleep() const {
+bool XiaozhiService::BlocksSleep() const {
     const bool audio_active = audio_ && audio_->IsActive();
     return in_mode_.load(std::memory_order_relaxed) || config_running_.load(std::memory_order_relaxed) ||
-           ConversationBlocksSleep(chat_phase_.load(std::memory_order_relaxed)) || audio_active;
+           ConversationBlocksSleep(xiaozhi_phase_.load(std::memory_order_relaxed)) || audio_active;
 }
 
-void ChatService::SuspendForSleep() {
+void XiaozhiService::SuspendForSleep() {
     in_mode_.store(false, std::memory_order_relaxed);
-    chat_phase_.store(ChatPhase::kStopping, std::memory_order_relaxed);
+    xiaozhi_phase_.store(XiaozhiPhase::kStopping, std::memory_order_relaxed);
     StopConfigTask(true);
     control_close_requested_.store(false, std::memory_order_relaxed);
     pending_listen_after_playback_.store(false, std::memory_order_relaxed);
@@ -202,82 +240,81 @@ void ChatService::SuspendForSleep() {
     const bool stopped = WaitForConversationStopped(3000);
     EndAudioSession();
     if (stopped)
-        chat_phase_.store(ChatPhase::kIdle, std::memory_order_relaxed);
+        xiaozhi_phase_.store(XiaozhiPhase::kIdle, std::memory_order_relaxed);
 }
 
-void ChatService::NotifyNetworkClosed(uint32_t conversation_token) {
+void XiaozhiService::NotifyNetworkClosed(uint32_t conversation_token) {
     RequestControlClose(conversation_token);
 }
 
-void ChatService::StartConversationTask() {
+void XiaozhiService::StartConversationTask() {
     if (!started_.load(std::memory_order_relaxed))
         return;
     std::lock_guard<std::mutex> task_lock(conversation_task_mutex_);
-    const ChatPhase             phase = chat_phase_.load(std::memory_order_relaxed);
+    const XiaozhiPhase          phase = xiaozhi_phase_.load(std::memory_order_relaxed);
     if (tasks_.conversation_task || ConversationStopOrRestartPending(phase)) {
-        ESP_LOGI(kTag, "StartConversationTask queued task=%p phase=%d", tasks_.conversation_task,
-                 static_cast<int>(phase));
+        ESP_LOGD(kTag, "conversation queued task=%p phase=%s", tasks_.conversation_task, XiaozhiPhaseName(phase));
         QueueConversationStartLocked();
         return;
     }
-    ChatPhase expected = ChatPhase::kIdle;
-    if (!chat_phase_.compare_exchange_strong(expected, ChatPhase::kStarting, std::memory_order_relaxed))
+    XiaozhiPhase expected = XiaozhiPhase::kIdle;
+    if (!xiaozhi_phase_.compare_exchange_strong(expected, XiaozhiPhase::kStarting, std::memory_order_relaxed))
         return;
     if (tasks_.conversation_done_notify) {
         while (xSemaphoreTake(tasks_.conversation_done_notify, 0) == pdTRUE) {
         }
     }
     conversation_token_.fetch_add(1, std::memory_order_acq_rel);
-    ESP_LOGI(kTag, "StartConversationTask create token=%lu",
+    ESP_LOGD(kTag, "conversation start token=%lu",
              static_cast<unsigned long>(conversation_token_.load(std::memory_order_acquire)));
-    BaseType_t ok = xTaskCreatePinnedToCore(&ChatService::ConversationTaskEntry, "xiaozhi_conv", 10 * 1024, this, 4,
+    BaseType_t ok = xTaskCreatePinnedToCore(&XiaozhiService::ConversationTaskEntry, "xiaozhi_conv", 10 * 1024, this, 4,
                                             &tasks_.conversation_task, 0);
     if (ok != pdPASS) {
-        ESP_LOGE(kTag, "Conversation task create failed: internal_free=%u largest=%u",
+        ESP_LOGE(kTag, "conversation task create failed internal_free=%u largest=%u",
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
-        chat_phase_.store(ChatPhase::kIdle, std::memory_order_relaxed);
+        xiaozhi_phase_.store(XiaozhiPhase::kIdle, std::memory_order_relaxed);
         tasks_.conversation_task = nullptr;
         if (tasks_.conversation_done_notify)
             xSemaphoreGive(tasks_.conversation_done_notify);
         SetError("小智对话任务启动失败");
     } else {
-        ESP_LOGI(kTag, "StartConversationTask created task=%p", tasks_.conversation_task);
+        ESP_LOGD(kTag, "conversation task created task=%p", tasks_.conversation_task);
     }
 }
 
-bool ChatService::HasConversationTaskLocked() const {
+bool XiaozhiService::HasConversationTaskLocked() const {
     return tasks_.conversation_task != nullptr;
 }
 
-void ChatService::QueueConversationStartLocked() {
-    ESP_LOGI(kTag, "QueueConversationStart");
-    chat_phase_.store(ChatPhase::kStartPending, std::memory_order_relaxed);
-    if (in_mode_.load(std::memory_order_relaxed) && CurrentState() != ChatState::kError)
-        SetState(ChatState::kStopping, "小智正在收尾...");
+void XiaozhiService::QueueConversationStartLocked() {
+    ESP_LOGD(kTag, "queue conversation start");
+    xiaozhi_phase_.store(XiaozhiPhase::kStartPending, std::memory_order_relaxed);
+    if (in_mode_.load(std::memory_order_relaxed) && CurrentState() != XiaozhiState::kError)
+        SetState(XiaozhiState::kStopping, "小智正在收尾...");
 }
 
-bool ChatService::WaitForConversationStopped(int timeout_ms) {
-    ESP_LOGI(kTag, "WaitForConversationStopped begin timeout=%d", timeout_ms);
+bool XiaozhiService::WaitForConversationStopped(int timeout_ms) {
+    ESP_LOGD(kTag, "wait conversation stopped begin timeout_ms=%d", timeout_ms);
     {
         std::lock_guard<std::mutex> task_lock(conversation_task_mutex_);
-        const ChatPhase             phase = chat_phase_.load(std::memory_order_relaxed);
+        const XiaozhiPhase          phase = xiaozhi_phase_.load(std::memory_order_relaxed);
         if (!ConversationMayRun(phase) && !tasks_.conversation_task) {
-            ESP_LOGI(kTag, "WaitForConversationStopped already stopped");
+            ESP_LOGD(kTag, "wait conversation stopped skip reason=already_stopped");
             return true;
         }
     }
     if (!tasks_.conversation_done_notify)
         return false;
     if (xSemaphoreTake(tasks_.conversation_done_notify, pdMS_TO_TICKS(timeout_ms)) == pdTRUE) {
-        ESP_LOGI(kTag, "WaitForConversationStopped done");
+        ESP_LOGD(kTag, "wait conversation stopped done");
         return true;
     }
-    ESP_LOGW(kTag, "Timed out waiting for conversation task");
+    ESP_LOGW(kTag, "wait conversation stopped timeout timeout_ms=%d", timeout_ms);
     return false;
 }
 
-void ChatService::InterruptSpeaking() {
+void XiaozhiService::InterruptSpeaking() {
     if (!audio_)
         return;
     pending_listen_after_playback_.store(false, std::memory_order_relaxed);
@@ -292,10 +329,10 @@ void ChatService::InterruptSpeaking() {
     }
     audio_->ResetDecoder();
     audio_->EnableVoiceProcessing(true);
-    SetState(ChatState::kListening, "聆听中");
+    SetState(XiaozhiState::kListening, "聆听中");
 }
 
-void ChatService::EndAudioSession() {
+void XiaozhiService::EndAudioSession() {
     pending_listen_after_playback_.store(false, std::memory_order_relaxed);
     if (!audio_)
         return;
@@ -307,13 +344,13 @@ void ChatService::EndAudioSession() {
     }
 }
 
-void ChatService::StartConfigTask() {
+void XiaozhiService::StartConfigTask() {
     if (!started_.load(std::memory_order_relaxed) || config_running_.exchange(true))
         return;
     std::lock_guard<std::mutex> task_lock(config_task_mutex_);
     if (tasks_.config_task) {
         config_running_.store(false, std::memory_order_relaxed);
-        ESP_LOGW(kTag, "Config task is still stopping");
+        ESP_LOGW(kTag, "config task start skipped reason=still_stopping");
         return;
     }
     config_stop_requested_.store(false, std::memory_order_relaxed);
@@ -321,10 +358,10 @@ void ChatService::StartConfigTask() {
         while (xSemaphoreTake(tasks_.config_done_notify, 0) == pdTRUE) {
         }
     }
-    BaseType_t ok = xTaskCreatePinnedToCore(&ChatService::ConfigTaskEntry, "xiaozhi_cfg", 8 * 1024, this, 3,
+    BaseType_t ok = xTaskCreatePinnedToCore(&XiaozhiService::ConfigTaskEntry, "xiaozhi_cfg", 8 * 1024, this, 3,
                                             &tasks_.config_task, 0);
     if (ok != pdPASS) {
-        ESP_LOGE(kTag, "Config task create failed: internal_free=%u largest=%u",
+        ESP_LOGE(kTag, "config task create failed internal_free=%u largest=%u",
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
         config_running_.store(false, std::memory_order_relaxed);
@@ -335,24 +372,24 @@ void ChatService::StartConfigTask() {
     }
 }
 
-void ChatService::StopConfigTask(bool wait) {
+void XiaozhiService::StopConfigTask(bool wait) {
     config_stop_requested_.store(true, std::memory_order_relaxed);
     if (!wait || !config_running_.load(std::memory_order_relaxed))
         return;
     if (!tasks_.config_done_notify)
         return;
     if (xSemaphoreTake(tasks_.config_done_notify, pdMS_TO_TICKS(2000)) != pdTRUE) {
-        ESP_LOGW(kTag, "Timed out waiting for config task");
+        ESP_LOGW(kTag, "config task stop timeout");
     }
 }
 
-void ChatService::SignalConfigTaskStopped() {
+void XiaozhiService::SignalConfigTaskStopped() {
     if (tasks_.config_done_notify)
         xSemaphoreGive(tasks_.config_done_notify);
 }
 
-void ChatService::ConfigTaskEntry(void* arg) {
-    auto* self = static_cast<ChatService*>(arg);
+void XiaozhiService::ConfigTaskEntry(void* arg) {
+    auto* self = static_cast<XiaozhiService*>(arg);
     self->ConfigTask();
     bool signal_stopped = false;
     {
@@ -368,10 +405,10 @@ void ChatService::ConfigTaskEntry(void* arg) {
     vTaskDelete(nullptr);
 }
 
-void ChatService::ConfigTask() {
+void XiaozhiService::ConfigTask() {
     while (in_mode_.load(std::memory_order_relaxed) && !config_stop_requested_.load(std::memory_order_relaxed) &&
            !settings::HasProtocolConfig()) {
-        SetState(ChatState::kCheckingConfig, "获取小智配置中...");
+        SetState(XiaozhiState::kCheckingConfig, "获取小智配置中...");
         ActivationClient       client;
         ActivationConfigResult result = client.Fetch();
         if (config_stop_requested_.load(std::memory_order_relaxed) || !in_mode_.load(std::memory_order_relaxed))
@@ -382,7 +419,7 @@ void ChatService::ConfigTask() {
         }
 
         if (result.has_protocol || settings::HasProtocolConfig()) {
-            SetState(ChatState::kReadyIdle, "小智待机");
+            SetState(XiaozhiState::kReadyIdle, "小智待机");
             return;
         }
         if (result.has_activation_challenge) {
@@ -390,14 +427,14 @@ void ChatService::ConfigTask() {
                 SetActivation(result.activation_message, result.activation_code);
             esp_err_t activate_err = client.Activate(result.activation_challenge);
             if (activate_err != ESP_OK && activate_err != ESP_ERR_TIMEOUT)
-                ESP_LOGW(kTag, "Activation challenge failed: %s", esp_err_to_name(activate_err));
+                ESP_LOGW(kTag, "activation challenge failed err=%s", esp_err_to_name(activate_err));
         }
         if (result.has_activation) {
             SetActivation(result.activation_message, result.activation_code);
         } else if (!result.ok) {
             SetError(result.error.empty() ? "小智配置失败" : result.error);
         } else if (result.has_activation_challenge) {
-            SetState(ChatState::kCheckingConfig, "小智激活确认中...");
+            SetState(XiaozhiState::kCheckingConfig, "小智激活确认中...");
         } else {
             SetError("小智未返回协议配置");
         }
@@ -410,23 +447,23 @@ void ChatService::ConfigTask() {
     }
     if (in_mode_.load(std::memory_order_relaxed) && !config_stop_requested_.load(std::memory_order_relaxed) &&
         settings::HasProtocolConfig())
-        SetState(ChatState::kReadyIdle, "小智待机");
+        SetState(XiaozhiState::kReadyIdle, "小智待机");
 }
 
-void ChatService::StartControlTask() {
+void XiaozhiService::StartControlTask() {
     if (tasks_.control_task || control_running_.exchange(true))
         return;
     if (!tasks_.control_notify)
         tasks_.control_notify = xSemaphoreCreateBinary();
     if (!tasks_.control_notify) {
-        ESP_LOGE(kTag, "Control semaphore create failed");
+        ESP_LOGE(kTag, "control semaphore create failed");
         control_running_.store(false, std::memory_order_relaxed);
         return;
     }
-    BaseType_t ok = xTaskCreatePinnedToCore(&ChatService::ControlTaskEntry, "xiaozhi_ctl", 4 * 1024, this, 3,
+    BaseType_t ok = xTaskCreatePinnedToCore(&XiaozhiService::ControlTaskEntry, "xiaozhi_ctl", 4 * 1024, this, 3,
                                             &tasks_.control_task, 0);
     if (ok != pdPASS) {
-        ESP_LOGE(kTag, "Control task create failed: internal_free=%u largest=%u",
+        ESP_LOGE(kTag, "control task create failed internal_free=%u largest=%u",
                  static_cast<unsigned>(heap_caps_get_free_size(MALLOC_CAP_INTERNAL)),
                  static_cast<unsigned>(heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL)));
         tasks_.control_task = nullptr;
@@ -434,55 +471,55 @@ void ChatService::StartControlTask() {
     }
 }
 
-void ChatService::RequestControlClose(uint32_t conversation_token) {
+void XiaozhiService::RequestControlClose(uint32_t conversation_token) {
     if (conversation_token != conversation_token_.load(std::memory_order_acquire))
         return;
-    ESP_LOGI(kTag, "RequestControlClose token=%lu", static_cast<unsigned long>(conversation_token));
+    ESP_LOGD(kTag, "control close request token=%lu", static_cast<unsigned long>(conversation_token));
     control_close_token_.store(conversation_token, std::memory_order_release);
     control_close_requested_.store(true, std::memory_order_release);
     if (tasks_.control_notify)
         xSemaphoreGive(tasks_.control_notify);
 }
 
-void ChatService::RequestConversationStoppedHandling() {
-    ESP_LOGI(kTag, "RequestConversationStoppedHandling");
+void XiaozhiService::RequestConversationStoppedHandling() {
+    ESP_LOGD(kTag, "conversation stopped request");
     control_conversation_stopped_.store(true, std::memory_order_release);
     if (tasks_.control_notify)
         xSemaphoreGive(tasks_.control_notify);
 }
 
-void ChatService::MaybeStartPendingConversation() {
+void XiaozhiService::MaybeStartPendingConversation() {
     control_close_requested_.store(false, std::memory_order_relaxed);
     if (!in_mode_.load(std::memory_order_relaxed)) {
-        chat_phase_.store(ChatPhase::kIdle, std::memory_order_relaxed);
+        xiaozhi_phase_.store(XiaozhiPhase::kIdle, std::memory_order_relaxed);
         return;
     }
     if (!settings::HasProtocolConfig()) {
-        chat_phase_.store(ChatPhase::kIdle, std::memory_order_relaxed);
-        if (CurrentState() != ChatState::kError)
+        xiaozhi_phase_.store(XiaozhiPhase::kIdle, std::memory_order_relaxed);
+        if (CurrentState() != XiaozhiState::kError)
             StartConfigTask();
         return;
     }
-    if (chat_phase_.load(std::memory_order_relaxed) == ChatPhase::kStartPending) {
-        ESP_LOGI(kTag, "MaybeStartPendingConversation starting queued conversation");
-        chat_phase_.store(ChatPhase::kIdle, std::memory_order_relaxed);
+    if (xiaozhi_phase_.load(std::memory_order_relaxed) == XiaozhiPhase::kStartPending) {
+        ESP_LOGD(kTag, "conversation queued start");
+        xiaozhi_phase_.store(XiaozhiPhase::kIdle, std::memory_order_relaxed);
         StartConversationTask();
         return;
     }
-    chat_phase_.store(ChatPhase::kIdle, std::memory_order_relaxed);
-    if (CurrentState() != ChatState::kError)
-        SetState(ChatState::kReadyIdle, "小智待机");
+    xiaozhi_phase_.store(XiaozhiPhase::kIdle, std::memory_order_relaxed);
+    if (CurrentState() != XiaozhiState::kError)
+        SetState(XiaozhiState::kReadyIdle, "小智待机");
 }
 
-void ChatService::ControlTaskEntry(void* arg) {
-    auto* self = static_cast<ChatService*>(arg);
+void XiaozhiService::ControlTaskEntry(void* arg) {
+    auto* self = static_cast<XiaozhiService*>(arg);
     self->ControlTask();
     self->tasks_.control_task = nullptr;
     self->control_running_.store(false, std::memory_order_relaxed);
     vTaskDelete(nullptr);
 }
 
-void ChatService::ControlTask() {
+void XiaozhiService::ControlTask() {
     while (control_running_.load(std::memory_order_relaxed)) {
         if (!tasks_.control_notify) {
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -491,20 +528,20 @@ void ChatService::ControlTask() {
         xSemaphoreTake(tasks_.control_notify, portMAX_DELAY);
         if (control_close_requested_.exchange(false, std::memory_order_acq_rel)) {
             const uint32_t token = control_close_token_.load(std::memory_order_acquire);
-            ESP_LOGI(kTag, "ControlTask close request token=%lu current=%lu", static_cast<unsigned long>(token),
+            ESP_LOGD(kTag, "control close token=%lu current=%lu", static_cast<unsigned long>(token),
                      static_cast<unsigned long>(conversation_token_.load(std::memory_order_acquire)));
             if (token == conversation_token_.load(std::memory_order_acquire))
                 StopConversation(false);
         }
         if (control_conversation_stopped_.exchange(false, std::memory_order_acq_rel)) {
-            ESP_LOGI(kTag, "ControlTask conversation stopped");
+            ESP_LOGD(kTag, "control conversation stopped");
             MaybeStartPendingConversation();
         }
     }
 }
 
-void ChatService::ConversationTaskEntry(void* arg) {
-    auto* self = static_cast<ChatService*>(arg);
+void XiaozhiService::ConversationTaskEntry(void* arg) {
+    auto* self = static_cast<XiaozhiService*>(arg);
     self->ConversationTask();
     bool signal_stopped = false;
     {
@@ -514,30 +551,30 @@ void ChatService::ConversationTaskEntry(void* arg) {
             signal_stopped                 = true;
         }
     }
-    SetStoppingIfMayRun(self->chat_phase_);
+    SetStoppingIfMayRun(self->xiaozhi_phase_);
     if (signal_stopped && self->tasks_.conversation_done_notify)
         xSemaphoreGive(self->tasks_.conversation_done_notify);
     if (signal_stopped)
         self->RequestConversationStoppedHandling();
-    ESP_LOGI(kTag, "ConversationTaskEntry exit signal_stopped=%d", signal_stopped ? 1 : 0);
+    ESP_LOGD(kTag, "conversation task exit signal_stopped=%d", signal_stopped ? 1 : 0);
     vTaskDelete(nullptr);
 }
 
-void ChatService::ConversationTask() {
+void XiaozhiService::ConversationTask() {
     const uint32_t token = conversation_token_.load(std::memory_order_acquire);
-    ESP_LOGI(kTag, "ConversationTask begin token=%lu", static_cast<unsigned long>(token));
-    if (!ConversationMayRun(chat_phase_.load(std::memory_order_relaxed)))
+    ESP_LOGD(kTag, "conversation begin token=%lu", static_cast<unsigned long>(token));
+    if (!ConversationMayRun(xiaozhi_phase_.load(std::memory_order_relaxed)))
         return;
     if (!settings::HasProtocolConfig()) {
-        chat_phase_.store(ChatPhase::kIdle, std::memory_order_relaxed);
+        xiaozhi_phase_.store(XiaozhiPhase::kIdle, std::memory_order_relaxed);
         StartConfigTask();
         return;
     }
 
-    SetState(ChatState::kConnecting, "连接小智中...");
+    SetState(XiaozhiState::kConnecting, "连接小智中...");
     auto protocol = CreatePreferredProtocol();
     if (!protocol) {
-        SetStoppingIfMayRun(chat_phase_);
+        SetStoppingIfMayRun(xiaozhi_phase_);
         SetError("未获取小智协议配置");
         return;
     }
@@ -551,18 +588,18 @@ void ChatService::ConversationTask() {
     }
 
     bool opened = false;
-    if (ConversationMayRun(chat_phase_.load(std::memory_order_relaxed)) && in_mode_.load(std::memory_order_relaxed) &&
-        active_protocol->Start()) {
+    if (ConversationMayRun(xiaozhi_phase_.load(std::memory_order_relaxed)) &&
+        in_mode_.load(std::memory_order_relaxed) && active_protocol->Start()) {
         opened = active_protocol->OpenAudioChannel();
     }
-    ESP_LOGI(kTag, "ConversationTask open result opened=%d phase=%d in_mode=%d", opened ? 1 : 0,
-             static_cast<int>(chat_phase_.load(std::memory_order_relaxed)),
+    ESP_LOGD(kTag, "conversation open opened=%d phase=%s in_mode=%d", opened ? 1 : 0,
+             XiaozhiPhaseName(xiaozhi_phase_.load(std::memory_order_relaxed)),
              in_mode_.load(std::memory_order_relaxed) ? 1 : 0);
-    if (!opened || !ConversationMayRun(chat_phase_.load(std::memory_order_relaxed)) ||
+    if (!opened || !ConversationMayRun(xiaozhi_phase_.load(std::memory_order_relaxed)) ||
         !in_mode_.load(std::memory_order_relaxed)) {
-        const bool cancelled = !ConversationMayRun(chat_phase_.load(std::memory_order_relaxed)) ||
+        const bool cancelled = !ConversationMayRun(xiaozhi_phase_.load(std::memory_order_relaxed)) ||
                                !in_mode_.load(std::memory_order_relaxed);
-        if (!opened && !cancelled && CurrentState() != ChatState::kError)
+        if (!opened && !cancelled && CurrentState() != XiaozhiState::kError)
             SetError("小智连接失败");
         StopConversation(false);
         return;
@@ -574,17 +611,17 @@ void ChatService::ConversationTask() {
         return;
     }
 
-    if (!ConversationMayRun(chat_phase_.load(std::memory_order_relaxed))) {
+    if (!ConversationMayRun(xiaozhi_phase_.load(std::memory_order_relaxed))) {
         StopConversation(false);
         return;
     }
-    chat_phase_.store(ChatPhase::kRunning, std::memory_order_relaxed);
+    xiaozhi_phase_.store(XiaozhiPhase::kRunning, std::memory_order_relaxed);
     active_protocol->SendStartListening(ListeningMode::kAutoStop);
     pending_listen_after_playback_.store(false, std::memory_order_relaxed);
     audio_->EnableVoiceProcessing(true);
-    SetState(ChatState::kListening, "聆听中");
+    SetState(XiaozhiState::kListening, "聆听中");
 
-    while (ConversationMayRun(chat_phase_.load(std::memory_order_relaxed)) &&
+    while (ConversationMayRun(xiaozhi_phase_.load(std::memory_order_relaxed)) &&
            in_mode_.load(std::memory_order_relaxed)) {
         const bool channel_open = active_protocol->IsAudioChannelOpened();
         if (!channel_open)
@@ -594,7 +631,7 @@ void ChatService::ConversationTask() {
             active_protocol->SendStartListening(ListeningMode::kAutoStop);
             pending_listen_after_playback_.store(false, std::memory_order_relaxed);
             audio_->EnableVoiceProcessing(true);
-            SetState(ChatState::kListening, "聆听中");
+            SetState(XiaozhiState::kListening, "聆听中");
         }
 
         bool sent = false;
@@ -608,10 +645,10 @@ void ChatService::ConversationTask() {
         }
     }
 
-    ESP_LOGI(kTag, "ConversationTask loop exit phase=%d in_mode=%d channel_open=%d",
-             static_cast<int>(chat_phase_.load(std::memory_order_relaxed)),
+    ESP_LOGD(kTag, "conversation loop exit phase=%s in_mode=%d channel_open=%d",
+             XiaozhiPhaseName(xiaozhi_phase_.load(std::memory_order_relaxed)),
              in_mode_.load(std::memory_order_relaxed) ? 1 : 0, active_protocol->IsAudioChannelOpened() ? 1 : 0);
-    SetStoppingIfMayRun(chat_phase_);
+    SetStoppingIfMayRun(xiaozhi_phase_);
     EndAudioSession();
     pending_listen_after_playback_.store(false, std::memory_order_relaxed);
     bool close_channel = false;
@@ -624,16 +661,16 @@ void ChatService::ConversationTask() {
     }
     if (close_channel)
         active_protocol->CloseAudioChannel(false);
-    if (CurrentState() != ChatState::kError)
-        SetState(ChatState::kStopping, "小智正在收尾...");
+    if (CurrentState() != XiaozhiState::kError)
+        SetState(XiaozhiState::kStopping, "小智正在收尾...");
 }
 
-void ChatService::ConfigureProtocolCallbacks(Protocol* protocol) {
+void XiaozhiService::ConfigureProtocolCallbacks(Protocol* protocol) {
     const uint32_t token = protocol->owner_token();
     protocol->OnIncomingAudio([this, token](std::unique_ptr<AudioStreamPacket> packet) {
         if (token != conversation_token_.load(std::memory_order_acquire))
             return;
-        if (CurrentState() == ChatState::kSpeaking)
+        if (CurrentState() == XiaozhiState::kSpeaking)
             audio_->PushPacketToDecodeQueue(std::move(packet));
     });
     protocol->OnIncomingJson([this, token](const cJSON* root) {
@@ -642,23 +679,23 @@ void ChatService::ConfigureProtocolCallbacks(Protocol* protocol) {
         HandleIncomingJson(root);
     });
     protocol->OnAudioChannelClosed([this, token]() {
-        ESP_LOGI(kTag, "OnAudioChannelClosed token=%lu current=%lu", static_cast<unsigned long>(token),
+        ESP_LOGD(kTag, "audio channel closed token=%lu current=%lu", static_cast<unsigned long>(token),
                  static_cast<unsigned long>(conversation_token_.load(std::memory_order_acquire)));
         if (token != conversation_token_.load(std::memory_order_acquire))
             return;
-        SetStoppingIfMayRun(chat_phase_);
+        SetStoppingIfMayRun(xiaozhi_phase_);
         pending_listen_after_playback_.store(false, std::memory_order_relaxed);
         audio_->EnableVoiceProcessing(false);
         audio_->ResetDecoder();
-        if (CurrentState() != ChatState::kError)
-            SetState(ChatState::kStopping, "小智正在收尾...");
+        if (CurrentState() != XiaozhiState::kError)
+            SetState(XiaozhiState::kStopping, "小智正在收尾...");
     });
     protocol->OnNetworkError([this, token](const std::string& message) {
-        ESP_LOGI(kTag, "OnNetworkError token=%lu current=%lu message=%s", static_cast<unsigned long>(token),
+        ESP_LOGW(kTag, "network error token=%lu current=%lu message=%s", static_cast<unsigned long>(token),
                  static_cast<unsigned long>(conversation_token_.load(std::memory_order_acquire)), message.c_str());
         if (token != conversation_token_.load(std::memory_order_acquire))
             return;
-        SetStoppingIfMayRun(chat_phase_);
+        SetStoppingIfMayRun(xiaozhi_phase_);
         pending_listen_after_playback_.store(false, std::memory_order_relaxed);
         audio_->EnableVoiceProcessing(false);
         audio_->ResetDecoder();
@@ -666,22 +703,22 @@ void ChatService::ConfigureProtocolCallbacks(Protocol* protocol) {
     });
 }
 
-ChatSnapshot ChatService::Snapshot() {
+XiaozhiSnapshot XiaozhiService::Snapshot() {
     std::lock_guard<std::mutex> lock(snapshot_mutex_);
     return snapshot_;
 }
 
-void ChatService::HandleIncomingJson(const cJSON* root) {
+void XiaozhiService::HandleIncomingJson(const cJSON* root) {
     const IncomingMessage message = ParseIncomingMessage(root);
     switch (message.kind) {
         case IncomingMessageKind::kTtsStart:
             pending_listen_after_playback_.store(false, std::memory_order_relaxed);
             audio_->EnableVoiceProcessing(false);
             audio_->ResetDecoder();
-            SetState(ChatState::kSpeaking, "小智回复中");
+            SetState(XiaozhiState::kSpeaking, "小智回复中");
             break;
         case IncomingMessageKind::kTtsStop:
-            if (ConversationMayRun(chat_phase_.load(std::memory_order_relaxed))) {
+            if (ConversationMayRun(xiaozhi_phase_.load(std::memory_order_relaxed))) {
                 pending_listen_after_playback_.store(true, std::memory_order_relaxed);
             }
             break;
@@ -702,41 +739,41 @@ void ChatService::HandleIncomingJson(const cJSON* root) {
                      message.emotion.empty() ? "neutral" : message.emotion);
             break;
         case IncomingMessageKind::kAlertMissingMessage:
-            ESP_LOGW(kTag, "Ignore alert without message");
+            ESP_LOGW(kTag, "alert ignored reason=message_missing");
             break;
         case IncomingMessageKind::kNone:
             break;
     }
 }
 
-void ChatService::SetState(ChatState state, const std::string& status) {
+void XiaozhiService::SetState(XiaozhiState state, const std::string& status) {
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
         snapshot_.state        = state;
         snapshot_.has_protocol = settings::HasProtocolConfig();
         if (!status.empty())
             snapshot_.status = status;
-        if (state == ChatState::kReadyIdle)
+        if (state == XiaozhiState::kReadyIdle)
             snapshot_.emotion = "neutral";
-        if (state == ChatState::kReadyIdle) {
+        if (state == XiaozhiState::kReadyIdle) {
             snapshot_.messages.clear();
             snapshot_.user_text.clear();
             snapshot_.assistant_text.clear();
         }
-        if (state != ChatState::kAwaitingActivation) {
+        if (state != XiaozhiState::kAwaitingActivation) {
             snapshot_.activation_message.clear();
             snapshot_.activation_code.clear();
         }
-        if (state != ChatState::kError)
+        if (state != XiaozhiState::kError)
             snapshot_.error.clear();
     }
     PostChanged();
 }
 
-void ChatService::SetError(const std::string& error) {
+void XiaozhiService::SetError(const std::string& error) {
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
-        snapshot_.state        = ChatState::kError;
+        snapshot_.state        = XiaozhiState::kError;
         snapshot_.status       = "小智异常";
         snapshot_.emotion      = "sad";
         snapshot_.error        = error;
@@ -746,10 +783,10 @@ void ChatService::SetError(const std::string& error) {
     PostChanged();
 }
 
-void ChatService::SetActivation(const std::string& message, const std::string& code) {
+void XiaozhiService::SetActivation(const std::string& message, const std::string& code) {
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
-        snapshot_.state              = ChatState::kAwaitingActivation;
+        snapshot_.state              = XiaozhiState::kAwaitingActivation;
         snapshot_.status             = "小智激活";
         snapshot_.emotion            = "thinking";
         snapshot_.activation_message = message;
@@ -761,7 +798,7 @@ void ChatService::SetActivation(const std::string& message, const std::string& c
     PostChanged();
 }
 
-void ChatService::SetUserText(const std::string& text) {
+void XiaozhiService::SetUserText(const std::string& text) {
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
         snapshot_.user_text = text;
@@ -772,7 +809,7 @@ void ChatService::SetUserText(const std::string& text) {
     PostChanged();
 }
 
-void ChatService::SetAssistantText(const std::string& text) {
+void XiaozhiService::SetAssistantText(const std::string& text) {
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
         snapshot_.assistant_text = text;
@@ -783,7 +820,7 @@ void ChatService::SetAssistantText(const std::string& text) {
     PostChanged();
 }
 
-void ChatService::SetAlert(const std::string& status, const std::string& message, const std::string& emotion) {
+void XiaozhiService::SetAlert(const std::string& status, const std::string& message, const std::string& emotion) {
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
         snapshot_.status        = status;
@@ -797,25 +834,25 @@ void ChatService::SetAlert(const std::string& status, const std::string& message
     PostChanged();
 }
 
-void ChatService::ClearAlertLocked() {
+void XiaozhiService::ClearAlertLocked() {
     snapshot_.alert_active = false;
     snapshot_.alert_status.clear();
     snapshot_.alert_message.clear();
     snapshot_.alert_emotion.clear();
 }
 
-void ChatService::TrimMessagesLocked() {
+void XiaozhiService::TrimMessagesLocked() {
     if (snapshot_.messages.size() > 12)
         snapshot_.messages.erase(snapshot_.messages.begin(),
                                  snapshot_.messages.begin() + (snapshot_.messages.size() - 12));
 }
 
-ChatState ChatService::CurrentState() {
+XiaozhiState XiaozhiService::CurrentState() {
     std::lock_guard<std::mutex> lock(snapshot_mutex_);
     return snapshot_.state;
 }
 
-void ChatService::PostChanged() {
+void XiaozhiService::PostChanged() {
     evt::PostSimple(UiEventKind::kXiaozhiChanged, pdMS_TO_TICKS(50));
 }
 

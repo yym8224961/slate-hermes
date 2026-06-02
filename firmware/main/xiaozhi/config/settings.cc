@@ -20,75 +20,103 @@ std::string GenerateUuid() {
                   uuid[12], uuid[13], uuid[14], uuid[15]);
     return out;
 }
+
+bool LoadMqttFromNamespace(const char* ns, xiaozhi::settings::MqttConfig& out) {
+    nvs_store::GetStrings(ns, {
+                                  {nvs_schema::mqtt::kEndpoint, &out.endpoint},
+                                  {nvs_schema::mqtt::kClientId, &out.client_id},
+                                  {nvs_schema::mqtt::kUsername, &out.username},
+                                  {nvs_schema::mqtt::kPassword, &out.password},
+                                  {nvs_schema::mqtt::kPubTopic, &out.publish_topic},
+                              });
+    out.keepalive = nvs_store::GetInt32(ns, nvs_schema::mqtt::kKeepalive, 240);
+    return !out.endpoint.empty() && !out.client_id.empty() && !out.publish_topic.empty();
+}
+
+bool LoadWebsocketFromNamespace(const char* ns, xiaozhi::settings::WebsocketConfig& out) {
+    nvs_store::GetStrings(ns, {
+                                  {nvs_schema::ws::kUrl, &out.url},
+                                  {nvs_schema::ws::kToken, &out.token},
+                              });
+    out.version = nvs_store::GetInt32(ns, nvs_schema::ws::kVersion, 0);
+    return !out.url.empty();
+}
 }  // namespace
 
 namespace xiaozhi {
 namespace settings {
 
 std::string GetUuid() {
-    std::string uuid = nvs_store::GetString(nvs_schema::kChat, nvs_schema::chat::kUuid);
+    std::string uuid = nvs_store::GetString(nvs_schema::kXiaozhi, nvs_schema::xiaozhi::kUuid);
     if (!uuid.empty())
         return uuid;
+    uuid = nvs_store::GetString(nvs_schema::kLegacyXiaozhi, nvs_schema::xiaozhi::kUuid);
+    if (!uuid.empty()) {
+        nvs_store::SetString(nvs_schema::kXiaozhi, nvs_schema::xiaozhi::kUuid, uuid);
+        return uuid;
+    }
     uuid = GenerateUuid();
-    nvs_store::SetString(nvs_schema::kChat, nvs_schema::chat::kUuid, uuid);
+    nvs_store::SetString(nvs_schema::kXiaozhi, nvs_schema::xiaozhi::kUuid, uuid);
     return uuid;
 }
 
 bool SaveMqtt(const MqttConfig& cfg) {
     bool ok = true;
-    ok &= nvs_store::SetString(nvs_schema::kChatMqtt, nvs_schema::mqtt::kEndpoint, cfg.endpoint);
-    ok &= nvs_store::SetString(nvs_schema::kChatMqtt, nvs_schema::mqtt::kClientId, cfg.client_id);
-    ok &= nvs_store::SetString(nvs_schema::kChatMqtt, nvs_schema::mqtt::kUsername, cfg.username);
-    ok &= nvs_store::SetString(nvs_schema::kChatMqtt, nvs_schema::mqtt::kPassword, cfg.password);
-    ok &= nvs_store::SetString(nvs_schema::kChatMqtt, nvs_schema::mqtt::kPubTopic, cfg.publish_topic);
-    ok &= nvs_store::SetInt32(nvs_schema::kChatMqtt, nvs_schema::mqtt::kKeepalive, cfg.keepalive);
+    ok &= nvs_store::SetString(nvs_schema::kXiaozhiMqtt, nvs_schema::mqtt::kEndpoint, cfg.endpoint);
+    ok &= nvs_store::SetString(nvs_schema::kXiaozhiMqtt, nvs_schema::mqtt::kClientId, cfg.client_id);
+    ok &= nvs_store::SetString(nvs_schema::kXiaozhiMqtt, nvs_schema::mqtt::kUsername, cfg.username);
+    ok &= nvs_store::SetString(nvs_schema::kXiaozhiMqtt, nvs_schema::mqtt::kPassword, cfg.password);
+    ok &= nvs_store::SetString(nvs_schema::kXiaozhiMqtt, nvs_schema::mqtt::kPubTopic, cfg.publish_topic);
+    ok &= nvs_store::SetInt32(nvs_schema::kXiaozhiMqtt, nvs_schema::mqtt::kKeepalive, cfg.keepalive);
     const bool valid = ok && !cfg.endpoint.empty() && !cfg.client_id.empty() && !cfg.publish_topic.empty();
     return valid;
 }
 
 bool LoadMqtt(MqttConfig& out) {
-    nvs_store::GetStrings(nvs_schema::kChatMqtt, {
-                                                     {nvs_schema::mqtt::kEndpoint, &out.endpoint},
-                                                     {nvs_schema::mqtt::kClientId, &out.client_id},
-                                                     {nvs_schema::mqtt::kUsername, &out.username},
-                                                     {nvs_schema::mqtt::kPassword, &out.password},
-                                                     {nvs_schema::mqtt::kPubTopic, &out.publish_topic},
-                                                 });
-    out.keepalive = nvs_store::GetInt32(nvs_schema::kChatMqtt, nvs_schema::mqtt::kKeepalive, 240);
-    return !out.endpoint.empty() && !out.client_id.empty() && !out.publish_topic.empty();
+    if (LoadMqttFromNamespace(nvs_schema::kXiaozhiMqtt, out))
+        return true;
+    if (!LoadMqttFromNamespace(nvs_schema::kLegacyXiaozhiMqtt, out))
+        return false;
+    SaveMqtt(out);
+    return true;
 }
 
 void ClearMqtt() {
-    nvs_store::EraseNamespace(nvs_schema::kChatMqtt);
+    nvs_store::EraseNamespace(nvs_schema::kXiaozhiMqtt);
 }
 
 bool SaveWebsocket(const WebsocketConfig& cfg) {
     bool ok = true;
-    ok &= nvs_store::SetString(nvs_schema::kChatWs, nvs_schema::ws::kUrl, cfg.url);
-    ok &= nvs_store::SetString(nvs_schema::kChatWs, nvs_schema::ws::kToken, cfg.token);
-    ok &= nvs_store::SetInt32(nvs_schema::kChatWs, nvs_schema::ws::kVersion, cfg.version);
+    ok &= nvs_store::SetString(nvs_schema::kXiaozhiWs, nvs_schema::ws::kUrl, cfg.url);
+    ok &= nvs_store::SetString(nvs_schema::kXiaozhiWs, nvs_schema::ws::kToken, cfg.token);
+    ok &= nvs_store::SetInt32(nvs_schema::kXiaozhiWs, nvs_schema::ws::kVersion, cfg.version);
     const bool valid = ok && !cfg.url.empty();
     return valid;
 }
 
 bool LoadWebsocket(WebsocketConfig& out) {
-    nvs_store::GetStrings(nvs_schema::kChatWs, {
-                                                   {nvs_schema::ws::kUrl, &out.url},
-                                                   {nvs_schema::ws::kToken, &out.token},
-                                               });
-    out.version = nvs_store::GetInt32(nvs_schema::kChatWs, nvs_schema::ws::kVersion, 0);
-    return !out.url.empty();
+    if (LoadWebsocketFromNamespace(nvs_schema::kXiaozhiWs, out))
+        return true;
+    if (!LoadWebsocketFromNamespace(nvs_schema::kLegacyXiaozhiWs, out))
+        return false;
+    SaveWebsocket(out);
+    return true;
 }
 
 void ClearWebsocket() {
-    nvs_store::EraseNamespace(nvs_schema::kChatWs);
+    nvs_store::EraseNamespace(nvs_schema::kXiaozhiWs);
 }
 
 bool HasProtocolConfig() {
-    if (nvs_store::HasStrings(nvs_schema::kChatMqtt,
+    if (nvs_store::HasStrings(nvs_schema::kXiaozhiMqtt,
                               {nvs_schema::mqtt::kEndpoint, nvs_schema::mqtt::kClientId, nvs_schema::mqtt::kPubTopic}))
         return true;
-    return nvs_store::HasString(nvs_schema::kChatWs, nvs_schema::ws::kUrl);
+    if (nvs_store::HasString(nvs_schema::kXiaozhiWs, nvs_schema::ws::kUrl))
+        return true;
+    if (nvs_store::HasStrings(nvs_schema::kLegacyXiaozhiMqtt,
+                              {nvs_schema::mqtt::kEndpoint, nvs_schema::mqtt::kClientId, nvs_schema::mqtt::kPubTopic}))
+        return true;
+    return nvs_store::HasString(nvs_schema::kLegacyXiaozhiWs, nvs_schema::ws::kUrl);
 }
 
 int GetVolume() {
@@ -100,9 +128,12 @@ void SetVolume(int level) {
 }
 
 void ClearAll() {
-    nvs_store::EraseNamespace(nvs_schema::kChat);
-    nvs_store::EraseNamespace(nvs_schema::kChatMqtt);
-    nvs_store::EraseNamespace(nvs_schema::kChatWs);
+    nvs_store::EraseNamespace(nvs_schema::kXiaozhi);
+    nvs_store::EraseNamespace(nvs_schema::kXiaozhiMqtt);
+    nvs_store::EraseNamespace(nvs_schema::kXiaozhiWs);
+    nvs_store::EraseNamespace(nvs_schema::kLegacyXiaozhi);
+    nvs_store::EraseNamespace(nvs_schema::kLegacyXiaozhiMqtt);
+    nvs_store::EraseNamespace(nvs_schema::kLegacyXiaozhiWs);
 }
 
 }  // namespace settings

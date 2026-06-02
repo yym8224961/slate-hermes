@@ -84,7 +84,7 @@ describe('DynamicContentSchedulerService', () => {
     await service.tick();
     service.onModuleDestroy();
 
-    expect(logged.some((msg) => msg.includes('dynamic refresh job failed'))).toBe(true);
-    expect(logged.some((msg) => msg.includes('dynamic refresh retry mark failed'))).toBe(true);
+    expect(logged.some((msg) => msg.includes('Dynamic refresh job failed'))).toBe(true);
+    expect(logged.some((msg) => msg.includes('Dynamic refresh retry marker failed'))).toBe(true);
   });
 });

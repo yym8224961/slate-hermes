@@ -8,10 +8,10 @@
 #include <cstring>
 
 namespace {
-constexpr char kTag[] = "DnsHijack";
+constexpr char kTag[]            = "dns_hijack";
 constexpr int  kDnsQueryMaxBytes = 512;
 constexpr int  kDnsAnswerBytes   = 16;
-}
+}  // namespace
 
 DnsHijack::~DnsHijack() {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
@@ -25,7 +25,7 @@ DnsHijack::~DnsHijack() {
 void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
     std::lock_guard<std::mutex> lock(lifecycle_mutex_);
     if (task_handle_ && !StopLocked(pdMS_TO_TICKS(2000))) {
-        ESP_LOGW(kTag, "Previous DNS task still stopping; start skipped");
+        ESP_LOGW(kTag, "start skipped reason=previous_task_stopping");
         return;
     }
 
@@ -41,7 +41,7 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
 
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sock < 0) {
-        ESP_LOGE(kTag, "Socket failed: %d", errno);
+        ESP_LOGE(kTag, "socket create failed errno=%d", errno);
         return;
     }
 
@@ -51,7 +51,7 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
     addr.sin_port        = htons(port_);
 
     if (bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) < 0) {
-        ESP_LOGE(kTag, "Bind :%u failed: %d", port_, errno);
+        ESP_LOGE(kTag, "socket bind failed port=%u errno=%d", port_, errno);
         close(sock);
         return;
     }
@@ -67,7 +67,7 @@ void DnsHijack::Start(esp_ip4_addr_t gateway, uint16_t port) {
         },
         "dns_hijack", 4 * 1024, this, 5, &task_handle_);
     if (ok != pdPASS) {
-        ESP_LOGE(kTag, "Task create failed");
+        ESP_LOGE(kTag, "task create failed");
         running_.store(false);
         fd_.store(-1);
         close(sock);
@@ -92,7 +92,7 @@ bool DnsHijack::StopLocked(TickType_t wait_ticks) {
     if (exit_sem_ && had_task) {
         // 等 task 真正退出再返回。2s 兜底:即便 lwip 出意外阻塞,Stop 也不会永挂。
         if (xSemaphoreTake(exit_sem_, wait_ticks) != pdTRUE) {
-            ESP_LOGW(kTag, "DNS task did not exit before stop timeout");
+            ESP_LOGW(kTag, "stop timeout");
             return false;
         }
     }
@@ -108,12 +108,11 @@ void DnsHijack::Run() {
             break;
         sockaddr_in client     = {};
         socklen_t   client_len = sizeof(client);
-        int         len =
-            recvfrom(sock, buf, kDnsQueryMaxBytes, 0, reinterpret_cast<sockaddr*>(&client), &client_len);
+        int         len = recvfrom(sock, buf, kDnsQueryMaxBytes, 0, reinterpret_cast<sockaddr*>(&client), &client_len);
         if (len < 0) {
             if (!running_.load())
                 break;
-            ESP_LOGE(kTag, "Recvfrom failed: %d", errno);
+            ESP_LOGE(kTag, "receive failed errno=%d", errno);
             continue;
         }
         if (!running_.load())

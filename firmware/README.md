@@ -42,7 +42,7 @@ firmware/
     ├── network/                Wi-Fi、SNTP、DNS hijack、captive portal、凭据存储
     ├── power/                  power state、sleep manager、重启/关机、分钟级时钟
     ├── resources/              captive portal HTML 与内置字体
-    ├── scenes/                 BootSplash、BgRefresh、Frame、Chat、Settings 及子页
+    ├── scenes/                 BootSplash、BgRefresh、Frame、Xiaozhi、Settings 及子页
     ├── startup/                boot mode、首次启动/注册流程
     ├── storage/                LittleFS cache、NVS schema
     ├── sync/                   Slate backend HTTP API client 与 SyncService
@@ -171,7 +171,7 @@ nvs_flash_init + LittleFS mount
   -> Board::Init()
   -> AudioPlayer::Init()
   -> evt::Init()
-  -> xiaozhi::ChatService::Start()
+  -> xiaozhi::XiaozhiService::Start()
   -> SceneStack::SetContext()
   -> load credentials + boot_mode::Decide()
   -> SleepManager::Init()
@@ -332,7 +332,7 @@ Scene：
 BootSplashScene      启动、配网、注册、等待绑定/内容组
 BgRefreshScene       timer wake 后台刷新
 FrameScene           常规显示与翻页
-ChatScene            小智语音对话
+XiaozhiScene         小智语音对话
 SettingsScene        设置页
   ├─ VolumePage      音量调节
   ├─ DeviceInfoPage
@@ -383,13 +383,12 @@ ES8311 使用 lazy open：
 
 `xiaozhi/` 子系统包含：
 
-- `api/`：`activation_client`，向小智配置服务上报系统信息，获取 MQTT/WebSocket 配置与 activation 信息。
-- `config/`：`settings`，UUID、协议配置、音量等 NVS 设置。
+- `config/`：`activation_client` / `settings`，向小智配置服务获取 MQTT/WebSocket 配置与 activation 信息，并保存 UUID、协议配置、音量等 NVS 设置。
 - `mcp/`：`mcp_dispatcher` / `mcp_tools`，MCP 协议分发与工具注册。
 - `protocol/`：`protocol` / `mqtt_protocol` / `websocket_protocol` / `audio_stream_packet`，对话协议。
-- `service/`：`audio_service`、`chat_service`、`message_handler`，对话状态机、麦克风、播放、语音处理。
+- `service/`：`xiaozhi_service`、`xiaozhi_phase`、`audio_service`、`message_handler`，对话状态机、麦克风、播放、语音处理。
 
-进入方式：ENTER 双击打开 `ChatScene`。如果尚无协议配置，会先走配置/激活流程；配置完成后进入待机。语音活动、配置任务或播放中会阻止 deep sleep。
+进入方式：ENTER 双击打开 `XiaozhiScene`。如果尚无协议配置，会先走配置/激活流程；配置完成后进入待机。语音活动、配置任务或播放中会阻止 deep sleep。
 
 ## 休眠与唤醒
 

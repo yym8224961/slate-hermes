@@ -11,7 +11,7 @@
 #include "utils/json_utils.h"
 #include "xiaozhi/config/settings.h"
 #include "xiaozhi/service/audio_service.h"
-#include "xiaozhi/service/chat_service.h"
+#include "xiaozhi/service/xiaozhi_service.h"
 
 namespace xiaozhi::mcp {
 namespace {
@@ -19,23 +19,23 @@ namespace {
 using json_utils::JsonId;
 using json_utils::PrintAndDelete;
 
-std::string ChatStateName(ChatState state) {
+std::string XiaozhiStateName(XiaozhiState state) {
     switch (state) {
-        case ChatState::kCheckingConfig:
+        case XiaozhiState::kCheckingConfig:
             return "checking_config";
-        case ChatState::kAwaitingActivation:
+        case XiaozhiState::kAwaitingActivation:
             return "awaiting_activation";
-        case ChatState::kReadyIdle:
+        case XiaozhiState::kReadyIdle:
             return "ready_idle";
-        case ChatState::kConnecting:
+        case XiaozhiState::kConnecting:
             return "connecting";
-        case ChatState::kListening:
+        case XiaozhiState::kListening:
             return "listening";
-        case ChatState::kSpeaking:
+        case XiaozhiState::kSpeaking:
             return "speaking";
-        case ChatState::kStopping:
+        case XiaozhiState::kStopping:
             return "stopping";
-        case ChatState::kError:
+        case XiaozhiState::kError:
             return "error";
     }
     return "unknown";
@@ -67,12 +67,12 @@ cJSON* MakeObjectSchema() {
 std::string BuildDeviceStatusJson() {
     cJSON* root = cJSON_CreateObject();
 
-    cJSON*    audio      = cJSON_CreateObject();
-    const int chat_level = settings::GetVolume();
-    cJSON_AddNumberToObject(audio, "volume", vol::ToCodec(chat_level));
-    cJSON_AddNumberToObject(audio, "level", chat_level);
+    cJSON*    audio         = cJSON_CreateObject();
+    const int xiaozhi_level = settings::GetVolume();
+    cJSON_AddNumberToObject(audio, "volume", vol::ToCodec(xiaozhi_level));
+    cJSON_AddNumberToObject(audio, "level", xiaozhi_level);
     cJSON_AddNumberToObject(audio, "max_level", vol::kMax);
-    cJSON_AddBoolToObject(audio, "chat_active", AudioService::Get().IsActive());
+    cJSON_AddBoolToObject(audio, "xiaozhi_active", AudioService::Get().IsActive());
     cJSON_AddBoolToObject(audio, "voice_processing", AudioService::Get().IsVoiceProcessing());
     cJSON_AddItemToObject(root, "audio_speaker", audio);
 
@@ -104,20 +104,20 @@ std::string BuildDeviceStatusJson() {
     }
     cJSON_AddItemToObject(root, "network", network);
 
-    const auto snap = ChatService::Get().Snapshot();
-    cJSON*     chat = cJSON_CreateObject();
-    cJSON_AddStringToObject(chat, "state", ChatStateName(snap.state).c_str());
-    cJSON_AddStringToObject(chat, "status", snap.status.c_str());
-    cJSON_AddBoolToObject(chat, "has_protocol", snap.has_protocol);
-    cJSON_AddNumberToObject(chat, "volume", vol::ToCodec(snap.volume));
-    cJSON_AddNumberToObject(chat, "level", snap.volume);
+    const auto snap    = XiaozhiService::Get().Snapshot();
+    cJSON*     xiaozhi = cJSON_CreateObject();
+    cJSON_AddStringToObject(xiaozhi, "state", XiaozhiStateName(snap.state).c_str());
+    cJSON_AddStringToObject(xiaozhi, "status", snap.status.c_str());
+    cJSON_AddBoolToObject(xiaozhi, "has_protocol", snap.has_protocol);
+    cJSON_AddNumberToObject(xiaozhi, "volume", vol::ToCodec(snap.volume));
+    cJSON_AddNumberToObject(xiaozhi, "level", snap.volume);
     if (!snap.user_text.empty())
-        cJSON_AddStringToObject(chat, "user_text", snap.user_text.c_str());
+        cJSON_AddStringToObject(xiaozhi, "user_text", snap.user_text.c_str());
     if (!snap.assistant_text.empty())
-        cJSON_AddStringToObject(chat, "assistant_text", snap.assistant_text.c_str());
+        cJSON_AddStringToObject(xiaozhi, "assistant_text", snap.assistant_text.c_str());
     if (!snap.error.empty())
-        cJSON_AddStringToObject(chat, "error", snap.error.c_str());
-    cJSON_AddItemToObject(root, "xiaozhi", chat);
+        cJSON_AddStringToObject(xiaozhi, "error", snap.error.c_str());
+    cJSON_AddItemToObject(root, "xiaozhi", xiaozhi);
 
     return PrintAndDelete(root);
 }

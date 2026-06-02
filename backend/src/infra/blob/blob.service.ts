@@ -30,7 +30,7 @@ export class BlobService implements OnModuleInit {
     await mkdir(this.config.blobDir, { recursive: true });
     this.blobRoot = realpathSync(this.config.blobDir);
     await this.cleanupStaleTmpFiles().catch((err: unknown) => {
-      this.logger.warn(`清理过期 blob 临时文件失败: ${formatError(err)}`);
+      this.logger.warn(`Failed to clean stale blob temporary files: ${formatError(err)}`);
     });
   }
 
@@ -72,7 +72,9 @@ export class BlobService implements OnModuleInit {
       await rename(tmp, p);
     } catch (err) {
       await unlink(tmp).catch((cleanupErr: unknown) => {
-        this.logger.warn(`清理 blob 临时文件失败 path=${tmp}: ${formatError(cleanupErr)}`);
+        this.logger.warn(
+          `Failed to remove blob temporary file at ${tmp}: ${formatError(cleanupErr)}`
+        );
       });
       throw err;
     }
@@ -155,14 +157,14 @@ async function cleanupTmpFilesUnder(dir: string, cutoff: number, logger: Logger)
     if (!entry.isFile() || !entry.name.endsWith('.tmp')) return;
     const info = await stat(path).catch((err: unknown) => {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        logger.warn(`读取 blob 临时文件状态失败 path=${path}: ${formatError(err)}`);
+        logger.warn(`Failed to inspect blob temporary file at ${path}: ${formatError(err)}`);
       }
       return null;
     });
     if (!info || info.mtimeMs > cutoff) return;
     await unlink(path).catch((err: unknown) => {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-        logger.warn(`删除过期 blob 临时文件失败 path=${path}: ${formatError(err)}`);
+        logger.warn(`Failed to remove stale blob temporary file at ${path}: ${formatError(err)}`);
       }
     });
   });

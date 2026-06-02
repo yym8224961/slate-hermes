@@ -34,9 +34,7 @@ export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDes
       run: () => this.runBatch(),
       onError: (err) => {
         this.logger.warn(
-          `dynamic refresh scheduler tick failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `Dynamic refresh scheduler tick failed: ${err instanceof Error ? err.message : String(err)}`
         );
       },
       fallbackDelayMs: WORKER_INTERVAL_MS,
@@ -62,13 +60,13 @@ export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDes
       jobs.map((job) =>
         this.renderDue(job.id, job.dynamicType).catch(async (err: unknown) => {
           this.logger.warn(
-            `dynamic refresh job failed content=${job.id}: ${
+            `Dynamic refresh job failed for content ${job.id} of type ${job.dynamicType}: ${
               err instanceof Error ? err.message : String(err)
             }`
           );
           await this.markRetry(job, err).catch((retryErr: unknown) => {
             this.logger.error(
-              `dynamic refresh retry mark failed content=${job.id}: ${formatError(retryErr)}`
+              `Dynamic refresh retry marker failed for content ${job.id}: ${formatError(retryErr)}`
             );
           });
         })
@@ -123,8 +121,9 @@ export class DynamicContentSchedulerService implements OnModuleInit, OnModuleDes
   private async renderDue(contentId: string, dynamicType: string): Promise<void> {
     const result = await this.renderer.renderDynamicContent(contentId);
     this.logger.log(
-      `refreshed dynamic content=${contentId} type=${dynamicType}` +
-        (result.unchanged ? ' unchanged=1' : ' changed=1')
+      `Dynamic content ${contentId} of type ${dynamicType} was refreshed and ${
+        result.unchanged ? 'did not change' : 'changed'
+      }.`
     );
   }
 

@@ -3,10 +3,10 @@
 #include <cJSON.h>
 #include <cstring>
 
+#include "storage/cache/cache_internal.h"
 #include "storage/cache/cache_io.h"
 #include "storage/cache/cache_json.h"
 #include "storage/cache/cache_paths.h"
-#include "storage/cache/cache_internal.h"
 #include "utils/scoped_mutex_lock.h"
 
 namespace cache::internal {

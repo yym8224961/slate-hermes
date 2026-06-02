@@ -11,17 +11,17 @@
 #include <new>
 #include <vector>
 
-#include "storage/cache/cache.h"
 #include "drivers/display/epd_ssd1683.h"
 #include "drivers/display/framebuffer_ops.h"
 #include "events/event_bus.h"
-#include "ui/frame_view.h"
 #include "power/power_state.h"
+#include "storage/cache/cache.h"
+#include "ui/frame_view.h"
 #include "ui/status_bar.h"
 #include "ui/theme.h"
 
 namespace {
-constexpr char kTag[] = "BgRefresh";
+constexpr char kTag[] = "bg_refresh";
 constexpr int  kBpr   = FrameView::kWidth / 8;
 
 // 后台刷新整体硬截止：从进场到完成的总时长上限。WiFi 连接 + poll + 拉帧 + EPD 刷新
@@ -66,15 +66,13 @@ void DeadlineEntry(void* arg) {
     std::unique_ptr<WatcherContext> ctx(static_cast<WatcherContext*>(arg));
     auto                            done_posted = ctx ? ctx->done_posted : std::shared_ptr<std::atomic<bool>>();
     int                             waited      = 0;
-    const auto                      finished    = [&] {
-        return done_posted && done_posted->load(std::memory_order_acquire);
-    };
+    const auto finished = [&] { return done_posted && done_posted->load(std::memory_order_acquire); };
     while (waited < kBgRefreshDeadlineMs && !finished()) {
         vTaskDelay(pdMS_TO_TICKS(200));
         waited += 200;
     }
     if (!finished()) {
-        ESP_LOGW(kTag, "Background refresh deadline %dms reached -> force done", kBgRefreshDeadlineMs);
+        ESP_LOGW(kTag, "deadline reached elapsed_ms=%d action=force_done", kBgRefreshDeadlineMs);
         // 不在此处 RecordTimerWakeResult：与 OnEvent 的上报存在时序竞态(渲染跨过截止时
         // 会先 true 再 false 重复计数)。失败退避由「连不上服务器」(app.cc net_ok=false)与
         // OnEvent 的 kSyncFinished(ok) 覆盖；「连上但每次卡满截止」是罕见失败模式，
@@ -98,13 +96,13 @@ void BgRefreshScene::OnEnter(SceneContext& ctx) {
 void BgRefreshScene::StartDeadlineWatchdog() {
     auto* ctx = new (std::nothrow) WatcherContext{nullptr, done_posted_};
     if (!ctx) {
-        ESP_LOGW(kTag, "Deadline watchdog alloc failed");
+        ESP_LOGW(kTag, "deadline watchdog alloc failed");
         return;  // 退化到 SleepManager 的 idle/看门狗兜底
     }
     BaseType_t ok = xTaskCreatePinnedToCore(&DeadlineEntry, "bg_refresh_deadline", 2048, ctx, 2, nullptr, 0);
     if (ok != pdPASS) {
         delete ctx;
-        ESP_LOGW(kTag, "Deadline watchdog create failed");
+        ESP_LOGW(kTag, "deadline watchdog create failed");
     }
 }
 
@@ -126,7 +124,7 @@ void BgRefreshScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
     }
 
     if (!previous_screen_seeded_) {
-        ESP_LOGW(kTag, "Previous screen seed incomplete; skip background screen update");
+        ESP_LOGW(kTag, "render skipped reason=previous_seed_incomplete");
         Finish();
         return;
     }
@@ -144,32 +142,32 @@ bool BgRefreshScene::SeedPreviousFrame(SceneContext& ctx) {
     std::array<uint8_t, epd::kStatusBarSnapshotBytes> status_bar{};
     const bool status_ok = power_state::LoadStatusBarSnapshot(status_bar.data(), status_bar.size());
     if (!status_ok) {
-        ESP_LOGW(kTag, "No RTC status bar snapshot; partial seed unavailable");
+        ESP_LOGW(kTag, "seed skipped reason=status_snapshot_missing");
         return false;
     }
 
     std::string gid;
     std::string etag;
     if (!cache::ReadStateMeta(gid, etag) || gid.empty()) {
-        ESP_LOGW(kTag, "No cached group to seed");
+        ESP_LOGW(kTag, "seed skipped reason=cached_group_missing");
         return false;
     }
 
     int content_count = 0;
     if (!cache::ReadManifestContentCount(gid, content_count) || content_count <= 0) {
-        ESP_LOGW(kTag, "No cached manifest to seed");
+        ESP_LOGW(kTag, "seed skipped reason=manifest_missing");
         return false;
     }
 
     const int seq = power_state::GetCurrentFrameSeq();
     if (seq < 0 || seq >= content_count) {
-        ESP_LOGW(kTag, "Cached seq out of range seq=%d count=%d", seq, content_count);
+        ESP_LOGW(kTag, "seed skipped reason=seq_out_of_range seq=%d count=%d", seq, content_count);
         return false;
     }
 
     std::vector<uint8_t> raw;
     if (!cache::ReadFrameImage(gid, seq, raw) || raw.size() != static_cast<size_t>(FrameView::kRawBytes)) {
-        ESP_LOGW(kTag, "Seed image miss seq=%d size=%u", seq, static_cast<unsigned>(raw.size()));
+        ESP_LOGW(kTag, "seed skipped reason=image_miss seq=%d bytes=%u", seq, static_cast<unsigned>(raw.size()));
         return false;
     }
 
@@ -184,11 +182,11 @@ bool BgRefreshScene::SeedPreviousFrame(SceneContext& ctx) {
 bool BgRefreshScene::ResolveCurrentFrame(std::string& gid, int& seq, int& content_count) {
     std::string etag;
     if (!cache::ReadStateMeta(gid, etag) || gid.empty()) {
-        ESP_LOGW(kTag, "Render skip: no cached group after sync");
+        ESP_LOGW(kTag, "render skipped reason=cached_group_missing");
         return false;
     }
     if (!cache::ReadManifestContentCount(gid, content_count) || content_count <= 0) {
-        ESP_LOGW(kTag, "Render skip: no manifest after sync");
+        ESP_LOGW(kTag, "render skipped reason=manifest_missing");
         return false;
     }
 
@@ -211,7 +209,7 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
 
     std::vector<uint8_t> raw;
     if (!cache::ReadFrameImage(gid, seq, raw) || raw.size() != static_cast<size_t>(FrameView::kRawBytes)) {
-        ESP_LOGW(kTag, "Render image miss seq=%d size=%u", seq, static_cast<unsigned>(raw.size()));
+        ESP_LOGW(kTag, "render skipped reason=image_miss seq=%d bytes=%u", seq, static_cast<unsigned>(raw.size()));
         return false;
     }
 
@@ -220,7 +218,7 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
     UpdateFrameSchedule(seq, meta);
 
     if (!ctx.epd->Lock(2000)) {
-        ESP_LOGW(kTag, "EPD lock timeout in render");
+        ESP_LOGW(kTag, "render failed reason=epd_lock_timeout");
         return false;
     }
 
@@ -247,14 +245,14 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
 void BgRefreshScene::StartWatcher(EpdSsd1683* epd) {
     auto* ctx = new (std::nothrow) WatcherContext{epd, done_posted_};
     if (!ctx) {
-        ESP_LOGW(kTag, "Watcher alloc failed; finish immediately");
+        ESP_LOGW(kTag, "watcher alloc failed action=finish");
         Finish();
         return;
     }
     BaseType_t ok = xTaskCreatePinnedToCore(&WatcherEntry, "bg_refresh_watch", 2048, ctx, 2, nullptr, 0);
     if (ok != pdPASS) {
         delete ctx;
-        ESP_LOGW(kTag, "Watcher create failed; finish immediately");
+        ESP_LOGW(kTag, "watcher create failed action=finish");
         Finish();
     }
 }

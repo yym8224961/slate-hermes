@@ -3,6 +3,7 @@
 #include <driver/gpio.h>
 #include <esp_codec_dev_defaults.h>
 #include <esp_log.h>
+#include <esp_log_level.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -16,7 +17,7 @@
 // i2c_device.cc 仍然在异常路径上调 BoardI2cForcePowerOn 自救，实现放在 board_power.cc。
 
 namespace {
-constexpr char kTag[] = "Audio";
+constexpr char kTag[] = "audio";
 }
 
 AudioPlayer& AudioPlayer::Get() {
@@ -45,7 +46,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     chan_cfg.intr_priority       = 0;
     esp_err_t err                = i2s_new_channel(&chan_cfg, &tx_handle_, &rx_handle_);
     if (err != ESP_OK) {
-        ESP_LOGE(kTag, "I2S channel create failed: %s", esp_err_to_name(err));
+        ESP_LOGE(kTag, "i2s channel create failed err=%s", esp_err_to_name(err));
         return fail();
     }
 
@@ -74,12 +75,12 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     std_cfg.gpio_cfg.din  = static_cast<gpio_num_t>(AUDIO_I2S_GPIO_DIN);
     err                   = i2s_channel_init_std_mode(tx_handle_, &std_cfg);
     if (err != ESP_OK) {
-        ESP_LOGE(kTag, "I2S tx init failed: %s", esp_err_to_name(err));
+        ESP_LOGE(kTag, "i2s tx init failed err=%s", esp_err_to_name(err));
         return fail();
     }
     err = i2s_channel_init_std_mode(rx_handle_, &std_cfg);
     if (err != ESP_OK) {
-        ESP_LOGE(kTag, "I2S rx init failed: %s", esp_err_to_name(err));
+        ESP_LOGE(kTag, "i2s rx init failed err=%s", esp_err_to_name(err));
         return fail();
     }
     // 不在这里 i2s_channel_enable:esp_codec_dev_open 内部会 enable channel,
@@ -94,7 +95,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     i2s_data_cfg.rx_handle             = rx_handle_;
     data_if_                           = audio_codec_new_i2s_data(&i2s_data_cfg);
     if (!data_if_) {
-        ESP_LOGE(kTag, "Audio codec new_i2s_data failed");
+        ESP_LOGE(kTag, "codec data interface create failed");
         return fail();
     }
 
@@ -108,13 +109,13 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
         ctrl_if_ = audio_codec_new_i2c_ctrl(&i2c_cfg);
     }
     if (!ctrl_if_) {
-        ESP_LOGE(kTag, "Audio codec new_i2c_ctrl failed");
+        ESP_LOGE(kTag, "codec control interface create failed");
         return fail();
     }
 
     gpio_if_ = audio_codec_new_gpio();
     if (!gpio_if_) {
-        ESP_LOGE(kTag, "Audio codec new_gpio failed");
+        ESP_LOGE(kTag, "codec gpio interface create failed");
         return fail();
     }
 
@@ -136,7 +137,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     es_cfg.pa_reverted               = false;
     codec_if_                        = es8311_codec_new(&es_cfg);
     if (!codec_if_) {
-        ESP_LOGE(kTag, "ES8311 codec_new failed (I2C error?)");
+        ESP_LOGE(kTag, "codec create failed chip=es8311");
         return fail();
     }
 
@@ -152,7 +153,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     dev_cfg.data_if             = data_if_;
     dev_                        = esp_codec_dev_new(&dev_cfg);
     if (!dev_) {
-        ESP_LOGE(kTag, "ESP codec_dev_new failed");
+        ESP_LOGE(kTag, "codec device create failed");
         return fail();
     }
 
@@ -161,12 +162,12 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     codec_mutex_  = xSemaphoreCreateMutex();
     notify_       = xSemaphoreCreateBinary();
     if (!shared_mutex_ || !codec_mutex_ || !notify_) {
-        ESP_LOGE(kTag, "Audio sync primitive create failed");
+        ESP_LOGE(kTag, "sync primitive create failed");
         return fail();
     }
     BaseType_t task_ok = xTaskCreatePinnedToCore(&AudioPlayer::TaskEntry, "audio_play", 6 * 1024, this, 5, &task_, 1);
     if (task_ok != pdPASS) {
-        ESP_LOGE(kTag, "Audio task create failed");
+        ESP_LOGE(kTag, "task create failed name=audio_play");
         return fail();
     }
 
@@ -178,7 +179,7 @@ bool AudioPlayer::Init(i2c_master_bus_handle_t i2c_bus) {
     // 而卡顿。创建失败不致命(退化为无锁,等价旧行为),acquire/release 内部判空。
     esp_err_t pm_err = esp_pm_lock_create(ESP_PM_NO_LIGHT_SLEEP, 0, "audio", &no_light_sleep_lock_);
     if (pm_err != ESP_OK) {
-        ESP_LOGW(kTag, "audio PM lock create failed: %s", esp_err_to_name(pm_err));
+        ESP_LOGW(kTag, "pm lock create failed err=%s", esp_err_to_name(pm_err));
         no_light_sleep_lock_ = nullptr;
     }
 
@@ -263,11 +264,19 @@ bool AudioPlayer::EnsureCodecOpen() {
         }
         // PA 此时仍 LOW(BoardPowerBsp 构造已设 + hold_en),不出声。codec_dev_open
         // 内 codec lib 会 DAC start + set_mute(false),但 pa_pin=-1 所以不动 PA。
+        //
+        // esp_codec_dev 1.5.x 的 I2S data_if 在 set_fmt 阶段会先 disable
+        // 尚未 enable 的 TX/RX channel。ESP-IDF driver 会打一条 i2s_common
+        // ERROR,但随后 open 成功。只在这次已知调用窗口里压掉 false error。
+        const esp_log_level_t i2s_common_level = esp_log_level_get("i2s_common");
+        esp_log_level_set("i2s_common", ESP_LOG_NONE);
         if (esp_codec_dev_open(dev_, &fs) != ESP_OK) {
-            ESP_LOGE(kTag, "ESP codec_dev_open failed");
+            esp_log_level_set("i2s_common", i2s_common_level);
+            ESP_LOGE(kTag, "codec device open failed");
             xSemaphoreGive(codec_mutex_);
             return false;
         }
+        esp_log_level_set("i2s_common", i2s_common_level);
         esp_codec_dev_set_out_vol(dev_, volume_.load(std::memory_order_relaxed));
         esp_codec_dev_set_in_gain(dev_, 30.0f);
         // codec_opened_=true 必须在锁内,否则 SetVolume 在锁外释放后到这里之间
@@ -287,7 +296,7 @@ bool AudioPlayer::EnsureCodecOpen() {
 void AudioPlayer::Play(const uint8_t* pcm_bytes, size_t len_bytes) {
     if (!initialized_ || pcm_bytes == nullptr || len_bytes == 0)
         return;
-    if (chat_active_.load(std::memory_order_relaxed))
+    if (xiaozhi_active_.load(std::memory_order_relaxed))
         return;
     if (len_bytes & 1)
         len_bytes &= ~1;  // 取偶,16bit 对齐
@@ -297,7 +306,7 @@ void AudioPlayer::Play(const uint8_t* pcm_bytes, size_t len_bytes) {
     // 深拷贝(LittleFS 缓冲生命周期短),共享 mutex 保护
     uint8_t* copy = static_cast<uint8_t*>(malloc(len_bytes));
     if (!copy) {
-        ESP_LOGW(kTag, "Play: malloc %u failed", (unsigned)len_bytes);
+        ESP_LOGW(kTag, "play alloc failed bytes=%u", (unsigned)len_bytes);
         return;
     }
     std::memcpy(copy, pcm_bytes, len_bytes);
@@ -344,30 +353,30 @@ void AudioPlayer::SetVolume(int v) {
     }
 }
 
-bool AudioPlayer::BeginChat() {
+bool AudioPlayer::BeginXiaozhi() {
     if (!initialized_)
         return false;
     Stop();
-    chat_active_.store(true, std::memory_order_relaxed);
+    xiaozhi_active_.store(true, std::memory_order_relaxed);
     if (!EnsureCodecOpen()) {
-        chat_active_.store(false, std::memory_order_relaxed);
+        xiaozhi_active_.store(false, std::memory_order_relaxed);
         return false;
     }
-    // 对话期间(双工 I2S)禁 light sleep；与 EndChat 的 release 配对(由 chat_active_ 守卫)。
+    // 对话期间(双工 I2S)禁 light sleep；与 EndXiaozhi 的 release 配对(由 xiaozhi_active_ 守卫)。
     AcquireAudioPmLock();
     return true;
 }
 
-void AudioPlayer::EndChat() {
+void AudioPlayer::EndXiaozhi() {
     if (!initialized_)
         return;
-    const bool was_active = chat_active_.exchange(false, std::memory_order_relaxed);
+    const bool was_active = xiaozhi_active_.exchange(false, std::memory_order_relaxed);
     if (was_active)
         ReleaseAudioPmLock();
 }
 
-bool AudioPlayer::ReadChatPcm(int16_t* dest, size_t samples) {
-    if (!initialized_ || !chat_active_.load(std::memory_order_relaxed) || !dest || samples == 0)
+bool AudioPlayer::ReadXiaozhiPcm(int16_t* dest, size_t samples) {
+    if (!initialized_ || !xiaozhi_active_.load(std::memory_order_relaxed) || !dest || samples == 0)
         return false;
     if (!EnsureCodecOpen())
         return false;
@@ -377,8 +386,8 @@ bool AudioPlayer::ReadChatPcm(int16_t* dest, size_t samples) {
     return ret == ESP_OK;
 }
 
-bool AudioPlayer::WriteChatPcm(const int16_t* data, size_t samples) {
-    if (!initialized_ || !chat_active_.load(std::memory_order_relaxed) || !data || samples == 0)
+bool AudioPlayer::WriteXiaozhiPcm(const int16_t* data, size_t samples) {
+    if (!initialized_ || !xiaozhi_active_.load(std::memory_order_relaxed) || !data || samples == 0)
         return false;
     if (!EnsureCodecOpen())
         return false;
@@ -401,7 +410,7 @@ void AudioPlayer::TaskLoop() {
     while (true) {
         // 等通知
         xSemaphoreTake(notify_, portMAX_DELAY);
-        if (chat_active_.load(std::memory_order_relaxed))
+        if (xiaozhi_active_.load(std::memory_order_relaxed))
             continue;
 
         // 拿当前 pending
@@ -415,7 +424,7 @@ void AudioPlayer::TaskLoop() {
 
         if (!buf || len == 0)
             continue;
-        if (chat_active_.load(std::memory_order_relaxed)) {
+        if (xiaozhi_active_.load(std::memory_order_relaxed)) {
             free(buf);
             continue;
         }
@@ -456,7 +465,7 @@ void AudioPlayer::TaskLoop() {
         bool   wrote_first = false;
         while (off < len) {
             bool stop = stop_flag_.load(std::memory_order_acquire);
-            if (chat_active_.load(std::memory_order_relaxed))
+            if (xiaozhi_active_.load(std::memory_order_relaxed))
                 stop = true;
             if (stop)
                 break;
@@ -467,14 +476,14 @@ void AudioPlayer::TaskLoop() {
             const int ret = esp_codec_dev_write(dev_, const_cast<uint8_t*>(buf + off), static_cast<int>(to_write));
             xSemaphoreGive(codec_mutex_);
             if (ret != ESP_CODEC_DEV_OK) {
-                ESP_LOGW(kTag, "esp_codec_dev_write failed ret=0x%x, stop current PCM", ret);
+                ESP_LOGW(kTag, "write failed ret=0x%x action=stop_current", ret);
                 break;
             }
             off += to_write;
 
             // 第一段 PCM 写下去之后再恢复音量:确保新 PCM 已经到达 DAC 才解 mute,
             // 0 → volume_ 的爬坡跟新 PCM 起始波形混在一起,听感上没有"接通"感。
-            if (!wrote_first && need_unmute_after && !chat_active_.load(std::memory_order_relaxed)) {
+            if (!wrote_first && need_unmute_after && !xiaozhi_active_.load(std::memory_order_relaxed)) {
                 xSemaphoreTake(codec_mutex_, portMAX_DELAY);
                 ScopedI2cBusLock lock("AudioPlayer::switch_unmute");
                 if (lock.status() == ESP_OK) {
@@ -486,7 +495,7 @@ void AudioPlayer::TaskLoop() {
         }
         // 兜底:走完整段都没解 mute(比如 PCM < kChunk 又被中断),下次进入
         // 还会再次 set_out_vol(0)→delay→恢复,所以保持 codec_in_progress_=true。
-        if (need_unmute_after && !wrote_first && !chat_active_.load(std::memory_order_relaxed)) {
+        if (need_unmute_after && !wrote_first && !xiaozhi_active_.load(std::memory_order_relaxed)) {
             xSemaphoreTake(codec_mutex_, portMAX_DELAY);
             ScopedI2cBusLock lock("AudioPlayer::switch_unmute_fallback");
             if (lock.status() == ESP_OK) {

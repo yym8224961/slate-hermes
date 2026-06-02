@@ -19,7 +19,7 @@
 #include "utils/json_utils.h"
 
 namespace {
-constexpr char   kTag[]           = "Portal";
+constexpr char   kTag[]           = "portal";
 constexpr size_t kMaxServerUrlLen = 256;
 std::mutex       g_scan_mutex;
 
@@ -146,7 +146,7 @@ esp_err_t CaptivePortal::HandleScan(httpd_req_t* req) {
     if (err == ESP_OK) {
         esp_wifi_scan_get_ap_num(&num);
     } else {
-        ESP_LOGW(kTag, "WiFi scan failed: %s", esp_err_to_name(err));
+        ESP_LOGW(kTag, "wifi scan failed err=%s", esp_err_to_name(err));
     }
     std::vector<wifi_ap_record_t> recs(num);
     if (num > 0) {
@@ -249,7 +249,7 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
         if (portal && portal->on_finished_) {
             auto* ctx = new (std::nothrow) FinishTaskContext{portal->alive_, portal->on_finished_};
             if (!ctx) {
-                ESP_LOGE(kTag, "portal_done context alloc failed, firing inline");
+                ESP_LOGE(kTag, "finish context alloc failed action=inline");
                 portal->on_finished_(true);
                 return ESP_OK;
             }
@@ -258,7 +258,7 @@ esp_err_t CaptivePortal::HandleSubmit(httpd_req_t* req) {
                 delete ctx;
                 // 创建失败(堆紧张):同步触发 finished,避免 AP 永远不关。
                 // 缺点是浏览器看不到 success 页(连接随即断),但比 AP 一直开着好。
-                ESP_LOGE(kTag, "portal_done task create failed (heap?), firing inline");
+                ESP_LOGE(kTag, "finish task create failed action=inline");
                 portal->on_finished_(true);
             }
         }
@@ -282,13 +282,13 @@ esp_err_t CaptivePortal::HandleExit(httpd_req_t* req) {
     if (portal) {
         auto* ctx = new (std::nothrow) StopTaskContext{portal->alive_, portal};
         if (!ctx) {
-            ESP_LOGE(kTag, "portal_exit context alloc failed");
+            ESP_LOGE(kTag, "exit context alloc failed");
             return ESP_OK;
         }
         BaseType_t r = xTaskCreate(&CaptivePortal::StopTask, "portal_exit", 8 * 1024, ctx, 3, nullptr);
         if (r != pdPASS) {
             delete ctx;
-            ESP_LOGE(kTag, "portal_exit task create failed");
+            ESP_LOGE(kTag, "exit task create failed");
         }
     }
     return ESP_OK;
@@ -314,7 +314,7 @@ bool CaptivePortal::Start() {
         return true;
 
     if (!Wifi::Get().StartAp(CONFIG_SLATE_AP_SSID_PREFIX)) {
-        ESP_LOGE(kTag, "StartAp failed");
+        ESP_LOGE(kTag, "start failed reason=start_ap_failed");
         return false;
     }
 
@@ -342,7 +342,7 @@ bool CaptivePortal::Start() {
         // DNS 劫持服务:把所有查询响应到 AP IP
         dns_.Start(ip_info.ip);
     } else {
-        ESP_LOGW(kTag, "AP netif not found, DNS hijack skipped");
+        ESP_LOGW(kTag, "dns hijack skipped reason=ap_netif_missing");
     }
 
     httpd_config_t cfg   = HTTPD_DEFAULT_CONFIG();
@@ -352,7 +352,7 @@ bool CaptivePortal::Start() {
     // + ESP_LOG（vfprintf 含 UTF-8 中文消耗大），会触发 LoadProhibited panic。
     cfg.stack_size = 8192;
     if (httpd_start(&server_, &cfg) != ESP_OK) {
-        ESP_LOGE(kTag, "HTTP server start failed");
+        ESP_LOGE(kTag, "start failed reason=http_server_start_failed");
         dns_.Stop();
         Wifi::Get().StopAp();
         return false;

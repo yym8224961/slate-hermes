@@ -43,7 +43,7 @@ void SyncService::Start(std::string wake_reason, InitialSync initial_sync) {
     {
         std::lock_guard<std::mutex> lock(task_mutex_);
         if (task_handle_) {
-            ESP_LOGW(sync_internal::kTag, "Start ignored: previous sync task has not exited");
+            ESP_LOGW(sync_internal::kTag, "start ignored reason=previous_task_running");
             return;
         }
     }
@@ -52,14 +52,14 @@ void SyncService::Start(std::string wake_reason, InitialSync initial_sync) {
     if (!event_group_) {
         event_group_ = xEventGroupCreate();
         if (!event_group_) {
-            ESP_LOGE(sync_internal::kTag, "Failed to create event group");
+            ESP_LOGE(sync_internal::kTag, "event group create failed");
             return;
         }
     }
     if (!exit_sem_) {
         exit_sem_ = xSemaphoreCreateBinary();
         if (!exit_sem_) {
-            ESP_LOGE(sync_internal::kTag, "Failed to create exit semaphore");
+            ESP_LOGE(sync_internal::kTag, "exit semaphore create failed");
             return;
         }
     }
@@ -71,7 +71,7 @@ void SyncService::Start(std::string wake_reason, InitialSync initial_sync) {
         if (ok != pdPASS) {
             running_.store(false, std::memory_order_release);
             task_handle_ = nullptr;
-            ESP_LOGE(sync_internal::kTag, "sync task create failed");
+            ESP_LOGE(sync_internal::kTag, "task create failed name=slate_sync");
             return;
         }
     }
@@ -100,7 +100,7 @@ void SyncService::Stop() {
         xEventGroupSetBits(event_group_, BIT_STOP);
     }
     if (exit_sem_ && xSemaphoreTake(exit_sem_, pdMS_TO_TICKS(sync_internal::kStopWaitMs)) != pdTRUE) {
-        ESP_LOGW(sync_internal::kTag, "sync task did not exit within %dms", sync_internal::kStopWaitMs);
+        ESP_LOGW(sync_internal::kTag, "stop timeout elapsed_ms=%d", sync_internal::kStopWaitMs);
         return;
     }
     {
@@ -113,6 +113,16 @@ void SyncService::Trigger(SyncMode mode) {
     const int bit = mode == SyncMode::kBackgroundRefresh ? BIT_WAKE_REFRESH : BIT_TRIGGER;
     if (event_group_)
         xEventGroupSetBits(event_group_, bit);
+}
+
+const char* SyncService::SyncModeName(SyncMode mode) {
+    switch (mode) {
+        case SyncMode::kUserActive:
+            return "user_active";
+        case SyncMode::kBackgroundRefresh:
+            return "background_refresh";
+    }
+    return "unknown";
 }
 
 void SyncService::RequestUserActiveSync() {

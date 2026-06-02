@@ -8,15 +8,15 @@
 
 #include "bsp/battery_adc.h"
 #include "bsp/board_power.h"
-#include "drivers/input/button.h"
 #include "bsp/charge_status.h"
 #include "bsp/config.h"
-#include "drivers/display/epd_ssd1683.h"
 #include "drivers/bus/i2c_bus_lock.h"
+#include "drivers/display/epd_ssd1683.h"
+#include "drivers/input/button.h"
 #include "utils/time_utils.h"
 
 namespace {
-constexpr char     kTag[]          = "Board";
+constexpr char     kTag[]          = "board";
 constexpr uint16_t kNavLongPressMs = 1000;
 
 // deep sleep 唤醒(非 cold boot)后，睡前用 rtc_gpio_hold_en 锁住的 EXT1 唤醒源
@@ -28,12 +28,14 @@ constexpr uint16_t kNavLongPressMs = 1000;
 void ReleaseDeepSleepWakeHolds() {
     if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED)
         return;  // cold boot：无遗留 hold
+    ESP_LOGD(kTag, "wake hold release");
     const gpio_num_t pins[] = {
         static_cast<gpio_num_t>(BOOT_BUTTON_GPIO),
         static_cast<gpio_num_t>(DOWN_BUTTON_GPIO),
         static_cast<gpio_num_t>(CHARGE_DETECT_GPIO),
     };
     for (gpio_num_t pin : pins) {
+        ESP_LOGD(kTag, "wake hold release pin=%d", static_cast<int>(pin));
         rtc_gpio_hold_dis(pin);
         rtc_gpio_deinit(pin);
     }
@@ -46,6 +48,7 @@ Board& Board::Get() {
 }
 
 void Board::Init() {
+    ESP_LOGD(kTag, "init begin");
     ReleaseDeepSleepWakeHolds();
     InitPower();
     InitI2c();
@@ -56,9 +59,11 @@ void Board::Init() {
     InitEpd();
     InitButtons();
     InitBatteryAdc();
+    ESP_LOGD(kTag, "init done");
 }
 
 void Board::InitPower() {
+    ESP_LOGD(kTag, "init power begin");
     charge_ = std::make_unique<ChargeStatus>();
     // BoardPowerBsp 一次 gpio_config 把 audio rail / PA CTRL / VBAT 三个 pin 都
     // 配 OUTPUT,PA CTRL(GPIO46) 在构造完成的瞬间被驱动 LOW。后面 PowerAudioOn
@@ -78,13 +83,15 @@ void Board::InitPower() {
         vTaskDelay(pdMS_TO_TICKS(10));
         waited += 10;
         if (waited >= kMaxWaitMs) {
-            ESP_LOGW(kTag, "Down key not released after %dms, continuing", waited);
+            ESP_LOGW(kTag, "power key wait timeout waited_ms=%d", waited);
             break;
         }
     }
+    ESP_LOGD(kTag, "init power done down_key_wait_ms=%d", waited);
 }
 
 void Board::InitI2c() {
+    ESP_LOGD(kTag, "init i2c");
     ScopedI2cBusLock lock("Board::InitI2c");
     ESP_ERROR_CHECK(lock.status());
     i2c_master_bus_config_t cfg      = {};
@@ -100,17 +107,22 @@ void Board::InitI2c() {
 }
 
 void Board::InitChargeStatus() {
+    ESP_LOGD(kTag, "init charge status");
     charge_->Init(static_cast<gpio_num_t>(CHARGE_DETECT_GPIO), static_cast<gpio_num_t>(CHARGE_FULL_GPIO),
                   time_utils::NowMs());
     charge_->StartTick();
 }
 
 void Board::InitEpd() {
+    ESP_LOGD(kTag, "init epd");
     epd_ = std::make_unique<EpdSsd1683>();
     epd_->Init();
 }
 
 void Board::InitButtons() {
+    ESP_LOGD(kTag, "init buttons up=%d down=%d enter=%d long_ms=%u", static_cast<int>(UP_BUTTON_GPIO),
+             static_cast<int>(DOWN_BUTTON_GPIO), static_cast<int>(BOOT_BUTTON_GPIO),
+             static_cast<unsigned>(kNavLongPressMs));
     // 三个业务按键统一 1s 长按阈值。具体语义由当前 Scene 处理:
     // FrameScene 中 UP/DOWN 长按切内容组,ENTER 长按进设置;危险动作在各确认页长按执行。
     // 不启用 iot_button 的 enable_power_save：它会注册一个 GPIO wake ISR，
@@ -122,6 +134,7 @@ void Board::InitButtons() {
 }
 
 void Board::InitBatteryAdc() {
+    ESP_LOGD(kTag, "init battery adc");
     battery_adc_ = std::make_unique<BatteryAdc>();
     battery_adc_->Init();
 }

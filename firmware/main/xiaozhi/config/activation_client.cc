@@ -27,7 +27,7 @@
 #include "xiaozhi/config/settings.h"
 
 namespace {
-constexpr char kTag[] = "XiaoCfg";
+constexpr char kTag[] = "xiaozhi_cfg";
 
 esp_err_t HttpEventHandler(esp_http_client_event_t* evt) {
     auto* out = static_cast<std::string*>(evt->user_data);
@@ -164,7 +164,7 @@ void ActivationClient::SetupHeaders(esp_http_client_handle_t client, const std::
 
 std::string ActivationClient::ActivationPayload(const std::string& challenge, const std::string& serial_number) const {
     if (serial_number.empty()) {
-        ESP_LOGW(kTag, "Activation challenge present but serial number is empty; using empty payload");
+        ESP_LOGW(kTag, "activation payload empty reason=serial_number_missing");
         return "{}";
     }
 
@@ -174,12 +174,12 @@ std::string ActivationClient::ActivationPayload(const std::string& challenge, co
     esp_err_t ret = esp_hmac_calculate(HMAC_KEY0, reinterpret_cast<const uint8_t*>(challenge.data()), challenge.size(),
                                        hmac_result);
     if (ret != ESP_OK) {
-        ESP_LOGE(kTag, "Activation HMAC failed: %s", esp_err_to_name(ret));
+        ESP_LOGE(kTag, "activation hmac failed err=%s", esp_err_to_name(ret));
         return "{}";
     }
     hmac_hex = util::HexLower(hmac_result, sizeof(hmac_result));
 #else
-    ESP_LOGW(kTag, "Activation HMAC unsupported by target");
+    ESP_LOGW(kTag, "activation hmac unsupported");
 #endif
 
     cJSON* payload = cJSON_CreateObject();
@@ -192,7 +192,7 @@ std::string ActivationClient::ActivationPayload(const std::string& challenge, co
 
 esp_err_t ActivationClient::Activate(const std::string& challenge) {
     if (challenge.empty()) {
-        ESP_LOGW(kTag, "Activate skipped: empty challenge");
+        ESP_LOGW(kTag, "activate skipped reason=challenge_empty");
         return ESP_FAIL;
     }
 
@@ -222,7 +222,7 @@ esp_err_t ActivationClient::Activate(const std::string& challenge) {
     esp_err_t err    = esp_http_client_perform(client);
     const int status = esp_http_client_get_status_code(client);
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "Activate failed: err=%s status=%d body_len=%u", esp_err_to_name(err), status,
+        ESP_LOGW(kTag, "activate failed err=%s status=%d body_len=%u", esp_err_to_name(err), status,
                  static_cast<unsigned>(body.size()));
     }
     esp_http_client_cleanup(client);
@@ -264,7 +264,7 @@ ActivationConfigResult ActivationClient::Fetch() {
     result.http_status = esp_http_client_get_status_code(client);
     if (err != ESP_OK) {
         result.error = esp_err_to_name(err);
-        ESP_LOGW(kTag, "Fetch failed: %s", result.error.c_str());
+        ESP_LOGW(kTag, "fetch failed err=%s", result.error.c_str());
         esp_http_client_cleanup(client);
         return result;
     }
@@ -272,7 +272,7 @@ ActivationConfigResult ActivationClient::Fetch() {
 
     if (result.http_status != 200) {
         result.error = "HTTP " + std::to_string(result.http_status);
-        ESP_LOGW(kTag, "Fetch status=%d body_len=%u", result.http_status, static_cast<unsigned>(body.size()));
+        ESP_LOGW(kTag, "fetch failed status=%d body_len=%u", result.http_status, static_cast<unsigned>(body.size()));
         return result;
     }
 

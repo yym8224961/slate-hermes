@@ -16,7 +16,7 @@
 #include "utils/time_utils.h"
 
 namespace {
-constexpr char kTag[]                      = "Api";
+constexpr char kTag[]                      = "api";
 constexpr int  kUnauthorizedResetThreshold = 5;
 constexpr int  kDefaultTimeoutMs           = 8000;
 constexpr int  kManifestTimeoutMs          = 15000;
@@ -130,13 +130,14 @@ std::string ReadEtagHeader(esp_http_client_handle_t client) {
 
 void LogErrorEnvelope(const std::string& path, int status, const std::vector<uint8_t>& body) {
     if (body.empty()) {
-        ESP_LOGW(kTag, "%s -> HTTP %d", path.c_str(), status);
+        ESP_LOGW(kTag, "http error path=%s status=%d", path.c_str(), status);
         return;
     }
     std::string text(body.begin(), body.end());
     cJSON*      root = cJSON_Parse(text.c_str());
     if (!root) {
-        ESP_LOGW(kTag, "%s -> HTTP %d: non-json error body len=%u", path.c_str(), status, (unsigned)body.size());
+        ESP_LOGW(kTag, "http error path=%s status=%d body=json_invalid bytes=%u", path.c_str(), status,
+                 (unsigned)body.size());
         return;
     }
     auto get_str = [](cJSON* obj, const char* key) -> const char* {
@@ -149,7 +150,7 @@ void LogErrorEnvelope(const std::string& path, int status, const std::vector<uin
     if (cJSON_IsObject(detail)) {
         code = get_str(detail, proto::kCode);
     }
-    ESP_LOGW(kTag, "%s -> HTTP %d error=%s code=%s", path.c_str(), status, klass, code);
+    ESP_LOGW(kTag, "http error path=%s status=%d error=%s code=%s", path.c_str(), status, klass, code);
     cJSON_Delete(root);
 }
 
@@ -251,20 +252,20 @@ bool ApiClient::DoRequest(const std::string& path, esp_http_client_method_t meth
         secret   = secret_;
     }
     if (base_url.empty()) {
-        ESP_LOGW(kTag, "Server URL not set");
+        ESP_LOGW(kTag, "request failed reason=server_url_missing");
         return false;
     }
     if (!IsAllowedBaseUrl(base_url)) {
-        ESP_LOGW(kTag, "Server URL rejected");
+        ESP_LOGW(kTag, "request failed reason=server_url_rejected");
         return false;
     }
     if (need_auth && secret.empty()) {
-        ESP_LOGW(kTag, "%s: need_auth but secret empty", path.c_str());
+        ESP_LOGW(kTag, "request failed reason=secret_empty path=%s", path.c_str());
         return false;
     }
     if (need_auth && base_url.rfind("http://", 0) == 0 &&
         !warned_http_auth_.exchange(true, std::memory_order_relaxed)) {
-        ESP_LOGW(kTag, "Using HTTP for authenticated request %s", path.c_str());
+        ESP_LOGW(kTag, "request insecure path=%s auth=1 scheme=http", path.c_str());
     }
     std::string normalized_base = base_url;
     if (!normalized_base.empty() && normalized_base.back() == '/')
@@ -283,7 +284,7 @@ bool ApiClient::DoRequest(const std::string& path, esp_http_client_method_t meth
         const bool               reused = (conn_ != nullptr);
         esp_http_client_handle_t client = EnsureClientLocked(normalized_base);
         if (!client) {
-            ESP_LOGW(kTag, "HTTP init failed %s after %lldms", path.c_str(),
+            ESP_LOGW(kTag, "http init failed path=%s elapsed_ms=%lld", path.c_str(),
                      (long long)(time_utils::NowMs() - started_ms));
             return false;
         }
@@ -310,7 +311,7 @@ bool ApiClient::DoRequest(const std::string& path, esp_http_client_method_t meth
         // open 会建立连接并发送请求头。复用的死 socket 在此暴露,可安全重试(请求体尚未发出)。
         esp_err_t err = esp_http_client_open(client, body_in.size());
         if (err != ESP_OK) {
-            ESP_LOGW(kTag, "Open %s failed after %lldms: %s", path.c_str(),
+            ESP_LOGW(kTag, "http open failed path=%s elapsed_ms=%lld err=%s", path.c_str(),
                      (long long)(time_utils::NowMs() - started_ms), esp_err_to_name(err));
             DropConnectionLocked();
             if (reused && attempt == 0)
@@ -320,7 +321,7 @@ bool ApiClient::DoRequest(const std::string& path, esp_http_client_method_t meth
         if (!body_in.empty()) {
             int wn = esp_http_client_write(client, body_in.c_str(), body_in.size());
             if (wn != static_cast<int>(body_in.size())) {
-                ESP_LOGW(kTag, "Write %s short after %lldms: %d/%u", path.c_str(),
+                ESP_LOGW(kTag, "http write short path=%s elapsed_ms=%lld written=%d expected=%u", path.c_str(),
                          (long long)(time_utils::NowMs() - started_ms), wn, (unsigned)body_in.size());
                 DropConnectionLocked();
                 return false;  // 请求头已发出,不重试(POST 非幂等)
@@ -329,7 +330,7 @@ bool ApiClient::DoRequest(const std::string& path, esp_http_client_method_t meth
 
         int64_t content_length = esp_http_client_fetch_headers(client);
         if (content_length < 0) {
-            ESP_LOGW(kTag, "%s: fetch_headers failed after %lldms", path.c_str(),
+            ESP_LOGW(kTag, "http header fetch failed path=%s elapsed_ms=%lld", path.c_str(),
                      (long long)(time_utils::NowMs() - started_ms));
             DropConnectionLocked();
             return false;
@@ -344,8 +345,8 @@ bool ApiClient::DoRequest(const std::string& path, esp_http_client_method_t meth
         bool failed = false;
         if (status != 304) {
             if (content_length > static_cast<int64_t>(kMaxResponseBytes)) {
-                ESP_LOGW(kTag, "%s: Content-Length %lld exceeds %u B limit", path.c_str(), (long long)content_length,
-                         (unsigned)kMaxResponseBytes);
+                ESP_LOGW(kTag, "http response refused path=%s content_length=%lld limit=%u", path.c_str(),
+                         (long long)content_length, (unsigned)kMaxResponseBytes);
                 DropConnectionLocked();
                 return false;
             }
@@ -355,7 +356,7 @@ bool ApiClient::DoRequest(const std::string& path, esp_http_client_method_t meth
             while (true) {
                 int n = esp_http_client_read(client, buf, sizeof(buf));
                 if (n < 0) {
-                    ESP_LOGW(kTag, "%s: response read failed after %lldms: %d", path.c_str(),
+                    ESP_LOGW(kTag, "http read failed path=%s elapsed_ms=%lld ret=%d", path.c_str(),
                              (long long)(time_utils::NowMs() - started_ms), n);
                     failed = true;
                     break;
@@ -364,14 +365,14 @@ bool ApiClient::DoRequest(const std::string& path, esp_http_client_method_t meth
                     break;
                 body_out.insert(body_out.end(), buf, buf + n);
                 if (body_out.size() > kMaxResponseBytes) {
-                    ESP_LOGW(kTag, "%s: response body exceeded %u B, aborting", path.c_str(),
+                    ESP_LOGW(kTag, "http response exceeded path=%s limit=%u", path.c_str(),
                              (unsigned)kMaxResponseBytes);
                     failed = true;
                     break;
                 }
             }
             if (!failed && content_length > 0 && body_out.size() != static_cast<size_t>(content_length)) {
-                ESP_LOGW(kTag, "%s: short response body after %lldms %u/%lld B", path.c_str(),
+                ESP_LOGW(kTag, "http response short path=%s elapsed_ms=%lld bytes=%u expected=%lld", path.c_str(),
                          (long long)(time_utils::NowMs() - started_ms), (unsigned)body_out.size(),
                          (long long)content_length);
                 failed = true;
@@ -381,7 +382,7 @@ bool ApiClient::DoRequest(const std::string& path, esp_http_client_method_t meth
             while (!esp_http_client_is_complete_data_received(client)) {
                 int n = esp_http_client_read(client, drain, sizeof(drain));
                 if (n < 0) {
-                    ESP_LOGW(kTag, "%s: 304 drain failed after %lldms: %d", path.c_str(),
+                    ESP_LOGW(kTag, "http not_modified drain failed path=%s elapsed_ms=%lld ret=%d", path.c_str(),
                              (long long)(time_utils::NowMs() - started_ms), n);
                     failed = true;
                     break;
@@ -409,7 +410,8 @@ bool ApiClient::DoRequest(const std::string& path, esp_http_client_method_t meth
         if (status == 401 && need_auth) {
             const int count = consecutive_401_.fetch_add(1, std::memory_order_relaxed) + 1;
             LogErrorEnvelope(path, status, body_out);
-            ESP_LOGW(kTag, "%s -> 401 count=%d/%d", path.c_str(), count, kUnauthorizedResetThreshold);
+            ESP_LOGW(kTag, "unauthorized path=%s count=%d threshold=%d", path.c_str(), count,
+                     kUnauthorizedResetThreshold);
             UnauthorizedCb cb;
             if (count >= kUnauthorizedResetThreshold) {
                 std::lock_guard<std::mutex> lock(state_mutex_);
@@ -460,7 +462,7 @@ bool ParseDeviceState(const std::string& json, DeviceState& out) {
         out.structure_etag = JsonString(group, proto::kStructureEtag);
         out.manifest_etag  = JsonString(group, proto::kManifestEtag);
         if (out.manifest_etag.empty()) {
-            ESP_LOGW(kTag, "DeviceState group missing manifest_etag");
+            ESP_LOGW(kTag, "device state invalid reason=manifest_etag_missing");
             cJSON_Delete(root);
             return false;
         }
@@ -498,14 +500,14 @@ bool ApiClient::Register(RegisterResult& out) {
     }
     cJSON* j = cJSON_CreateObject();
     if (!j) {
-        ESP_LOGW(kTag, "Register: json allocation failed");
+        ESP_LOGW(kTag, "register alloc failed object=json");
         return false;
     }
     cJSON_AddStringToObject(j, proto::kMac, mac.c_str());
     char* body = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     if (!body) {
-        ESP_LOGW(kTag, "Register: body allocation failed");
+        ESP_LOGW(kTag, "register alloc failed object=body");
         return false;
     }
     std::string resp;
@@ -517,7 +519,7 @@ bool ApiClient::Register(RegisterResult& out) {
 
     cJSON* root = cJSON_Parse(resp.c_str());
     if (!root) {
-        ESP_LOGW(kTag, "Register: invalid json response");
+        ESP_LOGW(kTag, "register response invalid reason=json_parse");
         return false;
     }
     auto get_str = [&](const char* k) -> std::string {
@@ -530,7 +532,7 @@ bool ApiClient::Register(RegisterResult& out) {
     cJSON_Delete(root);
 
     if (out.id.empty() || out.device_secret.empty() || out.pair_code.empty()) {
-        ESP_LOGW(kTag, "Register: response missing required fields");
+        ESP_LOGW(kTag, "register response invalid reason=required_fields_missing");
         return false;
     }
     return true;
@@ -539,7 +541,7 @@ bool ApiClient::Register(RegisterResult& out) {
 bool ApiClient::Poll(const Telemetry& tel, DeviceState& out) {
     cJSON* root = cJSON_CreateObject();
     if (!root) {
-        ESP_LOGW(kTag, "Poll: json allocation failed");
+        ESP_LOGW(kTag, "poll alloc failed object=json");
         return false;
     }
 
@@ -550,7 +552,7 @@ bool ApiClient::Poll(const Telemetry& tel, DeviceState& out) {
     if (has_telemetry) {
         cJSON* t = cJSON_CreateObject();
         if (!t) {
-            ESP_LOGW(kTag, "Poll: telemetry allocation failed");
+            ESP_LOGW(kTag, "poll alloc failed object=telemetry");
             cJSON_Delete(root);
             return false;
         }
@@ -576,7 +578,7 @@ bool ApiClient::Poll(const Telemetry& tel, DeviceState& out) {
     char* body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!body) {
-        ESP_LOGW(kTag, "Poll: body allocation failed");
+        ESP_LOGW(kTag, "poll alloc failed object=body");
         return false;
     }
     std::string resp;
@@ -603,14 +605,14 @@ bool ApiClient::CycleGroup(const std::string& direction, DeviceState& out) {
 bool ApiClient::SelectGroup(const std::string& gid, DeviceState& out) {
     cJSON* j = cJSON_CreateObject();
     if (!j) {
-        ESP_LOGW(kTag, "SelectGroup: json allocation failed");
+        ESP_LOGW(kTag, "select group alloc failed object=json");
         return false;
     }
     cJSON_AddStringToObject(j, proto::kId, gid.c_str());
     char* body = cJSON_PrintUnformatted(j);
     cJSON_Delete(j);
     if (!body) {
-        ESP_LOGW(kTag, "SelectGroup: body allocation failed");
+        ESP_LOGW(kTag, "select group alloc failed object=body");
         return false;
     }
     std::string resp;
@@ -647,7 +649,7 @@ bool ApiClient::GetManifest(const std::string& group_id, const std::string& if_n
     // 协议 v3：group 子对象 { id, structure_etag, manifest_etag, name, sort_order, position }
     cJSON* group = cJSON_GetObjectItemCaseSensitive(root, proto::kGroup);
     if (!cJSON_IsObject(group)) {
-        ESP_LOGW(kTag, "GetManifest: response missing group");
+        ESP_LOGW(kTag, "manifest response invalid reason=group_missing");
         cJSON_Delete(root);
         return false;
     }
@@ -655,7 +657,7 @@ bool ApiClient::GetManifest(const std::string& group_id, const std::string& if_n
     out.group_name    = JsonString(group, proto::kName);
     out.manifest_etag = JsonString(group, proto::kManifestEtag);
     if (out.manifest_etag.empty()) {
-        ESP_LOGW(kTag, "GetManifest: response missing manifest_etag");
+        ESP_LOGW(kTag, "manifest response invalid reason=manifest_etag_missing");
         cJSON_Delete(root);
         return false;
     }

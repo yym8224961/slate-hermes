@@ -12,7 +12,7 @@ constexpr std::array<uint16_t, N> MakeLumLut(uint16_t factor, uint16_t max_value
     std::array<uint16_t, N> lut = {};
     for (size_t i = 0; i < N; ++i) {
         const uint16_t expanded = static_cast<uint16_t>((i * 255 + rounding_bias) / max_value);
-        lut[i] = static_cast<uint16_t>(factor * expanded);
+        lut[i]                  = static_cast<uint16_t>(factor * expanded);
     }
     return lut;
 }
@@ -94,9 +94,9 @@ Rect AlignX8(const Rect& r) {
 }
 
 bool Rgb565IsWhite(uint16_t c, uint8_t threshold) {
-    const uint8_t r5 = (c >> 11) & 0x1F;
-    const uint8_t g6 = (c >> 5) & 0x3F;
-    const uint8_t b5 = c & 0x1F;
+    const uint8_t  r5  = (c >> 11) & 0x1F;
+    const uint8_t  g6  = (c >> 5) & 0x3F;
+    const uint8_t  b5  = c & 0x1F;
     const uint32_t lum = kR5Lum[r5] + kG6Lum[g6] + kB5Lum[b5];
     return lum >= (static_cast<uint32_t>(threshold) << 8);
 }

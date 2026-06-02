@@ -136,7 +136,7 @@ export class DeviceCurrentContentService {
         return { ...request, manifestEtag: rendered.groupEtag, content: updatedContent };
       } catch (err) {
         this.logger.warn(
-          `dynamic current-frame refresh failed content=${content.id}: ${formatError(err)}`
+          `Dynamic current-frame refresh failed for content ${content.id} on device ${request.deviceId}: ${formatError(err)}`
         );
       }
     }

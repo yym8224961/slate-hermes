@@ -6,7 +6,7 @@
 #include "ui/theme.h"
 
 namespace {
-constexpr char kTag[]      = "FrameView";
+constexpr char kTag[]      = "frame_view";
 constexpr int  kStatusBarH = theme::kStatusBarHeight;
 constexpr int  kImgH       = FrameView::kHeight - kStatusBarH;
 constexpr int  kBpr        = FrameView::kWidth >> 3;
@@ -25,19 +25,21 @@ FrameView::FrameView(lv_obj_t* parent) {
 }
 
 void FrameView::SetFrame(EpdSsd1683* epd, const std::vector<uint8_t>& raw) {
-    if (!epd) return;
+    if (!epd)
+        return;
     if (raw.size() != kRawBytes) {
-        ESP_LOGW(kTag, "Raw size %u != %d", static_cast<unsigned>(raw.size()), kRawBytes);
+        ESP_LOGW(kTag, "raw size mismatch bytes=%u expected=%d", static_cast<unsigned>(raw.size()), kRawBytes);
         return;
     }
-    epd->WriteRaw1bpp(0, kStatusBarH, kWidth, kImgH,
-                      raw.data() + kStatusBarH * kBpr, kImgBytes);
+    epd->WriteRaw1bpp(0, kStatusBarH, kWidth, kImgH, raw.data() + kStatusBarH * kBpr, kImgBytes);
 }
 
 void FrameView::Show() {
-    if (container_) lv_obj_clear_flag(container_, LV_OBJ_FLAG_HIDDEN);
+    if (container_)
+        lv_obj_clear_flag(container_, LV_OBJ_FLAG_HIDDEN);
 }
 
 void FrameView::Hide() {
-    if (container_) lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
+    if (container_)
+        lv_obj_add_flag(container_, LV_OBJ_FLAG_HIDDEN);
 }

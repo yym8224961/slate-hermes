@@ -132,7 +132,9 @@ export class ContentsService {
     ]);
     const failed = deleted.filter((result) => result.status === 'rejected').length;
     if (failed > 0) {
-      this.logger.warn(`content ${contentId} deleted with ${failed} blob cleanup failure(s)`);
+      this.logger.warn(
+        `Content ${contentId} was deleted, but ${failed} blob cleanup operation(s) failed.`
+      );
     }
   }
 
@@ -449,7 +451,7 @@ export class ContentsService {
     if (!audioEtag) return;
     await this.audioBlobs.delete(groupId, contentId, audioEtag).catch((err: unknown) => {
       this.logger.warn(
-        `post-commit audio blob cleanup failed content=${contentId}: ${formatError(err)}`
+        `Post-commit audio blob cleanup failed for content ${contentId} in group ${groupId}: ${formatError(err)}`
       );
     });
   }

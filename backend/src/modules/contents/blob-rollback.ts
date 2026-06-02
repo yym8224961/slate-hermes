@@ -33,18 +33,13 @@ export class BlobRollbackPlan {
   async restoreAll(): Promise<void> {
     await Promise.all(
       this.ops.map((op) =>
-        restoreBlob(
-          this.blob,
-          op.groupId,
-          op.contentId,
-          op.kind,
-          op.previousBytes,
-          this.logger
-        ).catch((err: unknown) => {
-          this.logger.warn(
-            `blob rollback operation failed content=${op.contentId} kind=${op.kind}: ${formatError(err)}`
-          );
-        })
+        restoreBlob(this.blob, op.groupId, op.contentId, op.kind, op.previousBytes).catch(
+          (err: unknown) => {
+            this.logger.warn(
+              `Blob rollback failed for ${op.kind} content ${op.contentId} in group ${op.groupId}: ${formatError(err)}`
+            );
+          }
+        )
       )
     );
   }
@@ -55,14 +50,8 @@ async function restoreBlob(
   groupId: string,
   contentId: string,
   kind: BlobKind,
-  previousBytes: Buffer | null,
-  logger: Logger
+  previousBytes: Buffer | null
 ): Promise<void> {
-  try {
-    if (previousBytes) await blob.write(groupId, contentId, kind, previousBytes);
-    else await blob.delete(groupId, contentId, kind);
-  } catch (err) {
-    logger.warn(`恢复 ${kind} blob 失败 content=${contentId}: ${formatError(err)}`);
-    throw err;
-  }
+  if (previousBytes) await blob.write(groupId, contentId, kind, previousBytes);
+  else await blob.delete(groupId, contentId, kind);
 }

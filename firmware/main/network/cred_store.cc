@@ -6,7 +6,7 @@
 #include "storage/nvs/nvs_store.h"
 
 namespace {
-constexpr char kTag[] = "Cred";
+constexpr char kTag[] = "cred";
 }  // namespace
 
 namespace cred {
@@ -29,7 +29,7 @@ bool Save(const Credentials& c) {
                                                           {nvs_schema::net::kUrl, c.server_url},
                                                       });
     if (!ok) {
-        ESP_LOGE(kTag, "Save credentials failed");
+        ESP_LOGE(kTag, "save failed type=credentials");
     }
     return ok;
 }
@@ -40,7 +40,7 @@ bool SaveSecret(const std::string& device_id, const std::string& device_secret) 
                                                           {nvs_schema::net::kDevSec, device_secret},
                                                       });
     if (!ok) {
-        ESP_LOGE(kTag, "SaveSecret failed");
+        ESP_LOGE(kTag, "save failed type=secret");
         return false;
     }
     return true;
@@ -50,7 +50,7 @@ void ClearSecret() {
     // 保留 Wi-Fi 和 server url，只清内容服务端设备身份。
     nvs_store::EraseKey(nvs_schema::kNet, nvs_schema::net::kDevId);
     nvs_store::EraseKey(nvs_schema::kNet, nvs_schema::net::kDevSec);
-    ESP_LOGW(kTag, "Device secret cleared (will re-register on next boot)");
+    ESP_LOGW(kTag, "secret cleared action=reregister_next_boot");
 }
 
 std::string GetServerUrl() {

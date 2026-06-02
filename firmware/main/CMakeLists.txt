@@ -4,6 +4,7 @@ set(SOURCES
     "app/app.cc"
 
     "events/event_bus.cc"
+    "events/ui_event_log.cc"
 
     "drivers/input/up_down_combo.cc"
 
@@ -57,12 +58,12 @@ set(SOURCES
     "xiaozhi/protocol/protocol.cc"
     "xiaozhi/protocol/websocket_protocol.cc"
     "xiaozhi/service/audio_service.cc"
-    "xiaozhi/service/chat_service.cc"
+    "xiaozhi/service/xiaozhi_service.cc"
     "xiaozhi/service/message_handler.cc"
 
     "scenes/splash/splash_scene.cc"
     "scenes/bg_refresh/bg_refresh_scene.cc"
-    "scenes/chat/chat_scene.cc"
+    "scenes/xiaozhi/xiaozhi_scene.cc"
     "scenes/frame/frame_scene.cc"
     "scenes/settings/settings_scene.cc"
     "scenes/settings/settings_page_base.cc"

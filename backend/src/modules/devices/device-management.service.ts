@@ -122,13 +122,11 @@ export class DeviceManagementService {
     const { device, freshlyClaimed } = result;
     if (freshlyClaimed) {
       this.logger.log(
-        `device claimed by pair code: id=${device.id} owner=${maskId(ownerUserId)}` +
+        `Device ${device.id} was claimed by owner ${ownerUserId}` +
           (device.selectedGroupId
-            ? ` auto-bound to group ${device.selectedGroupId}`
-            : ' (owner has no group yet)')
+            ? ` and auto-bound to group ${device.selectedGroupId}.`
+            : '; the owner has no group yet.')
       );
-    } else {
-      this.logger.log(`device re-claim no-op (already owned by self): id=${device.id}`);
     }
     return toDeviceSummary(device);
   }
@@ -157,7 +155,7 @@ export class DeviceManagementService {
         },
       });
     });
-    this.logger.log(`device unbound: id=${deviceId} new_pair_code=***`);
+    this.logger.log(`Device ${deviceId} was unbound and received a new pair code.`);
   }
 
   async reorderDevices(ownerUserId: string, order: string[]): Promise<void> {
@@ -193,10 +191,4 @@ export class DeviceManagementService {
     }
     return d;
   }
-}
-
-// 日志里保留 id 末四位，便于排查；不泄露完整 id。
-function maskId(id: string | null): string {
-  if (!id) return 'null';
-  return `***${id.slice(-4)}`;
 }

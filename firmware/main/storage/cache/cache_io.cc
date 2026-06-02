@@ -3,10 +3,10 @@
 #include <esp_log.h>
 #include <sys/stat.h>
 
-#include <cerrno>
-#include <cstring>
 #include <dirent.h>
 #include <unistd.h>
+#include <cerrno>
+#include <cstring>
 
 namespace cache::internal {
 
@@ -18,7 +18,7 @@ bool DirEnsure(const std::string& dir) {
         return true;
     if (errno == EEXIST)
         return true;
-    ESP_LOGW(kTag, "Mkdir %s failed: %d", dir.c_str(), errno);
+    ESP_LOGW(kTag, "mkdir failed path=%s errno=%d", dir.c_str(), errno);
     return false;
 }
 
@@ -26,18 +26,19 @@ bool WriteAll(const std::string& path, const void* data, size_t len) {
     const std::string tmp = path + ".tmp";
     FILE*             f   = fopen(tmp.c_str(), "wb");
     if (!f) {
-        ESP_LOGW(kTag, "Open w %s failed: %d", tmp.c_str(), errno);
+        ESP_LOGW(kTag, "open write failed path=%s errno=%d", tmp.c_str(), errno);
         return false;
     }
     size_t w    = fwrite(data, 1, len, f);
     int    cret = fclose(f);
     if (w != len || cret != 0) {
-        ESP_LOGW(kTag, "Write %s short/flush failed (w=%u/%u close=%d)", tmp.c_str(), (unsigned)w, (unsigned)len, cret);
+        ESP_LOGW(kTag, "write failed path=%s written=%u expected=%u close_ret=%d", tmp.c_str(), (unsigned)w,
+                 (unsigned)len, cret);
         unlink(tmp.c_str());
         return false;
     }
     if (rename(tmp.c_str(), path.c_str()) != 0) {
-        ESP_LOGW(kTag, "Rename %s -> %s failed: %d", tmp.c_str(), path.c_str(), errno);
+        ESP_LOGW(kTag, "rename failed from=%s to=%s errno=%d", tmp.c_str(), path.c_str(), errno);
         unlink(tmp.c_str());
         return false;
     }
@@ -52,7 +53,7 @@ bool ReadAll(const std::string& path, std::vector<uint8_t>& out, long max_read_b
     if (len < 0)
         return false;
     if (len > max_read_bytes) {
-        ESP_LOGW(kTag, "Read %s refused: %ld B exceeds limit", path.c_str(), len);
+        ESP_LOGW(kTag, "read refused path=%s bytes=%ld limit=%ld", path.c_str(), len, max_read_bytes);
         return false;
     }
     FILE* f = fopen(path.c_str(), "rb");
@@ -68,7 +69,7 @@ namespace {
 bool RemoveTreeInternal(const std::string& path, int depth) {
     constexpr int kMaxRemoveTreeDepth = 16;
     if (depth > kMaxRemoveTreeDepth) {
-        ESP_LOGW(kTag, "RemoveTree refused: depth>%d at %s", kMaxRemoveTreeDepth, path.c_str());
+        ESP_LOGW(kTag, "remove tree refused reason=max_depth depth=%d path=%s", kMaxRemoveTreeDepth, path.c_str());
         return false;
     }
     DIR* dir = opendir(path.c_str());
@@ -88,13 +89,13 @@ bool RemoveTreeInternal(const std::string& path, int depth) {
         if (S_ISDIR(st.st_mode)) {
             ok = RemoveTreeInternal(child, depth + 1) && ok;
         } else if (unlink(child.c_str()) != 0 && errno != ENOENT) {
-            ESP_LOGW(kTag, "Unlink %s failed: %d", child.c_str(), errno);
+            ESP_LOGW(kTag, "unlink failed path=%s errno=%d", child.c_str(), errno);
             ok = false;
         }
     }
     closedir(dir);
     if (rmdir(path.c_str()) != 0 && errno != ENOENT) {
-        ESP_LOGW(kTag, "Rmdir %s failed: %d", path.c_str(), errno);
+        ESP_LOGW(kTag, "rmdir failed path=%s errno=%d", path.c_str(), errno);
         ok = false;
     }
     return ok;
@@ -113,7 +114,7 @@ bool PathExists(const std::string& path) {
 bool RemoveIfExists(const std::string& path) {
     if (unlink(path.c_str()) == 0 || errno == ENOENT)
         return true;
-    ESP_LOGW(kTag, "Unlink %s failed: %d", path.c_str(), errno);
+    ESP_LOGW(kTag, "unlink failed path=%s errno=%d", path.c_str(), errno);
     return false;
 }
 

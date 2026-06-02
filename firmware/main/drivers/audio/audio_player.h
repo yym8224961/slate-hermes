@@ -1,7 +1,7 @@
 #pragma once
 
 // I2S + ES8311 audio owner。内容使用异步播放接口；小智进入对话时通过
-// BeginChat/EndChat 独占同一套 codec/I2S，避免两套业务各自初始化硬件。
+// BeginXiaozhi/EndXiaozhi 独占同一套 codec/I2S，避免两套业务各自初始化硬件。
 //
 // 服务端约定：16 kHz mono 16-bit raw PCM（.pcm 二进制）。
 // 数据来源:cache::ReadFrameAudio(gid, idx, vec<uint8_t>) 读 LittleFS。
@@ -43,12 +43,12 @@ class AudioPlayer {
     void SetVolume(int v);
 
     // 小智对话独占音频硬件。
-    bool BeginChat();
-    void EndChat();
-    bool ReadChatPcm(int16_t* dest, size_t samples);
-    bool WriteChatPcm(const int16_t* data, size_t samples);
-    bool IsChatActive() const {
-        return chat_active_.load(std::memory_order_relaxed);
+    bool BeginXiaozhi();
+    void EndXiaozhi();
+    bool ReadXiaozhiPcm(int16_t* dest, size_t samples);
+    bool WriteXiaozhiPcm(const int16_t* data, size_t samples);
+    bool IsXiaozhiActive() const {
+        return xiaozhi_active_.load(std::memory_order_relaxed);
     }
 
    private:
@@ -86,7 +86,7 @@ class AudioPlayer {
     uint8_t*          pending_pcm_  = nullptr;  // 由 Play 拷贝;task 取走置 null
     size_t            pending_len_  = 0;
     std::atomic<bool> stop_flag_{false};
-    std::atomic<bool> chat_active_{false};
+    std::atomic<bool> xiaozhi_active_{false};
     TaskHandle_t      task_ = nullptr;
 
     esp_pm_lock_handle_t no_light_sleep_lock_ = nullptr;

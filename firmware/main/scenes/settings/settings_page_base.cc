@@ -9,7 +9,7 @@ bool SettingsPageBase::EnterSettingsScaffold(SceneContext& ctx, const char* capt
     if (!ctx.epd->Lock(2000))
         return false;
 
-    root_ = CreateFullscreenRoot();
+    root_       = CreateFullscreenRoot();
     status_bar_ = std::make_unique<StatusBar>(root_);
     status_bar_->SetCaption(caption ? caption : "");
     RefreshStatusBarFromSensors(ctx, *status_bar_);

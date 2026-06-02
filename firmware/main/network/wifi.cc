@@ -14,7 +14,7 @@
 #include "utils/time_utils.h"
 
 namespace {
-constexpr char kTag[]                 = "Wifi";
+constexpr char kTag[]                 = "wifi";
 constexpr int  kWifiBitConnected      = BIT0;
 constexpr int  kWifiBitConnectionFail = BIT1;
 
@@ -116,8 +116,8 @@ void Wifi::EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data
             auto*      d              = static_cast<wifi_event_sta_disconnected_t*>(data);
             const bool want_reconnect = self->want_reconnect_.load(std::memory_order_acquire);
             const int  fail_count     = self->fail_count_.load(std::memory_order_acquire);
-            ESP_LOGW(kTag, "STA disconnected: reason=%d want_reconnect=%d fail_count=%d/%d", d->reason, want_reconnect,
-                     fail_count, self->max_fast_fail_);
+            ESP_LOGW(kTag, "sta disconnected reason=%d want_reconnect=%d fail_count=%d max_fast_fail=%d", d->reason,
+                     want_reconnect, fail_count, self->max_fast_fail_);
             self->last_disconnect_reason_.store(d->reason, std::memory_order_release);
             DisconnectCb on_disconnect;
             {
@@ -137,7 +137,7 @@ void Wifi::EventHandler(void* arg, esp_event_base_t base, int32_t id, void* data
                 self->fail_count_.fetch_add(1, std::memory_order_acq_rel);
                 esp_err_t e = esp_wifi_connect();
                 if (e != ESP_OK) {
-                    ESP_LOGW(kTag, "ESP wifi_connect retry failed: %s", esp_err_to_name(e));
+                    ESP_LOGW(kTag, "sta reconnect failed err=%s", esp_err_to_name(e));
                 }
                 return;
             }
@@ -212,7 +212,7 @@ void Wifi::Init() {
 bool Wifi::Connect(const std::string& ssid, const std::string& password, int timeout_ms) {
     Init();
     if (ssid.empty()) {
-        ESP_LOGW(kTag, "Connect: empty SSID");
+        ESP_LOGW(kTag, "connect failed reason=ssid_empty");
         return false;
     }
     if (mode_.load(std::memory_order_acquire) == Mode::AccessPoint)
@@ -222,7 +222,7 @@ bool Wifi::Connect(const std::string& ssid, const std::string& password, int tim
 
     wifi_config_t wc = {};
     if (!FillStaConfig(wc, ssid, password, nullptr)) {
-        ESP_LOGW(kTag, "Connect: invalid Wi-Fi credentials ssid_len=%u password_len=%u",
+        ESP_LOGW(kTag, "connect failed reason=invalid_credentials ssid_len=%u password_len=%u",
                  static_cast<unsigned>(ssid.size()), static_cast<unsigned>(password.size()));
         return false;
     }
@@ -244,7 +244,7 @@ bool Wifi::Connect(const std::string& ssid, const std::string& password, int tim
         return true;
     }
 
-    ESP_LOGW(kTag, "STA connect timeout/fail (last_reason=%d), disabling auto-reconnect",
+    ESP_LOGW(kTag, "connect failed reason=timeout_or_fail last_reason=%d action=disable_auto_reconnect",
              last_disconnect_reason_.load(std::memory_order_acquire));
     want_reconnect_.store(false, std::memory_order_release);
     reconnect_.Stop();
@@ -260,7 +260,7 @@ bool Wifi::TryConnect(const std::string& ssid, const std::string& password, int 
     }
     if (mode_.load(std::memory_order_acquire) != Mode::AccessPoint) {
         out_reason = "TryConnect 必须在配网模式下调用";
-        ESP_LOGE(kTag, "TryConnect called without AP mode");
+        ESP_LOGE(kTag, "try connect failed reason=not_ap_mode");
         return false;
     }
     want_reconnect_.store(false, std::memory_order_release);
@@ -289,7 +289,7 @@ bool Wifi::TryConnect(const std::string& ssid, const std::string& password, int 
         xEventGroupClearBits(WifiEventGroup(), kWifiBitConnected | kWifiBitConnectionFail);
         esp_err_t err = esp_wifi_connect();
         if (err != ESP_OK) {
-            ESP_LOGW(kTag, "ESP wifi_connect attempt %d failed: %s", attempt, esp_err_to_name(err));
+            ESP_LOGW(kTag, "try connect attempt failed attempt=%d err=%s", attempt, esp_err_to_name(err));
             vTaskDelay(pdMS_TO_TICKS(300));
             continue;
         }
@@ -305,10 +305,10 @@ bool Wifi::TryConnect(const std::string& ssid, const std::string& password, int 
         }
         if (bits & kWifiBitConnectionFail) {
             last_reason = last_disconnect_reason_.load(std::memory_order_acquire);
-            ESP_LOGW(kTag, "TryConnect attempt %d failed: reason=%d", attempt, last_reason);
+            ESP_LOGW(kTag, "try connect attempt failed attempt=%d reason=%d", attempt, last_reason);
             vTaskDelay(pdMS_TO_TICKS(300));
         } else {
-            ESP_LOGW(kTag, "TryConnect attempt %d timeout (%dms)", attempt, wait_ms);
+            ESP_LOGW(kTag, "try connect attempt timeout attempt=%d timeout_ms=%d", attempt, wait_ms);
             esp_wifi_disconnect();
             vTaskDelay(pdMS_TO_TICKS(200));
         }
@@ -320,7 +320,7 @@ bool Wifi::TryConnect(const std::string& ssid, const std::string& password, int 
         out_reason = "连接超时,可能信号弱或路由器无响应";
     }
     esp_wifi_disconnect();
-    ESP_LOGW(kTag, "TryConnect all attempts failed: %s", out_reason.c_str());
+    ESP_LOGW(kTag, "try connect failed reason=%s", out_reason.c_str());
     return false;
 }
 
@@ -378,7 +378,7 @@ void Wifi::ResetFastFailCount() {
 bool Wifi::StartAp(const std::string& ssid_prefix) {
     Init();
     if (mode_.load(std::memory_order_acquire) == Mode::AccessPoint) {
-        ESP_LOGW(kTag, "StartAp called but already in AP mode");
+        ESP_LOGW(kTag, "start ap ignored reason=already_ap_mode");
         return true;
     }
     StartApInternal(ssid_prefix);

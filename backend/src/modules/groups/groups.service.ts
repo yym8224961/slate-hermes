@@ -292,7 +292,7 @@ export class GroupsService {
         });
         if (result.count > 0) {
           this.logger.log(
-            `first group ${group.id} created → auto-bound ${result.count} pending device(s)`
+            `First group ${group.id} was created for owner ${ownerUserId}; ${result.count} pending device(s) were auto-bound.`
           );
         }
       }
@@ -347,7 +347,9 @@ export class GroupsService {
       })
     );
     const failed = deleted.filter((result) => result.status === 'rejected').length;
-    if (failed > 0) this.logger.warn(`group ${gid} deleted with ${failed} blob cleanup failure(s)`);
+    if (failed > 0) {
+      this.logger.warn(`Group ${gid} was deleted, but ${failed} blob cleanup operation(s) failed.`);
+    }
   }
 
   async reorderGroups(ownerUserId: string, order: string[]): Promise<void> {

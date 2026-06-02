@@ -24,17 +24,19 @@ frontend/src/
 │   ├── main.tsx              BrowserRouter、QueryClientProvider、Auth/Toast/Confirm Provider
 │   └── App.tsx               路由表与 lazy page
 ├── components/
+│   ├── dnd/                  SortableGrid 与拖拽排序 helper
+│   ├── eink/                 1bpp 帧预览与状态栏 overlay
 │   ├── feedback/             ErrorBoundary、Toast、Confirm
-│   ├── layout/               Layout、AuthLayout、RequireAuth、PageHeader、Section
-│   └── ui/                   Button、Input、Select、Dialog、SortableGrid 等基础组件
+│   ├── layout/               Layout、PageHeader、Section、RequireRouteParams
+│   └── ui/                   Button、Input、Select、Dialog 等基础组件
 ├── features/
-│   ├── auth/                 AuthProvider、登录注册 hooks、重定向逻辑
+│   ├── auth/                 AuthProvider、AuthLayout、RequireAuth、登录注册 hooks、重定向逻辑
 │   ├── contents/             内容列表、卡片、新建页、图片编辑、音频预览、content queries
 │   ├── devices/              设备卡片、绑定弹窗、设备详情弹窗、device queries
 │   ├── dynamic/              动态内容配置表单、预览、默认 config、dashboard push panel
 │   └── groups/               内容组卡片、新建弹窗、group queries
-├── hooks/                    跨 feature hooks；DnD hook 放在 hooks/dnd/
-├── lib/                      axios、错误解包、格式化、图片解码、JSON helper、样式片段
+├── hooks/                    跨 feature hooks
+├── lib/                      axios、错误解包、格式化、JSON helper、样式片段、eink 图片解码
 ├── pages/
 │   ├── auth/                 LoginPage、RegisterPage
 │   ├── contents/             ContentNewPage、ImageContentEditorPage、DynamicContentEditorPage

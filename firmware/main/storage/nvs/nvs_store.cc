@@ -6,7 +6,7 @@
 #include <cstring>
 
 namespace {
-constexpr char kTag[] = "NvsStore";
+constexpr char kTag[] = "nvs_store";
 
 bool ValidName(const char* value) {
     return value && value[0] != '\0' && std::strlen(value) < NVS_KEY_NAME_MAX_SIZE;
@@ -15,14 +15,14 @@ bool ValidName(const char* value) {
 bool ValidateNamespace(const char* ns) {
     if (ValidName(ns))
         return true;
-    ESP_LOGW(kTag, "Invalid namespace: %s", ns ? ns : "<null>");
+    ESP_LOGW(kTag, "invalid namespace ns=%s", ns ? ns : "<null>");
     return false;
 }
 
 bool ValidateKey(const char* ns, const char* key) {
     if (ValidName(key))
         return true;
-    ESP_LOGW(kTag, "Invalid key for namespace %s: %s", ns ? ns : "<null>", key ? key : "<null>");
+    ESP_LOGW(kTag, "invalid key ns=%s key=%s", ns ? ns : "<null>", key ? key : "<null>");
     return false;
 }
 
@@ -94,7 +94,7 @@ bool SetString(const char* ns, const char* key, const std::string& value) {
 
     nvs_handle_t h = 0;
     if (nvs_open(ns, NVS_READWRITE, &h) != ESP_OK) {
-        ESP_LOGW(kTag, "Open namespace %s failed", ns);
+        ESP_LOGW(kTag, "open namespace failed ns=%s", ns);
         return false;
     }
     esp_err_t err = nvs_set_str(h, key, value.c_str());
@@ -102,7 +102,7 @@ bool SetString(const char* ns, const char* key, const std::string& value) {
         err = nvs_commit(h);
     nvs_close(h);
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "Set %s/%s failed: %s", ns, key, esp_err_to_name(err));
+        ESP_LOGW(kTag, "set string failed ns=%s key=%s err=%s", ns, key, esp_err_to_name(err));
         return false;
     }
     return true;
@@ -142,7 +142,7 @@ bool SetStrings(const char* ns, std::initializer_list<std::pair<const char*, std
 
     nvs_handle_t h = 0;
     if (nvs_open(ns, NVS_READWRITE, &h) != ESP_OK) {
-        ESP_LOGW(kTag, "Open namespace %s failed", ns);
+        ESP_LOGW(kTag, "open namespace failed ns=%s", ns);
         return false;
     }
     esp_err_t err = ESP_OK;
@@ -155,7 +155,7 @@ bool SetStrings(const char* ns, std::initializer_list<std::pair<const char*, std
         err = nvs_commit(h);
     nvs_close(h);
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "Set strings in %s failed: %s", ns, esp_err_to_name(err));
+        ESP_LOGW(kTag, "set strings failed ns=%s err=%s", ns, esp_err_to_name(err));
         return false;
     }
     return true;
@@ -180,7 +180,7 @@ bool SetInt32(const char* ns, const char* key, int32_t value) {
 
     nvs_handle_t h = 0;
     if (nvs_open(ns, NVS_READWRITE, &h) != ESP_OK) {
-        ESP_LOGW(kTag, "Open namespace %s failed", ns);
+        ESP_LOGW(kTag, "open namespace failed ns=%s", ns);
         return false;
     }
     esp_err_t err = nvs_set_i32(h, key, value);
@@ -188,7 +188,7 @@ bool SetInt32(const char* ns, const char* key, int32_t value) {
         err = nvs_commit(h);
     nvs_close(h);
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "Set %s/%s failed: %s", ns, key, esp_err_to_name(err));
+        ESP_LOGW(kTag, "set int32 failed ns=%s key=%s err=%s", ns, key, esp_err_to_name(err));
         return false;
     }
     return true;
@@ -213,7 +213,7 @@ bool SetInt8(const char* ns, const char* key, int8_t value) {
 
     nvs_handle_t h = 0;
     if (nvs_open(ns, NVS_READWRITE, &h) != ESP_OK) {
-        ESP_LOGW(kTag, "Open namespace %s failed", ns);
+        ESP_LOGW(kTag, "open namespace failed ns=%s", ns);
         return false;
     }
     esp_err_t err = nvs_set_i8(h, key, value);
@@ -221,7 +221,7 @@ bool SetInt8(const char* ns, const char* key, int8_t value) {
         err = nvs_commit(h);
     nvs_close(h);
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "Set %s/%s failed: %s", ns, key, esp_err_to_name(err));
+        ESP_LOGW(kTag, "set int8 failed ns=%s key=%s err=%s", ns, key, esp_err_to_name(err));
         return false;
     }
     return true;

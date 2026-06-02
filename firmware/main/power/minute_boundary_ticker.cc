@@ -7,7 +7,7 @@
 #include "events/event_bus.h"
 
 namespace {
-constexpr char kTag[] = "MinuteBoundary";
+constexpr char kTag[] = "minute_boundary";
 
 // 触发点落在边界之后一点点，避免因调度抖动在边界前几毫秒触发、读到上一分钟。
 constexpr int64_t kBoundaryEpsilonMs = 50;
@@ -52,7 +52,7 @@ void MinuteBoundaryTicker::Stop() {
         return;
     esp_err_t err = esp_timer_stop(timer_);
     if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-        ESP_LOGW(kTag, "esp_timer_stop failed: %s", esp_err_to_name(err));
+        ESP_LOGW(kTag, "timer stop failed err=%s", esp_err_to_name(err));
     }
     esp_timer_delete(timer_);
     timer_ = nullptr;
@@ -66,9 +66,8 @@ void MinuteBoundaryTicker::TickCb(void* arg) {
         struct tm tm;
         localtime_r(&now, &tm);
         int last = self->last_minute_.load(std::memory_order_acquire);
-        if (tm.tm_min != last &&
-            self->last_minute_.compare_exchange_strong(last, tm.tm_min, std::memory_order_acq_rel,
-                                                       std::memory_order_acquire)) {
+        if (tm.tm_min != last && self->last_minute_.compare_exchange_strong(last, tm.tm_min, std::memory_order_acq_rel,
+                                                                            std::memory_order_acquire)) {
             evt::PostSimple(UiEventKind::kMinuteTick, evt::kNoWait);
         }
     }

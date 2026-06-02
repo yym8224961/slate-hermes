@@ -37,7 +37,7 @@ class VolumePage : public SettingsPageBase {
     ~VolumePage() override;
 
     const char* Name() const override {
-        return "Volume";
+        return "volume";
     }
     void OnEnter(SceneContext& ctx) override;
     void OnExit(SceneContext& ctx) override;
@@ -64,7 +64,7 @@ class DeviceInfoPage : public Scene {
     ~DeviceInfoPage() override;
 
     const char* Name() const override {
-        return "DeviceInfo";
+        return "device_info";
     }
     bool IsSettings() const override {
         return true;

@@ -77,9 +77,7 @@ export class HotListProvider implements DataProvider<HotListConfigT, HotListProv
 
     const p = this.fetchFresh(config.source).catch((err: unknown) => {
       this.logger.warn(
-        `hot-list source fetch failed source=${config.source}: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        `Hot-list source ${config.source} fetch failed: ${err instanceof Error ? err.message : String(err)}`
       );
       throw err;
     });

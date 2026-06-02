@@ -11,7 +11,7 @@
 #include "network/wifi.h"
 
 namespace {
-constexpr char     kTag[]              = "Wifi";
+constexpr char     kTag[]              = "wifi";
 constexpr uint32_t kBackoffSec[]       = {10, 20, 40, 80, 120, 120};
 constexpr size_t   kBackoffSize        = sizeof(kBackoffSec) / sizeof(kBackoffSec[0]);
 constexpr uint16_t kMaxSlowScanRecords = 20;
@@ -74,7 +74,7 @@ void WifiReconnectManager::Stop() {
     if (timer_) {
         esp_err_t err = esp_timer_stop(timer_);
         if (err != ESP_OK && err != ESP_ERR_INVALID_STATE) {
-            ESP_LOGW(kTag, "esp_timer_stop failed: %s", esp_err_to_name(err));
+            ESP_LOGW(kTag, "slow reconnect stop failed err=%s", esp_err_to_name(err));
         }
     }
     slow_scan_pending_.store(false, std::memory_order_release);
@@ -109,7 +109,7 @@ void WifiReconnectManager::DoSlowScanReconnect() {
 
     esp_err_t err = esp_wifi_scan_start(&scan_cfg, false);
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "ESP wifi_scan_start failed: %s, reschedule", esp_err_to_name(err));
+        ESP_LOGW(kTag, "slow scan start failed err=%s action=reschedule", esp_err_to_name(err));
         slow_scan_pending_.store(false, std::memory_order_release);
         Schedule();
     }
@@ -130,12 +130,12 @@ void WifiReconnectManager::HandleSlowScanResult() {
 
     wifi_config_t wc = {};
     if (esp_wifi_get_config(WIFI_IF_STA, &wc) != ESP_OK) {
-        ESP_LOGW(kTag, "ESP wifi_get_config failed in slow scan handler");
+        ESP_LOGW(kTag, "slow scan config read failed");
         Schedule();
         return;
     }
     if (wc.sta.ssid[0] == '\0') {
-        ESP_LOGW(kTag, "Slow scan: no target SSID in current config, abort");
+        ESP_LOGW(kTag, "slow scan aborted reason=target_ssid_missing");
         return;
     }
     const wifi_ap_record_t* match = nullptr;
@@ -158,7 +158,7 @@ void WifiReconnectManager::HandleSlowScanResult() {
 
     esp_err_t err = esp_wifi_connect();
     if (err != ESP_OK) {
-        ESP_LOGW(kTag, "ESP wifi_connect after slow scan failed: %s", esp_err_to_name(err));
+        ESP_LOGW(kTag, "slow reconnect failed err=%s", esp_err_to_name(err));
         Schedule();
     }
 }

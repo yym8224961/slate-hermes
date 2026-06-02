@@ -174,10 +174,10 @@ void StatusBar::LayoutTitle() {
     }
 
     lv_obj_clear_flag(title_icon_label_, LV_OBJ_FLAG_HIDDEN);
-    const int icon_w = lv_obj_get_width(title_icon_label_);
-    const int text_w = lv_obj_get_width(title_label_);
-    constexpr int kGap = 5;
-    const int total = icon_w + kGap + text_w;
+    const int     icon_w = lv_obj_get_width(title_icon_label_);
+    const int     text_w = lv_obj_get_width(title_label_);
+    constexpr int kGap   = 5;
+    const int     total  = icon_w + kGap + text_w;
     lv_obj_align(title_icon_label_, LV_ALIGN_CENTER, -(total / 2) + icon_w / 2, 0);
     lv_obj_align(title_label_, LV_ALIGN_CENTER, -(total / 2) + icon_w + kGap + text_w / 2, 0);
 }

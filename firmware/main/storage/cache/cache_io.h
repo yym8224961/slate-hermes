@@ -10,7 +10,7 @@
 
 namespace cache::internal {
 
-inline constexpr char kTag[]                = "Cache";
+inline constexpr char kTag[]                = "cache";
 inline constexpr long kMaxAudioReadBytes    = AUDIO_MAX_PCM_BYTES;
 inline constexpr long kMaxStateJsonBytes    = 4 * 1024;
 inline constexpr long kMaxManifestJsonBytes = 64 * 1024;

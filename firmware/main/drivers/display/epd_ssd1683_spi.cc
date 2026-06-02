@@ -11,7 +11,7 @@
 #include "utils/time_utils.h"
 
 namespace {
-constexpr char kTag[] = "Epd";
+constexpr char kTag[] = "epd";
 }
 
 // SPI 反复 free + reinit 是为了切换 DI 数据线方向(EPD 单数据线复用 MOSI/MISO):
@@ -130,7 +130,7 @@ void EpdSsd1683::ReadBusy() {
     while (gpio_get_level(busy_) == 0) {
         vTaskDelay(pdMS_TO_TICKS(5));
         if (time_utils::NowMs() - start_ms > kBusyTimeoutMs) {
-            ESP_LOGE(kTag, "EPD BUSY stuck low > %lldms -> restarting", kBusyTimeoutMs);
+            ESP_LOGE(kTag, "busy timeout elapsed_ms=%lld action=restart", kBusyTimeoutMs);
             esp_restart();
         }
     }

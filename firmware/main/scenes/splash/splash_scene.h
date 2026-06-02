@@ -32,7 +32,7 @@ class SplashScene : public Scene {
     };
 
     const char* Name() const override {
-        return "SplashScene";
+        return "splash";
     }
     void      OnEnter(SceneContext& ctx) override;
     void      OnExit(SceneContext& ctx) override;

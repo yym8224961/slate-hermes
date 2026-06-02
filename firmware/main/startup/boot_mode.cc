@@ -3,12 +3,12 @@
 #include <esp_log.h>
 #include <esp_sleep.h>
 
-#include "storage/cache/cache.h"
 #include "bsp/config.h"
+#include "storage/cache/cache.h"
 
 namespace boot_mode {
 namespace {
-constexpr char kTag[] = "BootMode";
+constexpr char kTag[] = "boot_mode";
 
 WakeCause Classify(uint64_t& ext1_mask) {
     const esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
@@ -23,7 +23,7 @@ WakeCause Classify(uint64_t& ext1_mask) {
             if (ext1_mask & (1ULL << CHARGE_DETECT_GPIO)) {
                 return WakeCause::kCharge;
             }
-            ESP_LOGW(kTag, "Unknown EXT1 wake mask=0x%llx -> other", (unsigned long long)ext1_mask);
+            ESP_LOGW(kTag, "wake source unknown cause=ext1 mask=0x%llx action=other", (unsigned long long)ext1_mask);
             return WakeCause::kOther;
         case ESP_SLEEP_WAKEUP_TIMER:
             return WakeCause::kRtcTimer;

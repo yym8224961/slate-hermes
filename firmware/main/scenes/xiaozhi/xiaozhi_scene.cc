@@ -1,4 +1,4 @@
-#include "scenes/chat/chat_scene.h"
+#include "scenes/xiaozhi/xiaozhi_scene.h"
 
 #include <esp_log.h>
 
@@ -10,14 +10,15 @@
 
 #include "drivers/display/epd_ssd1683.h"
 #include "events/event_bus.h"
+#include "events/ui_event_log.h"
 #include "scenes/core/scene_stack.h"
 #include "scenes/settings/settings_scene.h"
 #include "ui/theme.h"
 #include "utils/utf8_utils.h"
-#include "xiaozhi/service/chat_service.h"
+#include "xiaozhi/service/xiaozhi_service.h"
 
 namespace {
-constexpr char kTag[]                    = "ChatScene";
+constexpr char kTag[]                    = "xiaozhi";
 constexpr int  kStandbyBottomHintReserve = 46;
 
 int RootCenterYOffset(int y) {
@@ -32,7 +33,7 @@ std::string DisplayText(const std::string& text) {
     return util::TrimForScreen(util::SanitizeForScreen(text), 120);
 }
 
-std::string MessagesKey(const xiaozhi::ChatSnapshot& snap) {
+std::string MessagesKey(const xiaozhi::XiaozhiSnapshot& snap) {
     std::string key;
     for (const auto& msg : snap.messages) {
         key += msg.role;
@@ -43,11 +44,11 @@ std::string MessagesKey(const xiaozhi::ChatSnapshot& snap) {
     return key;
 }
 
-const char* EmotionIcon(const std::string& emotion, xiaozhi::ChatState state) {
-    if (state == xiaozhi::ChatState::kCheckingConfig || state == xiaozhi::ChatState::kConnecting ||
-        state == xiaozhi::ChatState::kStopping)
+const char* EmotionIcon(const std::string& emotion, xiaozhi::XiaozhiState state) {
+    if (state == xiaozhi::XiaozhiState::kCheckingConfig || state == xiaozhi::XiaozhiState::kConnecting ||
+        state == xiaozhi::XiaozhiState::kStopping)
         return FONT_AWESOME_THINKING;
-    if (state == xiaozhi::ChatState::kError)
+    if (state == xiaozhi::XiaozhiState::kError)
         return FONT_AWESOME_SAD;
 
     if (emotion == "happy")
@@ -93,19 +94,19 @@ const char* EmotionIcon(const std::string& emotion, xiaozhi::ChatState state) {
     return FONT_AWESOME_NEUTRAL;
 }
 
-std::string StatusTitle(const xiaozhi::ChatSnapshot& snap) {
+std::string StatusTitle(const xiaozhi::XiaozhiSnapshot& snap) {
     switch (snap.state) {
-        case xiaozhi::ChatState::kReadyIdle:
+        case xiaozhi::XiaozhiState::kReadyIdle:
             return snap.alert_active && !snap.status.empty() ? snap.status : "小智AI";
-        case xiaozhi::ChatState::kListening:
+        case xiaozhi::XiaozhiState::kListening:
             return snap.status.empty() ? "聆听中" : snap.status;
-        case xiaozhi::ChatState::kSpeaking:
+        case xiaozhi::XiaozhiState::kSpeaking:
             return snap.status.empty() ? "回复中" : snap.status;
-        case xiaozhi::ChatState::kConnecting:
-        case xiaozhi::ChatState::kStopping:
-        case xiaozhi::ChatState::kCheckingConfig:
-        case xiaozhi::ChatState::kAwaitingActivation:
-        case xiaozhi::ChatState::kError:
+        case xiaozhi::XiaozhiState::kConnecting:
+        case xiaozhi::XiaozhiState::kStopping:
+        case xiaozhi::XiaozhiState::kCheckingConfig:
+        case xiaozhi::XiaozhiState::kAwaitingActivation:
+        case xiaozhi::XiaozhiState::kError:
             return snap.status.empty() ? "小智AI" : snap.status;
     }
     return "小智AI";
@@ -131,13 +132,13 @@ void StyleBubble(lv_obj_t* bubble) {
 }
 }  // namespace
 
-xiaozhi::ChatService* ChatScene::Service(SceneContext& ctx) {
-    if (!service_ && ctx.chat_service)
-        service_ = ctx.chat_service();
+xiaozhi::XiaozhiService* XiaozhiScene::Service(SceneContext& ctx) {
+    if (!service_ && ctx.xiaozhi_service)
+        service_ = ctx.xiaozhi_service();
     return service_;
 }
 
-void ChatScene::EnsureServiceStarted(SceneContext& ctx) {
+void XiaozhiScene::EnsureServiceStarted(SceneContext& ctx) {
     if (service_entered_)
         return;
     auto* service = Service(ctx);
@@ -156,9 +157,10 @@ void ChatScene::EnsureServiceStarted(SceneContext& ctx) {
     service_entered_ = true;
 }
 
-void ChatScene::OnEnter(SceneContext& ctx) {
+void XiaozhiScene::OnEnter(SceneContext& ctx) {
+    ESP_LOGD(kTag, "enter service_entered=%d", service_entered_ ? 1 : 0);
     if (!ctx.epd->Lock(2000)) {
-        ESP_LOGW(kTag, "EPD lock timeout in OnEnter");
+        ESP_LOGW(kTag, "enter failed reason=epd_lock_timeout");
         EnsureServiceStarted(ctx);
         return;
     }
@@ -173,18 +175,20 @@ void ChatScene::OnEnter(SceneContext& ctx) {
     lv_refr_now(NULL);
     ctx.epd->Unlock();
     ctx.epd->RequestUrgentFullRefresh();
+    ESP_LOGD(kTag, "enter done root=%p service_entered=%d", root_, service_entered_ ? 1 : 0);
 }
 
-void ChatScene::OnExit(SceneContext& ctx) {
+void XiaozhiScene::OnExit(SceneContext& ctx) {
+    ESP_LOGD(kTag, "exit root=%p service_entered=%d", root_, service_entered_ ? 1 : 0);
     DestroyRoot(ctx, root_, [this]() {
         status_bar_.reset();
         standby_icon_label_     = nullptr;
         standby_body_label_     = nullptr;
         system_label_           = nullptr;
         code_label_             = nullptr;
-        chat_area_              = nullptr;
-        chat_content_           = nullptr;
-        chat_empty_label_       = nullptr;
+        xiaozhi_area_           = nullptr;
+        xiaozhi_content_        = nullptr;
+        xiaozhi_empty_label_    = nullptr;
         hint_label_             = nullptr;
         rendered_message_count_ = 0;
         rendered_messages_key_.clear();
@@ -196,7 +200,7 @@ void ChatScene::OnExit(SceneContext& ctx) {
     }
 }
 
-void ChatScene::CreateLayout() {
+void XiaozhiScene::CreateLayout() {
     root_ = CreateFullscreenRoot();
 
     status_bar_ = std::make_unique<StatusBar>(root_);
@@ -231,34 +235,34 @@ void ChatScene::CreateLayout() {
     lv_label_set_long_mode(system_label_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(system_label_, LV_HOR_RES - 40);
 
-    chat_area_ = lv_obj_create(root_);
-    lv_obj_set_size(chat_area_, LV_HOR_RES, LV_VER_RES - theme::kStatusBarHeight);
-    lv_obj_set_pos(chat_area_, 0, theme::kStatusBarHeight);
-    StyleTransparent(chat_area_);
+    xiaozhi_area_ = lv_obj_create(root_);
+    lv_obj_set_size(xiaozhi_area_, LV_HOR_RES, LV_VER_RES - theme::kStatusBarHeight);
+    lv_obj_set_pos(xiaozhi_area_, 0, theme::kStatusBarHeight);
+    StyleTransparent(xiaozhi_area_);
 
-    chat_content_ = lv_obj_create(chat_area_);
-    lv_obj_set_size(chat_content_, LV_HOR_RES, LV_VER_RES - theme::kStatusBarHeight);
-    lv_obj_set_pos(chat_content_, 0, 0);
-    lv_obj_set_style_bg_opa(chat_content_, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(chat_content_, 0, 0);
-    lv_obj_set_style_pad_left(chat_content_, 0, 0);
-    lv_obj_set_style_pad_right(chat_content_, 0, 0);
-    lv_obj_set_style_pad_top(chat_content_, 14, 0);
-    lv_obj_set_style_pad_bottom(chat_content_, 14, 0);
-    lv_obj_set_style_pad_row(chat_content_, 8, 0);
-    lv_obj_set_scroll_dir(chat_content_, LV_DIR_VER);
-    lv_obj_set_scrollbar_mode(chat_content_, LV_SCROLLBAR_MODE_OFF);
-    lv_obj_set_flex_flow(chat_content_, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(chat_content_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    xiaozhi_content_ = lv_obj_create(xiaozhi_area_);
+    lv_obj_set_size(xiaozhi_content_, LV_HOR_RES, LV_VER_RES - theme::kStatusBarHeight);
+    lv_obj_set_pos(xiaozhi_content_, 0, 0);
+    lv_obj_set_style_bg_opa(xiaozhi_content_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(xiaozhi_content_, 0, 0);
+    lv_obj_set_style_pad_left(xiaozhi_content_, 0, 0);
+    lv_obj_set_style_pad_right(xiaozhi_content_, 0, 0);
+    lv_obj_set_style_pad_top(xiaozhi_content_, 14, 0);
+    lv_obj_set_style_pad_bottom(xiaozhi_content_, 14, 0);
+    lv_obj_set_style_pad_row(xiaozhi_content_, 8, 0);
+    lv_obj_set_scroll_dir(xiaozhi_content_, LV_DIR_VER);
+    lv_obj_set_scrollbar_mode(xiaozhi_content_, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_set_flex_flow(xiaozhi_content_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(xiaozhi_content_, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
 
-    chat_empty_label_ = lv_label_create(chat_area_);
-    lv_obj_set_style_text_font(chat_empty_label_, &Zfull_16, 0);
-    lv_obj_set_style_text_color(chat_empty_label_, lv_color_black(), 0);
-    lv_obj_set_style_text_align(chat_empty_label_, LV_TEXT_ALIGN_CENTER, 0);
-    lv_label_set_text(chat_empty_label_, "正在听，想聊点什么？");
-    lv_obj_set_width(chat_empty_label_, LV_HOR_RES - 48);
-    lv_obj_align(chat_empty_label_, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(chat_empty_label_, LV_OBJ_FLAG_HIDDEN);
+    xiaozhi_empty_label_ = lv_label_create(xiaozhi_area_);
+    lv_obj_set_style_text_font(xiaozhi_empty_label_, &Zfull_16, 0);
+    lv_obj_set_style_text_color(xiaozhi_empty_label_, lv_color_black(), 0);
+    lv_obj_set_style_text_align(xiaozhi_empty_label_, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(xiaozhi_empty_label_, "正在听，想聊点什么？");
+    lv_obj_set_width(xiaozhi_empty_label_, LV_HOR_RES - 48);
+    lv_obj_align(xiaozhi_empty_label_, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(xiaozhi_empty_label_, LV_OBJ_FLAG_HIDDEN);
 
     hint_label_ = lv_label_create(root_);
     lv_obj_set_style_text_font(hint_label_, &Zfull_16, 0);
@@ -269,21 +273,31 @@ void ChatScene::CreateLayout() {
     lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -10);
 }
 
-void ChatScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
-    if (!root_)
+void XiaozhiScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
+    if (evt::log::DebugEnabled(kTag)) {
+        char detail[128];
+        evt::log::Describe(e, detail, sizeof(detail));
+        ESP_LOGD(kTag, "event kind=%s detail=%s root=%p", evt::log::KindName(e.kind), detail, root_);
+    }
+    if (!root_) {
+        ESP_LOGW(kTag, "event ignored reason=no_root kind=%s", evt::log::KindName(e.kind));
         return;
+    }
     switch (e.kind) {
         case UiEventKind::kButtonShort:
             switch (e.u.button.btn) {
                 case ButtonId::kEnter:
+                    ESP_LOGD(kTag, "button short btn=enter action=toggle_chat");
                     if (auto* service = Service(ctx))
-                        service->ToggleChat();
+                        service->ToggleXiaozhi();
                     break;
                 case ButtonId::kUp:
+                    ESP_LOGD(kTag, "button short btn=up action=volume_up");
                     if (auto* service = Service(ctx))
                         service->AdjustVolume(+1);
                     break;
                 case ButtonId::kDown:
+                    ESP_LOGD(kTag, "button short btn=down action=volume_down");
                     if (auto* service = Service(ctx))
                         service->AdjustVolume(-1);
                     break;
@@ -291,6 +305,7 @@ void ChatScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             break;
         case UiEventKind::kButtonDouble:
             if (e.u.button.btn == ButtonId::kEnter) {
+                ESP_LOGD(kTag, "button double btn=enter action=pop");
                 if (auto* service = Service(ctx))
                     service->LeaveMode();
                 ctx.stack->RequestPop();
@@ -298,6 +313,7 @@ void ChatScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             break;
         case UiEventKind::kButtonLong:
             if (e.u.button.btn == ButtonId::kEnter) {
+                ESP_LOGD(kTag, "button long btn=enter action=settings");
                 if (auto* service = Service(ctx))
                     service->StopConversation(true);
                 ctx.stack->RequestPush(std::make_unique<SettingsScene>());
@@ -323,13 +339,13 @@ void ChatScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
     }
 }
 
-void ChatScene::Render(SceneContext& ctx, bool full) {
+void XiaozhiScene::Render(SceneContext& ctx, bool full) {
     if (!root_)
         return;
     SyncRender(ctx, [this]() { RenderContent(); }, full);
 }
 
-void ChatScene::RenderContent() {
+void XiaozhiScene::RenderContent() {
     if (!root_ || !status_bar_ || !system_label_ || !code_label_ || !hint_label_)
         return;
     if (!service_)
@@ -345,35 +361,35 @@ void ChatScene::RenderContent() {
         RenderSystemMessage(title + (message.empty() ? "" : "\n\n" + message), false, "");
     } else {
         switch (snap.state) {
-            case xiaozhi::ChatState::kCheckingConfig:
+            case xiaozhi::XiaozhiState::kCheckingConfig:
                 RenderSystemMessage("正在获取小智配置...", false, "");
                 break;
-            case xiaozhi::ChatState::kAwaitingActivation:
+            case xiaozhi::XiaozhiState::kAwaitingActivation:
                 RenderSystemMessage(
                     snap.activation_message.empty() ? "请在小智控制台输入激活码" : DisplayText(snap.activation_message),
                     true, snap.activation_code);
                 break;
-            case xiaozhi::ChatState::kReadyIdle:
+            case xiaozhi::XiaozhiState::kReadyIdle:
                 lv_obj_clear_flag(standby_icon_label_, LV_OBJ_FLAG_HIDDEN);
                 lv_obj_clear_flag(standby_body_label_, LV_OBJ_FLAG_HIDDEN);
                 break;
-            case xiaozhi::ChatState::kConnecting:
+            case xiaozhi::XiaozhiState::kConnecting:
                 RenderSystemMessage("正在连接小智服务器...", false, "");
                 break;
-            case xiaozhi::ChatState::kStopping:
+            case xiaozhi::XiaozhiState::kStopping:
                 RenderSystemMessage("正在结束当前对话...", false, "");
                 break;
-            case xiaozhi::ChatState::kListening:
-            case xiaozhi::ChatState::kSpeaking:
-                RenderChatMessages(snap);
+            case xiaozhi::XiaozhiState::kListening:
+            case xiaozhi::XiaozhiState::kSpeaking:
+                RenderXiaozhiMessages(snap);
                 break;
-            case xiaozhi::ChatState::kError:
+            case xiaozhi::XiaozhiState::kError:
                 RenderSystemMessage("小智暂不可用\n\n" + util::TrimForScreen(util::SanitizeForScreen(snap.error), 72),
                                     false, "");
                 break;
         }
     }
-    if (snap.state == xiaozhi::ChatState::kListening || snap.state == xiaozhi::ChatState::kSpeaking) {
+    if (snap.state == xiaozhi::XiaozhiState::kListening || snap.state == xiaozhi::XiaozhiState::kSpeaking) {
         lv_obj_add_flag(hint_label_, LV_OBJ_FLAG_HIDDEN);
     } else {
         lv_obj_clear_flag(hint_label_, LV_OBJ_FLAG_HIDDEN);
@@ -381,16 +397,16 @@ void ChatScene::RenderContent() {
     }
 }
 
-void ChatScene::HideContentViews() {
+void XiaozhiScene::HideContentViews() {
     lv_obj_add_flag(standby_icon_label_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(standby_body_label_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(system_label_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(code_label_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(chat_area_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(chat_empty_label_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(xiaozhi_area_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(xiaozhi_empty_label_, LV_OBJ_FLAG_HIDDEN);
 }
 
-void ChatScene::RenderSystemMessage(const std::string& text, bool show_code, const std::string& code) {
+void XiaozhiScene::RenderSystemMessage(const std::string& text, bool show_code, const std::string& code) {
     lv_label_set_text(system_label_, text.c_str());
     lv_obj_clear_flag(system_label_, LV_OBJ_FLAG_HIDDEN);
     if (show_code) {
@@ -403,45 +419,45 @@ void ChatScene::RenderSystemMessage(const std::string& text, bool show_code, con
     }
 }
 
-void ChatScene::RenderChatMessages(const xiaozhi::ChatSnapshot& snap) {
-    lv_obj_clear_flag(chat_area_, LV_OBJ_FLAG_HIDDEN);
+void XiaozhiScene::RenderXiaozhiMessages(const xiaozhi::XiaozhiSnapshot& snap) {
+    lv_obj_clear_flag(xiaozhi_area_, LV_OBJ_FLAG_HIDDEN);
     const bool        state_changed = rendered_state_ != static_cast<int>(snap.state);
     const std::string messages_key  = MessagesKey(snap);
     const bool        should_rebuild =
         state_changed || rendered_message_count_ != snap.messages.size() || rendered_messages_key_ != messages_key;
-    if (state_changed && snap.state == xiaozhi::ChatState::kListening && snap.messages.empty())
-        ClearChatMessages();
+    if (state_changed && snap.state == xiaozhi::XiaozhiState::kListening && snap.messages.empty())
+        ClearXiaozhiMessages();
 
     if (should_rebuild) {
-        ClearChatMessages();
+        ClearXiaozhiMessages();
         for (const auto& msg : snap.messages)
-            AppendChatBubble(msg.role, msg.text);
+            AppendXiaozhiBubble(msg.role, msg.text);
         rendered_message_count_ = snap.messages.size();
         rendered_messages_key_  = messages_key;
     }
 
-    if (chat_content_ && lv_obj_get_child_cnt(chat_content_) == 0)
-        ShowEmptyChatHint();
+    if (xiaozhi_content_ && lv_obj_get_child_cnt(xiaozhi_content_) == 0)
+        ShowEmptyXiaozhiHint();
 
     rendered_state_ = static_cast<int>(snap.state);
 }
 
-void ChatScene::ClearChatMessages() {
-    if (!chat_content_)
+void XiaozhiScene::ClearXiaozhiMessages() {
+    if (!xiaozhi_content_)
         return;
-    lv_obj_clean(chat_content_);
+    lv_obj_clean(xiaozhi_content_);
     rendered_message_count_ = 0;
     rendered_messages_key_.clear();
 }
 
-void ChatScene::ShowEmptyChatHint() {
-    if (chat_empty_label_) {
-        lv_obj_clear_flag(chat_empty_label_, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_align(chat_empty_label_, LV_ALIGN_CENTER, 0, 0);
+void XiaozhiScene::ShowEmptyXiaozhiHint() {
+    if (xiaozhi_empty_label_) {
+        lv_obj_clear_flag(xiaozhi_empty_label_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(xiaozhi_empty_label_, LV_ALIGN_CENTER, 0, 0);
     }
 }
 
-void ChatScene::AppendChatBubble(const std::string& role, const std::string& text) {
+void XiaozhiScene::AppendXiaozhiBubble(const std::string& role, const std::string& text) {
     if (text.empty()) {
         return;
     }
@@ -452,7 +468,7 @@ void ChatScene::AppendChatBubble(const std::string& role, const std::string& tex
 
     const bool user   = role == "user";
     const bool system = role == "system";
-    lv_obj_t*  row    = lv_obj_create(chat_content_);
+    lv_obj_t*  row    = lv_obj_create(xiaozhi_content_);
     lv_obj_set_width(row, LV_HOR_RES);
     lv_obj_set_height(row, LV_SIZE_CONTENT);
     lv_obj_set_style_flex_grow(row, 0, 0);
@@ -477,7 +493,7 @@ void ChatScene::AppendChatBubble(const std::string& role, const std::string& tex
     lv_obj_scroll_to_view_recursive(row, LV_ANIM_OFF);
 }
 
-void ChatScene::LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::string& text) {
+void XiaozhiScene::LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::string& text) {
     lv_label_set_text(label, text.c_str());
     lv_obj_set_width(label, LV_SIZE_CONTENT);
     lv_label_set_long_mode(label, LV_LABEL_LONG_CLIP);
@@ -499,9 +515,9 @@ void ChatScene::LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::strin
     lv_obj_update_layout(bubble);
 }
 
-void ChatScene::UpdateStatusBarTitle(const xiaozhi::ChatSnapshot& snap) {
+void XiaozhiScene::UpdateStatusBarTitle(const xiaozhi::XiaozhiSnapshot& snap) {
     status_bar_->SetCaption(StatusTitle(snap));
-    if (snap.state == xiaozhi::ChatState::kReadyIdle && !snap.alert_active) {
+    if (snap.state == xiaozhi::XiaozhiState::kReadyIdle && !snap.alert_active) {
         status_bar_->SetCaptionIcon(nullptr);
     } else {
         status_bar_->SetCaptionIcon(EmotionIcon(snap.emotion, snap.state));

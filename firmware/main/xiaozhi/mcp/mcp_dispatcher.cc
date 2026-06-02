@@ -5,14 +5,14 @@
 
 #include <algorithm>
 
+#include "storage/nvs/volume_store.h"
 #include "utils/json_utils.h"
 #include "xiaozhi/mcp/mcp_tools.h"
-#include "storage/nvs/volume_store.h"
 
 namespace xiaozhi::mcp {
 namespace {
 
-constexpr char kTag[] = "XiaoMcp";
+constexpr char kTag[] = "xiaozhi_mcp";
 
 using json_utils::JsonId;
 using json_utils::JsonString;
@@ -46,7 +46,7 @@ bool DispatchMessage(const cJSON* root, const Dispatcher& dispatcher) {
         return true;
 
     if (id.empty()) {
-        ESP_LOGW(kTag, "Ignore MCP request without id: %s", method.c_str());
+        ESP_LOGW(kTag, "request ignored reason=id_missing method=%s", method.c_str());
         return true;
     }
 

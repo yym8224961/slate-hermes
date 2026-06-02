@@ -5,7 +5,7 @@
 
 namespace {
 
-constexpr char kTag[] = "I2cBusLock";
+constexpr char kTag[] = "i2c_bus_lock";
 
 SemaphoreHandle_t GetI2cBusMutex() {
     static SemaphoreHandle_t mutex = []() {
@@ -22,7 +22,7 @@ esp_err_t LockI2cBus(const char* owner, TickType_t timeout_ticks) {
     if (xSemaphoreTakeRecursive(GetI2cBusMutex(), timeout_ticks) == pdTRUE) {
         return ESP_OK;
     }
-    ESP_LOGW(kTag, "I2C bus lock timeout: owner=%s timeout_ticks=%lu", owner ? owner : "unknown",
+    ESP_LOGW(kTag, "bus lock timeout owner=%s timeout_ticks=%lu", owner ? owner : "unknown",
              static_cast<unsigned long>(timeout_ticks));
     return ESP_ERR_TIMEOUT;
 }
