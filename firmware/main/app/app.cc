@@ -532,8 +532,13 @@ void App::Init() {
                 }
             }
             if (!net_ok) {
-                ESP_LOGW(kTag, "fallback action=captive_portal");
+                ESP_LOGW(kTag, "wifi failed action=cache_and_bg_portal");
+                // 显示缓存画面（有缓存则切到FrameScene，无缓存则保持WiFi失败提示）
+                PostCachedGroupReadyIfAny();
+                // 后台悄悄启动配网SoftAP+HTTP，不接管屏幕
+                // 用户手机连上 Slate-XXXX 热点即可重新配网
                 StartPortal();
+                // SoftAP 需要设备保持唤醒，禁深睡
                 sleep_mgr_.Disable();
             }
             break;
