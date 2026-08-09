@@ -11,7 +11,7 @@
 #include <new>
 #include <vector>
 
-#include "drivers/display/epd_ssd1683.h"
+#include "drivers/display/epd_ssd2683.h"
 #include "drivers/display/framebuffer_ops.h"
 #include "events/event_bus.h"
 #include "power/power_state.h"
@@ -40,7 +40,7 @@ void PostBgRefreshDoneOnce(const std::shared_ptr<std::atomic<bool>>& done_posted
 }
 
 struct WatcherContext {
-    EpdSsd1683*                        epd = nullptr;
+    EpdSsd2683*                        epd = nullptr;
     std::shared_ptr<std::atomic<bool>> done_posted;
 };
 
@@ -242,7 +242,7 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
     return true;
 }
 
-void BgRefreshScene::StartWatcher(EpdSsd1683* epd) {
+void BgRefreshScene::StartWatcher(EpdSsd2683* epd) {
     auto* ctx = new (std::nothrow) WatcherContext{epd, done_posted_};
     if (!ctx) {
         ESP_LOGW(kTag, "watcher alloc failed action=finish");

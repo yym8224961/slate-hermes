@@ -200,14 +200,34 @@ void PackPartial1bppTo2683(uint8_t prev, uint8_t now, uint8_t& out0, uint8_t& ou
     SplitPacked16(kPackPrevLut[prev] | kPackNowLut[now], out0, out1);
 }
 
-DiffResult Diff(const uint8_t* a, const uint8_t* b, size_t len) {
+DiffResult Diff(const uint8_t* a, const uint8_t* b, int width, int height) {
     DiffResult result;
-    for (size_t i = 0; i < len; ++i) {
-        const uint8_t x = a[i] ^ b[i];
-        if (x)
+    if (!a || !b || width <= 0 || height <= 0)
+        return result;
+
+    const int bytes_per_row = (width + 7) >> 3;
+    int       min_byte_x    = bytes_per_row;
+    int       min_y         = height;
+    int       max_byte_x    = -1;
+    int       max_y         = -1;
+    for (int y = 0; y < height; ++y) {
+        for (int byte_x = 0; byte_x < bytes_per_row; ++byte_x) {
+            const uint8_t x = a[y * bytes_per_row + byte_x] ^ b[y * bytes_per_row + byte_x];
+            if (!x)
+                continue;
             result.bits += __builtin_popcount(x);
+            min_byte_x = std::min(min_byte_x, byte_x);
+            max_byte_x = std::max(max_byte_x, byte_x);
+            min_y      = std::min(min_y, y);
+            max_y      = std::max(max_y, y);
+        }
     }
-    result.ratio = len == 0 ? 0.0f : static_cast<float>(result.bits) / (len * 8);
+    result.ratio = static_cast<float>(result.bits) / (static_cast<size_t>(width) * height);
+    if (max_byte_x >= min_byte_x && max_y >= min_y) {
+        const int x0 = min_byte_x * 8;
+        const int x1 = std::min(width, (max_byte_x + 1) * 8);
+        result.bounds = {x0, min_y, x1 - x0, max_y - min_y + 1};
+    }
     return result;
 }
 

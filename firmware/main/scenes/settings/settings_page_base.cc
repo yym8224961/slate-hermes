@@ -2,7 +2,7 @@
 
 #include <utility>
 
-#include "drivers/display/epd_ssd1683.h"
+#include "drivers/display/epd_ssd2683.h"
 #include "ui/theme.h"
 
 bool SettingsPageBase::EnterSettingsScaffold(SceneContext& ctx, const char* caption) {

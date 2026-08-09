@@ -2,6 +2,7 @@
 
 #include <driver/gpio.h>
 #include <driver/spi_master.h>
+#include <esp_err.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
@@ -13,17 +14,17 @@
 
 #include "drivers/display/framebuffer_ops.h"
 
-// SSD1683 类驱动 4.2" 黑白 EPD（400×300，1bpp）+ LVGL 集成。
+// SSD2683 类驱动 4.2" 黑白 EPD（400×300，1bpp）+ LVGL 集成。
 // SPI 写帧 + 异步 refresh_task（300 ms 节流，防过频刷新损伤 EPD）+ LVGL flush_cb
 // 阈值化 RGB565→1bpp。RequestUrgentFullRefresh() 立即触发全帧刷新。
-class EpdSsd1683 {
+class EpdSsd2683 {
    public:
     static constexpr int kWidth     = 400;
     static constexpr int kHeight    = 300;
     static constexpr int kBufferLen = ((kWidth + 7) / 8) * kHeight;
 
-    EpdSsd1683();
-    ~EpdSsd1683();
+    EpdSsd2683();
+    ~EpdSsd2683();
 
     void Init();
 
@@ -96,28 +97,29 @@ class EpdSsd1683 {
     bool        ThrottleRefreshSampling(bool urgent, bool force_full);
     bool        CaptureRefreshSnapshot(bool force_full, epd::DiffResult& diff, bool& prev_synced);
     bool        ShouldUseFullRefresh(const epd::DiffResult& diff, bool force_full, bool prev_synced) const;
-    void        RunRefresh(bool full_refresh);
-    void        FinishRefreshSnapshot();
+    bool        RunRefresh(bool full_refresh, const epd::Rect& bounds);
+    void        FinishRefreshSnapshot(bool success);
     void        MarkRefreshIdle();
 
     void AssertRefreshTaskContext() const;
-    void SpiPortInit();    // 发送模式（DI 当 MOSI，40 MHz）
-    void SpiPortRxInit();  // 接收模式（DI 反向当 MISO，8 MHz）—— 读温度寄存器
-    void SpiGpioInit();
-    void EpdInit();
-    void EpdDisplayFull();
-    void EpdDisplayPartial();
-    void EpdTurnOnDisplay();
-    // 读屏内温度寄存器(0x40)→映射 5 档 booster 写 0xE0/0xE6,Full/Partial 共用。
+    esp_err_t SpiPortInit();    // 发送模式（DI 当 MOSI，20 MHz）
+    esp_err_t SpiPortRxInit();  // 接收模式（DI 反向当 MISO，8 MHz）—— 读温度寄存器
+    esp_err_t SpiGpioInit();
+    esp_err_t EpdInit();
+    esp_err_t EpdDisplayFull();
+    esp_err_t EpdDisplayPartial(const epd::Rect& bounds);
+    esp_err_t EpdTurnOnDisplay();
+    esp_err_t SetPartialWindow(const epd::Rect& bounds);
+    // 读屏内温度寄存器(0x40)→映射 5 档 booster 写 0xE0/0xE6，全刷使用。
     // 60 s 内重复刷新会复用上次温度避免每次 5~10 ms 切换 SPI 模式开销。
-    void    ApplyTemperatureBoost();
+    esp_err_t ApplyTemperatureBoost();
     int64_t last_temp_read_ms_ = 0;
     uint8_t cached_booster_    = 0;
-    void    EpdSendCommand(uint8_t c);
-    void    EpdSendData(uint8_t d);
-    uint8_t EpdRecvData();  // refresh_task only:切到 RX 模式读 1 字节,读完切回 TX
-    void    WriteBytes(const uint8_t* buf, int len);
-    void    ReadBusy();
+    esp_err_t EpdSendCommand(uint8_t c);
+    esp_err_t EpdSendData(uint8_t d);
+    esp_err_t EpdRecvData(uint8_t* out);  // refresh_task only:切到 RX 模式读 1 字节,读完切回 TX
+    esp_err_t WriteBytes(const uint8_t* buf, int len);
+    esp_err_t ReadBusy(const char* operation);
     void    EpdPowerOn();  // 主动管 EPD_PWR_PIN(含 hold_dis/set/hold_en)
     void    EpdPowerOff();
 

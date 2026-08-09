@@ -6,7 +6,7 @@
 #include <cstdio>
 #include <cstring>
 
-#include "drivers/display/epd_ssd1683.h"
+#include "drivers/display/epd_ssd2683.h"
 #include "events/event_bus.h"
 #include "events/ui_event_log.h"
 #include "hermes/hermes_service.h"

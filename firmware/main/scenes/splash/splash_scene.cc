@@ -7,7 +7,7 @@
 #include <cstring>
 #include <memory>
 
-#include "drivers/display/epd_ssd1683.h"
+#include "drivers/display/epd_ssd2683.h"
 #include "events/event_bus.h"
 #include "events/ui_event_log.h"
 #include "network/cred_store.h"

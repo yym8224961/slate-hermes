@@ -7,7 +7,7 @@ class BatteryAdc;
 class BoardPowerBsp;
 class ChargeStatus;
 class Button;
-class EpdSsd1683;
+class EpdSsd2683;
 
 // 板级单例:i2c bus / 电源 / 充电状态 / 按键 / EPD+LVGL / 电池 ADC。
 // 按 Init() 内的顺序构建依赖,顺序要求详见 Init() 里的注释。
@@ -32,7 +32,7 @@ class Board {
     Button* boot_btn() {
         return boot_btn_.get();
     }
-    EpdSsd1683* epd() {
+    EpdSsd2683* epd() {
         return epd_.get();
     }
     i2c_master_bus_handle_t i2c_bus() {
@@ -57,6 +57,6 @@ class Board {
     std::unique_ptr<Button>        up_btn_;
     std::unique_ptr<Button>        down_btn_;
     std::unique_ptr<Button>        boot_btn_;
-    std::unique_ptr<EpdSsd1683>    epd_;
+    std::unique_ptr<EpdSsd2683>    epd_;
     i2c_master_bus_handle_t        i2c_bus_ = nullptr;
 };

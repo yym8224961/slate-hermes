@@ -2,7 +2,7 @@
 
 #include <esp_log.h>
 
-#include "drivers/display/epd_ssd1683.h"
+#include "drivers/display/epd_ssd2683.h"
 #include "ui/theme.h"
 
 namespace {
@@ -24,7 +24,7 @@ FrameView::FrameView(lv_obj_t* parent) {
     lv_obj_clear_flag(container_, LV_OBJ_FLAG_SCROLLABLE);
 }
 
-void FrameView::SetFrame(EpdSsd1683* epd, const std::vector<uint8_t>& raw) {
+void FrameView::SetFrame(EpdSsd2683* epd, const std::vector<uint8_t>& raw) {
     if (!epd)
         return;
     if (raw.size() != kRawBytes) {

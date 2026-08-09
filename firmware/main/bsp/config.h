@@ -36,7 +36,7 @@ constexpr gpio_num_t CHARGE_DETECT_GPIO           = GPIO_NUM_2;
 constexpr gpio_num_t CHARGE_FULL_GPIO             = GPIO_NUM_1;
 constexpr int        CHARGE_DETECT_CHARGING_LEVEL = 0;  // 0=低有效充电,1=高有效
 
-// ── EPD (SSD1683) ──────────────────────────────────────────────
+// ── EPD (SSD2683) ──────────────────────────────────────────────
 constexpr spi_host_device_t EPD_SPI_NUM = SPI3_HOST;
 
 constexpr gpio_num_t EPD_DC_PIN   = GPIO_NUM_10;
@@ -47,7 +47,7 @@ constexpr gpio_num_t EPD_RST_PIN  = GPIO_NUM_9;
 constexpr gpio_num_t EPD_BUSY_PIN = GPIO_NUM_8;
 
 // ── 系统电源 ──────────────────────────────────────────────────
-constexpr gpio_num_t EPD_PWR_PIN           = GPIO_NUM_6;   // EPD 电源,EpdSsd1683 自管
+constexpr gpio_num_t EPD_PWR_PIN           = GPIO_NUM_6;   // EPD 电源,EpdSsd2683 自管
 constexpr gpio_num_t AUDIO_PWR_PIN         = GPIO_NUM_42;  // AVDD_3V3 rail (I²C 上拉也在这条 rail)
 constexpr int        AUDIO_PWR_FORCE_LEVEL = 1;
 constexpr gpio_num_t VBAT_PWR_PIN          = GPIO_NUM_17;       // 系统软锁存,拉低 = 关机

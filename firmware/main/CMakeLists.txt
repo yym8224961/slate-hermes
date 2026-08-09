@@ -28,9 +28,9 @@ set(SOURCES
     "drivers/input/button.cc"
     "drivers/bus/i2c_device.cc"
     "drivers/bus/i2c_bus_lock.cc"
-    "drivers/display/epd_ssd1683.cc"
-    "drivers/display/epd_ssd1683_commands.cc"
-    "drivers/display/epd_ssd1683_spi.cc"
+    "drivers/display/epd_ssd2683.cc"
+    "drivers/display/epd_ssd2683_commands.cc"
+    "drivers/display/epd_ssd2683_spi.cc"
     "drivers/display/framebuffer_ops.cc"
     "drivers/audio/audio_player.cc"
 
