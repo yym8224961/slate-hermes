@@ -4,7 +4,7 @@
 
 #include <vector>
 
-class EpdSsd1683;
+class EpdSsd2683;
 
 class FrameView {
    public:
@@ -14,7 +14,7 @@ class FrameView {
 
     explicit FrameView(lv_obj_t* parent);
 
-    void SetFrame(EpdSsd1683* epd, const std::vector<uint8_t>& raw);
+    void SetFrame(EpdSsd2683* epd, const std::vector<uint8_t>& raw);
     void Show();
     void Hide();
 

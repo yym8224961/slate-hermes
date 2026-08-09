@@ -7,7 +7,7 @@
 #include "bsp/board.h"
 #include "bsp/charge_status.h"
 #include "drivers/audio/audio_player.h"
-#include "drivers/display/epd_ssd1683.h"
+#include "drivers/display/epd_ssd2683.h"
 #include "sync/sync_service.h"
 
 namespace power_shutdown {

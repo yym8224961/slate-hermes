@@ -12,7 +12,7 @@
 #include "bsp/board.h"
 #include "bsp/charge_status.h"
 #include "bsp/config.h"
-#include "drivers/display/epd_ssd1683.h"
+#include "drivers/display/epd_ssd2683.h"
 #include "drivers/display/framebuffer_ops.h"
 #include "events/event_bus.h"
 #include "power/power_state.h"
@@ -63,7 +63,7 @@ void LockVbatPowerHigh() {
     rtc_gpio_hold_en(pin);
 }
 
-void SaveStatusBarSnapshot(EpdSsd1683* epd) {
+void SaveStatusBarSnapshot(EpdSsd2683* epd) {
     if (!epd)
         return;
     std::array<uint8_t, epd::kStatusBarSnapshotBytes> snapshot{};

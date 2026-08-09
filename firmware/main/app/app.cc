@@ -18,7 +18,7 @@
 
 #include "bsp/board.h"
 #include "bsp/config.h"
-#include "drivers/display/epd_ssd1683.h"
+#include "drivers/display/epd_ssd2683.h"
 #include "drivers/input/button.h"
 #include "scenes/bg_refresh/bg_refresh_scene.h"
 #include "startup/boot_mode.h"

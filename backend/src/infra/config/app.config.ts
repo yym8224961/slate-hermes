@@ -33,6 +33,9 @@ export class AppConfig {
   get backgroundWorkers() {
     return this.cs.get('BACKGROUND_WORKERS', { infer: true });
   }
+  get hermesAgentToken() {
+    return this.cs.get('HERMES_AGENT_TOKEN', { infer: true });
+  }
   get isProd() {
     return this.nodeEnv === 'production';
   }

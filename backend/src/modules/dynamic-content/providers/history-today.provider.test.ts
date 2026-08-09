@@ -99,7 +99,7 @@ describe('HistoryTodayProvider', () => {
 
     expect(fetchCalls).toBe(1);
     expect(aiCalls).toBe(1);
-    expect(userAgent).toContain('github.com/qiujun8023/slate');
+    expect(userAgent).toContain('github.com/yym8224961/slate-hermes');
     expect(secondData).toEqual(firstData);
     expect(firstData.items).toEqual([{ year: '1999', display: '事件一' }]);
   });

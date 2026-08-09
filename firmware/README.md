@@ -36,7 +36,7 @@
     36|    ├── drivers/
     37|    │   ├── audio/              ES8311 + I2S duplex 音频播放/录音
     38|    │   ├── bus/                I2C 设备封装、总线锁、电源自救 hook
-    39|    │   ├── display/            SSD2683/SSD1683-compatible EPD 驱动
+    39|    │   ├── display/            SSD2683 EPD 驱动与窗口局刷
     40|    │   └── input/              按键封装
     41|    ├── events/                 boot stage、group sync status、UI 事件与事件总线
     42|    ├── network/                Wi-Fi、SNTP、DNS hijack、captive portal、凭据存储
@@ -56,7 +56,7 @@
     56|| 项 | 规格 |
     57|| --- | --- |
     58|| MCU | ESP32-S3-WROOM-1 N16R8V，16 MB QIO Flash + 8 MB Octal PSRAM |
-    59|| 显示 | 4.2" 黑白 EPD，400 x 300，SSD2683 控制器，命令兼容 SSD1683 |
+    59|| 显示 | 4.2" 黑白 EPD，400 x 300，SSD2683 控制器 |
     60|| 音频 | ES8311 codec，单声道扬声器，MEMS 麦，差分 D 类 PA |
     61|| 传感 | PCF8563 RTC、GT23SC6699 NFC |
     62|| 电源 | 单节 4.2 V 锂电，软锁存主电源，独立 EPD rail 与音频/I2C rail |
@@ -129,7 +129,7 @@
    129|| 总线 | 端口 | 引脚 | 设备 |
    130|| --- | --- | --- | --- |
    131|| I2C | `I2C_NUM_0` | SDA=47, SCL=48 | ES8311 0x18、PCF8563 0x51、GT23SC6699 0x55 |
-   132|| SPI | `SPI3_HOST` | SCK=12, MOSI=13, CS=11, DC=10, RST=9, BUSY=8 | EPD，40 MHz mode 0 |
+   132|| SPI | `SPI3_HOST` | SCK=12, MOSI=13, CS=11, DC=10, RST=9, BUSY=8 | EPD，20 MHz mode 0；温度读取 8 MHz |
    133|| I2S | `I2S_NUM_0` | MCLK=14, BCLK=15, WS=38, DIN=16, DOUT=45 | ES8311 duplex |
    134|| ADC | ADC1 CH3 | GPIO4 | VBAT 分压 |
    135|
@@ -345,11 +345,13 @@
    345|关键参数：
    346|
    347|- 400 x 300，1bpp packed 帧为 15000 bytes。
-   348|- SSD2683 实际刷屏需要 2bpp 传输，1bpp 会膨胀成 30 KB SPI payload。
+   348|- SSD2683 实际刷屏需要 2bpp 传输，全刷时 1bpp 会膨胀成 30 KB SPI payload。
+       |- 局刷按 framebuffer 差异计算最小字节对齐窗口，通过命令 `0x83` 只传输窗口内旧/新像素对。
    349|- 全刷约 2-3 秒，局刷约 0.3-0.6 秒。
    350|- 累计多次 partial 后强制 full cleanup，减少残影。
    351|- BUSY 极性是 active-low：低=忙，高=空闲。
    352|- 读屏内温度后写温度补偿寄存器，60 秒内复用温度，避免每次 RX 切换开销。
+       |- SPI/BUSY 失败会使旧画面基线失效，下一次自动强制全刷恢复，不因单次屏幕故障重启整机。
    353|
    354|deep sleep 前只等待已有 EPD refresh 完成，不主动全刷；屏幕内容依靠墨水屏双稳态保留。
    355|
@@ -479,7 +481,9 @@
    479|- HTTP base URL 接受 `http://` 和 `https://`；authenticated HTTP 会打印警告。
    480|- HTTPS 需要 SNTP 时间同步，否则证书校验可能失败。
    481|- `/api/v1` 前缀写死在 `sync/api_client.cc`，要与 shared/backend 保持一致。
-   482|- EPD BUSY 是低忙高闲，调试新屏或新板时不要按 SSD1683 datasheet 默认极性判断。
+   482|- EPD BUSY 是低忙高闲；刷新异常会记录具体操作阶段，并在下一轮全刷重建画面基线。
    483|- AVDD_3V3 关闭后 I2C 上拉消失，任何 I2C 操作都会失败。
    484|- deep sleep 前 GPIO17 必须切 RTC GPIO hold 高，否则会整机断电，按键唤不醒。
    485|
+       |SSD2683 的 OTP 初始化、温度补偿和窗口局刷序列参考 Zectrix Lab 开源硬件 Demo，
+       |授权说明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

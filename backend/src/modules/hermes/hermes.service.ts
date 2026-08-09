@@ -1,17 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { TtsService } from '../tts/tts.service';
 
+const MAX_DEVICE_REPLY_AUDIO_BYTES = 16000 * 2 * 20;
+
 // ── Types ────────────────────────────────────────────────────────────
 
 export interface HermesChatRequest {
   text?: string;
-  audio?: string;  // base64 PCM16 16kHz mono
+  audio?: string; // base64 PCM16 16kHz mono
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
 export interface HermesChatResponse {
   text: string;
-  audio?: string;  // base64 PCM16 16kHz mono
+  audio?: string; // base64 PCM16 16kHz mono
 }
 
 interface PendingRequest {
@@ -80,7 +82,9 @@ export class HermesService {
         createdAt: Date.now(),
         resolve: (response) => {
           // Also generate TTS before resolving
-          this.addTts(response).then(resolve).catch(() => resolve(response));
+          this.addTts(response)
+            .then(resolve)
+            .catch(() => resolve(response));
         },
         reject,
         timer: setTimeout(() => {
@@ -100,7 +104,13 @@ export class HermesService {
         text: response.text,
         voice: this.tts.defaultVoice(),
       });
-      response.audio = pcm.toString('base64');
+      if (pcm.byteLength <= MAX_DEVICE_REPLY_AUDIO_BYTES) {
+        response.audio = pcm.toString('base64');
+      } else {
+        this.logger.warn(
+          `TTS reply omitted because ${pcm.byteLength} bytes exceeds the Slate limit`
+        );
+      }
     } catch (err) {
       this.logger.warn(`TTS failed: ${err}`);
     }
@@ -201,17 +211,21 @@ export class HermesService {
     }
 
     this.inFlight.delete(response.requestId);
+    clearTimeout(inFlight.timer);
     inFlight.resolve({ text: response.text });
     this.logger.log(`Agent resolved request ${response.requestId}`);
     return true;
   }
 
   // In-flight requests (removed from pending, waiting for agent response)
-  private inFlight = new Map<string, {
-    resolve: (response: HermesChatResponse) => void;
-    reject: (err: Error) => void;
-    timer: ReturnType<typeof setTimeout>;
-  }>();
+  private inFlight = new Map<
+    string,
+    {
+      resolve: (response: HermesChatResponse) => void;
+      reject: (err: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
 
   // ── Internal ──────────────────────────────────────────────────────
 
@@ -236,7 +250,10 @@ export class HermesService {
     }
   }
 
-  private removeWaiter(waiter: { resolve: (r: PendingRequest | null) => void; timer: ReturnType<typeof setTimeout> }) {
+  private removeWaiter(waiter: {
+    resolve: (r: PendingRequest | null) => void;
+    timer: ReturnType<typeof setTimeout>;
+  }) {
     const idx = this.agentWaiters.indexOf(waiter);
     if (idx >= 0) {
       clearTimeout(waiter.timer);
@@ -256,7 +273,11 @@ export class HermesService {
       headers: { Authorization: `Bearer ${apiKey}` },
       body: (() => {
         const fd = new FormData();
-        fd.append('file', new Blob([Buffer.from(audioBase64, 'base64')], { type: 'audio/wav' }), 'recording.wav');
+        const pcm = Buffer.from(audioBase64, 'base64');
+        if (pcm.length === 0 || pcm.length % 2 !== 0) {
+          throw new Error('Invalid PCM16 audio payload');
+        }
+        fd.append('file', new Blob([pcmToWav(pcm)], { type: 'audio/wav' }), 'recording.wav');
         fd.append('model', 'whisper-1');
         return fd;
       })(),
@@ -288,4 +309,25 @@ export class HermesService {
       return true;
     });
   }
+}
+
+export function pcmToWav(pcm: Uint8Array): Uint8Array {
+  const sampleRate = 16000;
+  const channels = 1;
+  const bitsPerSample = 16;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + pcm.byteLength, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE((sampleRate * channels * bitsPerSample) / 8, 28);
+  header.writeUInt16LE((channels * bitsPerSample) / 8, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(pcm.byteLength, 40);
+  return Buffer.concat([header, pcm]);
 }

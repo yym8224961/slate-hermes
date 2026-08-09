@@ -1,6 +1,7 @@
 #include "hermes/hermes_service.h"
 
 #include <cJSON.h>
+#include <esp_crt_bundle.h>
 #include <esp_http_client.h>
 #include <esp_log.h>
 #include <mbedtls/base64.h>
@@ -9,25 +10,35 @@
 #include <cstdio>
 #include <cstring>
 
+#include "bsp/config.h"
 #include "drivers/audio/audio_player.h"
 #include "events/event_bus.h"
 #include "network/cred_store.h"
 #include "storage/nvs/volume_store.h"
 
 namespace {
-constexpr char kTag[]         = "hermes";
-constexpr int  kMaxRecordSec  = 15;   // max recording duration
-constexpr int  kSampleRate    = 16000;
-constexpr int  kBufSizeBytes  = 4096;
+constexpr char   kTag[]              = "hermes";
+constexpr int    kMaxRecordSec       = 15;  // max recording duration
+constexpr int    kSampleRate         = 16000;
+constexpr int    kBufSizeBytes       = 4096;
+constexpr int    kHttpTimeoutMs      = 75000;
+constexpr size_t kMaxReplyAudioBytes = static_cast<size_t>(kSampleRate) * AUDIO_PCM_BYTES_PER_SAMPLE * 20;
+constexpr size_t kMaxResponseBytes   = ((kMaxReplyAudioBytes + 2) / 3) * 4 + 8192;
 
 const char* StateName(hermes::HermesState state) {
     switch (state) {
-        case hermes::HermesState::kIdle:      return "idle";
-        case hermes::HermesState::kRecording:  return "recording";
-        case hermes::HermesState::kSending:    return "sending";
-        case hermes::HermesState::kThinking:   return "thinking";
-        case hermes::HermesState::kSpeaking:   return "speaking";
-        case hermes::HermesState::kError:      return "error";
+        case hermes::HermesState::kIdle:
+            return "idle";
+        case hermes::HermesState::kRecording:
+            return "recording";
+        case hermes::HermesState::kSending:
+            return "sending";
+        case hermes::HermesState::kThinking:
+            return "thinking";
+        case hermes::HermesState::kSpeaking:
+            return "speaking";
+        case hermes::HermesState::kError:
+            return "error";
     }
     return "unknown";
 }
@@ -53,7 +64,8 @@ HermesService& HermesService::Get() {
 }
 
 bool HermesService::Start(AudioPlayer* player) {
-    if (!player) return false;
+    if (!player)
+        return false;
     player_ = player;
 
     if (started_.load(std::memory_order_relaxed))
@@ -76,7 +88,7 @@ void HermesService::EnterMode() {
     in_mode_.store(true, std::memory_order_relaxed);
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
-        snapshot_.volume     = vol::Get();
+        snapshot_.volume = vol::Get();
         snapshot_.messages.clear();
         snapshot_.error.clear();
         snapshot_.record_sec = 0;
@@ -132,9 +144,8 @@ void HermesService::StartRecording() {
     recording_.store(true, std::memory_order_relaxed);
 
     // Start recording task
-    BaseType_t ok = xTaskCreatePinnedToCore(
-        &HermesService::RecordTaskEntry, "hermes_rec", 8 * 1024,
-        this, 5, &record_task_, 0);
+    BaseType_t ok =
+        xTaskCreatePinnedToCore(&HermesService::RecordTaskEntry, "hermes_rec", 8 * 1024, this, 5, &record_task_, 0);
 
     if (ok != pdPASS) {
         ESP_LOGE(kTag, "record task create failed");
@@ -194,9 +205,7 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
     }
 
     // Base64 encode the PCM data
-    std::string audio_b64 = Base64Encode(
-        reinterpret_cast<const uint8_t*>(pcm.data()),
-        pcm.size() * sizeof(int16_t));
+    std::string audio_b64 = Base64Encode(reinterpret_cast<const uint8_t*>(pcm.data()), pcm.size() * sizeof(int16_t));
 
     ESP_LOGI(kTag, "pcm encoded base64_len=%d", (int)audio_b64.size());
 
@@ -218,10 +227,15 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
 
     char* body_str = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
+    if (!body_str) {
+        SetError("请求编码失败");
+        return;
+    }
 
     // Build URL
     std::string url = creds.server_url;
-    if (url.back() == '/') url.pop_back();
+    if (url.back() == '/')
+        url.pop_back();
     url += "/api/v1/hermes/chat";
 
     std::string auth = "Bearer " + creds.device_secret;
@@ -229,37 +243,54 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
     ESP_LOGI(kTag, "POST to %s body_len=%d", url.c_str(), (int)strlen(body_str));
 
     esp_http_client_config_t config = {};
-    config.url                     = url.c_str();
-    config.method                  = HTTP_METHOD_POST;
-    config.timeout_ms              = 30000;
-    config.buffer_size             = 8192;
-    config.disable_auto_redirect   = true;
+    config.url                      = url.c_str();
+    config.method                   = HTTP_METHOD_POST;
+    config.timeout_ms               = kHttpTimeoutMs;
+    config.buffer_size              = 8192;
+    config.disable_auto_redirect    = true;
+    config.crt_bundle_attach        = esp_crt_bundle_attach;
 
     esp_http_client_handle_t client = esp_http_client_init(&config);
+    if (!client) {
+        free(body_str);
+        SetError("网络连接失败");
+        return;
+    }
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_header(client, "Authorization", auth.c_str());
-    esp_http_client_set_post_field(client, body_str, strlen(body_str));
 
     SetState(HermesState::kThinking, "Hermes思考中...");
 
-    esp_err_t err = esp_http_client_perform(client);
-
+    const size_t body_len = strlen(body_str);
+    esp_err_t    err      = esp_http_client_open(client, body_len);
     if (err == ESP_OK) {
+        const int written = esp_http_client_write(client, body_str, body_len);
+        if (written != static_cast<int>(body_len))
+            err = ESP_FAIL;
+    }
+    int64_t content_length = -1;
+    if (err == ESP_OK)
+        content_length = esp_http_client_fetch_headers(client);
+
+    if (err == ESP_OK && content_length >= 0) {
         int status = esp_http_client_get_status_code(client);
         ESP_LOGI(kTag, "response status=%d", status);
 
-        if (status == 200) {
-            // Read response body
+        if (status == 200 && content_length <= static_cast<int64_t>(kMaxResponseBytes)) {
             std::string resp_body;
+            if (content_length > 0)
+                resp_body.reserve(static_cast<size_t>(content_length));
             char chunk[1024];
-            int read;
-            while ((read = esp_http_client_read(client, chunk, sizeof(chunk) - 1)) > 0) {
-                chunk[read] = '\0';
-                resp_body += chunk;
-                if (resp_body.size() > 8192) break;
+            int  read;
+            while ((read = esp_http_client_read(client, chunk, sizeof(chunk))) > 0) {
+                resp_body.append(chunk, read);
+                if (resp_body.size() > kMaxResponseBytes) {
+                    resp_body.clear();
+                    break;
+                }
             }
 
-            cJSON* resp = cJSON_Parse(resp_body.c_str());
+            cJSON* resp = resp_body.empty() ? nullptr : cJSON_ParseWithLength(resp_body.data(), resp_body.size());
             if (resp) {
                 cJSON* text_item  = cJSON_GetObjectItem(resp, "text");
                 cJSON* audio_item = cJSON_GetObjectItem(resp, "audio");
@@ -269,54 +300,48 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
                     response_text = text_item->valuestring;
 
                 if (!response_text.empty()) {
-                    // Add to message history
                     {
                         std::lock_guard<std::mutex> lock(snapshot_mutex_);
-                        // We don't have transcription yet, so use placeholder
                         snapshot_.messages.push_back({"user", "（语音消息）"});
                         snapshot_.messages.push_back({"assistant", response_text});
                         while (snapshot_.messages.size() > 20)
                             snapshot_.messages.erase(snapshot_.messages.begin());
                     }
 
-                    // Play TTS audio if available
+                    SetState(HermesState::kSpeaking, response_text);
                     if (audio_item && cJSON_IsString(audio_item) && audio_item->valuestring) {
-                        // Decode base64 audio
-                        std::string audio_b64 = audio_item->valuestring;
-                        size_t out_len = 0;
-                        mbedtls_base64_decode(nullptr, 0, &out_len,
-                            reinterpret_cast<const unsigned char*>(audio_b64.data()), audio_b64.size());
+                        const auto*  audio_b64     = reinterpret_cast<const unsigned char*>(audio_item->valuestring);
+                        const size_t audio_b64_len = strlen(audio_item->valuestring);
+                        size_t       out_len       = 0;
+                        mbedtls_base64_decode(nullptr, 0, &out_len, audio_b64, audio_b64_len);
 
-                        if (out_len > 0 && player_) {
+                        if (out_len > 0 && out_len <= kMaxReplyAudioBytes && player_) {
                             std::vector<uint8_t> pcm_data(out_len);
-                            int ret = mbedtls_base64_decode(
-                                pcm_data.data(), pcm_data.size(), &out_len,
-                                reinterpret_cast<const unsigned char*>(audio_b64.data()), audio_b64.size());
-                            if (ret == 0 && out_len > 0) {
+                            int ret = mbedtls_base64_decode(pcm_data.data(), pcm_data.size(), &out_len, audio_b64,
+                                                            audio_b64_len);
+                            if (ret == 0 && out_len > 0 && player_->BeginXiaozhi()) {
                                 pcm_data.resize(out_len);
-                                // Play via Xiaozhi interface
-                                player_->BeginXiaozhi();
-                                player_->WriteXiaozhiPcm(
-                                    reinterpret_cast<const int16_t*>(pcm_data.data()),
-                                    out_len / sizeof(int16_t));
-                                vTaskDelay(pdMS_TO_TICKS(500));  // brief delay for playback
+                                player_->WriteXiaozhiPcm(reinterpret_cast<const int16_t*>(pcm_data.data()),
+                                                         out_len / sizeof(int16_t));
                                 player_->EndXiaozhi();
                                 ESP_LOGI(kTag, "tts played %d bytes", (int)out_len);
                             }
                         }
                     }
-
-                    SetState(HermesState::kSpeaking, response_text);
+                    SetState(HermesState::kIdle, response_text);
                 } else {
                     SetState(HermesState::kIdle, "Hermes没听清，再说一次？");
                 }
                 cJSON_Delete(resp);
             } else {
-                ESP_LOGW(kTag, "bad json: %s", resp_body.c_str());
+                ESP_LOGW(kTag, "invalid or oversized JSON response");
                 SetError("后端响应异常");
             }
         } else if (status == 401) {
             SetError("设备认证失败");
+        } else if (content_length > static_cast<int64_t>(kMaxResponseBytes)) {
+            ESP_LOGW(kTag, "response too large: %lld", (long long)content_length);
+            SetError("Hermes回复太长了");
         } else {
             ESP_LOGW(kTag, "backend error %d", status);
             SetError("Hermes暂时连不上...");
@@ -326,6 +351,7 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
         SetError("网络连接失败");
     }
 
+    esp_http_client_close(client);
     esp_http_client_cleanup(client);
     free(body_str);
 }
@@ -355,7 +381,7 @@ void HermesService::AdjustVolume(int delta) {
 }
 
 void HermesService::SetVolume(int level) {
-    level = std::clamp(level, 0, vol::kMax);
+    level         = std::clamp(level, 0, vol::kMax);
     saved_volume_ = level;
     vol::Set(level);
     if (player_)
@@ -368,8 +394,7 @@ void HermesService::SetVolume(int level) {
 }
 
 bool HermesService::BlocksSleep() const {
-    return in_mode_.load(std::memory_order_relaxed) &&
-           CurrentState() != HermesState::kIdle;
+    return in_mode_.load(std::memory_order_relaxed) && CurrentState() != HermesState::kIdle;
 }
 
 void HermesService::SuspendForSleep() {
@@ -425,8 +450,8 @@ void HermesService::RecordTask() {
     ESP_LOGI(kTag, "record task started");
     std::vector<int16_t> chunk(512);  // 32ms at 16kHz
 
-    int        total_samples = 0;
-    const int  max_samples   = kSampleRate * kMaxRecordSec;
+    int       total_samples = 0;
+    const int max_samples   = kSampleRate * kMaxRecordSec;
 
     while (!record_stop_.load(std::memory_order_relaxed) && total_samples < max_samples) {
         if (!player_ || !player_->IsXiaozhiActive()) {

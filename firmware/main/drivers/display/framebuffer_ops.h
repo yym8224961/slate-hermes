@@ -19,6 +19,7 @@ struct Rect {
 struct DiffResult {
     size_t bits  = 0;
     float  ratio = 0.0f;
+    Rect   bounds;
 };
 
 int  Area(const Rect& r);
@@ -34,6 +35,6 @@ void Copy1bppFrom(const uint8_t* fb, int fb_w, int fb_h, int x, int y, int w, in
 void Pack1bppTo2683(uint8_t in, uint8_t& out0, uint8_t& out1);
 void PackPartial1bppTo2683(uint8_t prev, uint8_t now, uint8_t& out0, uint8_t& out1);
 
-DiffResult Diff(const uint8_t* a, const uint8_t* b, size_t len);
+DiffResult Diff(const uint8_t* a, const uint8_t* b, int width, int height);
 
 }  // namespace epd

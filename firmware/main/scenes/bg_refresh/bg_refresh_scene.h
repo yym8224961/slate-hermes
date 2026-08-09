@@ -7,7 +7,7 @@
 #include "scenes/core/scene.h"
 #include "ui/status_bar.h"
 
-class EpdSsd1683;
+class EpdSsd2683;
 
 class BgRefreshScene : public Scene {
    public:
@@ -36,7 +36,7 @@ class BgRefreshScene : public Scene {
     bool SeedPreviousFrame(SceneContext& ctx);
     bool ResolveCurrentFrame(std::string& gid, int& seq, int& content_count);
     bool RenderChangedFrame(SceneContext& ctx);
-    void StartWatcher(EpdSsd1683* epd);
+    void StartWatcher(EpdSsd2683* epd);
     void StartDeadlineWatchdog();
     void Finish();
 

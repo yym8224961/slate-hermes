@@ -3,7 +3,7 @@
 #include <esp_log.h>
 #include <esp_timer.h>
 
-#include "drivers/display/epd_ssd1683.h"
+#include "drivers/display/epd_ssd2683.h"
 #include "ui/status_bar.h"
 
 namespace {

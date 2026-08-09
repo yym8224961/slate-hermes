@@ -20,14 +20,14 @@ class HermesService;
 }
 
 class StatusBar;
-class EpdSsd1683;
+class EpdSsd2683;
 class AudioPlayer;
 class SceneStack;
 
 struct UiEvent;
 
 struct SceneContext {
-    EpdSsd1683*  epd   = nullptr;
+    EpdSsd2683*  epd   = nullptr;
     AudioPlayer* audio = nullptr;
     SceneStack*  stack = nullptr;
 

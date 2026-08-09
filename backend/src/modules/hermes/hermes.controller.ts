@@ -1,25 +1,34 @@
 import { Body, Controller, Get, HttpCode, Post, Query, UseGuards } from '@nestjs/common';
 import { DeviceAuthGuard } from '../../common/nest/guards/device-auth.guard';
+import { Public } from '../../common/nest/decorators/auth-context.decorators';
 import { HermesService } from './hermes.service';
 import type { HermesChatResponse } from './hermes.service';
 import { z } from 'zod';
-import { ZodValidationPipe } from '../../common/nest/pipes/zod-validation.pipe';
+import { HermesAgentAuthGuard } from './hermes-agent-auth.guard';
 
 // ── Device endpoints (auth required) ──────────────────────────────────
 
 const HermesChatSchema = z.object({
   text: z.string().max(1024).optional(),
-  audio: z.string().max(512000).optional(),
+  // 15 seconds of 16 kHz mono PCM16 is 480 KB, or 640 KB after base64 encoding.
+  audio: z.string().max(640000).optional(),
   history: z
     .array(
       z.object({
         role: z.enum(['user', 'assistant']),
         content: z.string().max(512),
-      }),
+      })
     )
     .max(20)
     .optional(),
 });
+
+class HermesChatDto implements z.infer<typeof HermesChatSchema> {
+  static readonly schema = HermesChatSchema;
+  declare text?: string;
+  declare audio?: string;
+  declare history?: Array<{ role: 'user' | 'assistant'; content: string }>;
+}
 
 // ── Agent endpoints (internal, no device auth) ────────────────────────
 
@@ -28,16 +37,10 @@ const AgentResponseSchema = z.object({
   text: z.string().min(1).max(2048),
 });
 
-// Shared agent auth key — can be set in env to secure agent endpoints
-function getAgentToken(): string {
-  return process.env['HERMES_AGENT_TOKEN'] ?? 'slate-hermes-agent';
-}
-
-function checkAgentAuth(authHeader?: string): boolean {
-  const token = getAgentToken();
-  if (!token || token === 'slate-hermes-agent') return true; // dev mode
-  const expected = `Bearer ${token}`;
-  return authHeader === expected;
+class AgentResponseDto implements z.infer<typeof AgentResponseSchema> {
+  static readonly schema = AgentResponseSchema;
+  declare requestId: string;
+  declare text: string;
 }
 
 @Controller('hermes')
@@ -48,20 +51,18 @@ export class HermesController {
 
   @Post('chat')
   @HttpCode(200)
+  @Public()
   @UseGuards(DeviceAuthGuard)
-  async chat(
-    @Body(new ZodValidationPipe(HermesChatSchema))
-    body: z.infer<typeof HermesChatSchema>,
-  ): Promise<HermesChatResponse> {
+  async chat(@Body() body: HermesChatDto): Promise<HermesChatResponse> {
     return this.hermes.chat(body);
   }
 
   // ── Agent: long-poll for next pending request ──────────────────────
 
   @Get('agent/pending')
-  async agentGetPending(
-    @Query('timeout') timeout?: string,
-  ): Promise<{
+  @Public()
+  @UseGuards(HermesAgentAuthGuard)
+  async agentGetPending(@Query('timeout') timeout?: string): Promise<{
     requestId: string;
     text: string;
     history: Array<{ role: string; content: string }>;
@@ -74,10 +75,9 @@ export class HermesController {
 
   @Post('agent/response')
   @HttpCode(200)
-  async agentSubmitResponse(
-    @Body(new ZodValidationPipe(AgentResponseSchema))
-    body: z.infer<typeof AgentResponseSchema>,
-  ): Promise<{ ok: boolean }> {
+  @Public()
+  @UseGuards(HermesAgentAuthGuard)
+  async agentSubmitResponse(@Body() body: AgentResponseDto): Promise<{ ok: boolean }> {
     const ok = this.hermes.agentSubmitResponse(body);
     return { ok };
   }

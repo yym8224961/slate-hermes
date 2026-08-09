@@ -426,6 +426,7 @@ TTS 使用 OpenAI-compatible `/chat/completions`，请求 `audio: { format: 'pcm
 | `TTS_BASE_URL` | 空 | OpenAI-compatible TTS base URL |
 | `TTS_MODEL` | `mimo-v2.5-tts` | TTS 模型 |
 | `TTS_DEFAULT_VOICE` | `冰糖` | 默认音色，需属于 shared 的 `TTS_VOICES` |
+| `HERMES_AGENT_TOKEN` | 空 | Hermes Gateway 长轮询 Bearer token；至少 32 字符，生产环境未设置时 Agent 接口保持禁用 |
 | `BACKGROUND_WORKERS` | `true` | 是否启动动态刷新后台 worker |
 
 开发环境示例见 [.env.example](.env.example)。

@@ -36,4 +36,10 @@ describe('EnvSchema', () => {
 
     expect(parsed.DB_ALLOW_PUBLIC_KEY_RETRIEVAL).toBe(false);
   });
+
+  it('rejects short Hermes Agent tokens when one is configured', () => {
+    expect(EnvSchema.safeParse({ ...baseEnv, HERMES_AGENT_TOKEN: 'too-short' }).success).toBe(
+      false
+    );
+  });
 });
