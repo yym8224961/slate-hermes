@@ -1,6 +1,10 @@
 name: firmware
 
 on:
+  pull_request:
+    paths:
+      - 'firmware/**'
+      - '.github/workflows/firmware.yml'
   push:
     branches: [master]
     paths:
