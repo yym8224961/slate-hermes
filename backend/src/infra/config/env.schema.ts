@@ -58,6 +58,7 @@ export const EnvSchema = z.object({
   TTS_BASE_URL: OptionalEnv(z.string().url()),
   TTS_MODEL: z.string().min(1).default('mimo-v2.5-tts'),
   TTS_DEFAULT_VOICE: TtsVoice.default(DEFAULT_TTS_VOICE),
+  HERMES_AGENT_TOKEN: OptionalEnv(z.string().min(32)),
   BACKGROUND_WORKERS: BooleanEnv.default(true),
 });
 

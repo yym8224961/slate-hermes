@@ -1,0 +1,20 @@
+name: slate-platform
+label: Slate
+kind: platform
+version: 0.1.0
+description: Poll Slate's backend for ink-screen voice requests and return Hermes replies.
+author: yym8224961
+requires_env:
+  - name: SLATE_BACKEND
+    description: Slate backend URL, for example https://slate.example.com
+    prompt: Slate backend URL
+    password: false
+  - name: SLATE_AGENT_TOKEN
+    description: Bearer token shared with the backend HERMES_AGENT_TOKEN
+    prompt: Slate Agent token
+    password: true
+optional_env:
+  - name: SLATE_POLL_TIMEOUT_SECONDS
+    description: Long-poll duration between 1 and 60 seconds (default 30)
+    prompt: Slate poll timeout
+    password: false

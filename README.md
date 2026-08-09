@@ -170,8 +170,9 @@ ESP32 → NAS后端 (STT+队列) → SlateAdapter (轮询) → Hermes Agent (sou
 **启用：**
 
 1. 将 `plugins/platforms/slate/` 放到 `~/.hermes/hermes-agent/plugins/platforms/slate/`
-2. 设置环境变量 `SLATE_BACKEND=https://你的NAS:3001`
-3. 重启 Hermes Gateway：`hermes gateway stop && sleep 2 && hermes gateway start`
+2. 后端与 Hermes Gateway 配置相同的随机令牌：后端 `HERMES_AGENT_TOKEN`，Gateway 插件 `SLATE_AGENT_TOKEN`
+3. 设置 Gateway 插件环境变量 `SLATE_BACKEND=https://你的NAS:3001`
+4. 重启 Hermes Gateway：`hermes gateway stop && sleep 2 && hermes gateway start`
 
 Gateway 启动后自动轮询 NAS 后端，处理墨水屏发来的语音消息。
 

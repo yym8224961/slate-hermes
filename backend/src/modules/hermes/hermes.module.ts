@@ -3,10 +3,11 @@ import { AiModule } from '../ai/ai.module';
 import { TtsModule } from '../tts/tts.module';
 import { HermesController } from './hermes.controller';
 import { HermesService } from './hermes.service';
+import { HermesAgentAuthGuard } from './hermes-agent-auth.guard';
 
 @Module({
   imports: [AiModule, TtsModule],
   controllers: [HermesController],
-  providers: [HermesService],
+  providers: [HermesService, HermesAgentAuthGuard],
 })
 export class HermesModule {}
