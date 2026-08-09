@@ -6,6 +6,11 @@
 
 namespace {
 
+constexpr int kBatteryIconXOffset = -8;
+constexpr int kBatteryIconYOffset = 0;
+constexpr int kBatteryPctXOffset  = -26;
+constexpr int kBatteryPctYOffset  = 1;
+
 const char* WifiIcon(bool connected, int rssi) {
     if (!connected)
         return FONT_AWESOME_WIFI_SLASH;
@@ -65,7 +70,7 @@ StatusBar::StatusBar(lv_obj_t* parent) {
     // 14px 又造成充电状态字号跳变,不如统一 14px 视觉一致。
     battery_label_ = lv_label_create(root_);
     ApplyIconStyle(battery_label_);
-    lv_obj_align(battery_label_, LV_ALIGN_RIGHT_MID, -8, 0);
+    lv_obj_align(battery_label_, LV_ALIGN_RIGHT_MID, kBatteryIconXOffset, kBatteryIconYOffset);
 
     // 百分比偏左 — 14px 图标 advance ~14px + 4px 间距 = 18,起算偏移 -26。
     // 数字用 Zfull 12px(ASCII 子集),比 16px 更紧凑工整。
@@ -73,7 +78,7 @@ StatusBar::StatusBar(lv_obj_t* parent) {
     lv_obj_set_style_text_font(battery_pct_lbl_, &Zfull_12, 0);
     lv_obj_set_style_text_color(battery_pct_lbl_, lv_color_black(), 0);
     lv_label_set_text(battery_pct_lbl_, "");
-    lv_obj_align(battery_pct_lbl_, LV_ALIGN_RIGHT_MID, -26, 0);
+    lv_obj_align(battery_pct_lbl_, LV_ALIGN_RIGHT_MID, kBatteryPctXOffset, kBatteryPctYOffset);
 
     title_icon_label_ = lv_label_create(root_);
     ApplyIconStyle(title_icon_label_);
@@ -126,7 +131,7 @@ bool StatusBar::SetBattery(int pct, bool charging, bool full) {
     if (shown_pct_text_ != buf) {
         shown_pct_text_ = buf;
         lv_label_set_text(battery_pct_lbl_, buf);
-        lv_obj_align(battery_pct_lbl_, LV_ALIGN_RIGHT_MID, -26, 0);
+        lv_obj_align(battery_pct_lbl_, LV_ALIGN_RIGHT_MID, kBatteryPctXOffset, kBatteryPctYOffset);
         changed = true;
     }
     return changed;

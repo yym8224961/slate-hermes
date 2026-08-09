@@ -386,21 +386,28 @@ bool DeviceInfoPage::Refresh(SceneContext& ctx) {
     if (ctx.read_charge)
         charge = ctx.read_charge();
 
-    auto         round_kb_10    = [](size_t bytes) -> size_t { return (bytes / 1024 / 10) * 10; };
-    auto         round_kb_100   = [](size_t bytes) -> size_t { return (bytes / 1024 / 100) * 100; };
-    auto         to_mb          = [](size_t bytes) -> size_t { return bytes / (1024 * 1024); };
+    auto round_kb_10   = [](size_t bytes) -> size_t { return (bytes / 1024 / 10) * 10; };
+    auto round_kb_100  = [](size_t bytes) -> size_t { return (bytes / 1024 / 100) * 100; };
+    auto available_pct = [](size_t available, size_t total) -> size_t {
+        if (total == 0)
+            return 0;
+        return (available * 100 + total / 2) / total;
+    };
     const size_t dram_free_kb   = round_kb_10(heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
     const size_t dram_total_kb  = round_kb_10(heap_caps_get_total_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
-    const size_t psram_free_mb  = to_mb(heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
-    const size_t psram_total_mb = to_mb(heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+    const size_t psram_free_kb  = round_kb_100(heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    const size_t psram_total_kb = round_kb_100(heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+    const size_t dram_free_pct  = available_pct(dram_free_kb, dram_total_kb);
+    const size_t psram_free_pct = available_pct(psram_free_kb, psram_total_kb);
 
     size_t fs_total = 0;
     size_t fs_used  = 0;
     if (esp_littlefs_info("storage", &fs_total, &fs_used) != ESP_OK) {
         ESP_LOGW(kDeviceInfoTag, "littlefs info failed");
     }
-    const size_t fs_used_kb  = round_kb_100(fs_used);
     const size_t fs_total_kb = round_kb_100(fs_total);
+    const size_t fs_free_kb  = round_kb_100(fs_total >= fs_used ? fs_total - fs_used : 0);
+    const size_t fs_free_pct = available_pct(fs_free_kb, fs_total_kb);
 
     char buf[1024];
     std::snprintf(buf, sizeof(buf),
@@ -411,19 +418,21 @@ bool DeviceInfoPage::Refresh(SceneContext& ctx) {
                   "电量    %d%%   %d mV\n"
                   "状态    %s\n"
                   "\n"
-                  "DRAM    %u / %u KB\n"
-                  "PSRAM   %u / %u MB\n"
-                  "存储    %u / %u KB\n"
+                  "DRAM    总量 %u KB，可用 %u KB（%u%%）\n"
+                  "PSRAM   总量 %u KB，可用 %u KB（%u%%）\n"
+                  "存储    总量 %u KB，可用 %u KB（%u%%）\n"
                   "\n"
-                  "MAC     %s\n"
                   "固件    %s\n"
+                  "MAC     %s\n"
                   "服务器  %s",
                   wifi_on ? "已连接" : "未连接", rssi, wifi_ssid_.empty() ? "-" : wifi_ssid_.c_str(),
                   ip.empty() ? "-" : ip.c_str(), battery_pct < 0 ? 0 : battery_pct, battery_mv, ChargeText(charge),
-                  static_cast<unsigned>(dram_free_kb), static_cast<unsigned>(dram_total_kb),
-                  static_cast<unsigned>(psram_free_mb), static_cast<unsigned>(psram_total_mb),
-                  static_cast<unsigned>(fs_used_kb), static_cast<unsigned>(fs_total_kb), mac_str_,
-                  CONFIG_APP_PROJECT_VER, server_url_.empty() ? "-" : server_url_.c_str());
+                  static_cast<unsigned>(dram_total_kb), static_cast<unsigned>(dram_free_kb),
+                  static_cast<unsigned>(dram_free_pct), static_cast<unsigned>(psram_total_kb),
+                  static_cast<unsigned>(psram_free_kb), static_cast<unsigned>(psram_free_pct),
+                  static_cast<unsigned>(fs_total_kb), static_cast<unsigned>(fs_free_kb),
+                  static_cast<unsigned>(fs_free_pct), CONFIG_APP_PROJECT_VER, mac_str_,
+                  server_url_.empty() ? "-" : server_url_.c_str());
     if (last_text_ == buf)
         return false;
     last_text_.assign(buf);

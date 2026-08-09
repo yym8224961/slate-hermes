@@ -276,6 +276,11 @@ SleepManager::SleepDecision SleepManager::TryEnterDeepSleep() {
         ESP_LOGI(kTag, "deep sleep start wake_mask=0x%llx timer_sec=%u", (unsigned long long)kWakeupMask,
                  static_cast<unsigned>(next_sec));
     } else {
+        // 静态帧不配定时唤醒。但自动 light sleep(CONFIG_PM_ENABLE/tickless idle)会把
+        // RTC timer 唤醒源留在 esp_sleep 配置里,不显式清掉的话 esp_deep_sleep_start 会继承
+        // 这个「幻影 timer」,导致 timer_sec=0 的深睡约 1s 后就被 wake=rtc_timer 唤醒、
+        // 每分钟空醒重启(实测)。必须显式禁用 timer 唤醒源,确保静态帧只靠 EXT1/插电醒。
+        esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
         ESP_LOGI(kTag, "deep sleep start wake_mask=0x%llx timer_sec=0", (unsigned long long)kWakeupMask);
     }
     esp_deep_sleep_start();

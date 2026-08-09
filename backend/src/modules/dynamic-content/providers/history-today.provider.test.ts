@@ -55,8 +55,13 @@ describe('HistoryTodayProvider', () => {
     });
     let fetchCalls = 0;
     let aiCalls = 0;
-    globalThis.fetch = (async () => {
+    let userAgent: string | null = null;
+    globalThis.fetch = (async (
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ) => {
       fetchCalls += 1;
+      userAgent = new Headers(init?.headers).get('User-Agent');
       await blockedFetch;
       return Response.json({
         events: [
@@ -94,6 +99,7 @@ describe('HistoryTodayProvider', () => {
 
     expect(fetchCalls).toBe(1);
     expect(aiCalls).toBe(1);
+    expect(userAgent).toContain('github.com/qiujun8023/slate');
     expect(secondData).toEqual(firstData);
     expect(firstData.items).toEqual([{ year: '1999', display: '事件一' }]);
   });

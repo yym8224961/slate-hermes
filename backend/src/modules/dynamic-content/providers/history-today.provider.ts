@@ -15,6 +15,8 @@ import { CachedInflightFetcher, DEFAULT_PROVIDER_FETCH_TIMEOUT_MS } from './prov
 
 const CACHE_TTL_MS = 86_400_000;
 const RAW_LANG = 'zh-cn';
+const WIKIMEDIA_USER_AGENT =
+  'Slate/0.1 (+https://github.com/qiujun8023/slate; history-today-provider)';
 const MAX_RAW_CACHE_ENTRIES = 64;
 const MAX_AI_CACHE_ENTRIES = 256;
 
@@ -135,7 +137,10 @@ export class HistoryTodayProvider implements DataProvider<
         text?: string;
         pages?: Array<{ title?: string; description?: string; extract?: string }>;
       }>;
-    }>(url, { timeoutMs: DEFAULT_PROVIDER_FETCH_TIMEOUT_MS, userAgent: null });
+    }>(url, {
+      timeoutMs: DEFAULT_PROVIDER_FETCH_TIMEOUT_MS,
+      userAgent: WIKIMEDIA_USER_AGENT,
+    });
     const evs = json.events ?? [];
     return evs
       .filter(
