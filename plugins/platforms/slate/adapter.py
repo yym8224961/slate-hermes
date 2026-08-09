@@ -226,7 +226,10 @@ def register(ctx) -> None:
         pii_safe=True,
         allow_update_command=False,
         platform_hint=(
-            "You are replying on a 400x300 monochrome ink screen. "
-            "Use concise plain text and avoid markdown tables or long lists."
+            "你正在通过 Slate 墨水屏与用户对话。设备为 400×300 黑白电子墨水屏，"
+            "支持文字显示和语音播放，用户主要通过按键录音交流。默认使用简体中文，"
+            "结论优先，回复自然并适合语音朗读，通常不超过 200 个汉字。使用纯文本，"
+            "避免 Markdown 表格、复杂列表、链接堆叠，以及依赖颜色或复杂排版的表达。"
+            "需要配置、诊断或了解设备能力时，加载 slate-platform:slate-device skill。"
         ),
     )
