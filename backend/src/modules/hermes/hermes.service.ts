@@ -108,7 +108,7 @@ export class HermesService {
           const returnedUserText = response.user_text?.trim();
           const responseWithUserText = returnedUserText
             ? { ...response, user_text: returnedUserText }
-            : inputText
+            : req.audio && inputText
               ? { ...response, user_text: inputText }
               : response;
           this.addTts(responseWithUserText)
@@ -133,12 +133,14 @@ export class HermesService {
         text: response.text,
         voice: this.tts.defaultVoice(),
       });
-      if (pcm.byteLength <= MAX_DEVICE_REPLY_AUDIO_BYTES) {
+      if (pcm.byteLength > 0 && pcm.byteLength <= MAX_DEVICE_REPLY_AUDIO_BYTES) {
         response.audio = pcm.toString('base64');
       } else {
-        this.logger.warn(
-          `TTS reply omitted because ${pcm.byteLength} bytes exceeds the Slate limit`
-        );
+        if (pcm.byteLength > MAX_DEVICE_REPLY_AUDIO_BYTES) {
+          this.logger.warn(
+            `TTS reply omitted because ${pcm.byteLength} bytes exceeds the Slate limit`
+          );
+        }
       }
     } catch (err) {
       this.logger.warn(`TTS failed: ${err}`);
