@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { HermesConnectionStatusT } from 'shared';
 import { TtsService } from '../tts/tts.service';
+import { HermesTokenStore } from './hermes-token.store';
 
 const MAX_DEVICE_REPLY_AUDIO_BYTES = 16000 * 2 * 20;
 const AGENT_CONNECTION_TTL_MS = 90_000;
@@ -50,7 +51,14 @@ export class HermesService {
   private requestCounter = 0;
   private lastAgentSeenAt: number | null = null;
 
-  constructor(private readonly tts: TtsService) {}
+  constructor(
+    private readonly tts: TtsService,
+    private readonly tokenStore: HermesTokenStore
+  ) {}
+
+  async configureAgentToken(token: string): Promise<void> {
+    await this.tokenStore.set(token);
+  }
 
   // ── Device API ────────────────────────────────────────────────────
 
@@ -247,7 +255,10 @@ export class HermesService {
     }
   }
 
-  agentStatus(configured: boolean, now = Date.now()): HermesConnectionStatusT {
+  agentStatus(
+    configured = this.tokenStore.get() !== undefined,
+    now = Date.now()
+  ): HermesConnectionStatusT {
     const lastSeenAt = this.lastAgentSeenAt;
     const age = lastSeenAt === null ? Number.POSITIVE_INFINITY : now - lastSeenAt;
 

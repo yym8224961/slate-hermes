@@ -5,7 +5,6 @@ import { HermesService } from './hermes.service';
 import type { HermesChatResponse } from './hermes.service';
 import { z } from 'zod';
 import type { HermesConnectionStatusT } from 'shared';
-import { AppConfig } from '../../infra/config/app.config';
 import { HermesAgentAuthGuard } from './hermes-agent-auth.guard';
 
 // ── Device endpoints (auth required) ──────────────────────────────────
@@ -39,6 +38,15 @@ const AgentResponseSchema = z.object({
   text: z.string().min(1).max(2048),
 });
 
+const HermesAgentTokenSchema = z.object({
+  token: z.string().regex(/^[A-Za-z0-9._~-]{32,256}$/),
+});
+
+class HermesAgentTokenDto implements z.infer<typeof HermesAgentTokenSchema> {
+  static readonly schema = HermesAgentTokenSchema;
+  declare token: string;
+}
+
 class AgentResponseDto implements z.infer<typeof AgentResponseSchema> {
   static readonly schema = AgentResponseSchema;
   declare requestId: string;
@@ -47,16 +55,20 @@ class AgentResponseDto implements z.infer<typeof AgentResponseSchema> {
 
 @Controller('hermes')
 export class HermesController {
-  constructor(
-    private readonly hermes: HermesService,
-    private readonly config: AppConfig
-  ) {}
+  constructor(private readonly hermes: HermesService) {}
 
   // ── Web: inspect integration status without exposing the shared token ──
 
   @Get('status')
   status(): HermesConnectionStatusT {
-    return this.hermes.agentStatus(Boolean(this.config.hermesAgentToken));
+    return this.hermes.agentStatus();
+  }
+
+  @Post('token')
+  @HttpCode(200)
+  async configureToken(@Body() body: HermesAgentTokenDto): Promise<{ configured: true }> {
+    await this.hermes.configureAgentToken(body.token);
+    return { configured: true };
   }
 
   // ── Device: send audio/text, get response ─────────────────────────

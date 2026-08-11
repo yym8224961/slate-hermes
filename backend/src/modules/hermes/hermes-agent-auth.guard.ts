@@ -4,13 +4,17 @@ import type { FastifyRequest } from 'fastify';
 import { AuthError } from '../../common/errors';
 import { extractBearerToken } from '../../common/nest/guards/http-token';
 import { AppConfig } from '../../infra/config/app.config';
+import { HermesTokenStore } from './hermes-token.store';
 
 @Injectable()
 export class HermesAgentAuthGuard implements CanActivate {
-  constructor(private readonly config: AppConfig) {}
+  constructor(
+    private readonly tokenStore: HermesTokenStore,
+    private readonly config: AppConfig
+  ) {}
 
   canActivate(ctx: ExecutionContext): boolean {
-    const expected = this.config.hermesAgentToken;
+    const expected = this.tokenStore.get();
     if (!expected && !this.config.isProd) return true;
 
     const provided = extractBearerToken(ctx.switchToHttp().getRequest<FastifyRequest>());

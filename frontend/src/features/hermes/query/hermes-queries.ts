@@ -17,3 +17,8 @@ export function useHermesStatus() {
     refetchInterval: 15_000,
   });
 }
+
+export async function saveHermesAgentToken(token: string): Promise<{ configured: true }> {
+  const { data } = await api.post<{ configured: true }>(`${API_PREFIX}/hermes/token`, { token });
+  return data;
+}

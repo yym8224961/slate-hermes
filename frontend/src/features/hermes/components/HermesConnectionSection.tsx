@@ -1,21 +1,28 @@
-import { Cable, Copy, ExternalLink, RefreshCw } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { Cable, Check, Copy, ExternalLink, KeyRound, RefreshCw } from 'lucide-react';
+import { useState, type ReactNode } from 'react';
 import { Section } from '@/components/layout/Section';
 import { Button } from '@/components/ui/Button';
 import { useToast } from '@/components/feedback/toast-context';
 import { useTimeAgo } from '@/hooks/useTimeAgo';
 import { cn } from '@/lib/cn';
-import { useHermesStatus } from '@/features/hermes/query/hermes-queries';
+import { saveHermesAgentToken, useHermesStatus } from '@/features/hermes/query/hermes-queries';
+import {
+  buildHermesConfigTemplate,
+  generateHermesAgentToken,
+} from '@/features/hermes/lib/hermes-token';
 
 const PLUGIN_URL = 'https://github.com/yym8224961/slate-hermes/tree/master/plugins/platforms/slate';
 
 export function HermesConnectionSection() {
   const status = useHermesStatus();
   const toast = useToast();
+  const [savedToken, setSavedToken] = useState<string | null>(null);
+  const [isSavingToken, setIsSavingToken] = useState(false);
+  const [tokenSaveFailed, setTokenSaveFailed] = useState(false);
   const slateBackend = window.location.origin.replace(/\/+$/, '');
   const lastSeenAgo = useTimeAgo(status.data?.last_seen_at ?? null, 15_000);
   const state = connectionState(status.data, status.isPending, status.isError, lastSeenAgo);
-  const configTemplate = buildConfigTemplate(slateBackend);
+  const configTemplate = buildHermesConfigTemplate(slateBackend, savedToken ?? undefined);
 
   const copy = async (value: string, label: string) => {
     try {
@@ -23,6 +30,24 @@ export function HermesConnectionSection() {
       toast.success(`${label}已复制`);
     } catch {
       toast.error('复制失败', '请选中文字后手动复制。');
+    }
+  };
+
+  const generateAndSaveToken = async () => {
+    const token = generateHermesAgentToken();
+    setIsSavingToken(true);
+    setTokenSaveFailed(false);
+    try {
+      await saveHermesAgentToken(token);
+      setSavedToken(token);
+      await status.refetch();
+      toast.success('共享 Token 已生成并保存', '现在把它复制给 Hermes Gateway。');
+    } catch {
+      setSavedToken(null);
+      setTokenSaveFailed(true);
+      toast.error('Token 保存失败', '请检查登录状态后重试。');
+    } finally {
+      setIsSavingToken(false);
     }
   };
 
@@ -102,11 +127,77 @@ export function HermesConnectionSection() {
           </ConnectionPanel>
         </div>
 
+        <div className="border-t border-ink px-5 py-5 sm:px-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+            <div className="max-w-2xl">
+              <div className="flex items-center gap-2">
+                <KeyRound size={15} className="text-ink" />
+                <p className="font-mono text-[9px] uppercase tracking-[0.2em] text-stone">
+                  03 / 生成共享 Token
+                </p>
+              </div>
+              <p className="mt-2 font-sans text-[12px] leading-relaxed text-stone">
+                生成后 Slate Docker 会自动保存到现有数据卷；你只需要把同一个值复制给 Hermes
+                Gateway。 Token 只在当前页面显示，不会写入浏览器本地存储。
+              </p>
+            </div>
+            <Button
+              variant="primary"
+              size="sm"
+              iconLeft={
+                isSavingToken ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <KeyRound size={14} />
+                )
+              }
+              disabled={isSavingToken}
+              onClick={() => void generateAndSaveToken()}
+            >
+              {isSavingToken ? '保存中…' : savedToken ? '重新生成 Token' : '生成并保存 Token'}
+            </Button>
+          </div>
+
+          {savedToken ? (
+            <div className="mt-4 border-l-2 border-ink bg-cream/60 px-4 py-3">
+              <div className="flex items-start gap-3">
+                <code className="min-w-0 flex-1 break-all font-mono text-[12px] leading-relaxed text-ink">
+                  {savedToken}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => void copy(savedToken, '共享 Token')}
+                  aria-label="复制共享 Token"
+                  title="复制共享 Token"
+                  className="flex h-8 w-8 flex-shrink-0 items-center justify-center border border-ink text-ink transition-colors hover:bg-cream-deep"
+                >
+                  <Copy size={13} />
+                </button>
+              </div>
+              <p className="mt-3 flex items-center gap-1.5 font-sans text-[11px] leading-relaxed text-stone">
+                <Check size={13} className="text-ink" />
+                Slate 已保存；复制上方 Token 到 Hermes 的 <code>SLATE_AGENT_TOKEN</code>。
+              </p>
+            </div>
+          ) : (
+            <p
+              className={cn(
+                'mt-4 font-sans text-[11px] leading-relaxed',
+                tokenSaveFailed ? 'text-clay' : 'text-stone'
+              )}
+            >
+              {tokenSaveFailed
+                ? '刚才的 Token 没有保存成功，请重新生成。'
+                : '尚未生成新的共享 Token。'}
+            </p>
+          )}
+        </div>
+
         <div className="border-t border-ink bg-cream/40 px-5 py-4 sm:px-6">
           <ol className="grid grid-cols-1 gap-3 text-[12px] leading-relaxed text-stone md:grid-cols-3 md:gap-6">
             <SetupStep
               index="1"
-              text="用 openssl rand -hex 32 生成共享 Token，写入 Slate 的 .env。"
+              text="点击上方生成并保存共享 Token，再复制给 Hermes Gateway。Slate Docker 会自动持久使用它。"
             />
             <SetupStep
               index="2"
@@ -114,7 +205,7 @@ export function HermesConnectionSection() {
             />
             <SetupStep
               index="3"
-              text="在 Hermes 设置 SLATE_BACKEND 与 SLATE_AGENT_TOKEN，随后重启 Gateway。"
+              text="在 Hermes 设置 SLATE_BACKEND 与 SLATE_AGENT_TOKEN，随后重启 Gateway，再回到这里检查连接。"
             />
           </ol>
         </div>
@@ -212,7 +303,7 @@ function connectionState(
   if (!status.enabled) {
     return {
       title: 'Hermes 尚未启用',
-      description: '先在 Slate Docker 的 .env 中设置 HERMES_AGENT_TOKEN，并重建容器。',
+      description: '点击下方生成并保存共享 Token，Slate Docker 会自动采用它。',
       dotClass: 'dot-offline',
     };
   }
@@ -228,17 +319,6 @@ function connectionState(
     description: 'Slate 已启用共享 Token，但还没有检测到 Gateway 的有效长轮询。',
     dotClass: 'dot-warn',
   };
-}
-
-function buildConfigTemplate(slateBackend: string): string {
-  return [
-    '# Slate Docker .env',
-    'HERMES_AGENT_TOKEN=<至少 32 字符的共享 Token>',
-    '',
-    '# Hermes Gateway',
-    `SLATE_BACKEND=${slateBackend}`,
-    'SLATE_AGENT_TOKEN=<与上方相同的共享 Token>',
-  ].join('\n');
 }
 
 async function copyText(value: string): Promise<void> {

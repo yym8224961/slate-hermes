@@ -78,7 +78,7 @@ export const HistoryTodayConfig = z
   .object({
     type: z.literal('history_today'),
     tz: Tz,
-    source: z.enum(['wikipedia', 'baidu_baike']).default('wikipedia'),
+    source: z.enum(['wikipedia', 'baidu_baike']).default('baidu_baike'),
   })
   .merge(DynamicAudioOptions)
   .merge(DynamicRefreshOptions);

@@ -10,10 +10,7 @@ export function useCreateImageContent(gid: string) {
     mutationFn: async (form: FormData) => {
       const { data } = await api.post<ContentMutationResponseT>(
         `${API_PREFIX}/groups/${gid}/contents`,
-        form,
-        {
-          headers: { 'Content-Type': 'multipart/form-data' },
-        }
+        form
       );
       return data;
     },
@@ -29,8 +26,7 @@ export function useUpdateImageContent(gid: string) {
     mutationFn: async ({ contentId, form }: { contentId: string; form: FormData }) => {
       const { data } = await api.patch<ContentMutationResponseT>(
         `${API_PREFIX}/contents/${contentId}`,
-        form,
-        { headers: { 'Content-Type': 'multipart/form-data' } }
+        form
       );
       return data;
     },

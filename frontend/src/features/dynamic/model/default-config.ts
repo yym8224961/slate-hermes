@@ -38,7 +38,7 @@ export function defaultConfig(type: DynamicTypeT): DynamicConfigT {
       return {
         type: 'history_today',
         tz: LOCAL_TIME_ZONE,
-        source: 'wikipedia',
+        source: 'baidu_baike',
         audio_enabled: false,
         audio_voice: DEFAULT_TTS_VOICE,
       };

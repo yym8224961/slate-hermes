@@ -167,9 +167,12 @@ POST   /api/v1/contents/:contentId/preview
 
 GET    /api/v1/dynamic/weather/cities?q=北京
 GET    /api/v1/hermes/status
+POST   /api/v1/hermes/token
 ```
 
-`GET /hermes/status` 返回 Hermes Gateway 接入状态：是否设置了 `HERMES_AGENT_TOKEN`、最近 90 秒内是否有通过认证的 Gateway 长轮询，以及最近连接时间。该接口不会返回共享 Token。
+`GET /hermes/status` 返回 Hermes Gateway 接入状态：是否已配置 Token、最近 90 秒内是否有通过认证的 Gateway 长轮询，以及最近连接时间。该接口不会返回共享 Token。
+
+`POST /hermes/token` 接受登录态下由前端生成的 32–256 字符 Token，并以原子替换方式写入 `/data/hermes-agent-token`（实际路径为 `dirname(BLOB_DIR)/hermes-agent-token`，权限 `0600`）。接口只返回 `{ "configured": true }`。若文件不存在，服务启动时才回退读取 `HERMES_AGENT_TOKEN` 环境变量；因此 Docker 重建时仍会沿用 `/data` 卷中的 Token。
 
 `POST /groups/:groupId/contents` 和 `PATCH /contents/:contentId` 支持两种 content type：
 
@@ -420,16 +423,16 @@ TTS 使用 OpenAI-compatible `/chat/completions`，请求 `audio: { format: 'pcm
 | `JWT_SECRET` | 无 | 必填，至少 32 字符，且需满足基础熵检查 |
 | `JWT_EXPIRATION` | `7d` | 秒数或 `15m` / `7d` / `1h` 这类 duration |
 | `BLOB_DIR` | `./blobs` | blob 根目录 |
-| `QWEATHER_API_KEY` | 空 | 天气动态帧 |
-| `QWEATHER_API_HOST` | 空 | QWeather API Host，必须带 `https://` |
-| `AI_API_KEY` | 空 | 历史上的今天 AI 优化 |
+| `QWEATHER_API_KEY` | 空 | 天气动态帧的 QWeather Key；未配置时自动使用公开天气降级源 |
+| `QWEATHER_API_HOST` | 空 | QWeather API Host，必须带 `https://`；未配置时城市搜索回退到前端内置城市表 |
+| `AI_API_KEY` | 空 | 历史上的今天可选的 AI 优化；未配置或失败时自动使用百度历史源 |
 | `AI_BASE_URL` | 空 | OpenAI-compatible chat completions base URL |
 | `AI_MODEL` | `gpt-4o-mini` | AI 优化模型 |
 | `TTS_API_KEY` | 空 | TTS provider key |
 | `TTS_BASE_URL` | 空 | OpenAI-compatible TTS base URL |
 | `TTS_MODEL` | `mimo-v2.5-tts` | TTS 模型 |
 | `TTS_DEFAULT_VOICE` | `冰糖` | 默认音色，需属于 shared 的 `TTS_VOICES` |
-| `HERMES_AGENT_TOKEN` | 空 | Hermes Gateway 长轮询 Bearer token；至少 32 字符，生产环境未设置时 Agent 接口保持禁用 |
+| `HERMES_AGENT_TOKEN` | 空 | Hermes Gateway 长轮询 Bearer token 的启动回退值；至少 32 字符。前端生成的 Token 会优先持久化到 `dirname(BLOB_DIR)/hermes-agent-token`，生产环境两者都未设置时 Agent 接口保持禁用 |
 | `BACKGROUND_WORKERS` | `true` | 是否启动动态刷新后台 worker |
 
 开发环境示例见 [.env.example](.env.example)。

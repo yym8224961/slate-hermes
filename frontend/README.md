@@ -95,7 +95,7 @@ frontend/src/
 - 调整阈值与 dither 模式。
 - 浏览器端使用 `shared` 的 `rgbaToGray -> autoInvert -> autoContrast -> ditherToBinary` 生成预览。
 - 可附加上传音频，或提交 TTS 文案由后端生成音频。
-- 保存时提交 `multipart/form-data`，图片字段来自预览 canvas 导出的 PNG。
+- 保存时提交 `multipart/form-data`，图片字段来自预览 canvas 导出的 PNG；浏览器负责生成 multipart boundary，客户端不会覆盖 `Content-Type`。
 
 后端仍会重新用 sharp + shared 管线生成最终 1bpp `.img`，前端预览是为了让用户尽量所见即所得。
 
@@ -122,6 +122,8 @@ POST /api/v1/contents/:contentId/preview
 
 响应是 400 x 300 1bpp binary，前端通过 `DynamicFramePreview` 转成 canvas 预览。
 
+天气在配置了 `QWEATHER_API_KEY` / `QWEATHER_API_HOST` 时优先使用 QWeather；未配置时后端使用公开天气降级源，并沿用城市选择器提交的城市名。历史上的今天默认使用百度百科；选择 Wikipedia 时如果上游或 AI 优化不可用会自动降级，不会留下空帧。
+
 ### Dashboard 推送
 
 dashboard 动态内容可以选择系统模板或自定义 JSON 模板：
@@ -142,10 +144,11 @@ POST /api/v1/contents/:contentId/data
 Dashboard 的「Hermes 接入」区展示：
 
 - 当前 Web 同源的 Slate 后端地址，用作 Hermes Gateway 的 `SLATE_BACKEND`。
-- Slate Docker 与 Hermes Gateway 两侧需要设置的环境变量模板。
+- 「生成并保存 Token」按钮：在浏览器使用 Web Crypto 生成共享 Token，并由后端写入持久化 `/data/hermes-agent-token`；同一个 Token 只需复制给 Hermes Gateway 一次。
+- 保存成功后展示 Slate Docker 与 Hermes Gateway 两侧需要填写的环境变量模板；页面不会从服务端读取既有 Token。
 - `HERMES_AGENT_TOKEN` 是否已启用，以及 Gateway 最近 90 秒内是否完成过有效长轮询。
 
-状态查询使用登录态保护的 `GET /api/v1/hermes/status`。响应只包含启用状态和最近连接时间，不会向浏览器返回共享 Token。页面每 15 秒自动刷新，也可手动点击「检查连接」。
+状态查询和 Token 写入都使用登录态保护：`GET /api/v1/hermes/status`、`POST /api/v1/hermes/token`。写入接口只返回 `{ configured: true }`，不会回显 Token。页面每 15 秒自动刷新，也可手动点击「检查连接」。
 
 ## API 客户端
 

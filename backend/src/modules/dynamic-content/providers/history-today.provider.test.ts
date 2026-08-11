@@ -103,4 +103,34 @@ describe('HistoryTodayProvider', () => {
     expect(secondData).toEqual(firstData);
     expect(firstData.items).toEqual([{ year: '1999', display: '事件一' }]);
   });
+
+  it('falls back to Baidu when the Wikipedia/AI path is unavailable', async () => {
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('wikipedia.org')) throw new TypeError('upstream unavailable');
+      return Response.json({
+        '05': {
+          '0517': [{ year: '2001年', title: '<b>百度可用事件</b>。' }],
+        },
+      });
+    }) as unknown as typeof fetch;
+
+    const provider = new HistoryTodayProvider({
+      modelKey: () => 'model-a',
+      historyTodayPromptVersion: () => 'prompt-v1',
+      optimizeHistoryToday: async () => null,
+    } as unknown as AiService);
+    const config = provider.validateConfig({
+      type: 'history_today',
+      tz: 'Asia/Shanghai',
+      source: 'wikipedia',
+    });
+
+    await expect(
+      provider.fetchData(config, { now: new Date('2026-05-17T04:00:00.000Z') })
+    ).resolves.toEqual({
+      dateLabel: '5月17日',
+      items: [{ year: '2001', display: '百度可用事件' }],
+    });
+  });
 });

@@ -81,6 +81,29 @@ interface QWeatherCityLookupResponse {
   }>;
 }
 
+interface WttrResponse {
+  current_condition?: Array<{
+    temp_C?: string;
+    FeelsLikeC?: string;
+    humidity?: string;
+    pressure?: string;
+    winddir16Point?: string;
+    windspeedKmph?: string;
+    weatherCode?: string;
+    weatherDesc?: Array<{ value?: string }>;
+  }>;
+  weather?: Array<{
+    date?: string;
+    maxtempC?: string;
+    mintempC?: string;
+    hourly?: Array<{
+      time?: string;
+      weatherCode?: string;
+      weatherDesc?: Array<{ value?: string }>;
+    }>;
+  }>;
+}
+
 export interface WeatherCitySearchResult {
   id: string;
   name: string;
@@ -91,6 +114,8 @@ export interface WeatherCitySearchResult {
 const LOOKUP_CACHE_TTL_MS = 86_400_000;
 const CITY_SEARCH_CACHE_TTL_MS = 3_600_000;
 const FC_LABELS = ['今日', '明日', '后天'];
+const WTTR_BASE_URL = 'https://wttr.in';
+const WTTR_USER_AGENT = 'Slate/0.1 (+https://github.com/yym8224961/slate-hermes; weather-fallback)';
 const MAX_CACHE_ENTRIES = 128;
 const MAX_LOOKUP_CACHE_ENTRIES = 256;
 const MAX_CITY_SEARCH_CACHE_ENTRIES = 128;
@@ -123,10 +148,7 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
     const normalizedQuery = query.trim();
     if (!normalizedQuery) return [];
     const apiKey = this.config.apiKey;
-    if (!apiKey) throw new Error('QWEATHER_API_KEY 未配置');
-    if (!this.config.apiHost) {
-      throw new Error('QWEATHER_API_HOST 未配置，请在和风天气控制台-设置中复制你的 API Host');
-    }
+    if (!apiKey || !this.config.apiHost) return [];
 
     const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 20);
     const key = `${normalizedQuery}:${safeLimit}`;
@@ -165,8 +187,81 @@ export class WeatherProvider implements DataProvider<WeatherConfigT, WeatherProv
     const now = ctx.now.getTime();
     const ttlSec = Math.max(config.refresh_interval_sec ?? DEFAULT_PROVIDER_CACHE_TTL_SEC, 300);
     return this.fetcher.getOrFetch(key, now, ttlSec * 1000, () =>
-      this.fetchFromQWeather(config, ctx)
+      this.fetchWithFallback(config, ctx)
     );
+  }
+
+  private async fetchWithFallback(
+    config: WeatherConfigT,
+    ctx: DynamicContentFetchCtx
+  ): Promise<WeatherProviderData> {
+    let qweatherError: unknown = null;
+    if (this.config.apiKey && this.config.apiHost) {
+      try {
+        return await this.fetchFromQWeather(config, ctx);
+      } catch (err: unknown) {
+        qweatherError = err;
+      }
+    }
+
+    try {
+      return await this.fetchFromWttr(config, ctx);
+    } catch (fallbackError: unknown) {
+      const cached = this.fallbackFromLastData(config, ctx.lastData, ctx.now);
+      if (cached) return cached;
+      throw qweatherError ?? fallbackError;
+    }
+  }
+
+  private async fetchFromWttr(
+    config: WeatherConfigT,
+    ctx: DynamicContentFetchCtx
+  ): Promise<WeatherProviderData> {
+    const location = encodeURIComponent(config.location_label.trim());
+    const url = `${WTTR_BASE_URL}/${location}?format=j1`;
+    const json = await fetchJsonWithTimeout<WttrResponse>(url, {
+      timeoutMs: DEFAULT_PROVIDER_FETCH_TIMEOUT_MS,
+      userAgent: WTTR_USER_AGENT,
+    });
+    const current = json.current_condition?.[0];
+    const forecast = json.weather?.slice(0, 3) ?? [];
+    if (!current || forecast.length === 0) throw new Error('公共天气源没有返回有效数据');
+
+    const fc = forecast.map((day, index) => {
+      const hourly = pickWttrForecastHour(day.hourly);
+      const code = mapWttrCode(hourly?.weatherCode);
+      const text = weatherText(hourly?.weatherCode, hourly?.weatherDesc?.[0]?.value);
+      const tempMin = toDisplayNumber(day.mintempC);
+      const tempMax = toDisplayNumber(day.maxtempC);
+      return {
+        label: forecastLabel(day.date, config.tz, ctx.now) ?? FC_LABELS[index] ?? '--',
+        val: `${text}  ${tempMin}~${tempMax}°`,
+        text,
+        tempMin,
+        tempMax,
+        code,
+      };
+    });
+
+    const currentCode = mapWttrCode(current.weatherCode);
+    const currentText = weatherText(current.weatherCode, current.weatherDesc?.[0]?.value);
+    const windSpeed = toDisplayNumber(current.windspeedKmph);
+    return {
+      tempC: toDisplayNumber(current.temp_C),
+      feelsLikeC: toDisplayNumber(current.FeelsLikeC),
+      humidity: toDisplayNumber(current.humidity),
+      pressure: toDisplayNumber(current.pressure),
+      windDisplay: current.winddir16Point
+        ? `${translateWindDirection(current.winddir16Point)}${windSpeed === '--' ? '' : ` ${windSpeed}km/h`}`
+        : windSpeed === '--'
+          ? '--'
+          : `${windSpeed}km/h`,
+      summary: currentText,
+      code: currentCode,
+      obsTime: ctx.now.toISOString(),
+      updatedAt: ctx.now.toISOString(),
+      fc,
+    };
   }
 
   private async fetchFromQWeather(
@@ -407,4 +502,103 @@ export function forecastLabel(value: unknown, timeZone: string, now: Date): stri
 
 function ordinalDay(year: number, month: number, day: number): number {
   return Math.floor(Date.UTC(year, month - 1, day) / 86_400_000);
+}
+
+function pickWttrForecastHour(
+  hours:
+    | Array<{
+        time?: string;
+        weatherCode?: string;
+        weatherDesc?: Array<{ value?: string }>;
+      }>
+    | undefined
+) {
+  if (!hours || hours.length === 0) return undefined;
+  return (
+    hours.find((hour) => hour.time === '1200') ?? hours[Math.floor(hours.length / 2)] ?? hours[0]
+  );
+}
+
+function mapWttrCode(value: string | undefined): number {
+  const code = Number.parseInt(value ?? '', 10);
+  if (!Number.isFinite(code)) return 999;
+  if (code === 113) return 100;
+  if (code === 116) return 101;
+  if (code === 119 || code === 122) return 104;
+  if ([143, 248, 260].includes(code)) return 500;
+  if ([176, 263, 266, 293, 296, 353].includes(code)) return 300;
+  if ([299, 302, 305, 308, 356, 359, 386, 389].includes(code)) return 302;
+  if ([323, 326, 368].includes(code)) return 400;
+  if ([329, 332, 362].includes(code)) return 401;
+  if ([335, 338, 365, 371, 392, 395].includes(code)) return 406;
+  if ([350, 374, 377].includes(code)) return 499;
+  return 999;
+}
+
+function weatherText(value: string | undefined, description: string | undefined): string {
+  const code = Number.parseInt(value ?? '', 10);
+  const known: Record<number, string> = {
+    113: '晴',
+    116: '多云',
+    119: '阴',
+    122: '阴',
+    143: '雾',
+    176: '阵雨',
+    200: '雷阵雨',
+    263: '小雨',
+    266: '小雨',
+    293: '小雨',
+    296: '小雨',
+    299: '中雨',
+    302: '中雨',
+    305: '大雨',
+    308: '大雨',
+    323: '小雪',
+    326: '小雪',
+    329: '中雪',
+    332: '中雪',
+    335: '大雪',
+    338: '大雪',
+    350: '冰雹',
+    353: '阵雨',
+    356: '暴雨',
+    359: '暴雨',
+    362: '雨夹雪',
+    365: '雨夹雪',
+    368: '阵雪',
+    371: '暴雪',
+    374: '冰雹',
+    377: '冰雹',
+    386: '雷阵雨',
+    389: '雷阵雨',
+    392: '雷阵雪',
+    395: '雷阵雪',
+  };
+  return known[code] ?? (description?.trim() ? normalizeWeatherDescription(description) : '--');
+}
+
+function normalizeWeatherDescription(value: string): string {
+  return value
+    .replace(/patchy\s+rain\s+nearby/i, '阵雨')
+    .replace(/partly\s+cloudy/i, '多云')
+    .replace(/sunny/i, '晴')
+    .replace(/cloudy|overcast/i, '阴')
+    .replace(/light\s+rain/i, '小雨')
+    .replace(/moderate\s+rain/i, '中雨')
+    .replace(/heavy\s+rain/i, '大雨');
+}
+
+function translateWindDirection(value: string): string {
+  const compact = value.trim().toUpperCase();
+  const directions: Record<string, string> = {
+    N: '北风',
+    NE: '东北风',
+    E: '东风',
+    SE: '东南风',
+    S: '南风',
+    SW: '西南风',
+    W: '西风',
+    NW: '西北风',
+  };
+  return directions[compact] ?? value;
 }

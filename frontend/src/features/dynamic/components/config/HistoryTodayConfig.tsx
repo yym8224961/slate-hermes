@@ -29,10 +29,10 @@ export function HistoryTodayConfigPanel({
           onChange({ ...config, source: value });
         }}
       >
-        <SelectItem value="wikipedia" hint="默认">
-          维基百科
+        <SelectItem value="wikipedia" hint="可选">
+          维基百科（失败自动降级）
         </SelectItem>
-        <SelectItem value="baidu_baike" hint="百科">
+        <SelectItem value="baidu_baike" hint="推荐">
           百度百科
         </SelectItem>
       </Select>

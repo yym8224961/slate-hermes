@@ -16,8 +16,8 @@
 | 类型 | 说明 |
 |------|------|
 | 日历（日/月视图） | 农历/公历日历卡片 |
-| 天气 | 和风天气 QWeather 实时天气 |
-| 历史上的今天 | Wikipedia / 百度百科 |
+| 天气 | 和风天气 QWeather 优先；未配置 Key 时使用公开天气降级源 |
+| 历史上的今天 | 百度百科优先；Wikipedia 失败时自动降级 |
 | 气象预警 | 按省份官方预警 |
 | 地震速报 | 全国最新地震 |
 | 热榜 | 86 个榜单源（知乎、微博、B站、GitHub、V2EX 等） |
@@ -160,7 +160,7 @@ curl http://localhost:3001/healthz
 
 Slate 墨水屏可作为 [Hermes Agent](https://github.com/nousresearch/hermes-agent) 的一个平台 channel。
 
-登录 Slate Web 后，首页的「Hermes 接入」区会显示当前 Slate 接入地址、两侧环境变量模板和 Gateway 最近连接状态。共享 Token 只保留在服务端环境变量中，不会回传到浏览器。
+登录 Slate Web 后，首页的「Hermes 接入」区会显示当前 Slate 接入地址、两侧环境变量模板和 Gateway 最近连接状态。点击「生成并保存 Token」后，后端把 Token 原子写入现有 `/data` 持久卷中的 `hermes-agent-token` 文件；页面只在当前会话内保留并展示刚生成的值，不会读取或回传服务端已有 Token。
 
 **架构：**
 
@@ -173,9 +173,11 @@ ESP32 → NAS后端 (STT+队列) → SlateAdapter (轮询) → Hermes Agent (sou
 
 1. 将 `plugins/platforms/slate/` 安装到用户插件目录 `~/.hermes/plugins/platforms/slate/`
 2. 执行 `hermes plugins enable platforms/slate` 启用插件；插件会同时注册 `slate` 平台和 `slate-platform:slate-device` Skill
-3. 后端与 Hermes Gateway 配置相同的随机令牌：后端 `HERMES_AGENT_TOKEN`，Gateway 插件 `SLATE_AGENT_TOKEN`
+3. 在 Slate 首页「Hermes 接入」区点击「生成并保存 Token」，复制显示的 Token 到 Gateway 插件环境变量 `SLATE_AGENT_TOKEN`
 4. 设置 Gateway 插件环境变量 `SLATE_BACKEND=https://你的NAS:3001`
 5. 重启 Hermes Gateway：`hermes gateway stop && sleep 2 && hermes gateway start`
+
+如果首次部署时不使用网页生成，也可以在 `HERMES_AGENT_TOKEN` 中提供至少 32 字符的启动回退值；网页生成的持久化文件优先级更高。只要 `/data` 卷保留，Slate Docker 重建或升级后会继续使用同一个 Token，无需再次交给 Hermes。
 
 平台插件负责请求轮询和消息收发；随插件注册的 Skill 负责设备能力、回复规范、配置与诊断知识，不会修改全局 `SOUL.md`。
 

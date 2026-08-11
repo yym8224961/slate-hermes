@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { TtsService } from '../tts/tts.service';
 import { HermesService, pcmToWav } from './hermes.service';
+import type { HermesTokenStore } from './hermes-token.store';
 
 describe('pcmToWav', () => {
   it('wraps raw 16 kHz mono PCM16 in a valid WAV header', () => {
@@ -22,7 +23,7 @@ describe('pcmToWav', () => {
 
 describe('HermesService reply audio', () => {
   it('omits oversized TTS audio while preserving the text reply', async () => {
-    const service = new HermesService(tts(Buffer.alloc(640001)));
+    const service = new HermesService(tts(Buffer.alloc(640001)), tokenStore());
     const chat = service.chat({ text: '你好' });
     const pending = await service.agentGetPending();
 
@@ -36,7 +37,7 @@ describe('HermesService reply audio', () => {
 
 describe('HermesService agent status', () => {
   it('reports whether a configured Gateway has polled recently', async () => {
-    const service = new HermesService(tts(Buffer.alloc(0)));
+    const service = new HermesService(tts(Buffer.alloc(0)), tokenStore());
 
     expect(service.agentStatus(false)).toEqual({
       enabled: false,
@@ -62,4 +63,11 @@ function tts(pcm: Buffer): TtsService {
     defaultVoice: () => '冰糖',
     synthesizeToDevicePcm: async () => pcm,
   } as unknown as TtsService;
+}
+
+function tokenStore(value?: string): HermesTokenStore {
+  return {
+    get: () => value,
+    set: async () => undefined,
+  } as HermesTokenStore;
 }

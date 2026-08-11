@@ -7,6 +7,10 @@ import { ValidationError } from '../../errors';
 @Injectable()
 export class ZodValidationPipe implements PipeTransform {
   transform(value: unknown, metadata: ArgumentMetadata): unknown {
+    // JsonBody deliberately returns undefined for multipart requests so the
+    // controller can branch to MultipartParser. Keep regular @Body DTOs
+    // strict; only custom parameter decorators may intentionally be absent.
+    if (value === undefined && metadata.type === 'custom') return value;
     const schema = dtoSchema(metadata.metatype);
     if (!schema) return value;
     try {

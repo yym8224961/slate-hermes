@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { dirname, resolve } from 'node:path';
 import type { EnvT } from './env.schema';
 
 @Injectable()
@@ -35,6 +36,9 @@ export class AppConfig {
   }
   get hermesAgentToken() {
     return this.cs.get('HERMES_AGENT_TOKEN', { infer: true });
+  }
+  get hermesAgentTokenFile() {
+    return resolve(dirname(this.blobDir), 'hermes-agent-token');
   }
   get isProd() {
     return this.nodeEnv === 'production';

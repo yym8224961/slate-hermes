@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { HistoryTodayConfig, type HistoryTodayConfigT } from 'shared';
 import { AiService } from '../../ai/ai.service';
 import type { DataProvider, DynamicContentFetchCtx } from '../dynamic-content.types';
@@ -35,6 +35,7 @@ export class HistoryTodayProvider implements DataProvider<
   HistoryTodayProviderData
 > {
   readonly type = 'history_today';
+  private readonly logger = new Logger(HistoryTodayProvider.name);
   private readonly rawCache = new Map<
     string,
     { events: HistoryTodayRawEvent[]; fetchedAt: number }
@@ -61,9 +62,18 @@ export class HistoryTodayProvider implements DataProvider<
     const rawKey = `${mmdd(month, day)}:${RAW_LANG}`;
     const aiKey = `${rawKey}:${this.ai.modelKey()}:${this.ai.historyTodayPromptVersion()}`;
     const nowMs = ctx.now.getTime();
-    return this.resultFetcher.getOrFetch(aiKey, nowMs, CACHE_TTL_MS, () =>
-      this.fetchOptimized(month, day, rawKey, nowMs)
-    );
+    return this.resultFetcher.getOrFetch(aiKey, nowMs, CACHE_TTL_MS, async () => {
+      try {
+        return await this.fetchOptimized(month, day, rawKey, nowMs);
+      } catch (err: unknown) {
+        this.logger.warn(
+          `Wikipedia/AI history path failed; using Baidu fallback: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+        return this.fetchBaiduBaike(config, ctx);
+      }
+    });
   }
 
   private async fetchBaiduBaike(

@@ -3,27 +3,32 @@ import type { ExecutionContext } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { AuthError } from '../../common/errors';
 import type { AppConfig } from '../../infra/config/app.config';
+import type { HermesTokenStore } from './hermes-token.store';
 import { HermesAgentAuthGuard } from './hermes-agent-auth.guard';
 
 const token = 'hermes-agent-token-0123456789abcdef';
 
 describe('HermesAgentAuthGuard', () => {
   it('accepts the configured bearer token', () => {
-    const guard = new HermesAgentAuthGuard(config(token, true));
+    const guard = new HermesAgentAuthGuard(store(token), config(undefined, true));
     expect(guard.canActivate(context(`Bearer ${token}`))).toBe(true);
   });
 
   it('rejects a missing or incorrect production token', () => {
-    const guard = new HermesAgentAuthGuard(config(token, true));
+    const guard = new HermesAgentAuthGuard(store(token), config(undefined, true));
     expect(() => guard.canActivate(context(undefined))).toThrow(AuthError);
     expect(() => guard.canActivate(context('Bearer wrong'))).toThrow(AuthError);
   });
 
   it('allows an omitted token only outside production', () => {
-    const guard = new HermesAgentAuthGuard(config(undefined, false));
+    const guard = new HermesAgentAuthGuard(store(undefined), config(undefined, false));
     expect(guard.canActivate(context(undefined))).toBe(true);
   });
 });
+
+function store(value: string | undefined): HermesTokenStore {
+  return { get: () => value } as HermesTokenStore;
+}
 
 function config(hermesAgentToken: string | undefined, isProd: boolean): AppConfig {
   return { hermesAgentToken, isProd } as AppConfig;
