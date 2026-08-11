@@ -76,17 +76,26 @@ class HermesService {
     static void RecordTaskEntry(void* arg);
     void        RecordTask();
 
+    struct SendTaskContext {
+        HermesService*       service;
+        std::vector<int16_t> pcm;
+    };
+    static void SendTaskEntry(void* arg);
+
     AudioPlayer*             player_ = nullptr;
     std::atomic<bool>        started_{false};
     std::atomic<bool>        in_mode_{false};
     std::atomic<bool>        recording_{false};
     std::atomic<bool>        record_stop_{false};
+    std::atomic<bool>        send_in_flight_{false};
+    std::atomic<bool>        send_cancel_requested_{false};
 
     // PCM buffer (accumulated during recording)
     mutable std::mutex        pcm_mutex_;
     std::vector<int16_t>      pcm_buffer_;
 
     TaskHandle_t              record_task_ = nullptr;
+    TaskHandle_t              send_task_   = nullptr;
 
     mutable std::mutex        snapshot_mutex_;
     HermesSnapshot            snapshot_;

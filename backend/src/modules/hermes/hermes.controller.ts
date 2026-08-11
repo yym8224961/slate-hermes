@@ -89,6 +89,7 @@ export class HermesController {
   async agentGetPending(@Query('timeout') timeout?: string): Promise<{
     requestId: string;
     text: string;
+    audio?: string;
     history: Array<{ role: string; content: string }>;
   } | null> {
     const ms = Math.min(Math.max(parseInt(timeout ?? '30000', 10) || 30000, 1000), 60000);

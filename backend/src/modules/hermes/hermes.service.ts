@@ -22,6 +22,7 @@ export interface HermesChatResponse {
 interface PendingRequest {
   id: string;
   text: string;
+  audio?: string;
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
   createdAt: number;
   resolve: (response: HermesChatResponse) => void;
@@ -65,19 +66,26 @@ export class HermesService {
   /** Device sends audio/text; returns response when Hermes Agent replies. */
   async chat(req: HermesChatRequest): Promise<HermesChatResponse> {
     let inputText = (req.text ?? '').trim();
+    let inputAudio: string | undefined;
 
     // Transcribe audio if provided
     if (!inputText && req.audio) {
       try {
-        inputText = await this.transcribe(req.audio);
-        this.logger.log(`STT result: ${inputText.slice(0, 80)}`);
+        const transcript = await this.transcribe(req.audio);
+        if (transcript) {
+          inputText = transcript;
+          this.logger.log(`STT result: ${inputText.slice(0, 80)}`);
+        } else {
+          inputAudio = req.audio;
+          this.logger.warn('STT returned no text; handing audio to Hermes Agent');
+        }
       } catch (err) {
-        this.logger.warn(`Transcription failed: ${err}`);
-        return { text: '没听清，再说一次？' };
+        inputAudio = req.audio;
+        this.logger.warn(`Transcription failed; handing audio to Hermes Agent: ${err}`);
       }
     }
 
-    if (!inputText) {
+    if (!inputText && !inputAudio) {
       return { text: '嗯？你想说什么？' };
     }
 
@@ -89,6 +97,7 @@ export class HermesService {
       const pending: PendingRequest = {
         id: reqId,
         text: inputText,
+        audio: inputAudio,
         history: req.history ?? [],
         createdAt: Date.now(),
         resolve: (response) => {
@@ -137,6 +146,7 @@ export class HermesService {
   async agentGetPending(timeoutMs: number = 30000): Promise<{
     requestId: string;
     text: string;
+    audio?: string;
     history: Array<{ role: string; content: string }>;
   } | null> {
     this.markAgentSeen();
@@ -160,6 +170,7 @@ export class HermesService {
       return {
         requestId: existing.id,
         text: existing.text,
+        audio: existing.audio,
         history: existing.history,
       };
     }
@@ -185,6 +196,7 @@ export class HermesService {
             resolve({
               requestId: req.id,
               text: req.text,
+              audio: req.audio,
               history: req.history,
             });
           } else {

@@ -1,8 +1,12 @@
 """Hermes Gateway platform adapter for Slate ink-screen devices."""
 
 import asyncio
+import base64
+import binascii
+import io
 import logging
 import os
+import wave
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -17,10 +21,32 @@ except ImportError:
 from gateway.config import Platform, PlatformConfig
 from gateway.platforms.base import BasePlatformAdapter, MessageEvent, MessageType, SendResult
 
+try:
+    from gateway.platforms.base import cache_audio_from_bytes
+except ImportError:
+    cache_audio_from_bytes = None
+
 
 logger = logging.getLogger(__name__)
 MAX_MESSAGE_LENGTH = 2048
 RECONNECT_BACKOFF_SECONDS = (1, 2, 5, 10, 30)
+
+
+def _pcm16_base64_to_wav(audio_base64: str) -> bytes:
+    try:
+        pcm = base64.b64decode(audio_base64, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("invalid base64 audio payload") from exc
+    if not pcm or len(pcm) % 2:
+        raise ValueError("audio payload is not non-empty PCM16")
+
+    output = io.BytesIO()
+    with wave.open(output, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(16000)
+        wav.writeframes(pcm)
+    return output.getvalue()
 
 
 def _settings(config: PlatformConfig) -> tuple[str, str, int]:
@@ -138,13 +164,51 @@ class SlateAdapter(BasePlatformAdapter):
         data = response.json()
         if data is None:
             return None
-        if not isinstance(data, dict) or not data.get("requestId") or not data.get("text"):
+        if not isinstance(data, dict) or not data.get("requestId"):
             raise ValueError("invalid pending-request response")
+        text = data.get("text")
+        audio = data.get("audio")
+        if not (isinstance(text, str) and text.strip()) and not (
+            isinstance(audio, str) and audio.strip()
+        ):
+            raise ValueError("pending request has neither text nor audio")
         return data
 
     async def _dispatch(self, request: Dict[str, Any]) -> None:
         request_id = str(request["requestId"])
-        text = str(request["text"]).strip()
+        text = str(request.get("text") or "").strip()
+        message_type = MessageType.TEXT
+        media_urls = []
+        media_types = []
+
+        audio_base64 = request.get("audio")
+        if isinstance(audio_base64, str) and audio_base64.strip():
+            voice_type = getattr(MessageType, "VOICE", None)
+            if voice_type is None or cache_audio_from_bytes is None:
+                logger.error("[slate] Hermes runtime cannot accept voice media")
+                result = await self.send(
+                    "slate", "语音暂时无法识别，请再说一次。", reply_to=request_id
+                )
+                if not result.success:
+                    logger.warning("[slate] Failed to return voice compatibility error: %s", result.error)
+                return
+            try:
+                wav_bytes = _pcm16_base64_to_wav(audio_base64)
+                cached_path = await asyncio.to_thread(
+                    cache_audio_from_bytes, wav_bytes, ext=".wav"
+                )
+            except (ValueError, OSError) as exc:
+                logger.warning("[slate] Invalid voice payload %s: %s", request_id, exc)
+                result = await self.send(
+                    "slate", "语音暂时无法识别，请再说一次。", reply_to=request_id
+                )
+                if not result.success:
+                    logger.warning("[slate] Failed to return invalid voice error: %s", result.error)
+                return
+            message_type = voice_type
+            media_urls = [cached_path]
+            media_types = ["audio/wav"]
+
         source = self.build_source(
             chat_id="slate",
             chat_name="Slate ink screen",
@@ -154,11 +218,13 @@ class SlateAdapter(BasePlatformAdapter):
         )
         event = MessageEvent(
             text=text,
-            message_type=MessageType.TEXT,
+            message_type=message_type,
             source=source,
             message_id=request_id,
             raw_message=request,
             timestamp=datetime.now(tz=timezone.utc),
+            media_urls=media_urls,
+            media_types=media_types,
         )
         logger.info("[slate] Dispatching request %s", request_id)
         await self.handle_message(event)

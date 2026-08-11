@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
+#include <new>
 
 #include "bsp/config.h"
 #include "drivers/audio/audio_player.h"
@@ -126,6 +127,10 @@ void HermesService::ToggleChat() {
 void HermesService::StartRecording() {
     if (!player_ || !started_.load(std::memory_order_relaxed))
         return;
+    if (send_in_flight_.load(std::memory_order_relaxed)) {
+        SetError("上一条语音仍在处理");
+        return;
+    }
 
     // Take exclusive audio control
     if (!player_->BeginXiaozhi()) {
@@ -193,11 +198,29 @@ void HermesService::StopAndSend() {
 
     ESP_LOGI(kTag, "recorded %d samples (%.1fs)", (int)pcm.size(), (float)pcm.size() / kSampleRate);
 
+    send_cancel_requested_.store(false, std::memory_order_relaxed);
+    auto* context = new (std::nothrow) SendTaskContext{this, std::move(pcm)};
+    if (!context) {
+        SetError("发送任务内存不足");
+        return;
+    }
+
+    send_in_flight_.store(true, std::memory_order_relaxed);
     SetState(HermesState::kSending, "发送中...");
-    SendAudioToBackend(pcm);
+    const BaseType_t ok = xTaskCreatePinnedToCore(
+        &HermesService::SendTaskEntry, "hermes_send", 16 * 1024, context, 5, &send_task_, 0);
+    if (ok != pdPASS) {
+        send_in_flight_.store(false, std::memory_order_relaxed);
+        send_task_ = nullptr;
+        delete context;
+        SetError("发送任务启动失败");
+    }
 }
 
 void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
+    if (send_cancel_requested_.load(std::memory_order_relaxed))
+        return;
+
     cred::Credentials creds;
     if (!cred::Load(creds) || creds.server_url.empty() || creds.device_secret.empty()) {
         SetError("设备未绑定");
@@ -259,6 +282,12 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
     esp_http_client_set_header(client, "Content-Type", "application/json");
     esp_http_client_set_header(client, "Authorization", auth.c_str());
 
+    if (send_cancel_requested_.load(std::memory_order_relaxed)) {
+        free(body_str);
+        esp_http_client_cleanup(client);
+        return;
+    }
+
     SetState(HermesState::kThinking, "Hermes思考中...");
 
     const size_t body_len = strlen(body_str);
@@ -292,6 +321,13 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
 
             cJSON* resp = resp_body.empty() ? nullptr : cJSON_ParseWithLength(resp_body.data(), resp_body.size());
             if (resp) {
+                if (send_cancel_requested_.load(std::memory_order_relaxed)) {
+                    cJSON_Delete(resp);
+                    esp_http_client_close(client);
+                    esp_http_client_cleanup(client);
+                    free(body_str);
+                    return;
+                }
                 cJSON* text_item  = cJSON_GetObjectItem(resp, "text");
                 cJSON* audio_item = cJSON_GetObjectItem(resp, "audio");
 
@@ -361,6 +397,7 @@ void HermesService::StopConversation() {
 
     recording_.store(false, std::memory_order_relaxed);
     record_stop_.store(true, std::memory_order_relaxed);
+    send_cancel_requested_.store(true, std::memory_order_relaxed);
 
     // Clear PCM buffer
     {
@@ -443,6 +480,16 @@ void HermesService::RecordTaskEntry(void* arg) {
     auto* self = static_cast<HermesService*>(arg);
     self->RecordTask();
     self->record_task_ = nullptr;
+    vTaskDelete(nullptr);
+}
+
+void HermesService::SendTaskEntry(void* arg) {
+    auto* context = static_cast<SendTaskContext*>(arg);
+    auto* self    = context->service;
+    self->SendAudioToBackend(context->pcm);
+    delete context;
+    self->send_task_ = nullptr;
+    self->send_in_flight_.store(false, std::memory_order_relaxed);
     vTaskDelete(nullptr);
 }
 

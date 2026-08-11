@@ -388,7 +388,7 @@
    386|- `hermes_service`：语音对话状态机，管理录音、发送、TTS 播放全流程。
    387|- 使用 `AudioPlayer::BeginXiaozhi()` / `ReadXiaozhiPcm()` 独占音频硬件采集麦克风。
    388|- 录音 PCM 经 base64 编码后通过 HTTP POST 发送到后端 `/api/v1/hermes/chat`。
-   389|- 后端完成 STT（语音识别）、Hermes AI 对话、TTS（语音合成），返回文本+音频。
+   389|- 后端负责设备鉴权、请求排队和下行 TTS；若配置 `AI_BASE_URL`/`AI_API_KEY`，Slate 可直接做 STT，否则把 PCM 语音转交 Hermes Gateway 的 VOICE/STT 管线，再返回文本+音频。
    390|- 固件收到响应后在墨水屏显示文字，并通过 `AudioPlayer::WriteXiaozhiPcm()` 播放 TTS 音频。
    391|
    392|进入方式：ENTER 双击打开 `HermesScene`。按确认键开始录音，再按确认键停止并发送。语音活动中阻止 deep sleep。

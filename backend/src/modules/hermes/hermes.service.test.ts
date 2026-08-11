@@ -35,6 +35,35 @@ describe('HermesService reply audio', () => {
   });
 });
 
+describe('HermesService voice handoff', () => {
+  it('forwards audio to Hermes Agent when Slate STT is not configured', async () => {
+    const previousBaseUrl = process.env['AI_BASE_URL'];
+    const previousApiKey = process.env['AI_API_KEY'];
+    delete process.env['AI_BASE_URL'];
+    delete process.env['AI_API_KEY'];
+
+    try {
+      const service = new HermesService(tts(Buffer.alloc(0)), tokenStore());
+      const audio = Buffer.from([0x01, 0x02, 0x03, 0x04]).toString('base64');
+      const chat = service.chat({ audio });
+      const pending = await service.agentGetPending(5);
+
+      expect(pending).not.toBeNull();
+      expect(pending?.text).toBe('');
+      expect(pending?.audio).toBe(audio);
+      expect(
+        service.agentSubmitResponse({ requestId: pending!.requestId, text: '收到语音了' })
+      ).toBe(true);
+      expect((await chat).text).toBe('收到语音了');
+    } finally {
+      if (previousBaseUrl === undefined) delete process.env['AI_BASE_URL'];
+      else process.env['AI_BASE_URL'] = previousBaseUrl;
+      if (previousApiKey === undefined) delete process.env['AI_API_KEY'];
+      else process.env['AI_API_KEY'] = previousApiKey;
+    }
+  });
+});
+
 describe('HermesService agent status', () => {
   it('reports whether a configured Gateway has polled recently', async () => {
     const service = new HermesService(tts(Buffer.alloc(0)), tokenStore());

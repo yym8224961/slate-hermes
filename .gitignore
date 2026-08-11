@@ -29,6 +29,7 @@ Thumbs.db
 
 # === 测试 ===
 coverage/
+__pycache__/
 
 # === ESP-IDF (firmware/) ===
 firmware/build/

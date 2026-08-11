@@ -8,6 +8,11 @@ Gateway platform and the namespaced `slate-platform:slate-device` skill.
 The platform handles transport. The skill contains device capabilities,
 response constraints, configuration guidance, and diagnostics.
 
+Voice requests arrive as base64 PCM16 in the pending payload. The adapter wraps
+them as 16 kHz mono WAV, stores the file in Hermes' audio cache, and dispatches a
+`MessageType.VOICE` event so the Gateway's configured STT path handles speech.
+Text requests keep the existing `MessageType.TEXT` path.
+
 ## Install
 
 Install it as a user platform plugin. This does not modify the Hermes Agent
