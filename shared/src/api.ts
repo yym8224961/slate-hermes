@@ -50,6 +50,14 @@ export type RegisterRequestT = z.infer<typeof RegisterRequest>;
 export const RegisterResponse = LoginResponse;
 export type RegisterResponseT = z.infer<typeof RegisterResponse>;
 
+// Hermes Gateway 连接状态。共享 token 只存在服务端，不通过此接口回传。
+export const HermesConnectionStatus = z.object({
+  enabled: z.boolean(),
+  connected: z.boolean(),
+  last_seen_at: z.string().nullable(),
+});
+export type HermesConnectionStatusT = z.infer<typeof HermesConnectionStatus>;
+
 // envelope 包：所有错误响应统一字段。
 export const ApiErrorEnvelope = z.object({
   error: z.string(),

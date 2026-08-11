@@ -166,7 +166,10 @@ POST   /api/v1/contents/preview
 POST   /api/v1/contents/:contentId/preview
 
 GET    /api/v1/dynamic/weather/cities?q=北京
+GET    /api/v1/hermes/status
 ```
+
+`GET /hermes/status` 返回 Hermes Gateway 接入状态：是否设置了 `HERMES_AGENT_TOKEN`、最近 90 秒内是否有通过认证的 Gateway 长轮询，以及最近连接时间。该接口不会返回共享 Token。
 
 `POST /groups/:groupId/contents` 和 `PATCH /contents/:contentId` 支持两种 content type：
 

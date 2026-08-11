@@ -160,6 +160,8 @@ curl http://localhost:3001/healthz
 
 Slate 墨水屏可作为 [Hermes Agent](https://github.com/nousresearch/hermes-agent) 的一个平台 channel。
 
+登录 Slate Web 后，首页的「Hermes 接入」区会显示当前 Slate 接入地址、两侧环境变量模板和 Gateway 最近连接状态。共享 Token 只保留在服务端环境变量中，不会回传到浏览器。
+
 **架构：**
 
 ```
@@ -177,7 +179,7 @@ ESP32 → NAS后端 (STT+队列) → SlateAdapter (轮询) → Hermes Agent (sou
 
 平台插件负责请求轮询和消息收发；随插件注册的 Skill 负责设备能力、回复规范、配置与诊断知识，不会修改全局 `SOUL.md`。
 
-Gateway 启动后自动轮询 NAS 后端，处理墨水屏发来的语音消息。
+Gateway 启动后自动轮询 NAS 后端，处理墨水屏发来的语音消息。回到 Web 首页点击「检查连接」，状态应在下一次长轮询后变为「Hermes 已连接」。
 
 ## CI
 

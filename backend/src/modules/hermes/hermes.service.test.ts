@@ -34,6 +34,29 @@ describe('HermesService reply audio', () => {
   });
 });
 
+describe('HermesService agent status', () => {
+  it('reports whether a configured Gateway has polled recently', async () => {
+    const service = new HermesService(tts(Buffer.alloc(0)));
+
+    expect(service.agentStatus(false)).toEqual({
+      enabled: false,
+      connected: false,
+      last_seen_at: null,
+    });
+
+    const poll = service.agentGetPending(1);
+    const status = service.agentStatus(true);
+
+    expect(status.enabled).toBe(true);
+    expect(status.connected).toBe(true);
+    expect(status.last_seen_at).not.toBeNull();
+    expect(
+      service.agentStatus(true, new Date(status.last_seen_at!).getTime() + 90_001).connected
+    ).toBe(false);
+    await poll;
+  });
+});
+
 function tts(pcm: Buffer): TtsService {
   return {
     defaultVoice: () => '冰糖',

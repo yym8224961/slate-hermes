@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
+import type { HermesConnectionStatusT } from 'shared';
 import { TtsService } from '../tts/tts.service';
 
 const MAX_DEVICE_REPLY_AUDIO_BYTES = 16000 * 2 * 20;
+const AGENT_CONNECTION_TTL_MS = 90_000;
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -46,6 +48,7 @@ export class HermesService {
   }> = [];
 
   private requestCounter = 0;
+  private lastAgentSeenAt: number | null = null;
 
   constructor(private readonly tts: TtsService) {}
 
@@ -128,6 +131,8 @@ export class HermesService {
     text: string;
     history: Array<{ role: string; content: string }>;
   } | null> {
+    this.markAgentSeen();
+
     // Check if there's already a pending request
     if (this.pending.length > 0) {
       const existing = this.pending.shift()!;
@@ -191,6 +196,8 @@ export class HermesService {
    * Called by Hermes Agent to submit a response for a pending request.
    */
   agentSubmitResponse(response: AgentResponse): boolean {
+    this.markAgentSeen();
+
     // Find and resolve the matching pending request
     // (The pending was already removed from the queue by agentGetPending,
     //  but we keep a reference in the resolve/reject closures)
@@ -238,6 +245,21 @@ export class HermesService {
       // inFlight tracking is handled by agentGetPending's waiter callback
       waiter.resolve(req);
     }
+  }
+
+  agentStatus(configured: boolean, now = Date.now()): HermesConnectionStatusT {
+    const lastSeenAt = this.lastAgentSeenAt;
+    const age = lastSeenAt === null ? Number.POSITIVE_INFINITY : now - lastSeenAt;
+
+    return {
+      enabled: configured,
+      connected: configured && age >= 0 && age <= AGENT_CONNECTION_TTL_MS,
+      last_seen_at: lastSeenAt === null ? null : new Date(lastSeenAt).toISOString(),
+    };
+  }
+
+  private markAgentSeen() {
+    this.lastAgentSeenAt = Date.now();
   }
 
   private removePending(id: string) {

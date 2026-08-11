@@ -34,7 +34,8 @@ frontend/src/
 │   ├── contents/             内容列表、卡片、新建页、图片编辑、音频预览、content queries
 │   ├── devices/              设备卡片、绑定弹窗、设备详情弹窗、device queries
 │   ├── dynamic/              动态内容配置表单、预览、默认 config、dashboard push panel
-│   └── groups/               内容组卡片、新建弹窗、group queries
+│   ├── groups/               内容组卡片、新建弹窗、group queries
+│   └── hermes/               Hermes Gateway 接入状态、地址与配置提示
 ├── hooks/                    跨 feature hooks
 ├── lib/                      axios、错误解包、格式化、JSON helper、样式片段、eink 图片解码
 ├── pages/
@@ -135,6 +136,16 @@ POST /api/v1/contents/:contentId/data
 ```
 
 这个 URL 使用 `contentId` 作为 capability 凭证，不需要 JWT。前端只负责展示和复制 URL；泄漏后需要删除内容重建。
+
+### Hermes 接入
+
+Dashboard 的「Hermes 接入」区展示：
+
+- 当前 Web 同源的 Slate 后端地址，用作 Hermes Gateway 的 `SLATE_BACKEND`。
+- Slate Docker 与 Hermes Gateway 两侧需要设置的环境变量模板。
+- `HERMES_AGENT_TOKEN` 是否已启用，以及 Gateway 最近 90 秒内是否完成过有效长轮询。
+
+状态查询使用登录态保护的 `GET /api/v1/hermes/status`。响应只包含启用状态和最近连接时间，不会向浏览器返回共享 Token。页面每 15 秒自动刷新，也可手动点击「检查连接」。
 
 ## API 客户端
 

@@ -4,6 +4,8 @@ import { Public } from '../../common/nest/decorators/auth-context.decorators';
 import { HermesService } from './hermes.service';
 import type { HermesChatResponse } from './hermes.service';
 import { z } from 'zod';
+import type { HermesConnectionStatusT } from 'shared';
+import { AppConfig } from '../../infra/config/app.config';
 import { HermesAgentAuthGuard } from './hermes-agent-auth.guard';
 
 // ── Device endpoints (auth required) ──────────────────────────────────
@@ -45,7 +47,17 @@ class AgentResponseDto implements z.infer<typeof AgentResponseSchema> {
 
 @Controller('hermes')
 export class HermesController {
-  constructor(private readonly hermes: HermesService) {}
+  constructor(
+    private readonly hermes: HermesService,
+    private readonly config: AppConfig
+  ) {}
+
+  // ── Web: inspect integration status without exposing the shared token ──
+
+  @Get('status')
+  status(): HermesConnectionStatusT {
+    return this.hermes.agentStatus(Boolean(this.config.hermesAgentToken));
+  }
 
   // ── Device: send audio/text, get response ─────────────────────────
 

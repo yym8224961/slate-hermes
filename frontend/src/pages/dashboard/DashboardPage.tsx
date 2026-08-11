@@ -3,6 +3,7 @@ import { useAuth } from '@/features/auth/hooks/useAuth';
 import { useGroups } from '@/features/groups/query/group-queries';
 import { DevicesSection } from '@/features/devices/components/DevicesSection';
 import { GroupsSection } from '@/features/groups/components/GroupsSection';
+import { HermesConnectionSection } from '@/features/hermes/components/HermesConnectionSection';
 
 export function DashboardPage() {
   const { user } = useAuth();
@@ -17,6 +18,7 @@ export function DashboardPage() {
         </h1>
       </header>
 
+      <HermesConnectionSection />
       <DevicesSection devices={devices.data} groups={groups.data} isPending={devices.isPending} />
       <GroupsSection groups={groups.data} isPending={groups.isPending} />
     </div>
