@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import importlib.util
+import os
 import sys
 import tempfile
 import types
@@ -14,6 +15,8 @@ def _load_adapter_module():
     gateway_config = types.ModuleType("gateway.config")
     gateway_platforms = types.ModuleType("gateway.platforms")
     gateway_base = types.ModuleType("gateway.platforms.base")
+    tools = types.ModuleType("tools")
+    transcription_tools = types.ModuleType("tools.transcription_tools")
 
     class Platform:
         def __init__(self, value):
@@ -69,6 +72,16 @@ def _load_adapter_module():
             handle.write(data)
         return path
 
+    observed_language = {}
+
+    def transcribe_audio(path):
+        assert path.endswith(".wav")
+        observed_language["value"] = os.getenv("HERMES_LOCAL_STT_LANGUAGE")
+        return {"success": True, "transcript": "请告诉我今天的天气", "provider": "test"}
+
+    transcription_tools.transcribe_audio = transcribe_audio
+    tools.transcription_tools = transcription_tools
+
     gateway_config.Platform = Platform
     gateway_config.PlatformConfig = PlatformConfig
     gateway_base.BasePlatformAdapter = BasePlatformAdapter
@@ -83,6 +96,8 @@ def _load_adapter_module():
             "gateway.config": gateway_config,
             "gateway.platforms": gateway_platforms,
             "gateway.platforms.base": gateway_base,
+            "tools": tools,
+            "tools.transcription_tools": transcription_tools,
         }
     )
 
@@ -91,6 +106,7 @@ def _load_adapter_module():
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
+    module._observed_language = observed_language
     return module, PlatformConfig, MessageType
 
 
@@ -118,7 +134,10 @@ def test_dispatches_pcm_audio_as_a_voice_event():
     assert len(captured) == 1
     event = captured[0]
     assert event.message_type == message_type.VOICE
-    assert event.text == ""
+    assert event.text == "请告诉我今天的天气"
+    assert event.raw_message["userText"] == "请告诉我今天的天气"
+    assert adapter_module._observed_language["value"] == "zh"
+    assert os.getenv("HERMES_LOCAL_STT_LANGUAGE") is None
     assert len(event.media_urls) == 1
     with wave.open(event.media_urls[0], "rb") as wav:
         assert wav.getframerate() == 16000
@@ -127,5 +146,41 @@ def test_dispatches_pcm_audio_as_a_voice_event():
         assert wav.readframes(wav.getnframes()) == pcm
 
 
+def test_send_returns_transcript_with_agent_reply():
+    adapter_module, platform_config, _ = _load_adapter_module()
+    adapter = adapter_module.SlateAdapter(platform_config())
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"ok": True}
+
+    class Client:
+        def __init__(self):
+            self.payload = None
+
+        async def post(self, url, *, json, timeout):
+            del url, timeout
+            self.payload = json
+            return Response()
+
+    client = Client()
+    adapter._client = client
+    adapter._transcripts["hermes-voice-2"] = "请打开今天的天气"
+
+    result = asyncio.run(adapter.send("slate", "今天晴天", reply_to="hermes-voice-2"))
+
+    assert result.success is True
+    assert client.payload == {
+        "requestId": "hermes-voice-2",
+        "text": "今天晴天",
+        "userText": "请打开今天的天气",
+    }
+    assert "hermes-voice-2" not in adapter._transcripts
+
+
 if __name__ == "__main__":
     test_dispatches_pcm_audio_as_a_voice_event()
+    test_send_returns_transcript_with_agent_reply()

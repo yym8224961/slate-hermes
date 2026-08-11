@@ -97,7 +97,7 @@ slate/
 AI 语音对话
   └─ ENTER 双击 → HermesScene
      └─ 按键录音 → PCM → POST /api/v1/hermes/chat
-        └─ 后端 STT → Hermes Agent (长轮询) → TTS
+        └─ Gateway STT → Hermes Agent (长轮询) → TTS
            └─ 墨水屏显示文字 + 播放语音
 
 低功耗刷新
@@ -165,7 +165,7 @@ Slate 墨水屏可作为 [Hermes Agent](https://github.com/nousresearch/hermes-a
 **架构：**
 
 ```
-ESP32 → NAS后端 (STT+队列) → SlateAdapter (轮询) → Hermes Agent (soul.md)
+ESP32 → NAS后端 (鉴权+队列) → SlateAdapter (Gateway STT) → Hermes Agent (soul.md)
                                                  ↑ 人格/记忆/工具
 ```
 
@@ -181,7 +181,7 @@ ESP32 → NAS后端 (STT+队列) → SlateAdapter (轮询) → Hermes Agent (sou
 
 平台插件负责请求轮询和消息收发；随插件注册的 Skill 负责设备能力、回复规范、配置与诊断知识，不会修改全局 `SOUL.md`。
 
-Gateway 启动后自动轮询 NAS 后端，处理墨水屏发来的语音消息。回到 Web 首页点击「检查连接」，状态应在下一次长轮询后变为「Hermes 已连接」。
+Gateway 启动后自动轮询 NAS 后端，处理墨水屏发来的语音消息。插件会把一次转写正文同时交给 Agent 和 Slate，因此设备用户气泡显示的是 Hermes 实际听到的文字，而不是“（语音消息）”。回到 Web 首页点击「检查连接」，状态应在下一次长轮询后变为「Hermes 已连接」。
 
 ## CI
 

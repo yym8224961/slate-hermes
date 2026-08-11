@@ -409,7 +409,7 @@ device secret 必须是 64 字符 hex bearer token；JWT 与 device secret 不�
 
 TTS 使用 OpenAI-compatible `/chat/completions`，请求 `audio: { format: 'pcm16', voice }` 并解析 SSE 中的 base64 PCM，源采样率按 24 kHz 处理，再重采样到设备 16 kHz。
 
-Hermes 设备语音的 STT 有两条路径：配置 `AI_BASE_URL` 与 `AI_API_KEY` 时由 Slate 直接调用 Whisper-compatible `/audio/transcriptions`；未配置或调用失败时，Slate 会把原始 PCM 音频随 Agent pending 请求转发给 Hermes Gateway，由 Gateway 自己的 VOICE/STT 管线识别。这样 Slate 不需要复制 Hermes 的语音服务密钥，也不会把失败误报成“没听清”。
+Hermes 设备语音的 STT 有两条路径：配置 `AI_BASE_URL` 与 `AI_API_KEY` 时由 Slate 直接调用 Whisper-compatible `/audio/transcriptions`；未配置或调用失败时，Slate 会把原始 PCM 音频随 Agent pending 请求转发给 Hermes Gateway，由 Gateway 自己的 VOICE/STT 管线识别。Slate 插件会把 Gateway 的转写正文随 Agent 回复回传，固件据此显示用户气泡。这样 Slate 不需要复制 Hermes 的语音服务密钥，也不会把失败误报成“没听清”。
 
 ## 环境变量
 

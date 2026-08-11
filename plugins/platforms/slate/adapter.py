@@ -6,6 +6,7 @@ import binascii
 import io
 import logging
 import os
+import threading
 import wave
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
@@ -30,6 +31,7 @@ except ImportError:
 logger = logging.getLogger(__name__)
 MAX_MESSAGE_LENGTH = 2048
 RECONNECT_BACKOFF_SECONDS = (1, 2, 5, 10, 30)
+_STT_ENV_LOCK = threading.Lock()
 
 
 def _pcm16_base64_to_wav(audio_base64: str) -> bytes:
@@ -61,6 +63,56 @@ def _settings(config: PlatformConfig) -> tuple[str, str, int]:
     return backend, token, min(max(timeout, 1), 60)
 
 
+def _stt_language() -> str:
+    """Return the preferred language hint for Slate voice input.
+
+    Slate is a Chinese-first device. Hermes' local STT provider accepts the
+    legacy ``HERMES_LOCAL_STT_LANGUAGE`` escape hatch, so the plugin supplies
+    ``zh`` only when the operator has not already chosen a language. A value
+    of ``auto`` leaves Hermes' configured provider untouched.
+    """
+    value = os.getenv("SLATE_STT_LANGUAGE", "zh").strip()
+    return "" if value.lower() == "auto" else value
+
+
+def _transcribe_cached_audio(path: str) -> str:
+    """Use Hermes' configured STT once and return a clean transcript."""
+    try:
+        from tools import transcription_tools
+    except ImportError:
+        logger.warning("[slate] Hermes STT module is unavailable")
+        return ""
+
+    language = _stt_language()
+    previous_language = os.environ.get("HERMES_LOCAL_STT_LANGUAGE")
+    with _STT_ENV_LOCK:
+        try:
+            if language and previous_language is None:
+                os.environ["HERMES_LOCAL_STT_LANGUAGE"] = language
+            result = transcription_tools.transcribe_audio(path)
+            if (
+                isinstance(result, dict)
+                and not result.get("success")
+                and callable(getattr(transcription_tools, "transcribe_audio_local_fallback", None))
+            ):
+                result = transcription_tools.transcribe_audio_local_fallback(path)
+        except Exception as exc:
+            logger.warning("[slate] STT failed for %s: %s", path, exc)
+            return ""
+        finally:
+            if previous_language is None:
+                os.environ.pop("HERMES_LOCAL_STT_LANGUAGE", None)
+            else:
+                os.environ["HERMES_LOCAL_STT_LANGUAGE"] = previous_language
+
+    if not isinstance(result, dict) or not result.get("success"):
+        if isinstance(result, dict):
+            logger.info("[slate] STT did not produce a transcript: %s", result.get("error", "unknown error"))
+        return ""
+    transcript = result.get("transcript")
+    return transcript.strip()[:1024] if isinstance(transcript, str) else ""
+
+
 def check_requirements() -> bool:
     return HTTPX_AVAILABLE and bool(os.getenv("SLATE_BACKEND", "").strip()) and bool(
         os.getenv("SLATE_AGENT_TOKEN", "").strip()
@@ -88,6 +140,7 @@ class SlateAdapter(BasePlatformAdapter):
         self._backend, self._token, self._poll_timeout = _settings(config)
         self._client: Optional["httpx.AsyncClient"] = None
         self._poll_task: Optional[asyncio.Task] = None
+        self._transcripts: Dict[str, str] = {}
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
         if not HTTPX_AVAILABLE:
@@ -209,6 +262,16 @@ class SlateAdapter(BasePlatformAdapter):
             media_urls = [cached_path]
             media_types = ["audio/wav"]
 
+            # Transcribe here so the exact text used by Hermes is also
+            # available to Slate. Mark the event as already prepared using the
+            # Gateway's existing cache attributes; this prevents the normal
+            # inbound pipeline from running STT a second time.
+            transcript = await asyncio.to_thread(_transcribe_cached_audio, cached_path)
+            if transcript:
+                text = transcript
+                request["userText"] = transcript
+                self._transcripts[request_id] = transcript
+
         source = self.build_source(
             chat_id="slate",
             chat_name="Slate ink screen",
@@ -226,6 +289,9 @@ class SlateAdapter(BasePlatformAdapter):
             media_urls=media_urls,
             media_types=media_types,
         )
+        if request.get("userText"):
+            setattr(event, "_gateway_pending_stt_text", text)
+            setattr(event, "_gateway_pending_stt_transcripts", [str(request["userText"])])
         logger.info("[slate] Dispatching request %s", request_id)
         await self.handle_message(event)
 
@@ -245,16 +311,21 @@ class SlateAdapter(BasePlatformAdapter):
         text = content.strip()[: self.MAX_MESSAGE_LENGTH]
         if not text:
             text = "我暂时没有生成可显示的回复。"
+        payload = {"requestId": reply_to, "text": text}
+        transcript = self._transcripts.get(reply_to)
+        if transcript:
+            payload["userText"] = transcript
         try:
             response = await self._client.post(
                 f"{self._backend}/api/v1/hermes/agent/response",
-                json={"requestId": reply_to, "text": text},
+                json=payload,
                 timeout=15,
             )
             response.raise_for_status()
             data = response.json()
             if not isinstance(data, dict) or not data.get("ok"):
                 return SendResult(success=False, error="Slate request is no longer pending")
+            self._transcripts.pop(reply_to, None)
             return SendResult(success=True, message_id=reply_to)
         except httpx.TimeoutException:
             return SendResult(success=False, error="Timeout returning response to Slate")

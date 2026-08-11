@@ -18,3 +18,7 @@ optional_env:
     description: Long-poll duration between 1 and 60 seconds (default 30)
     prompt: Slate poll timeout
     password: false
+  - name: SLATE_STT_LANGUAGE
+    description: Voice transcription language hint (default zh; use auto to defer to Hermes)
+    prompt: Slate STT language
+    password: false

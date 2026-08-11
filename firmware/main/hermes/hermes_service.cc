@@ -328,17 +328,24 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
                     free(body_str);
                     return;
                 }
-                cJSON* text_item  = cJSON_GetObjectItem(resp, "text");
-                cJSON* audio_item = cJSON_GetObjectItem(resp, "audio");
+                cJSON* text_item      = cJSON_GetObjectItem(resp, "text");
+                cJSON* user_text_item = cJSON_GetObjectItem(resp, "user_text");
+                cJSON* audio_item     = cJSON_GetObjectItem(resp, "audio");
 
                 std::string response_text;
                 if (text_item && cJSON_IsString(text_item) && text_item->valuestring)
                     response_text = text_item->valuestring;
 
+                std::string user_text;
+                if (user_text_item && cJSON_IsString(user_text_item) && user_text_item->valuestring)
+                    user_text = user_text_item->valuestring;
+
                 if (!response_text.empty()) {
+                    if (user_text.empty())
+                        user_text = "（未识别到语音）";
                     {
                         std::lock_guard<std::mutex> lock(snapshot_mutex_);
-                        snapshot_.messages.push_back({"user", "（语音消息）"});
+                        snapshot_.messages.push_back({"user", user_text});
                         snapshot_.messages.push_back({"assistant", response_text});
                         while (snapshot_.messages.size() > 20)
                             snapshot_.messages.erase(snapshot_.messages.begin());

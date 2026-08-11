@@ -17,6 +17,8 @@ export interface HermesChatRequest {
 export interface HermesChatResponse {
   text: string;
   audio?: string; // base64 PCM16 16kHz mono
+  /** The text the device's last voice message was transcribed to. */
+  user_text?: string;
 }
 
 interface PendingRequest {
@@ -33,6 +35,7 @@ interface PendingRequest {
 interface AgentResponse {
   requestId: string;
   text: string;
+  userText?: string;
 }
 
 // ── Service ──────────────────────────────────────────────────────────
@@ -102,9 +105,15 @@ export class HermesService {
         createdAt: Date.now(),
         resolve: (response) => {
           // Also generate TTS before resolving
-          this.addTts(response)
+          const returnedUserText = response.user_text?.trim();
+          const responseWithUserText = returnedUserText
+            ? { ...response, user_text: returnedUserText }
+            : inputText
+              ? { ...response, user_text: inputText }
+              : response;
+          this.addTts(responseWithUserText)
             .then(resolve)
-            .catch(() => resolve(response));
+            .catch(() => resolve(responseWithUserText));
         },
         reject,
         timer: setTimeout(() => {
@@ -239,7 +248,11 @@ export class HermesService {
 
     this.inFlight.delete(response.requestId);
     clearTimeout(inFlight.timer);
-    inFlight.resolve({ text: response.text });
+    const userText = response.userText?.trim();
+    inFlight.resolve({
+      text: response.text,
+      ...(userText ? { user_text: userText } : {}),
+    });
     this.logger.log(`Agent resolved request ${response.requestId}`);
     return true;
   }

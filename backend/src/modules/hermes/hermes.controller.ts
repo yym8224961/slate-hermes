@@ -36,6 +36,7 @@ class HermesChatDto implements z.infer<typeof HermesChatSchema> {
 const AgentResponseSchema = z.object({
   requestId: z.string().min(1).max(64),
   text: z.string().min(1).max(2048),
+  userText: z.string().max(1024).optional(),
 });
 
 const HermesAgentTokenSchema = z.object({
@@ -51,6 +52,7 @@ class AgentResponseDto implements z.infer<typeof AgentResponseSchema> {
   static readonly schema = AgentResponseSchema;
   declare requestId: string;
   declare text: string;
+  declare userText?: string;
 }
 
 @Controller('hermes')

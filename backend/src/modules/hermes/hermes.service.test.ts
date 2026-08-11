@@ -52,9 +52,16 @@ describe('HermesService voice handoff', () => {
       expect(pending?.text).toBe('');
       expect(pending?.audio).toBe(audio);
       expect(
-        service.agentSubmitResponse({ requestId: pending!.requestId, text: '收到语音了' })
+        service.agentSubmitResponse({
+          requestId: pending!.requestId,
+          text: '收到语音了',
+          userText: '请告诉我今天的天气',
+        })
       ).toBe(true);
-      expect((await chat).text).toBe('收到语音了');
+      expect(await chat).toEqual({
+        text: '收到语音了',
+        user_text: '请告诉我今天的天气',
+      });
     } finally {
       if (previousBaseUrl === undefined) delete process.env['AI_BASE_URL'];
       else process.env['AI_BASE_URL'] = previousBaseUrl;

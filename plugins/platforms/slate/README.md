@@ -9,9 +9,12 @@ The platform handles transport. The skill contains device capabilities,
 response constraints, configuration guidance, and diagnostics.
 
 Voice requests arrive as base64 PCM16 in the pending payload. The adapter wraps
-them as 16 kHz mono WAV, stores the file in Hermes' audio cache, and dispatches a
-`MessageType.VOICE` event so the Gateway's configured STT path handles speech.
-Text requests keep the existing `MessageType.TEXT` path.
+them as 16 kHz mono WAV, stores the file in Hermes' audio cache, and runs the
+Gateway's configured STT path once. The resulting transcript is used for the
+agent event and returned to Slate with the reply, so the device can show what
+it heard instead of a generic voice placeholder. The event is marked as already
+transcribed to avoid a second STT pass. Text requests keep the existing
+`MessageType.TEXT` path.
 
 ## Install
 
@@ -36,11 +39,18 @@ HERMES_AGENT_TOKEN=<generated-token>
 # Hermes Gateway
 SLATE_BACKEND=https://your-slate-backend.example.com
 SLATE_AGENT_TOKEN=<generated-token>
+# Optional; Slate defaults local STT to Chinese. Use `auto` to keep Hermes' provider default.
+SLATE_STT_LANGUAGE=zh
 ```
 
 Restart both the Slate backend and Hermes Gateway after changing the values.
 The backend disables the two Agent polling endpoints in production when
 `HERMES_AGENT_TOKEN` is missing.
+
+For a Chinese-first Gateway, keep the STT language at `zh` (or set
+`stt.language: zh` in Hermes' config). If the device is used bilingually, set
+`SLATE_STT_LANGUAGE=auto` and configure the provider's language/auto-detection
+policy in Hermes instead.
 
 ## Verify
 
