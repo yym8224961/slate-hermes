@@ -242,6 +242,56 @@ class SlateAdapterVoiceTests(unittest.TestCase):
         )
         self.assertNotIn("hermes-voice-2", adapter._events)
 
+    def test_stt_echo_is_cached_for_final_send_without_consuming_request(self):
+        adapter = self.adapter_module.SlateAdapter(self.platform_config())
+
+        async def capture(_event):
+            return None
+
+        adapter.handle_message = capture
+        asyncio.run(
+            adapter._dispatch(
+                {
+                    "requestId": "hermes-voice-echo",
+                    "sessionId": "slate:device-1",
+                    "userId": "admin-1",
+                    "text": "",
+                    "audio": base64.b64encode(b"\x01\x02").decode("ascii"),
+                }
+            )
+        )
+        client = Client()
+        adapter._client = client
+
+        echo_result = asyncio.run(
+            adapter.send(
+                "slate:device-1",
+                '🎙️ "赫妹你好，今天是几号"',
+                metadata=None,
+            )
+        )
+        final_result = asyncio.run(
+            adapter.send(
+                "slate:device-1",
+                "今天是八月十二日。",
+                reply_to="hermes-voice-echo",
+                metadata={"notify": True},
+            )
+        )
+
+        self.assertTrue(echo_result.success)
+        self.assertTrue(final_result.success)
+        self.assertEqual(
+            client.payloads,
+            [
+                {
+                    "requestId": "hermes-voice-echo",
+                    "text": "今天是八月十二日。",
+                    "userText": "赫妹你好，今天是几号",
+                }
+            ],
+        )
+
     def test_streaming_preview_does_not_consume_the_pending_request(self):
         adapter = self.adapter_module.SlateAdapter(self.platform_config())
         client = Client()

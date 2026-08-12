@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 MAX_MESSAGE_LENGTH = 512
 RECONNECT_BACKOFF_SECONDS = (1, 2, 5, 10, 30)
 EVENT_CONTEXT_TTL_SECONDS = 10 * 60
+STT_ECHO_PREFIX = '🎙️ "'
 
 
 def _pcm16_base64_to_wav(audio_base64: str) -> bytes:
@@ -49,6 +50,14 @@ def _pcm16_base64_to_wav(audio_base64: str) -> bytes:
         wav.setframerate(16000)
         wav.writeframes(pcm)
     return output.getvalue()
+
+
+def _stt_echo_transcript(content: str) -> str:
+    """Extract the raw transcript from Hermes' user-visible STT echo."""
+    stripped = content.strip()
+    if not stripped.startswith(STT_ECHO_PREFIX) or not stripped.endswith('"'):
+        return ""
+    return stripped[len(STT_ECHO_PREFIX) : -1].strip()[:512]
 
 
 def _settings(config: PlatformConfig) -> tuple[str, str, int]:
@@ -93,6 +102,7 @@ class SlateAdapter(BasePlatformAdapter):
         self._polling = False
         self._events: Dict[str, MessageEvent] = {}
         self._event_created_at: Dict[str, float] = {}
+        self._request_ids_by_chat: Dict[str, str] = {}
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
         if not HTTPX_AVAILABLE:
@@ -126,6 +136,7 @@ class SlateAdapter(BasePlatformAdapter):
             self._client = None
         self._events.clear()
         self._event_created_at.clear()
+        self._request_ids_by_chat.clear()
         logger.info("[slate] Disconnected")
 
     async def _poll_loop(self) -> None:
@@ -242,6 +253,7 @@ class SlateAdapter(BasePlatformAdapter):
         )
         self._events[request_id] = event
         self._event_created_at[request_id] = time.monotonic()
+        self._request_ids_by_chat[session_id] = request_id
         logger.info("[slate] Dispatching request %s", request_id)
         await self.handle_message(event)
 
@@ -252,9 +264,20 @@ class SlateAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        del chat_id
         if not self._client:
             return SendResult(success=False, error="Slate HTTP client is not connected")
+        # Older Hermes Gateway releases expose the successful STT result only
+        # through their standard transcript echo. Cache that echo against the
+        # active Slate request, but never post it as the one-shot final reply.
+        # Newer releases also retain private event transcript attributes; the
+        # final path below supports both shapes without running STT twice.
+        transcript_echo = _stt_echo_transcript(content)
+        active_request_id = self._request_ids_by_chat.get(chat_id)
+        if not reply_to and transcript_echo and active_request_id:
+            event = self._events.get(active_request_id)
+            if event is not None and event.message_type == MessageType.VOICE:
+                setattr(event, "_slate_stt_echo_text", transcript_echo)
+                return SendResult(success=True, message_id=active_request_id)
         # Gateway previews, edits, typing/busy acknowledgements and transcript
         # echoes must not resolve the one-shot Slate request. Current Gateway
         # final delivery is explicitly marked notify=True; metadata=None keeps
@@ -306,19 +329,29 @@ class SlateAdapter(BasePlatformAdapter):
         event = self._events.get(request_id)
         if event is None:
             return ""
-        prepared = getattr(event, "_gateway_pending_stt_text", None)
-        if isinstance(prepared, str) and prepared.strip():
-            return prepared.strip()[:512]
         transcripts = getattr(event, "_gateway_pending_stt_transcripts", None)
         if isinstance(transcripts, (list, tuple)):
             for transcript in reversed(transcripts):
                 if isinstance(transcript, str) and transcript.strip():
                     return transcript.strip()[:512]
+        echoed = getattr(event, "_slate_stt_echo_text", None)
+        if isinstance(echoed, str) and echoed.strip():
+            return echoed.strip()[:512]
+        prepared = getattr(event, "_gateway_pending_stt_text", None)
+        if isinstance(prepared, str) and prepared.strip():
+            return prepared.strip()[:512]
         return ""
 
     def _drop_event_context(self, request_id: str) -> None:
         self._events.pop(request_id, None)
         self._event_created_at.pop(request_id, None)
+        stale_chats = [
+            chat_id
+            for chat_id, active_request_id in self._request_ids_by_chat.items()
+            if active_request_id == request_id
+        ]
+        for chat_id in stale_chats:
+            self._request_ids_by_chat.pop(chat_id, None)
 
     def _prune_event_contexts(self) -> None:
         cutoff = time.monotonic() - EVENT_CONTEXT_TTL_SECONDS

@@ -10,11 +10,14 @@ response constraints, configuration guidance, and diagnostics.
 
 Voice requests arrive as base64 PCM16 in the pending payload. The adapter wraps
 them as 16 kHz mono WAV and stores the file in Hermes' audio cache. Hermes'
-normal Gateway pipeline performs STT once in its background session; the final
-delivery reads that same event transcript and returns it to Slate, so the device
-shows what Hermes actually heard instead of a generic voice placeholder. Stream
-previews and busy/interim messages never resolve the one-shot device request.
-Text requests keep the existing `MessageType.TEXT` path.
+normal Gateway pipeline performs STT once in its background session. The adapter
+captures the standard Gateway transcript echo for releases that do not retain
+the transcript on the original event, while newer releases can use the event's
+raw transcript cache directly. Final delivery returns that same text to Slate,
+so the device shows what Hermes actually heard instead of a generic voice
+placeholder. Stream previews, transcript echoes, and busy/interim messages never
+resolve the one-shot device request. Text requests keep the existing
+`MessageType.TEXT` path.
 
 ## Install
 
