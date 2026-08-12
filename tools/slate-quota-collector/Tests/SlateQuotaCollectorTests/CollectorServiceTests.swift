@@ -7,6 +7,85 @@ struct CollectorServiceTests {
     private let now = Date(timeIntervalSince1970: 1_786_500_000)
     private let capabilityURL = URL(string: "https://slate.example/api/v1/contents/content-fixture/data")!
 
+    @Test func endToEndFakeRoundTripProducesPublicSlateEnvelope() async throws {
+        let fixture = try EndToEndFixture(
+            codexJSONRPC: .weeklyOnlyWithCredits,
+            openCodeHTTP: .threeWindows,
+            slateHTTP: .successReceipt
+        )
+        let report = try await fixture.service.collect(mode: .pushOnce)
+        #expect(report.receipt?.id == "redacted")
+        #expect(report.receipt?.imageEtag == "redacted")
+        #expect(report.receipt?.manifestEtag == "redacted")
+        #expect(report.readbackVerified)
+        let pushed = try #require(await fixture.slate.lastEnvelope)
+        #expect(pushed.data.codex.rolling.valueText == "未提供")
+        #expect(pushed.data.codex.weekly.remainingPercent == 91)
+        #expect(pushed.data.opencodeGo.rolling.remainingPercent == 81)
+        #expect(await fixture.allCapturedBytes.range(of: Data("go-test-secret".utf8)) == nil)
+    }
+
+    @Test("end-to-end Slate 500 response retries once and verifies the successful readback")
+    func endToEndSlate500Then200RetriesAndVerifies() async throws {
+        let fixture = try EndToEndFixture(
+            codexJSONRPC: .weeklyOnlyWithCredits,
+            openCodeHTTP: .threeWindows,
+            slateHTTP: .serverErrorThenSuccess
+        )
+
+        let report = try await fixture.service.collect(mode: .pushOnce)
+
+        #expect(report.pushed)
+        #expect(report.readbackVerified)
+        #expect(report.receipt?.id == "redacted")
+        #expect(await fixture.slate.postCount == 2)
+        #expect(await fixture.slate.getCount == 1)
+    }
+
+    @Test("end-to-end Codex timeout still publishes current OpenCode Go data")
+    func endToEndCodexTimeoutStillPushesOpenCodeGo() async throws {
+        let fixture = try EndToEndFixture(
+            codexJSONRPC: .timeouts(count: 1),
+            openCodeHTTP: .threeWindows,
+            slateHTTP: .successReceipt
+        )
+
+        let report = try await fixture.service.collect(mode: .pushOnce)
+        let envelope = try #require(report.envelope)
+
+        #expect(report.pushed)
+        #expect(report.readbackVerified)
+        #expect(report.publicErrorCodes["codex"] == "timeout")
+        #expect(envelope.data.codex.status == .unavailable)
+        #expect(envelope.data.codex.rolling.valueText == "未提供")
+        #expect(envelope.data.opencodeGo.status == .ok)
+        #expect(envelope.data.opencodeGo.rolling.remainingPercent == 81)
+    }
+
+    @Test("end-to-end second consecutive dual failure publishes explicit no-data windows")
+    func endToEndSecondDualFailurePublishesNoData() async throws {
+        let fixture = try EndToEndFixture(
+            codexJSONRPC: .timeouts(count: 2),
+            openCodeHTTP: .serverFailures(count: 2),
+            slateHTTP: .successReceipt
+        )
+
+        let first = try await fixture.service.collect(mode: .pushOnce)
+        let second = try await fixture.service.collect(mode: .pushOnce)
+        let envelope = try #require(second.envelope)
+
+        #expect(first.envelope == nil)
+        #expect(first.pushed == false)
+        #expect(second.pushed)
+        #expect(second.readbackVerified)
+        #expect(envelope.data.codex.status == .unavailable)
+        #expect(envelope.data.opencodeGo.status == .unavailable)
+        #expect(envelope.data.codex.weekly.valueText == "未提供")
+        #expect(envelope.data.opencodeGo.monthly.valueText == "未提供")
+        #expect(try fixture.snapshotCache.loadSnapshot().runtimeState.simultaneousFailures == 2)
+        #expect(await fixture.slate.postCount == 1)
+    }
+
     @Test("reads providers concurrently, persists, pushes, verifies, then records last push")
     func readsProvidersConcurrentlyThenCachesAndPushes() async throws {
         let events = LockedEventRecorder()
@@ -460,6 +539,213 @@ struct CollectorServiceTests {
         } catch {
             Issue.record("unexpected error type: \(type(of: error))", sourceLocation: sourceLocation)
         }
+    }
+}
+
+private final class EndToEndFixture: @unchecked Sendable {
+    private static let now = Date(timeIntervalSince1970: 1_786_500_000)
+    private static let apiKey = "go-test-secret"
+    private static let capabilityURL = "https://slate.example/api/v1/contents/e2e-content-id/data"
+
+    let service: CollectorService
+    let slate: EndToEndSlateHTTPTransport
+    let snapshotCache: SanitizedSnapshotCache
+    private let codex: EndToEndCodexTransport
+    private let temporaryURL: URL
+
+    init(
+        codexJSONRPC: EndToEndCodexJSONRPC,
+        openCodeHTTP: EndToEndOpenCodeHTTP,
+        slateHTTP: EndToEndSlateHTTP
+    ) throws {
+        let temporary = try TemporaryDirectory()
+        let codex = EndToEndCodexTransport(fixture: codexJSONRPC)
+        let openCode = openCodeHTTP.makeTransport()
+        let slate = EndToEndSlateHTTPTransport(fixture: slateHTTP)
+        let snapshotCache = SanitizedSnapshotCache(
+            applicationSupportURL: temporary.url,
+            sensitiveValues: [Self.apiKey, Self.capabilityURL, "e2e-content-id"]
+        )
+        let secrets = RecordingSecretStore(values: [
+            "opencode-go-api-key": Self.apiKey,
+            "slate-push-url": Self.capabilityURL,
+        ])
+
+        self.codex = codex
+        self.slate = slate
+        self.snapshotCache = snapshotCache
+        temporaryURL = temporary.url
+        service = CollectorService(
+            codex: CodexRateLimitClient(
+                executableURL: URL(fileURLWithPath: "/usr/bin/fake-codex"),
+                transport: codex
+            ),
+            openCodeGo: OpenCodeGoUsageClient(transport: openCode),
+            normalizer: .shanghai,
+            secrets: secrets,
+            snapshots: snapshotCache,
+            failurePolicy: FailurePolicy(),
+            slate: SlateIngestClient(transport: slate, sleep: { _ in }),
+            openCodeKeyAccount: "opencode-go-api-key",
+            slateURLAccount: "slate-push-url",
+            now: { Self.now }
+        )
+    }
+
+    deinit {
+        try? FileManager.default.removeItem(at: temporaryURL)
+    }
+
+    var allCapturedBytes: Data {
+        get async {
+            var captured = await codex.capturedInput
+            captured.append(await slate.capturedBytes)
+            if let persisted = try? Data(contentsOf: snapshotCache.snapshotURL) {
+                captured.append(persisted)
+            }
+            return captured
+        }
+    }
+}
+
+private enum EndToEndCodexJSONRPC {
+    case weeklyOnlyWithCredits
+    case timeouts(count: Int)
+}
+
+private actor EndToEndCodexTransport: CodexAppServerTransport {
+    private var results: [Result<Data, CodexClientError>]
+    private(set) var capturedInput = Data()
+
+    init(fixture: EndToEndCodexJSONRPC) {
+        switch fixture {
+        case .weeklyOnlyWithCredits:
+            results = [.success(Data(#"{"id":2,"result":{"rateLimits":null,"rateLimitsByLimitId":{"codex":{"limitId":"codex","primary":{"usedPercent":9,"windowDurationMins":10080,"resetsAt":1900000000},"secondary":null}},"credits":{"unlimited":false,"balance":"128.50"},"planType":"prolite"}}"#.utf8))]
+        case let .timeouts(count):
+            results = Array(repeating: .failure(.timeout), count: count)
+        }
+    }
+
+    func request(
+        executableURL _: URL,
+        lines: [Data],
+        responseID _: Int,
+        timeout _: Duration
+    ) async throws -> Data {
+        for line in lines { capturedInput.append(line) }
+        guard !results.isEmpty else { throw CodexClientError.invalidResponse }
+        return try results.removeFirst().get()
+    }
+}
+
+private enum EndToEndOpenCodeHTTP {
+    case threeWindows
+    case serverFailures(count: Int)
+
+    func makeTransport() -> RecordingHTTPTransport {
+        switch self {
+        case .threeWindows:
+            RecordingHTTPTransport(status: 200, body: Data(#"{"useBalance":false,"rollingUsage":{"status":"ok","resetInSec":300,"usagePercent":19},"weeklyUsage":{"status":"ok","resetInSec":600,"usagePercent":29},"monthlyUsage":{"status":"ok","resetInSec":900,"usagePercent":25}}"#.utf8))
+        case let .serverFailures(count):
+            RecordingHTTPTransport(responses: Array(
+                repeating: .success(.init(status: 500, body: Data("private upstream body".utf8))),
+                count: count
+            ))
+        }
+    }
+}
+
+private enum EndToEndSlateHTTP {
+    case successReceipt
+    case serverErrorThenSuccess
+
+    var postStatuses: [Int] {
+        switch self {
+        case .successReceipt: [200]
+        case .serverErrorThenSuccess: [500, 200]
+        }
+    }
+}
+
+private actor EndToEndSlateHTTPTransport: HTTPTransport {
+    private var postStatuses: [Int]
+    private var requestBytes: [Data] = []
+    private(set) var lastEnvelope: SlateEnvelope?
+    private(set) var postCount = 0
+    private(set) var getCount = 0
+
+    init(fixture: EndToEndSlateHTTP) {
+        postStatuses = fixture.postStatuses
+    }
+
+    var capturedBytes: Data {
+        requestBytes.reduce(into: Data(), { $0.append($1) })
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        if let url = request.url {
+            requestBytes.append(Data(url.absoluteString.utf8))
+        }
+        if let body = request.httpBody {
+            requestBytes.append(body)
+        }
+
+        switch request.httpMethod {
+        case "POST":
+            postCount += 1
+            guard !postStatuses.isEmpty else { throw URLError(.badServerResponse) }
+            let status = postStatuses.removeFirst()
+            if status == 200 {
+                lastEnvelope = try Self.decodeEnvelope(try #require(request.httpBody))
+            }
+            let body = status == 200
+                ? Data(#"{"id":"e2e-content-id","image_etag":"image-e2e","manifest_etag":"manifest-e2e","rendered_at":"2026-08-12T08:30:00Z"}"#.utf8)
+                : Data("private Slate failure".utf8)
+            return (body, Self.response(status: status, request: request))
+        case "GET":
+            getCount += 1
+            guard let data = lastEnvelope?.data else { throw URLError(.badServerResponse) }
+            return (
+                try JSONEncoder.slate.encode(data),
+                Self.response(status: 200, request: request)
+            )
+        default:
+            throw URLError(.unsupportedURL)
+        }
+    }
+
+    private static func decodeEnvelope(_ data: Data) throws -> SlateEnvelope {
+        struct WireEnvelope: Decodable {
+            let version: Int
+            let data: WireDashboard
+        }
+        struct WireDashboard: Decodable {
+            let schemaVersion: Int
+            let generatedAt: Date
+            let codex: CodexDisplaySnapshot
+            let opencodeGo: OpenCodeGoDisplaySnapshot
+        }
+
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.dateDecodingStrategy = .iso8601
+        let wire = try decoder.decode(WireEnvelope.self, from: data)
+        guard wire.version == 1 else { throw URLError(.cannotParseResponse) }
+        return SlateEnvelope(data: SlateDashboardData(
+            schemaVersion: wire.data.schemaVersion,
+            generatedAt: wire.data.generatedAt,
+            codex: wire.data.codex,
+            opencodeGo: wire.data.opencodeGo
+        ))
+    }
+
+    private static func response(status: Int, request: URLRequest) -> HTTPURLResponse {
+        HTTPURLResponse(
+            url: request.url ?? URL(string: "https://invalid.example")!,
+            statusCode: status,
+            httpVersion: nil,
+            headerFields: nil
+        )!
     }
 }
 
