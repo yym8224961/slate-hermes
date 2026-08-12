@@ -1,0 +1,158 @@
+{
+  "version": 1,
+  "name": "Codex · OpenCode Go 额度监控",
+  "blocks": [
+    { "type": "rect", "x": 0, "y": 24, "w": 400, "h": 28, "stroke": false, "fill": "black" },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 30,
+      "w": 210,
+      "h": 18,
+      "value": "{codex.header_left}",
+      "font_size": 16,
+      "color": "white"
+    },
+    {
+      "type": "text",
+      "x": 224,
+      "y": 30,
+      "w": 164,
+      "h": 18,
+      "value": "{codex.summary_label}",
+      "font_size": 16,
+      "align": "right",
+      "color": "white"
+    },
+
+    {
+      "type": "progress",
+      "x": 12,
+      "y": 55,
+      "w": 376,
+      "h": 38,
+      "label": "{codex.rolling.label}",
+      "percentage": "{codex.rolling.remaining_percent}",
+      "value_text": "{codex.rolling.value_text}",
+      "label_font_size": 16,
+      "value_font_size": 16,
+      "bar_height": 14
+    },
+    {
+      "type": "progress",
+      "x": 12,
+      "y": 93,
+      "w": 376,
+      "h": 38,
+      "label": "{codex.weekly.label}",
+      "percentage": "{codex.weekly.remaining_percent}",
+      "value_text": "{codex.weekly.value_text}",
+      "label_font_size": 16,
+      "value_font_size": 16,
+      "bar_height": 14
+    },
+    { "type": "line", "x1": 12, "y1": 134, "x2": 388, "y2": 134, "style": "solid" },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 139,
+      "w": 210,
+      "h": 18,
+      "value": "{codex.footer_left}",
+      "font_size": 16
+    },
+    {
+      "type": "text",
+      "x": 230,
+      "y": 139,
+      "w": 158,
+      "h": 18,
+      "value": "{codex.footer_right}",
+      "font_size": 16,
+      "align": "right"
+    },
+
+    { "type": "rect", "x": 0, "y": 158, "w": 400, "h": 28, "stroke": false, "fill": "black" },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 164,
+      "w": 210,
+      "h": 18,
+      "value": "{opencode_go.header_left}",
+      "font_size": 16,
+      "color": "white"
+    },
+    {
+      "type": "text",
+      "x": 224,
+      "y": 164,
+      "w": 164,
+      "h": 18,
+      "value": "{opencode_go.summary_label}",
+      "font_size": 16,
+      "align": "right",
+      "color": "white"
+    },
+
+    {
+      "type": "progress",
+      "x": 12,
+      "y": 189,
+      "w": 376,
+      "h": 31,
+      "label": "{opencode_go.rolling.label}",
+      "percentage": "{opencode_go.rolling.remaining_percent}",
+      "value_text": "{opencode_go.rolling.value_text}",
+      "label_font_size": 16,
+      "value_font_size": 16,
+      "bar_height": 14
+    },
+    {
+      "type": "progress",
+      "x": 12,
+      "y": 220,
+      "w": 376,
+      "h": 31,
+      "label": "{opencode_go.weekly.label}",
+      "percentage": "{opencode_go.weekly.remaining_percent}",
+      "value_text": "{opencode_go.weekly.value_text}",
+      "label_font_size": 16,
+      "value_font_size": 16,
+      "bar_height": 14
+    },
+    {
+      "type": "progress",
+      "x": 12,
+      "y": 251,
+      "w": 376,
+      "h": 31,
+      "label": "{opencode_go.monthly.label}",
+      "percentage": "{opencode_go.monthly.remaining_percent}",
+      "value_text": "{opencode_go.monthly.value_text}",
+      "label_font_size": 16,
+      "value_font_size": 16,
+      "bar_height": 14
+    },
+    { "type": "line", "x1": 12, "y1": 282, "x2": 388, "y2": 282, "style": "solid" },
+    {
+      "type": "text",
+      "x": 12,
+      "y": 283,
+      "w": 210,
+      "h": 17,
+      "value": "{opencode_go.footer_left}",
+      "font_size": 16
+    },
+    {
+      "type": "text",
+      "x": 230,
+      "y": 283,
+      "w": 158,
+      "h": 17,
+      "value": "{opencode_go.footer_right}",
+      "font_size": 16,
+      "align": "right"
+    }
+  ]
+}

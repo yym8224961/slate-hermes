@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "data": {
+    "schema_version": 1,
+    "generated_at": "2026-08-12T08:30:00Z",
+    "codex": {
+      "status": "ok",
+      "source_collected_at": "2026-08-12T08:30:00Z",
+      "header_left": "CODEX · PROLITE",
+      "summary_label": "最低剩余 90%",
+      "rolling": {
+        "label": "5 小时",
+        "remaining_percent": 0,
+        "value_text": "未提供",
+        "reset_at": null
+      },
+      "weekly": {
+        "label": "本周",
+        "remaining_percent": 90,
+        "value_text": "剩余 90%",
+        "reset_at": "2026-08-19T06:06:00+08:00"
+      },
+      "footer_left": "周重置 08-19 06:06",
+      "footer_right": "Credits 128.50"
+    },
+    "opencode_go": {
+      "status": "ok",
+      "source_collected_at": "2026-08-12T08:30:00Z",
+      "header_left": "OPENCODE GO",
+      "summary_label": "最低剩余 71%",
+      "rolling": {
+        "label": "5 小时",
+        "remaining_percent": 81,
+        "value_text": "剩余 81%",
+        "reset_at": "2026-08-12T18:30:00+08:00"
+      },
+      "weekly": {
+        "label": "本周",
+        "remaining_percent": 71,
+        "value_text": "剩余 71%",
+        "reset_at": "2026-08-16T10:00:00+08:00"
+      },
+      "monthly": {
+        "label": "本月",
+        "remaining_percent": 75,
+        "value_text": "剩余 75%",
+        "reset_at": "2026-09-01T00:00:00+08:00"
+      },
+      "footer_left": "下次重置 08-12 18:30",
+      "footer_right": "余额接续 关闭"
+    }
+  }
+}
