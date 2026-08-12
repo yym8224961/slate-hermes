@@ -23,6 +23,7 @@ enum RunLock {
         var failCreateAfterOpen = false
         var failInitialCreateFstat = false
         var failAfterQuarantine: RemovalReason?
+        var failDirectoryEnumerationAfterReadCount: Int?
         var beforeQuarantine: ((RemovalReason, URL) -> Void)?
         var afterQuarantine: ((RemovalReason, URL) -> Void)?
 
@@ -30,12 +31,14 @@ enum RunLock {
             failCreateAfterOpen: Bool = false,
             failInitialCreateFstat: Bool = false,
             failAfterQuarantine: RemovalReason? = nil,
+            failDirectoryEnumerationAfterReadCount: Int? = nil,
             beforeQuarantine: ((RemovalReason, URL) -> Void)? = nil,
             afterQuarantine: ((RemovalReason, URL) -> Void)? = nil
         ) {
             self.failCreateAfterOpen = failCreateAfterOpen
             self.failInitialCreateFstat = failInitialCreateFstat
             self.failAfterQuarantine = failAfterQuarantine
+            self.failDirectoryEnumerationAfterReadCount = failDirectoryEnumerationAfterReadCount
             self.beforeQuarantine = beforeQuarantine
             self.afterQuarantine = afterQuarantine
         }
@@ -142,7 +145,7 @@ enum RunLock {
     ) throws -> Lease? {
         guard pid > 0 else { throw RunLockError.invalidPID }
 
-        return try withLockedDirectory(at: applicationSupportURL) { directory in
+        return try withLockedDirectory(at: applicationSupportURL, testingHooks: testingHooks) { directory in
             for attempt in 0...1 {
                 let record = Record(pid: pid, startedAt: currentTimestamp())
                 switch try create(
@@ -295,7 +298,7 @@ enum RunLock {
         directoryIdentity: FileIdentity,
         testingHooks: TestingHooks
     ) throws {
-        try withLockedDirectory(at: applicationSupportURL) { directory in
+        try withLockedDirectory(at: applicationSupportURL, testingHooks: testingHooks) { directory in
             guard directory.identity == directoryIdentity else { return }
             let current: InspectedLock
             do {
@@ -427,8 +430,14 @@ enum RunLock {
         return FileIdentity(status)
     }
 
-    private static func recoverControlledQuarantine(in directoryDescriptor: Int32) throws {
-        let artifacts = try controlledQuarantineNames(in: directoryDescriptor)
+    private static func recoverControlledQuarantine(
+        in directoryDescriptor: Int32,
+        failEnumerationAfterReadCount: Int?
+    ) throws {
+        let artifacts = try controlledQuarantineNames(
+            in: directoryDescriptor,
+            failAfterReadCount: failEnumerationAfterReadCount
+        )
         guard artifacts.count <= 1 else { throw RunLockError.staleRecoveryFailed }
         guard let artifactName = artifacts.first else { return }
 
@@ -453,7 +462,10 @@ enum RunLock {
         }
     }
 
-    private static func controlledQuarantineNames(in directoryDescriptor: Int32) throws -> [String] {
+    private static func controlledQuarantineNames(
+        in directoryDescriptor: Int32,
+        failAfterReadCount: Int?
+    ) throws -> [String] {
         let duplicate = dup(directoryDescriptor)
         guard duplicate >= 0 else { throw RunLockError.ioFailure }
         guard let stream = fdopendir(duplicate) else {
@@ -463,7 +475,22 @@ enum RunLock {
         defer { _ = closedir(stream) }
 
         var names: [String] = []
-        while let entry = readdir(stream) {
+        var readCount = 0
+        while true {
+            errno = 0
+            let entry: UnsafeMutablePointer<dirent>?
+            if failAfterReadCount == readCount {
+                errno = EIO
+                entry = nil
+            } else {
+                entry = readdir(stream)
+            }
+            guard let entry else {
+                let readError = errno
+                guard readError == 0 else { throw RunLockError.ioFailure }
+                break
+            }
+            readCount += 1
             var rawName = entry.pointee.d_name
             let name = withUnsafeBytes(of: &rawName) { bytes -> String in
                 String(cString: bytes.bindMemory(to: CChar.self).baseAddress!)
@@ -481,13 +508,17 @@ enum RunLock {
 
     private static func withLockedDirectory<T>(
         at applicationSupportURL: URL,
+        testingHooks: TestingHooks = .init(),
         _ operation: (OpenedDirectory) throws -> T
     ) throws -> T {
         let directory = try openDirectory(at: applicationSupportURL)
         defer { _ = close(directory.descriptor) }
         guard flock(directory.descriptor, LOCK_EX) == 0 else { throw RunLockError.ioFailure }
         defer { _ = flock(directory.descriptor, LOCK_UN) }
-        try recoverControlledQuarantine(in: directory.descriptor)
+        try recoverControlledQuarantine(
+            in: directory.descriptor,
+            failEnumerationAfterReadCount: testingHooks.failDirectoryEnumerationAfterReadCount
+        )
         return try operation(directory)
     }
 

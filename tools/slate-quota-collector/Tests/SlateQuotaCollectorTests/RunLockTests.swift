@@ -266,6 +266,49 @@ struct RunLockTests {
         #expect(FileManager.default.fileExists(atPath: malformed.path))
     }
 
+    @Test func firstDirectoryEnumerationErrorFailsClosedWithoutCreatingLock() throws {
+        let root = try TemporaryDirectory()
+        let hooks = RunLock.TestingHooks(failDirectoryEnumerationAfterReadCount: 0)
+
+        #expect(throws: RunLockError.ioFailure) {
+            try RunLock.acquire(
+                at: root.url,
+                pid: 300,
+                isProcessAlive: { _ in false },
+                testingHooks: hooks
+            )
+        }
+
+        #expect(FileManager.default.fileExists(atPath: RunLock.url(in: root.url).path) == false)
+        #expect(try quarantineNames(in: root.url).isEmpty)
+    }
+
+    @Test func midDirectoryEnumerationErrorPreservesLockAndArtifact() throws {
+        let root = try TemporaryDirectory()
+        try RunLock.writeFixture(at: root.url, pid: 100)
+        let lockURL = RunLock.url(in: root.url)
+        let artifactURL = RunLock.directoryURL(in: root.url).appendingPathComponent(".run.lock.recovery")
+        let lockData = try Data(contentsOf: lockURL)
+        try lockData.write(to: artifactURL, options: .withoutOverwriting)
+        let lockInode = try inode(of: lockURL)
+        let artifactInode = try inode(of: artifactURL)
+        let hooks = RunLock.TestingHooks(failDirectoryEnumerationAfterReadCount: 3)
+
+        #expect(throws: RunLockError.ioFailure) {
+            try RunLock.acquire(
+                at: root.url,
+                pid: 300,
+                isProcessAlive: { _ in false },
+                testingHooks: hooks
+            )
+        }
+
+        #expect(try inode(of: lockURL) == lockInode)
+        #expect(try inode(of: artifactURL) == artifactInode)
+        #expect(try Data(contentsOf: lockURL) == lockData)
+        #expect(try Data(contentsOf: artifactURL) == lockData)
+    }
+
     @Test func transientCreateFstatFailureUsesBoundCleanup() throws {
         let root = try TemporaryDirectory()
         let hooks = RunLock.TestingHooks(failInitialCreateFstat: true)
