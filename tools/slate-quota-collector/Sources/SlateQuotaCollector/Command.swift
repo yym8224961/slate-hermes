@@ -11,12 +11,13 @@ enum RequestedCollectionMode: Equatable, Sendable {
 enum CollectorWorkerMode: String, Equatable, Sendable {
     case dryRun = "dry-run"
     case pushOnce = "push-once"
+    case pushOnceWithProof = "push-once-with-proof"
     case scheduled
 
     var serviceMode: CollectionMode {
         switch self {
         case .dryRun: .dryRun
-        case .pushOnce, .scheduled: .pushOnce
+        case .pushOnce, .pushOnceWithProof, .scheduled: .pushOnce
         }
     }
 }
@@ -62,6 +63,8 @@ enum CLIArguments: Equatable, Sendable {
         case ["collect", "--scheduled"]: .collectScheduled
         case ["collect", "--worker", "dry-run"]: .collectWorker(.dryRun)
         case ["collect", "--worker", "push-once"]: .collectWorker(.pushOnce)
+        case ["collect", "--worker", "push-once-with-proof"]:
+            .collectWorker(.pushOnceWithProof)
         case ["collect", "--worker", "scheduled"]: .collectWorker(.scheduled)
         default: throw CLIError.invalidArguments
         }
@@ -96,6 +99,39 @@ enum CLIError: Error, Equatable, Sendable, CustomStringConvertible {
     }
 
     var description: String { "CLIError(code: \(publicCode))" }
+}
+
+enum PushOnceProofFormatter {
+    static func render(_ report: CollectionReport) -> String? {
+        guard report.pushed,
+              report.readbackVerified,
+              let receipt = report.receipt,
+              receipt.id == "redacted",
+              receipt.imageEtag == "redacted",
+              receipt.manifestEtag == "redacted",
+              let envelope = report.envelope else {
+            return nil
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return "推送成功：id=redacted image_etag=redacted manifest_etag=redacted "
+            + "rendered_at=\(formatter.string(from: receipt.renderedAt)) "
+            + "readback_verified=true schema_version=\(envelope.data.schemaVersion) "
+            + "codex_status=\(envelope.data.codex.status.rawValue) "
+            + "opencode_go_status=\(envelope.data.opencodeGo.status.rawValue)"
+    }
+}
+
+enum CollectionPublicStatusFormatter {
+    static func render(_ publicErrorCodes: [String: String]) -> String? {
+        guard !publicErrorCodes.isEmpty else { return nil }
+        let safe = publicErrorCodes
+            .map { (MenuBarViewModel.safePublicCode($0.key), MenuBarViewModel.safePublicCode($0.value)) }
+            .sorted { $0.0 < $1.0 }
+            .map { "\($0.0)=\($0.1)" }
+            .joined(separator: ",")
+        return "状态：\(safe)"
+    }
 }
 
 @main
@@ -189,7 +225,7 @@ struct CommandRuntime: Sendable {
         case .setup:
             try await setup()
         case let .collect(mode):
-            let workerMode: CollectorWorkerMode = mode == .dryRun ? .dryRun : .pushOnce
+            let workerMode: CollectorWorkerMode = mode == .dryRun ? .dryRun : .pushOnceWithProof
             try await supervise(workerMode)
         case .collectScheduled:
             let settings = SettingsStore(applicationSupportURL: paths.applicationSupportURL)
@@ -319,13 +355,11 @@ struct CommandRuntime: Sendable {
             }
             print(text)
         }
-        if !report.publicErrorCodes.isEmpty {
-            let safe = report.publicErrorCodes
-                .map { (MenuBarViewModel.safePublicCode($0.key), MenuBarViewModel.safePublicCode($0.value)) }
-                .sorted { $0.0 < $1.0 }
-                .map { "\($0.0)=\($0.1)" }
-                .joined(separator: ",")
-            FileHandle.standardError.write(Data("状态：\(safe)\n".utf8))
+        if mode == .pushOnceWithProof, let proof = PushOnceProofFormatter.render(report) {
+            print(proof)
+        }
+        if let status = CollectionPublicStatusFormatter.render(report.publicErrorCodes) {
+            FileHandle.standardError.write(Data("\(status)\n".utf8))
         }
     }
 

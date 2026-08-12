@@ -69,7 +69,13 @@ rtk tools/slate-quota-collector/.build/release/slate-quota-collector collect --d
 rtk tools/slate-quota-collector/.build/release/slate-quota-collector collect --once
 ```
 
-成功时退出码为 0，不把 capability URL 或 Slate receipt 字段写到标准输出。程序已在返回前完成 Slate GET 回读和数据一致性验证；随后用 `status` 查看“最近推送”是否更新。如 provider 或 Slate 失败，只会写封闭错误码。
+成功时输出一行固定的脱敏证明，其中时间和两个 provider 状态来自本轮实际结果：
+
+```text
+推送成功：id=redacted image_etag=redacted manifest_etag=redacted rendered_at=[实际 ISO 8601 时间] readback_verified=true schema_version=1 codex_status=[实际状态] opencode_go_status=[实际状态]
+```
+
+这行证明表示程序已在返回前完成 Slate GET 回读，且回读 payload 与本轮归一化 data 一致。`id` 和两个 ETag 始终固定显示为 `redacted`；capability URL、content ID、原始 ETag、Authorization 和上游原始正文都不会打印。如 provider 或 Slate 失败，只会写封闭错误码。菜单栏“立即采集一次”和定时采集仍保持静默，不把这条交互证明写入后台日志。
 
 ### `pause`
 

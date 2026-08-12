@@ -22,7 +22,23 @@ struct CollectorServiceTests {
         #expect(pushed.data.codex.rolling.valueText == "未提供")
         #expect(pushed.data.codex.weekly.remainingPercent == 91)
         #expect(pushed.data.opencodeGo.rolling.remainingPercent == 81)
-        #expect(await fixture.allCapturedBytes.range(of: Data("go-test-secret".utf8)) == nil)
+        for (surface, bytes) in try await fixture.publicAndPersistentSurfaces(reports: [report]) {
+            expectNoEndToEndSensitiveValues(in: bytes, surface: surface)
+        }
+    }
+
+    @Test("explicit push-once proof is fixed, complete, and redacts raw receipt fields")
+    func explicitPushOnceProofIsSafeAndComplete() async throws {
+        let fixture = try EndToEndFixture(
+            codexJSONRPC: .weeklyOnlyWithCredits,
+            openCodeHTTP: .threeWindows,
+            slateHTTP: .successReceipt
+        )
+        let report = try await fixture.service.collect(mode: .pushOnce)
+
+        #expect(PushOnceProofFormatter.render(report) == """
+        推送成功：id=redacted image_etag=redacted manifest_etag=redacted rendered_at=2026-08-12T08:30:00Z readback_verified=true schema_version=1 codex_status=ok opencode_go_status=ok
+        """)
     }
 
     @Test("end-to-end Slate 500 response retries once and verifies the successful readback")
@@ -40,6 +56,96 @@ struct CollectorServiceTests {
         #expect(report.receipt?.id == "redacted")
         #expect(await fixture.slate.postCount == 2)
         #expect(await fixture.slate.getCount == 1)
+    }
+
+    @Test("end-to-end secrets occur only in their exact authorized outbound locations")
+    func endToEndSecretsOnlyAppearInAuthorizedOutboundLocations() async throws {
+        let fixture = try EndToEndFixture(
+            codexJSONRPC: .weeklyOnlyWithCredits,
+            openCodeHTTP: .threeWindows,
+            slateHTTP: .successReceipt
+        )
+        _ = try await fixture.service.collect(mode: .pushOnce)
+
+        let openCodeRequest = try #require(await fixture.openCodeRequests.only)
+        #expect(
+            openCodeRequest.value(forHTTPHeaderField: "Authorization")
+                == "Bearer \(EndToEndSensitive.apiKey)"
+        )
+        #expect(openCodeRequest.url?.absoluteString == "https://opencode.ai/zen/go/v1/usage")
+        expectNoEndToEndSensitiveValues(
+            in: fixture.openCodeRequestBytesExcludingAuthorization(openCodeRequest),
+            surface: "OpenCode request outside Authorization"
+        )
+
+        let slateRequests = await fixture.slate.requests
+        #expect(slateRequests.count == 2)
+        for request in slateRequests {
+            #expect(request.url?.absoluteString == EndToEndSensitive.capabilityURL)
+            expectNoEndToEndSensitiveValues(
+                in: fixture.slateRequestBytesExcludingURL(request),
+                surface: "Slate request outside capability URL"
+            )
+        }
+        expectNoEndToEndSensitiveValues(
+            in: await fixture.codexCapturedInput,
+            surface: "Codex JSON-RPC stdin"
+        )
+    }
+
+    @Test("end-to-end public and persistent surfaces exclude every raw sensitive sentinel")
+    func endToEndPublicAndPersistentSurfacesExcludeEverySensitiveSentinel() async throws {
+        for (index, value) in EndToEndSensitive.all.enumerated() {
+            for (otherIndex, other) in EndToEndSensitive.all.enumerated() where index != otherIndex {
+                #expect(value.contains(other) == false)
+            }
+        }
+        let retryFixture = try EndToEndFixture(
+            codexJSONRPC: .weeklyOnlyWithCredits,
+            openCodeHTTP: .threeWindows,
+            slateHTTP: .serverErrorThenSuccess
+        )
+        let retryReport = try await retryFixture.service.collect(mode: .pushOnce)
+        #expect(await retryFixture.slate.rawResponseBytes.contains(EndToEndSensitive.slateFailureBody))
+        #expect(await retryFixture.slate.rawResponseBytes.contains(EndToEndSensitive.contentID))
+        #expect(await retryFixture.slate.rawResponseBytes.contains(EndToEndSensitive.imageETag))
+        #expect(await retryFixture.slate.rawResponseBytes.contains(EndToEndSensitive.manifestETag))
+        let retrySurfaces = try await retryFixture.publicAndPersistentSurfaces(
+            reports: [retryReport]
+        )
+        expectCompletePublicSurfaceSet(retrySurfaces, reportCount: 1)
+        #expect(
+            String(
+                data: try #require(retrySurfaces["public logger sink"]),
+                encoding: .utf8
+            ) == "level=error code=push_failed detail=[REDACTED]"
+        )
+        for (surface, bytes) in retrySurfaces {
+            expectNoEndToEndSensitiveValues(in: bytes, surface: surface)
+        }
+
+        let providerFailureFixture = try EndToEndFixture(
+            codexJSONRPC: .timeouts(count: 2),
+            openCodeHTTP: .serverFailures(count: 2),
+            slateHTTP: .successReceipt
+        )
+        let first = try await providerFailureFixture.service.collect(mode: .pushOnce)
+        let second = try await providerFailureFixture.service.collect(mode: .pushOnce)
+        #expect(
+            CollectionPublicStatusFormatter.render(second.publicErrorCodes)
+                == "状态：codex=timeout,opencode_go=server"
+        )
+        #expect(
+            await providerFailureFixture.openCodeInboundBytes
+                .contains(EndToEndSensitive.openCodeFailureBody)
+        )
+        let failureSurfaces = try await providerFailureFixture.publicAndPersistentSurfaces(
+            reports: [first, second]
+        )
+        expectCompletePublicSurfaceSet(failureSurfaces, reportCount: 2)
+        for (surface, bytes) in failureSurfaces {
+            expectNoEndToEndSensitiveValues(in: bytes, surface: surface)
+        }
     }
 
     @Test("end-to-end Codex timeout still publishes current OpenCode Go data")
@@ -544,13 +650,13 @@ struct CollectorServiceTests {
 
 private final class EndToEndFixture: @unchecked Sendable {
     private static let now = Date(timeIntervalSince1970: 1_786_500_000)
-    private static let apiKey = "go-test-secret"
-    private static let capabilityURL = "https://slate.example/api/v1/contents/e2e-content-id/data"
 
     let service: CollectorService
     let slate: EndToEndSlateHTTPTransport
     let snapshotCache: SanitizedSnapshotCache
     private let codex: EndToEndCodexTransport
+    private let openCode: RecordingHTTPTransport
+    private let openCodeResponses: EndToEndResponseRecorder
     private let temporaryURL: URL
 
     init(
@@ -561,17 +667,20 @@ private final class EndToEndFixture: @unchecked Sendable {
         let temporary = try TemporaryDirectory()
         let codex = EndToEndCodexTransport(fixture: codexJSONRPC)
         let openCode = openCodeHTTP.makeTransport()
+        let openCodeResponses = EndToEndResponseRecorder()
         let slate = EndToEndSlateHTTPTransport(fixture: slateHTTP)
         let snapshotCache = SanitizedSnapshotCache(
             applicationSupportURL: temporary.url,
-            sensitiveValues: [Self.apiKey, Self.capabilityURL, "e2e-content-id"]
+            sensitiveValues: EndToEndSensitive.all
         )
         let secrets = RecordingSecretStore(values: [
-            "opencode-go-api-key": Self.apiKey,
-            "slate-push-url": Self.capabilityURL,
+            "opencode-go-api-key": EndToEndSensitive.apiKey,
+            "slate-push-url": EndToEndSensitive.capabilityURL,
         ])
 
         self.codex = codex
+        self.openCode = openCode
+        self.openCodeResponses = openCodeResponses
         self.slate = slate
         self.snapshotCache = snapshotCache
         temporaryURL = temporary.url
@@ -580,7 +689,10 @@ private final class EndToEndFixture: @unchecked Sendable {
                 executableURL: URL(fileURLWithPath: "/usr/bin/fake-codex"),
                 transport: codex
             ),
-            openCodeGo: OpenCodeGoUsageClient(transport: openCode),
+            openCodeGo: OpenCodeGoUsageClient(transport: EndToEndRecordingHTTPTransport(
+                base: openCode,
+                responses: openCodeResponses
+            )),
             normalizer: .shanghai,
             secrets: secrets,
             snapshots: snapshotCache,
@@ -596,15 +708,178 @@ private final class EndToEndFixture: @unchecked Sendable {
         try? FileManager.default.removeItem(at: temporaryURL)
     }
 
-    var allCapturedBytes: Data {
-        get async {
-            var captured = await codex.capturedInput
-            captured.append(await slate.capturedBytes)
-            if let persisted = try? Data(contentsOf: snapshotCache.snapshotURL) {
-                captured.append(persisted)
-            }
-            return captured
+    var openCodeRequests: [URLRequest] { get async { await openCode.requests } }
+    var openCodeInboundBytes: Data { get async { await openCodeResponses.bytes } }
+    var codexCapturedInput: Data { get async { await codex.capturedInput } }
+
+    func openCodeRequestBytesExcludingAuthorization(_ request: URLRequest) -> Data {
+        requestBytes(
+            request,
+            includeURL: true,
+            excludingHeaders: ["Authorization"]
+        )
+    }
+
+    func slateRequestBytesExcludingURL(_ request: URLRequest) -> Data {
+        requestBytes(request, includeURL: false, excludingHeaders: [])
+    }
+
+    func publicAndPersistentSurfaces(
+        reports: [CollectionReport]
+    ) async throws -> [String: Data] {
+        var surfaces: [String: Data] = [:]
+        for (index, report) in reports.enumerated() {
+            surfaces["report[\(index)]"] = try JSONEncoder.slate.encode(
+                EndToEndPublicReport(report)
+            )
+            surfaces["explicit CLI stdout[\(index)]"] = Data(
+                (PushOnceProofFormatter.render(report) ?? "").utf8
+            )
+            surfaces["explicit CLI stderr[\(index)]"] = Data(
+                (CollectionPublicStatusFormatter.render(report.publicErrorCodes) ?? "").utf8
+            )
+            surfaces["public error codes[\(index)]"] = try JSONEncoder.slate.encode(
+                report.publicErrorCodes
+            )
+            surfaces["envelope[\(index)]"] = try report.envelope.map {
+                try JSONEncoder.slate.encode($0)
+            } ?? Data()
+            surfaces["readback summary[\(index)]"] = Data(
+                (PushOnceProofFormatter.render(report) ?? "").utf8
+            )
         }
+
+        let sink = EndToEndPublicLogSink()
+        RedactingLogger(sink: sink).error(
+            code: .pushFailed,
+            detail: EndToEndSensitive.all.joined(separator: "|")
+        )
+        surfaces["public logger sink"] = Data(sink.output.utf8)
+
+        if let enumerator = FileManager.default.enumerator(
+            at: temporaryURL,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ) {
+            while let file = enumerator.nextObject() as? URL {
+                guard try file.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else {
+                    continue
+                }
+                surfaces["snapshot-state file: \(file.lastPathComponent)"] = try Data(contentsOf: file)
+            }
+        }
+        return surfaces
+    }
+
+    private func requestBytes(
+        _ request: URLRequest,
+        includeURL: Bool,
+        excludingHeaders: Set<String>
+    ) -> Data {
+        var fields = [request.httpMethod ?? ""]
+        if includeURL { fields.append(request.url?.absoluteString ?? "") }
+        fields.append(contentsOf: (request.allHTTPHeaderFields ?? [:])
+            .filter { excludingHeaders.contains($0.key) == false }
+            .sorted { $0.key < $1.key }
+            .map { "\($0.key): \($0.value)" })
+        var bytes = Data(fields.joined(separator: "\n").utf8)
+        bytes.append(request.httpBody ?? Data())
+        return bytes
+    }
+}
+
+private enum EndToEndSensitive {
+    static let apiKey = "E2E_API_KEY_X7Q9"
+    static let capabilityURL =
+        "https://slate.example/api/v1/contents/capability-route-f3j7/data"
+    static let contentID = "E2E_CONTENT_ID_N4M6"
+    static let imageETag = "E2E_IMAGE_ETAG_P2K8"
+    static let manifestETag = "E2E_MANIFEST_ETAG_R5V3"
+    static let openCodeFailureBody = "E2E_OPENCODE_FAILURE_BODY_C8L1"
+    static let slateFailureBody = "E2E_SLATE_FAILURE_BODY_Z6H4"
+    static let all = [
+        apiKey, capabilityURL, contentID, imageETag, manifestETag,
+        openCodeFailureBody, slateFailureBody,
+    ]
+}
+
+private struct EndToEndPublicReport: Encodable {
+    private struct Receipt: Encodable {
+        let id: String
+        let imageEtag: String
+        let manifestEtag: String
+        let renderedAt: Date
+    }
+
+    let envelope: SlateEnvelope?
+    let pushed: Bool
+    private let receipt: Receipt?
+    let readbackVerified: Bool
+    let publicErrorCodes: [String: String]
+
+    init(_ report: CollectionReport) {
+        envelope = report.envelope
+        pushed = report.pushed
+        receipt = report.receipt.map {
+            Receipt(
+                id: $0.id,
+                imageEtag: $0.imageEtag,
+                manifestEtag: $0.manifestEtag,
+                renderedAt: $0.renderedAt
+            )
+        }
+        readbackVerified = report.readbackVerified
+        publicErrorCodes = report.publicErrorCodes
+    }
+}
+
+private final class EndToEndPublicLogSink: RedactingLogSink, @unchecked Sendable {
+    private let lock = NSLock()
+    private var messages: [String] = []
+    var output: String { lock.withLock { messages.joined(separator: "\n") } }
+    func write(_ message: String) { lock.withLock { messages.append(message) } }
+}
+
+private func expectNoEndToEndSensitiveValues(
+    in bytes: Data,
+    surface: String,
+    sourceLocation: SourceLocation = #_sourceLocation
+) {
+    for sensitive in EndToEndSensitive.all {
+        #expect(
+            bytes.range(of: Data(sensitive.utf8)) == nil,
+            "\(surface) exposed \(sensitive)",
+            sourceLocation: sourceLocation
+        )
+    }
+}
+
+private func expectCompletePublicSurfaceSet(
+    _ surfaces: [String: Data],
+    reportCount: Int,
+    sourceLocation: SourceLocation = #_sourceLocation
+) {
+    for index in 0..<reportCount {
+        for name in [
+            "report", "explicit CLI stdout", "explicit CLI stderr",
+            "public error codes", "envelope", "readback summary",
+        ] {
+            #expect(surfaces["\(name)[\(index)]"] != nil, sourceLocation: sourceLocation)
+        }
+    }
+    #expect(surfaces["public logger sink"] != nil, sourceLocation: sourceLocation)
+    #expect(
+        surfaces.keys.contains { $0 == "snapshot-state file: snapshot-state.json" },
+        sourceLocation: sourceLocation
+    )
+}
+
+private extension Array {
+    var only: Element? { count == 1 ? self[0] : nil }
+}
+
+private extension Data {
+    func contains(_ string: String) -> Bool {
+        range(of: Data(string.utf8)) != nil
     }
 }
 
@@ -648,10 +923,30 @@ private enum EndToEndOpenCodeHTTP {
             RecordingHTTPTransport(status: 200, body: Data(#"{"useBalance":false,"rollingUsage":{"status":"ok","resetInSec":300,"usagePercent":19},"weeklyUsage":{"status":"ok","resetInSec":600,"usagePercent":29},"monthlyUsage":{"status":"ok","resetInSec":900,"usagePercent":25}}"#.utf8))
         case let .serverFailures(count):
             RecordingHTTPTransport(responses: Array(
-                repeating: .success(.init(status: 500, body: Data("private upstream body".utf8))),
+                repeating: .success(.init(
+                    status: 500,
+                    body: Data(EndToEndSensitive.openCodeFailureBody.utf8)
+                )),
                 count: count
             ))
         }
+    }
+
+}
+
+private actor EndToEndResponseRecorder {
+    private(set) var bytes = Data()
+    func record(_ value: Data) { bytes.append(value) }
+}
+
+private struct EndToEndRecordingHTTPTransport: HTTPTransport {
+    let base: RecordingHTTPTransport
+    let responses: EndToEndResponseRecorder
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let result = try await base.data(for: request)
+        await responses.record(result.0)
+        return result
     }
 }
 
@@ -669,7 +964,8 @@ private enum EndToEndSlateHTTP {
 
 private actor EndToEndSlateHTTPTransport: HTTPTransport {
     private var postStatuses: [Int]
-    private var requestBytes: [Data] = []
+    private(set) var requests: [URLRequest] = []
+    private(set) var rawResponseBytes = Data()
     private(set) var lastEnvelope: SlateEnvelope?
     private(set) var postCount = 0
     private(set) var getCount = 0
@@ -678,17 +974,8 @@ private actor EndToEndSlateHTTPTransport: HTTPTransport {
         postStatuses = fixture.postStatuses
     }
 
-    var capturedBytes: Data {
-        requestBytes.reduce(into: Data(), { $0.append($1) })
-    }
-
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        if let url = request.url {
-            requestBytes.append(Data(url.absoluteString.utf8))
-        }
-        if let body = request.httpBody {
-            requestBytes.append(body)
-        }
+        requests.append(request)
 
         switch request.httpMethod {
         case "POST":
@@ -699,16 +986,18 @@ private actor EndToEndSlateHTTPTransport: HTTPTransport {
                 lastEnvelope = try Self.decodeEnvelope(try #require(request.httpBody))
             }
             let body = status == 200
-                ? Data(#"{"id":"e2e-content-id","image_etag":"image-e2e","manifest_etag":"manifest-e2e","rendered_at":"2026-08-12T08:30:00Z"}"#.utf8)
-                : Data("private Slate failure".utf8)
+                ? Data("""
+                    {"id":"\(EndToEndSensitive.contentID)","image_etag":"\(EndToEndSensitive.imageETag)","manifest_etag":"\(EndToEndSensitive.manifestETag)","rendered_at":"2026-08-12T08:30:00Z"}
+                    """.utf8)
+                : Data(EndToEndSensitive.slateFailureBody.utf8)
+            rawResponseBytes.append(body)
             return (body, Self.response(status: status, request: request))
         case "GET":
             getCount += 1
             guard let data = lastEnvelope?.data else { throw URLError(.badServerResponse) }
-            return (
-                try JSONEncoder.slate.encode(data),
-                Self.response(status: 200, request: request)
-            )
+            let body = try JSONEncoder.slate.encode(data)
+            rawResponseBytes.append(body)
+            return (body, Self.response(status: 200, request: request))
         default:
             throw URLError(.unsupportedURL)
         }

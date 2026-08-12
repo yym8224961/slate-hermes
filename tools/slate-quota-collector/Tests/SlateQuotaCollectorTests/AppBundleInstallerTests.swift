@@ -28,6 +28,10 @@ struct AppBundleInstallerTests {
         #expect(try CLIArguments(["collect", "--once"]) == .collect(.pushOnce))
         #expect(try CLIArguments(["collect", "--scheduled"]) == .collectScheduled)
         #expect(try CLIArguments(["collect", "--worker", "scheduled"]) == .collectWorker(.scheduled))
+        #expect(
+            try CLIArguments(["collect", "--worker", "push-once-with-proof"])
+                == .collectWorker(.pushOnceWithProof)
+        )
         #expect(try CLIArguments(["--menu-bar"]) == .menuBar)
         #expect(try CLIArguments(["pause"]) == .pause)
         #expect(try CLIArguments(["resume"]) == .resume)
@@ -56,6 +60,54 @@ struct AppBundleInstallerTests {
         #expect(help.contains("--menu-bar") == false)
         #expect(help.localizedCaseInsensitiveContains("api-key") == false)
         #expect(help.localizedCaseInsensitiveContains("slate-url") == false)
+    }
+
+    @Test("explicit collect once selects the proof worker instead of the menu worker")
+    func explicitCollectOnceSelectsProofWorker() async throws {
+        let root = try TemporaryDirectory()
+        let marker = root.url.appendingPathComponent("worker-arguments.txt")
+        let executable = root.url.appendingPathComponent("worker-fixture")
+        try "#!/bin/sh\nprintf '%s\\n' \"$*\" > '\(marker.path)'\nexit 0\n"
+            .write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: executable.path
+        )
+        let runtime = CommandRuntime(
+            paths: .fixture(root: root.url), executableURL: executable
+        )
+
+        try await runtime.run(.collect(.pushOnce))
+
+        #expect(
+            try String(contentsOf: marker, encoding: .utf8)
+                == "collect --worker push-once-with-proof\n"
+        )
+    }
+
+    @Test("menu collection keeps the silent supervised worker")
+    @MainActor
+    func menuCollectionKeepsSilentWorker() async throws {
+        let root = try TemporaryDirectory()
+        let marker = root.url.appendingPathComponent("menu-worker-arguments.txt")
+        let executable = root.url.appendingPathComponent("menu-worker-fixture")
+        try "#!/bin/sh\nprintf '%s\\n' \"$*\" > '\(marker.path)'\nexit 0\n"
+            .write(to: executable, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: executable.path
+        )
+        let actions = RuntimeMenuBarActions(
+            schedule: NoopSchedule(),
+            executableURL: executable,
+            supervisor: .init(),
+            quitOperation: {}
+        )
+
+        try await actions.collectOnce()
+
+        #expect(
+            try String(contentsOf: marker, encoding: .utf8)
+                == "collect --worker push-once\n"
+        )
     }
 
     @Test("app bundle is an agent-only absolute layout with owner-only binaries")
@@ -414,6 +466,9 @@ struct AppBundleInstallerTests {
 
         await #expect(throws: CLIError.self) {
             try await runtime.run(.collectWorker(.scheduled))
+        }
+        await #expect(throws: CLIError.self) {
+            try await runtime.run(.collectWorker(.pushOnceWithProof))
         }
 
         #expect(FileManager.default.fileExists(atPath: paths.collectorStateDirectoryURL.path) == false)
