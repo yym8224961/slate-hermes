@@ -1,6 +1,45 @@
 import Foundation
 @testable import SlateQuotaCollector
 
+actor RecordingHTTPTransport: HTTPTransport {
+    struct Response: Sendable {
+        let status: Int
+        let body: Data
+    }
+
+    private var responses: [Result<Response, URLError>]
+    private(set) var requests: [URLRequest] = []
+
+    init(status: Int, body: Data) {
+        responses = [.success(Response(status: status, body: body))]
+    }
+
+    init(responses: [Result<Response, URLError>]) {
+        self.responses = responses
+    }
+
+    var lastRequest: URLRequest? { requests.last }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        requests.append(request)
+        guard !responses.isEmpty else { throw URLError(.badServerResponse) }
+
+        switch responses.removeFirst() {
+        case let .success(response):
+            let url = request.url ?? URL(string: "https://invalid.example")!
+            let httpResponse = HTTPURLResponse(
+                url: url,
+                statusCode: response.status,
+                httpVersion: nil,
+                headerFields: nil
+            )!
+            return (response.body, httpResponse)
+        case let .failure(error):
+            throw error
+        }
+    }
+}
+
 struct TemporaryDirectory {
     let url: URL
 
