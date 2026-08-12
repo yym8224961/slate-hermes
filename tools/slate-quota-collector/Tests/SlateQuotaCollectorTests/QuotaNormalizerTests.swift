@@ -35,6 +35,26 @@ import Testing
         #expect(value.footerLeft == "下次重置 08-12 17:30")
     }
 
+    @Test func openCodeRendersShanghaiResetAcrossMidnight() {
+        let value = QuotaNormalizer.shanghai.openCodeGo(
+            .fixture(rollingReset: 5_400, weeklyReset: 7_200, monthlyReset: 10_800),
+            collectedAt: .shanghaiAugust12At2330
+        )
+
+        #expect(value.rolling.resetAt == .shanghaiAugust12At2330.addingTimeInterval(5_400))
+        #expect(value.footerLeft == "下次重置 08-13 01:00")
+    }
+
+    @Test func openCodeRendersShanghaiResetAcrossMonthBoundary() {
+        let value = QuotaNormalizer.shanghai.openCodeGo(
+            .fixture(rollingReset: 5_400, weeklyReset: 7_200, monthlyReset: 10_800),
+            collectedAt: .shanghaiJanuary31At2330
+        )
+
+        #expect(value.rolling.resetAt == .shanghaiJanuary31At2330.addingTimeInterval(5_400))
+        #expect(value.footerLeft == "下次重置 02-01 01:00")
+    }
+
     @Test func serverLimitedWinsOverNonzeroRoundedRemaining() {
         #expect(QuotaNormalizer.summary(forUsedPercent: 99.1, serverLimited: true) == "已耗尽")
     }
@@ -73,6 +93,8 @@ import Testing
 
 private extension Date {
     static let fixtureNow = Date(timeIntervalSince1970: 1_786_523_400) // 2026-08-12 16:30 Asia/Shanghai
+    static let shanghaiAugust12At2330 = Date(timeIntervalSince1970: 1_786_548_600) // 2026-08-12 23:30 Asia/Shanghai
+    static let shanghaiJanuary31At2330 = Date(timeIntervalSince1970: 1_769_873_400) // 2026-01-31 23:30 Asia/Shanghai
 }
 
 private extension CodexRateLimitsReadResult {
