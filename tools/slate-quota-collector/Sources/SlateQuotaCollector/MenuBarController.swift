@@ -26,15 +26,13 @@ extension MenuBarActionHandling {
 
 @MainActor
 final class MenuBarController: NSObject, NSMenuDelegate {
-    private static let approvedMenuTitles = [
-        "Slate 额度监控", "每 5 分钟自动采集", "立即采集一次", "Codex",
-        "OpenCode Go", "最后推送", "查看详细状态", "退出菜单栏",
-    ]
+    typealias Now = @Sendable () -> Date
 
     private let actions: any MenuBarActionHandling
     private let schedule: any CollectionScheduleControlling
     private let statusReader: any MenuBarStatusReading
     private let statusWindowController: StatusWindowController
+    private let now: Now
     private let viewModel = MenuBarViewModel()
     private let menu = NSMenu()
     private let statusItem: NSStatusItem?
@@ -44,6 +42,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private var statusSnapshot = MenuBarStatusSnapshot.unavailable
     private var busy: MenuBarBusyState?
     private(set) var lastActionErrorCode: String?
+    private(set) var currentStatusErrorCode: String?
 
     private let headerItem = NSMenuItem(title: "Slate 额度监控", action: nil, keyEquivalent: "")
     private let automaticItem = NSMenuItem(title: "每 5 分钟自动采集", action: nil, keyEquivalent: "")
@@ -59,12 +58,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         schedule: any CollectionScheduleControlling,
         statusReader: any MenuBarStatusReading,
         statusWindowController: StatusWindowController = StatusWindowController(),
-        installSystemStatusItem: Bool = true
+        installSystemStatusItem: Bool = true,
+        now: @escaping Now = Date.init
     ) {
         self.actions = actions
         self.schedule = schedule
         self.statusReader = statusReader
         self.statusWindowController = statusWindowController
+        self.now = now
         statusItem = installSystemStatusItem
             ? NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
             : nil
@@ -73,12 +74,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         applyPresentation()
     }
 
-    var menuTitles: [String] { Self.approvedMenuTitles }
     var busyLine: String? { busy?.displayText }
-    var repeatedActionsEnabled: Bool { busy == nil }
-    var collectOnceEnabled: Bool { collectItem.isEnabled }
-    var menuIsEnabled: Bool { true }
-    var providerMenuLines: [String] { [codexItem.title, openCodeItem.title] }
+    var menuItemsForTesting: [NSMenuItem] { menu.items }
 
     func run() {
         NSApplication.shared.setActivationPolicy(.accessory)
@@ -101,8 +98,9 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
         do {
             scheduleStatus = try await schedule.status()
+            currentStatusErrorCode = nil
         } catch {
-            lastActionErrorCode = Self.publicErrorCode(error)
+            currentStatusErrorCode = Self.publicErrorCode(error)
         }
         applyPresentation()
     }
@@ -225,7 +223,8 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let value = viewModel.presentation(
             snapshot: snapshotForPresentation,
             schedule: scheduleStatus,
-            busy: busy
+            busy: busy,
+            now: now()
         )
         if let button = statusItem?.button {
             let image = NSImage(systemSymbolName: value.iconSystemName, accessibilityDescription: "Slate 额度监控")
@@ -242,9 +241,13 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     private var snapshotForPresentation: MenuBarStatusSnapshot {
-        guard let lastActionErrorCode else { return statusSnapshot }
         var codes = statusSnapshot.publicErrorCodes
-        codes["schedule"] = MenuBarViewModel.safePublicCode(lastActionErrorCode)
+        if let lastActionErrorCode {
+            codes["collector"] = MenuBarViewModel.safePublicCode(lastActionErrorCode)
+        }
+        if let currentStatusErrorCode {
+            codes["schedule"] = MenuBarViewModel.safePublicCode(currentStatusErrorCode)
+        }
         return MenuBarStatusSnapshot(
             codexSummary: statusSnapshot.codexSummary,
             openCodeGoSummary: statusSnapshot.openCodeGoSummary,

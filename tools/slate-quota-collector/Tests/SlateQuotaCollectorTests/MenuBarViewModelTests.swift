@@ -96,6 +96,64 @@ struct MenuBarViewModelTests {
         #expect(value.openCodeGoSummary == "注意 · 剩余 18%")
         #expect(value.publicErrorCodes == ["opencode_go": "rate_limited"])
     }
+
+    @Test("status reader ignores unavailable window sentinels before choosing remaining quota")
+    func statusReaderIgnoresUnavailableWindowSentinels() throws {
+        let persisted = CollectorSnapshot(
+            schemaVersion: 1,
+            lastGood: SanitizedLastGood(
+                schemaVersion: 1,
+                codex: .fixture(
+                    status: .ok,
+                    rolling: .unavailable(label: "5 小时"),
+                    weekly: .trusted(label: "本周", remaining: 91)
+                ),
+                openCodeGo: .fixture(
+                    status: .attention,
+                    rolling: .unavailable(label: "5 小时"),
+                    weekly: .trusted(label: "本周", remaining: 71),
+                    monthly: .trusted(label: "本月", remaining: 75)
+                )
+            ),
+            runtimeState: .fixture(
+                statuses: ["codex": .ok, "opencode_go": .attention]
+            )
+        )
+        let reader = SnapshotMenuBarStatusReader(snapshots: FixedSnapshotStore(snapshot: persisted))
+
+        let value = try reader.readStatus()
+
+        #expect(value.codexSummary == "正常 · 剩余 91%")
+        #expect(value.openCodeGoSummary == "注意 · 剩余 71%")
+    }
+
+    @Test("status reader reports no trusted data when every provider window is unavailable")
+    func statusReaderReportsNoDataWhenAllWindowsAreUnavailable() throws {
+        let persisted = CollectorSnapshot(
+            schemaVersion: 1,
+            lastGood: SanitizedLastGood(
+                schemaVersion: 1,
+                codex: .fixture(
+                    status: .ok,
+                    rolling: .unavailable(label: "5 小时"),
+                    weekly: .unavailable(label: "本周")
+                ),
+                openCodeGo: .fixture(
+                    status: .ok,
+                    rolling: .unavailable(label: "5 小时"),
+                    weekly: .unavailable(label: "本周"),
+                    monthly: .unavailable(label: "本月")
+                )
+            ),
+            runtimeState: .fixture(statuses: ["codex": .ok, "opencode_go": .ok])
+        )
+        let reader = SnapshotMenuBarStatusReader(snapshots: FixedSnapshotStore(snapshot: persisted))
+
+        let value = try reader.readStatus()
+
+        #expect(value.codexSummary == "无可信数据")
+        #expect(value.openCodeGoSummary == "无可信数据")
+    }
 }
 
 private extension MenuBarStatusSnapshot {
@@ -139,6 +197,23 @@ private extension CodexDisplaySnapshot {
             footerRight: "Credits —"
         )
     }
+
+    static func fixture(
+        status: ProviderStatus,
+        rolling: QuotaWindow,
+        weekly: QuotaWindow
+    ) -> Self {
+        Self(
+            status: status,
+            sourceCollectedAt: Date(timeIntervalSince1970: 1_754_990_140),
+            headerLeft: "CODEX",
+            summaryLabel: "菜单测试",
+            rolling: rolling,
+            weekly: weekly,
+            footerLeft: "周重置 --",
+            footerRight: "Credits —"
+        )
+    }
 }
 
 private extension OpenCodeGoDisplaySnapshot {
@@ -153,6 +228,50 @@ private extension OpenCodeGoDisplaySnapshot {
             monthly: .init(label: "本月", remainingPercent: remaining, valueText: "剩余 \(remaining)%", resetAt: nil),
             footerLeft: "下次重置 --",
             footerRight: "余额接续 关闭"
+        )
+    }
+
+    static func fixture(
+        status: ProviderStatus,
+        rolling: QuotaWindow,
+        weekly: QuotaWindow,
+        monthly: QuotaWindow
+    ) -> Self {
+        Self(
+            status: status,
+            sourceCollectedAt: Date(timeIntervalSince1970: 1_754_990_140),
+            headerLeft: "OPENCODE GO",
+            summaryLabel: "菜单测试",
+            rolling: rolling,
+            weekly: weekly,
+            monthly: monthly,
+            footerLeft: "下次重置 --",
+            footerRight: "余额接续 关闭"
+        )
+    }
+}
+
+private extension QuotaWindow {
+    static func unavailable(label: String) -> Self {
+        Self(label: label, remainingPercent: 0, valueText: "未提供", resetAt: nil)
+    }
+
+    static func trusted(label: String, remaining: Int) -> Self {
+        Self(label: label, remainingPercent: remaining, valueText: "剩余 \(remaining)%", resetAt: nil)
+    }
+}
+
+private extension CollectorRuntimeState {
+    static func fixture(statuses: [String: ProviderStatus]) -> Self {
+        Self(
+            schemaVersion: 1,
+            codexFailures: 0,
+            openCodeGoFailures: 0,
+            simultaneousFailures: 0,
+            lastSuccessAt: nil,
+            lastPushAt: nil,
+            providerStatuses: statuses,
+            lastErrorCodes: [:]
         )
     }
 }

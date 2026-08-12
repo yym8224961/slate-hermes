@@ -13,16 +13,39 @@ struct MenuBarControllerTests {
         let controller = makeController(actions: actions, schedule: schedule)
         await controller.refresh()
 
-        #expect(controller.menuTitles == [
-            "Slate 额度监控", "每 5 分钟自动采集", "立即采集一次", "Codex",
-            "OpenCode Go", "最后推送", "查看详细状态", "退出菜单栏",
+        let items = controller.menuItemsForTesting
+        #expect(items.map(\.isSeparatorItem) == [
+            false, true, false, false, true, false, false, false, true, false, false,
         ])
-        #expect(controller.providerMenuLines == [
+        #expect(items.filter { !$0.isSeparatorItem }.map(\.title) == [
+            "Slate 额度监控",
+            "每 5 分钟自动采集",
+            "立即采集一次",
             "Codex          正常 · 剩余 91%",
             "OpenCode Go    注意 · 剩余 18%",
+            "最后推送       今天 17:16",
+            "查看详细状态",
+            "退出菜单栏",
         ])
+        #expect(items[0].isEnabled == false)
+        #expect(items[2].state == .on)
+        #expect(items[2].isEnabled)
+        #expect(items[3].isEnabled)
+        #expect(items[5].isEnabled == false)
+        #expect(items[6].isEnabled == false)
+        #expect(items[7].isEnabled == false)
+        #expect(items[9].isEnabled)
+        #expect(items[10].isEnabled)
+        for index in [0, 5, 6, 7] {
+            #expect(items[index].action == nil)
+            #expect(items[index].target == nil)
+        }
+        expectAction(items[2], selector: "toggleAutomaticCollection", target: controller)
+        expectAction(items[3], selector: "collectOnce", target: controller)
+        expectAction(items[9], selector: "showDetailedStatus", target: controller)
+        expectAction(items[10], selector: "quitMenuBar", target: controller)
 
-        controller.perform(.quitMenuBar)
+        invoke(items[10])
 
         #expect(actions.pauseCount == 0)
         #expect(actions.quitCount == 1)
@@ -41,13 +64,21 @@ struct MenuBarControllerTests {
         await actions.pauseStarted.wait()
 
         #expect(controller.busyLine == "正在关闭")
-        #expect(controller.repeatedActionsEnabled == false)
+        expectRepeatActionsDisabledAndLifecycleAvailable(controller)
         #expect(actions.pauseCount == 1)
         #expect(actions.resumeCount == 0)
 
+        let busyItems = controller.menuItemsForTesting
+        invoke(busyItems[9])
+        invoke(busyItems[10])
+        #expect(actions.showCount == 1)
+        #expect(actions.quitCount == 1)
+
         actions.finishPause.resume()
         await controller.waitForCurrentActionForTesting()
-        #expect(controller.repeatedActionsEnabled)
+        let items = controller.menuItemsForTesting
+        #expect(items[2].isEnabled)
+        #expect(items[3].isEnabled)
     }
 
     @Test("toggle resumes from disabled and immediate collection remains available while paused")
@@ -57,7 +88,7 @@ struct MenuBarControllerTests {
         let controller = makeController(actions: actions, schedule: schedule)
         await controller.refresh()
 
-        #expect(controller.collectOnceEnabled)
+        #expect(controller.menuItemsForTesting[3].isEnabled)
         controller.perform(.collectOnce)
         await controller.waitForCurrentActionForTesting()
         #expect(actions.collectCount == 1)
@@ -80,14 +111,21 @@ struct MenuBarControllerTests {
         await actions.collectStarted.wait()
 
         #expect(controller.busyLine == "正在采集")
-        #expect(controller.repeatedActionsEnabled == false)
-        #expect(controller.menuIsEnabled)
+        expectRepeatActionsDisabledAndLifecycleAvailable(controller)
         controller.perform(.collectOnce)
         #expect(actions.collectCount == 1)
 
+        let busyItems = controller.menuItemsForTesting
+        invoke(busyItems[9])
+        invoke(busyItems[10])
+        #expect(actions.showCount == 1)
+        #expect(actions.quitCount == 1)
+
         actions.finishCollect.resume()
         await controller.waitForCurrentActionForTesting()
-        #expect(controller.repeatedActionsEnabled)
+        let items = controller.menuItemsForTesting
+        #expect(items[2].isEnabled)
+        #expect(items[3].isEnabled)
     }
 
     @Test("failed action clears busy state and restores interaction using a public code")
@@ -101,8 +139,43 @@ struct MenuBarControllerTests {
         await controller.waitForCurrentActionForTesting()
 
         #expect(controller.busyLine == nil)
-        #expect(controller.repeatedActionsEnabled)
+        #expect(controller.menuItemsForTesting[2].isEnabled)
+        #expect(controller.menuItemsForTesting[3].isEnabled)
         #expect(controller.lastActionErrorCode == "schedule_io")
+    }
+
+    @Test("recovered status read clears only its transient error and preserves action failure")
+    func recoveredStatusReadClearsTransientErrorOnly() async throws {
+        let actions = RecordingMenuBarActions(collectError: SnapshotCacheError.cacheCorrupt)
+        let schedule = RecoveringSchedule(results: [
+            .success(.enabledLoaded),
+            .failure(.ioFailure),
+            .success(.enabledLoaded),
+        ])
+        let statusWindow = StatusWindowController(createPanel: false)
+        let controller = makeController(
+            actions: actions,
+            schedule: schedule,
+            statusWindow: statusWindow
+        )
+        await controller.refresh()
+
+        controller.perform(.collectOnce)
+        await controller.waitForCurrentActionForTesting()
+
+        #expect(controller.lastActionErrorCode == "cache_corrupt")
+        #expect(controller.currentStatusErrorCode == "schedule_io")
+        controller.perform(.showDetailedStatus)
+        #expect(statusWindow.renderedText.contains("collector：cache_corrupt"))
+        #expect(statusWindow.renderedText.contains("schedule：schedule_io"))
+
+        await controller.refresh()
+
+        #expect(controller.lastActionErrorCode == "cache_corrupt")
+        #expect(controller.currentStatusErrorCode == nil)
+        controller.perform(.showDetailedStatus)
+        #expect(statusWindow.renderedText.contains("collector：cache_corrupt"))
+        #expect(statusWindow.renderedText.contains("schedule_io") == false)
     }
 
     @Test("details include only approved status fields and public error codes")
@@ -140,7 +213,7 @@ struct MenuBarControllerTests {
 
     private func makeController(
         actions: RecordingMenuBarActions,
-        schedule: ControllableSchedule,
+        schedule: any CollectionScheduleControlling,
         snapshot: MenuBarStatusSnapshot = .fixture,
         statusWindow: StatusWindowController = StatusWindowController(createPanel: false)
     ) -> MenuBarController {
@@ -149,8 +222,36 @@ struct MenuBarControllerTests {
             schedule: schedule,
             statusReader: FixedMenuBarStatusReader(snapshot: snapshot),
             statusWindowController: statusWindow,
-            installSystemStatusItem: false
+            installSystemStatusItem: false,
+            now: { Date(timeIntervalSince1970: 1_754_990_200) }
         )
+    }
+
+    private func expectAction(
+        _ item: NSMenuItem,
+        selector: String,
+        target: MenuBarController
+    ) {
+        #expect(item.action == NSSelectorFromString(selector))
+        #expect(item.target === target)
+    }
+
+    private func expectRepeatActionsDisabledAndLifecycleAvailable(_ controller: MenuBarController) {
+        let items = controller.menuItemsForTesting
+        #expect(items[2].isEnabled == false)
+        #expect(items[3].isEnabled == false)
+        #expect(items[2].title == controller.busyLine)
+        #expect(items[9].isEnabled)
+        #expect(items[10].isEnabled)
+        expectAction(items[9], selector: "showDetailedStatus", target: controller)
+        expectAction(items[10], selector: "quitMenuBar", target: controller)
+    }
+
+    private func invoke(_ item: NSMenuItem) {
+        let target = item.target as? NSObject
+        #expect(target != nil)
+        #expect(item.action != nil)
+        _ = target?.perform(item.action)
     }
 }
 
@@ -185,6 +286,22 @@ private actor ControllableSchedule: CollectionScheduleControlling {
     func status() async throws -> AutomaticCollectionStatus { currentStatus }
     func pause() async throws { pauseCount += 1; currentStatus = .disabled }
     func resume() async throws { resumeCount += 1; currentStatus = .enabledLoaded }
+}
+
+private actor RecoveringSchedule: CollectionScheduleControlling {
+    private var results: [Result<AutomaticCollectionStatus, CollectionScheduleError>]
+
+    init(results: [Result<AutomaticCollectionStatus, CollectionScheduleError>]) {
+        self.results = results
+    }
+
+    func status() async throws -> AutomaticCollectionStatus {
+        guard !results.isEmpty else { return .enabledLoaded }
+        return try results.removeFirst().get()
+    }
+
+    func pause() async throws {}
+    func resume() async throws {}
 }
 
 @MainActor

@@ -74,8 +74,10 @@ struct SnapshotMenuBarStatusReader: MenuBarStatusReading, Sendable {
         snapshot: CodexDisplaySnapshot?,
         status: ProviderStatus?
     ) -> String {
-        guard let snapshot else { return "无可信数据" }
-        let remaining = min(snapshot.rolling.remainingPercent, snapshot.weekly.remainingPercent)
+        guard let snapshot,
+              let remaining = trustedRemaining(in: [snapshot.rolling, snapshot.weekly]) else {
+            return "无可信数据"
+        }
         return providerSummary(status: status ?? snapshot.status, remaining: remaining)
     }
 
@@ -83,13 +85,20 @@ struct SnapshotMenuBarStatusReader: MenuBarStatusReading, Sendable {
         snapshot: OpenCodeGoDisplaySnapshot?,
         status: ProviderStatus?
     ) -> String {
-        guard let snapshot else { return "无可信数据" }
-        let remaining = min(
-            snapshot.rolling.remainingPercent,
-            snapshot.weekly.remainingPercent,
-            snapshot.monthly.remainingPercent
-        )
+        guard let snapshot,
+              let remaining = trustedRemaining(in: [
+                  snapshot.rolling, snapshot.weekly, snapshot.monthly,
+              ]) else {
+            return "无可信数据"
+        }
         return providerSummary(status: status ?? snapshot.status, remaining: remaining)
+    }
+
+    private static func trustedRemaining(in windows: [QuotaWindow]) -> Int? {
+        windows
+            .filter { $0.valueText != "未提供" }
+            .map(\.remainingPercent)
+            .min()
     }
 
     private static func providerSummary(status: ProviderStatus, remaining: Int) -> String {
