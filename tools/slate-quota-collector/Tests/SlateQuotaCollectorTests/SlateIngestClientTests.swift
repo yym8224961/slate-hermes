@@ -1,6 +1,9 @@
 import Foundation
 import Testing
 @testable import SlateQuotaCollector
+#if canImport(Darwin)
+import Darwin
+#endif
 
 @Suite("Slate ingest client")
 struct SlateIngestClientTests {
@@ -240,6 +243,56 @@ struct SlateIngestClientTests {
             #expect(!String(describing: error).contains("content-123"))
         }
     }
+
+    @Test(arguments: [307, 308])
+    func productionTransportNeverFollowsPOSTRedirectToWrongPath(_ status: Int) async throws {
+        let secondHop = try LoopbackHTTPServer(response: .init(status: 200, body: Self.receipt))
+        let redirectTarget = "http://127.0.0.1:\(secondHop.port)/wrong-path/content-123"
+        let firstHop = try LoopbackHTTPServer(
+            response: .init(status: status, headers: ["Location": redirectTarget], body: Data("private redirect body".utf8))
+        )
+        let capabilityURL = URL(
+            string: "http://127.0.0.1:\(firstHop.port)/api/v1/contents/content-123/data"
+        )!
+
+        do {
+            _ = try await SlateIngestClient().push(SlateEnvelope(data: Self.dashboard), capabilityURL: capabilityURL)
+            Issue.record("production transport followed an unsafe redirect")
+        } catch let error as SlateIngestError {
+            #expect(error.publicCode == "slate_http_\(status)")
+            #expect(!String(describing: error).contains("content-123"))
+            #expect(!String(describing: error).contains("private redirect body"))
+        }
+
+        #expect(firstHop.requestCount == 1)
+        #expect(secondHop.requestCount == 0)
+    }
+
+    @Test(arguments: [
+        (
+            URL(string: "https://slate.example.com/api/v1/contents/content-123/data")!,
+            URL(string: "https://other.example.com/api/v1/contents/content-123/data")!
+        ),
+        (
+            URL(string: "http://192.168.1.20/api/v1/contents/content-123/data")!,
+            URL(string: "http://example.com/api/v1/contents/content-123/data")!
+        ),
+        (
+            URL(string: "https://slate.example.com:443/api/v1/contents/content-123/data")!,
+            URL(string: "https://slate.example.com:9443/api/v1/contents/content-123/data")!
+        ),
+        (
+            URL(string: "https://slate.example.com/api/v1/contents/content-123/data")!,
+            URL(string: "http://slate.example.com/api/v1/contents/content-123/data")!
+        ),
+        (
+            URL(string: "https://slate.example.com/api/v1/contents/content-123/data")!,
+            URL(string: "https://slate.example.com/wrong-path")!
+        ),
+    ])
+    func redirectPolicyRejectsEveryProposedSecondHop(_ urls: (URL, URL)) {
+        #expect(!SlateRedirectPolicy.permits(originalURL: urls.0, proposedURL: urls.1))
+    }
 }
 
 private actor RetrySleepRecorder {
@@ -247,5 +300,105 @@ private actor RetrySleepRecorder {
 
     func record(_ duration: Duration) {
         durations.append(duration)
+    }
+}
+
+private final class LoopbackHTTPServer: @unchecked Sendable {
+    struct Response: Sendable {
+        let status: Int
+        var headers: [String: String] = [:]
+        var body = Data()
+    }
+
+    let port: UInt16
+    private let listener: Int32
+    private let response: Response
+    private let lock = NSLock()
+    private var requests = 0
+
+    var requestCount: Int {
+        lock.withLock { requests }
+    }
+
+    init(response: Response) throws {
+        let listener = socket(AF_INET, SOCK_STREAM, 0)
+        guard listener >= 0 else { throw Self.currentPOSIXError() }
+
+        var reuse: Int32 = 1
+        guard setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout.size(ofValue: reuse))) == 0 else {
+            Darwin.close(listener)
+            throw Self.currentPOSIXError()
+        }
+
+        var address = sockaddr_in()
+        address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        address.sin_family = sa_family_t(AF_INET)
+        address.sin_port = 0
+        address.sin_addr = in_addr(s_addr: inet_addr("127.0.0.1"))
+        let bound = withUnsafePointer(to: &address) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                bind(listener, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+            }
+        }
+        guard bound == 0, listen(listener, 4) == 0 else {
+            Darwin.close(listener)
+            throw Self.currentPOSIXError()
+        }
+
+        var actualAddress = sockaddr_in()
+        var actualLength = socklen_t(MemoryLayout<sockaddr_in>.size)
+        let named = withUnsafeMutablePointer(to: &actualAddress) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                getsockname(listener, $0, &actualLength)
+            }
+        }
+        guard named == 0 else {
+            Darwin.close(listener)
+            throw Self.currentPOSIXError()
+        }
+        self.port = UInt16(bigEndian: actualAddress.sin_port)
+        self.listener = listener
+        self.response = response
+
+        DispatchQueue.global(qos: .userInitiated).async { [self] in
+            serveOneRequest()
+        }
+    }
+
+    deinit {
+        shutdown(listener, SHUT_RDWR)
+        Darwin.close(listener)
+    }
+
+    private func serveOneRequest() {
+        let client = accept(listener, nil, nil)
+        guard client >= 0 else { return }
+        defer { Darwin.close(client) }
+
+        var bytes = [UInt8](repeating: 0, count: 4096)
+        _ = recv(client, &bytes, bytes.count, 0)
+        lock.withLock { requests += 1 }
+
+        let reason = switch response.status {
+        case 200: "OK"
+        case 307: "Temporary Redirect"
+        case 308: "Permanent Redirect"
+        default: "Response"
+        }
+        var header = "HTTP/1.1 \(response.status) \(reason)\r\n"
+        for (name, value) in response.headers {
+            header += "\(name): \(value)\r\n"
+        }
+        header += "Content-Length: \(response.body.count)\r\nConnection: close\r\n\r\n"
+        var payload = Data(header.utf8)
+        payload.append(response.body)
+        payload.withUnsafeBytes { buffer in
+            guard let base = buffer.baseAddress else { return }
+            _ = send(client, base, buffer.count, 0)
+        }
+    }
+
+    private static func currentPOSIXError() -> POSIXError {
+        POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
     }
 }

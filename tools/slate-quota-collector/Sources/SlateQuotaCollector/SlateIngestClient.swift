@@ -1,6 +1,49 @@
 import Darwin
 import Foundation
 
+enum SlateRedirectPolicy {
+    static func permits(originalURL _: URL?, proposedURL _: URL) -> Bool {
+        false
+    }
+}
+
+private final class SlateNoRedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    func urlSession(
+        _: URLSession,
+        task: URLSessionTask,
+        willPerformHTTPRedirection _: HTTPURLResponse,
+        newRequest request: URLRequest,
+        completionHandler: @escaping @Sendable (URLRequest?) -> Void
+    ) {
+        let proposedURL = request.url ?? URL(string: "about:blank")!
+        completionHandler(
+            SlateRedirectPolicy.permits(originalURL: task.originalRequest?.url, proposedURL: proposedURL)
+                ? request
+                : nil
+        )
+    }
+}
+
+private struct SlateURLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
+    private let session: URLSession
+
+    init() {
+        session = URLSession(
+            configuration: .ephemeral,
+            delegate: SlateNoRedirectSessionDelegate(),
+            delegateQueue: nil
+        )
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw URLError(.badServerResponse)
+        }
+        return (data, httpResponse)
+    }
+}
+
 enum SlateEndpointError: Error, Equatable, Sendable, LocalizedError {
     case invalidEndpoint
 
@@ -149,7 +192,7 @@ struct SlateIngestClient: SlateIngesting, Sendable {
     private let sleep: Sleep
 
     init(
-        transport: any HTTPTransport = URLSessionHTTPTransport(),
+        transport: any HTTPTransport = SlateURLSessionHTTPTransport(),
         sleep: @escaping Sleep = { try await Task.sleep(for: $0) }
     ) {
         self.transport = transport
