@@ -6,9 +6,13 @@ import binascii
 import io
 import logging
 import os
+import signal
+import subprocess
+import tempfile
 import time
 import wave
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 try:
@@ -33,6 +37,7 @@ MAX_MESSAGE_LENGTH = 512
 RECONNECT_BACKOFF_SECONDS = (1, 2, 5, 10, 30)
 EVENT_CONTEXT_TTL_SECONDS = 10 * 60
 STT_ECHO_PREFIX = '🎙️ "'
+SLATE_STT_TIMEOUT_SECONDS = 25
 
 
 def _pcm16_base64_to_wav(audio_base64: str) -> bytes:
@@ -57,7 +62,231 @@ def _stt_echo_transcript(content: str) -> str:
     stripped = content.strip()
     if not stripped.startswith(STT_ECHO_PREFIX) or not stripped.endswith('"'):
         return ""
-    return stripped[len(STT_ECHO_PREFIX) : -1].strip()[:512]
+    return _clean_transcript(stripped[len(STT_ECHO_PREFIX) : -1])
+
+
+def _clean_transcript(value: Any) -> str:
+    """Return a displayable speech transcript, rejecting punctuation-only noise."""
+    if not isinstance(value, str):
+        return ""
+    transcript = value.strip()[:512]
+    return transcript if transcript and any(char.isalnum() for char in transcript) else ""
+
+
+def _stt_language() -> str:
+    value = os.getenv("SLATE_STT_LANGUAGE", "zh").strip()
+    return "" if value.lower() == "auto" else value
+
+
+async def _terminate_stt_process(proc: asyncio.subprocess.Process) -> None:
+    if os.name == "nt":
+        if proc.returncode is not None:
+            return
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            return
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2)
+            return
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return
+
+    process_group = proc.pid
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    # The shell can exit before descendants that ignore SIGTERM. Wait for the
+    # process *group*, not only the shell parent, then kill every survivor.
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.05)
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        pass
+    else:
+        try:
+            os.killpg(process_group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if proc.returncode is None:
+        await proc.wait()
+
+
+async def _run_stt_process(
+    command: str, env: Dict[str, str], timeout: float
+) -> tuple[str, str, int, bool]:
+    """Run one command with a hard wall-clock timeout and process-group cleanup."""
+    process_options: Dict[str, Any] = {}
+    if os.name == "nt":
+        process_options["creationflags"] = getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+    else:
+        process_options["start_new_session"] = True
+    proc = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        stdin=asyncio.subprocess.DEVNULL,
+        env=env,
+        **process_options,
+    )
+    communicate_task = asyncio.create_task(proc.communicate())
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            asyncio.shield(communicate_task), timeout=timeout
+        )
+        return (
+            stdout_bytes.decode("utf-8", errors="replace"),
+            stderr_bytes.decode("utf-8", errors="replace"),
+            int(proc.returncode or 0),
+            False,
+        )
+    except asyncio.TimeoutError:
+        await _terminate_stt_process(proc)
+        stdout_bytes, stderr_bytes = await communicate_task
+        return (
+            stdout_bytes.decode("utf-8", errors="replace"),
+            stderr_bytes.decode("utf-8", errors="replace"),
+            int(proc.returncode or -1),
+            True,
+        )
+    except asyncio.CancelledError:
+        await asyncio.shield(_terminate_stt_process(proc))
+        await communicate_task
+        raise
+
+
+async def _run_bounded_command_stt(
+    transcription_tools: Any,
+    path: str,
+    provider: str,
+    command_config: Dict[str, Any],
+    stt_config: Dict[str, Any],
+    language_override: str,
+) -> Dict[str, Any]:
+    """Run Hermes' configured command provider with a hard total timeout."""
+    try:
+        from agent.delegation_context import delegated_child_subprocess_env
+        from tools.environments.local import hermes_subprocess_env
+
+        render_command = transcription_tools._render_command_stt_template
+        get_output_format = transcription_tools._get_command_stt_output_format
+        get_env_passthrough = transcription_tools._command_stt_env_passthrough
+        read_output = transcription_tools._read_command_stt_output
+    except (AttributeError, ImportError):
+        return {"success": False, "transcript": "", "compatible": False}
+
+    output_format = get_output_format(command_config)
+    provider_language = command_config.get("language")
+    if not provider_language:
+        resolve_language = getattr(transcription_tools, "_resolve_stt_language", None)
+        if callable(resolve_language):
+            provider_language = resolve_language(provider, stt_config)
+    language = language_override or provider_language or "en"
+    model = command_config.get("model") or ""
+
+    with tempfile.TemporaryDirectory(prefix=f"slate-stt-{provider}-") as tmpdir:
+        output_path = Path(tmpdir) / f"transcript.{output_format}"
+        placeholders = {
+            "input_path": str(Path(path).resolve()),
+            "output_path": str(output_path),
+            "output_dir": str(output_path.parent),
+            "format": output_format,
+            "language": str(language),
+            "model": str(model),
+        }
+        command = render_command(str(command_config.get("command") or ""), placeholders)
+        child_env = hermes_subprocess_env(inherit_credentials=False)
+        for key in get_env_passthrough(command_config):
+            value = os.environ.get(key)
+            if value is not None:
+                child_env[key] = value
+        child_env = delegated_child_subprocess_env(child_env)
+        stdout, stderr, returncode, timed_out = await _run_stt_process(
+            command, child_env, float(SLATE_STT_TIMEOUT_SECONDS)
+        )
+        if timed_out:
+            return {
+                "success": False,
+                "transcript": "",
+                "provider": provider,
+                "error": f"STT command exceeded {SLATE_STT_TIMEOUT_SECONDS}s total timeout",
+            }
+        if returncode:
+            detail = stderr.strip() or stdout.strip() or "no command output"
+            return {
+                "success": False,
+                "transcript": "",
+                "provider": provider,
+                "error": f"STT command exited with code {returncode}: {detail}",
+            }
+        try:
+            transcript = read_output(output_path, stdout, output_format)
+        except RuntimeError as exc:
+            return {
+                "success": False,
+                "transcript": "",
+                "provider": provider,
+                "error": str(exc),
+            }
+        return {"success": True, "transcript": transcript, "provider": provider}
+
+
+async def _transcribe_cached_audio(path: str) -> tuple[str, bool]:
+    """Return ``(transcript, definitive)`` from a compatible command STT."""
+    try:
+        from tools import transcription_tools
+    except ImportError:
+        logger.warning("[slate] Hermes STT module is unavailable")
+        return "", False
+
+    helpers = (
+        getattr(transcription_tools, "_load_stt_config", None),
+        getattr(transcription_tools, "_get_provider", None),
+        getattr(transcription_tools, "_resolve_command_stt_provider_config", None),
+    )
+    if not all(callable(helper) for helper in helpers):
+        return "", False
+    load_config, get_provider, resolve_command = helpers
+    try:
+        stt_config = load_config()
+        provider = get_provider(stt_config)
+        command_config = resolve_command(provider, stt_config)
+        if not isinstance(command_config, dict):
+            return "", False
+        result = await _run_bounded_command_stt(
+            transcription_tools,
+            path,
+            provider,
+            command_config,
+            stt_config,
+            _stt_language(),
+        )
+    except Exception as exc:
+        logger.warning("[slate] STT failed for %s: %s", path, exc)
+        return "", False
+
+    if not isinstance(result, dict) or not result.get("success"):
+        if isinstance(result, dict) and result.get("compatible") is False:
+            return "", False
+        if isinstance(result, dict):
+            logger.info(
+                "[slate] STT did not produce a transcript: %s",
+                result.get("error", "unknown error"),
+            )
+        return "", True
+    return _clean_transcript(result.get("transcript")), True
 
 
 def _settings(config: PlatformConfig) -> tuple[str, str, int]:
@@ -232,6 +461,33 @@ class SlateAdapter(BasePlatformAdapter):
             media_urls = [cached_path]
             media_types = ["audio/wav"]
 
+            # Pre-transcribe exactly once with Slate's Chinese language hint.
+            # The private cache attributes are the Gateway's existing signal
+            # that the normal inbound pipeline must reuse this text instead of
+            # running STT a second time. A definitive but unusable result is
+            # returned as a retry prompt instead of asking the agent to answer
+            # invented text. Older runtimes without the bounded command API
+            # retain their normal Gateway fallback path.
+            transcript, stt_definitive = await _transcribe_cached_audio(cached_path)
+            if transcript:
+                text = transcript
+                request["userText"] = transcript
+            elif stt_definitive:
+                logger.info(
+                    "[slate] Rejecting unrecognized voice request %s",
+                    request_id,
+                )
+                result = await self.send(
+                    "slate",
+                    "这段语音没有识别清楚，请再说一次。",
+                    reply_to=request_id,
+                )
+                if not result.success:
+                    logger.warning(
+                        "[slate] Failed to return STT error: %s", result.error
+                    )
+                return
+
         session_id = str(request.get("sessionId") or f"slate:{request_id}")[:128]
         user_id = str(request.get("userId") or "slate-owner")[:128]
         source = self.build_source(
@@ -254,6 +510,9 @@ class SlateAdapter(BasePlatformAdapter):
         self._events[request_id] = event
         self._event_created_at[request_id] = time.monotonic()
         self._request_ids_by_chat[session_id] = request_id
+        if request.get("userText"):
+            setattr(event, "_gateway_pending_stt_text", text)
+            setattr(event, "_gateway_pending_stt_transcripts", [text])
         logger.info("[slate] Dispatching request %s", request_id)
         await self.handle_message(event)
 
@@ -332,14 +591,17 @@ class SlateAdapter(BasePlatformAdapter):
         transcripts = getattr(event, "_gateway_pending_stt_transcripts", None)
         if isinstance(transcripts, (list, tuple)):
             for transcript in reversed(transcripts):
-                if isinstance(transcript, str) and transcript.strip():
-                    return transcript.strip()[:512]
+                cleaned = _clean_transcript(transcript)
+                if cleaned:
+                    return cleaned
         echoed = getattr(event, "_slate_stt_echo_text", None)
-        if isinstance(echoed, str) and echoed.strip():
-            return echoed.strip()[:512]
+        cleaned_echo = _clean_transcript(echoed)
+        if cleaned_echo:
+            return cleaned_echo
         prepared = getattr(event, "_gateway_pending_stt_text", None)
-        if isinstance(prepared, str) and prepared.strip():
-            return prepared.strip()[:512]
+        cleaned_prepared = _clean_transcript(prepared)
+        if cleaned_prepared:
+            return cleaned_prepared
         return ""
 
     def _drop_event_context(self, request_id: str) -> None:

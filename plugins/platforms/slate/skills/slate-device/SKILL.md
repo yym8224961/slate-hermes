@@ -23,7 +23,8 @@ Hermes Gateway 需要：
 - `SLATE_BACKEND`：Gateway 能访问的 Slate 后端根地址。
 - `SLATE_AGENT_TOKEN`：访问后端 Agent 接口的 Bearer token。
 - `SLATE_POLL_TIMEOUT_SECONDS`：可选，长轮询秒数，范围 1–60，默认 30。
-- STT 语言在 Hermes 全局及当前 provider 配置中设定；Slate 插件不修改进程级语言环境变量。
+- `SLATE_STT_LANGUAGE`：Slate 语音的语言提示，默认 `zh`；设为 `auto` 时沿用 provider 的语言配置。
+- STT 语言也应在 Hermes 全局及当前 provider 中设为 `zh`；插件把 Slate 语言作为命令参数传入，不修改 Gateway 的进程级环境变量。
 
 Slate 后端需要：
 

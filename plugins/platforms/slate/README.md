@@ -9,15 +9,17 @@ The platform handles transport. The skill contains device capabilities,
 response constraints, configuration guidance, and diagnostics.
 
 Voice requests arrive as base64 PCM16 in the pending payload. The adapter wraps
-them as 16 kHz mono WAV and stores the file in Hermes' audio cache. Hermes'
-normal Gateway pipeline performs STT once in its background session. The adapter
-captures the standard Gateway transcript echo for releases that do not retain
-the transcript on the original event, while newer releases can use the event's
-raw transcript cache directly. Final delivery returns that same text to Slate,
-so the device shows what Hermes actually heard instead of a generic voice
-placeholder. Stream previews, transcript echoes, and busy/interim messages never
-resolve the one-shot device request. Text requests keep the existing
-`MessageType.TEXT` path.
+them as 16 kHz mono WAV and stores the file in Hermes' audio cache. It invokes
+Hermes' configured STT once with `SLATE_STT_LANGUAGE` (default `zh`) and marks
+the voice event with the Gateway's existing transcript cache, preventing a
+second STT pass. A definitive failure or punctuation-only noise such as `??`
+returns a retry prompt instead of letting the Agent answer invented text. Older
+Gateway releases without bounded command-provider APIs retain their normal
+voice pipeline as a compatibility fallback. Final delivery returns the
+transcript to Slate, so the device shows what Hermes actually heard instead of
+a generic voice placeholder. Stream previews, transcript echoes, and
+busy/interim messages never resolve the one-shot device request. Text requests
+keep the existing `MessageType.TEXT` path.
 
 ## Install
 
@@ -49,9 +51,9 @@ The backend disables the two Agent polling endpoints in production when
 `HERMES_AGENT_TOKEN` is missing.
 
 For a Chinese-first Gateway, set both the global and selected-provider language
-to `zh` in Hermes' STT configuration. Language selection belongs to Hermes'
-normal STT pipeline; the Slate adapter does not mutate process-global STT
-environment variables.
+to `zh` in Hermes' STT configuration and keep `SLATE_STT_LANGUAGE=zh` (the
+default). Set `SLATE_STT_LANGUAGE=auto` to keep the language selected in the
+provider configuration.
 
 ## Verify
 
