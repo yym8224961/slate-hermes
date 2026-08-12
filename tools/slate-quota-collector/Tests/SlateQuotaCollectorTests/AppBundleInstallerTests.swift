@@ -257,6 +257,68 @@ struct AppBundleInstallerTests {
         #expect(try AppBundleInstaller(paths: paths).captureGeneration() == previous)
     }
 
+    @Test(
+        "stable executable CAS never overwrites a leaf successor",
+        arguments: [InstallerLeafPublishPhase.beforeQuarantine, .beforePublish]
+    )
+    func stableExecutableSuccessorWinsCAS(_ phase: InstallerLeafPublishPhase) throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let oldSource = try executableFixture(root: root.url, name: "old", contents: "old-binary")
+        let newSource = try executableFixture(root: root.url, name: "new", contents: "new-binary")
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: oldSource)
+        let successor = paths.stableExecutableURL.deletingLastPathComponent()
+            .appendingPathComponent("stable-successor")
+        try Data("successor-binary".utf8).write(to: successor)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: successor.path)
+        let successorInode = try fileInode(successor)
+        let race = LeafRaceHook(
+            targetName: paths.stableExecutableURL.lastPathComponent,
+            phase: phase
+        ) {
+            guard rename(successor.path, paths.stableExecutableURL.path) == 0 else {
+                throw InjectedInstallFailure.mutation
+            }
+        }
+        let installer = AppBundleInstaller(paths: paths, beforeLeafPublish: race.call)
+
+        #expect(throws: InstallerError.self) { try installer.install(executableURL: newSource) }
+
+        #expect(try Data(contentsOf: paths.stableExecutableURL) == Data("successor-binary".utf8))
+        #expect(try fileInode(paths.stableExecutableURL) == successorInode)
+        let names = try FileManager.default.contentsOfDirectory(
+            atPath: paths.stableExecutableURL.deletingLastPathComponent().path
+        )
+        #expect(names.allSatisfy {
+            !$0.hasPrefix(".slate-install-") && !$0.hasPrefix(".slate-quota-leaf-")
+        })
+    }
+
+    @Test("stable CAS restores its quarantined expected leaf when publication aborts")
+    func stableCASAbortRestoresExpectedLeafWithoutResidue() throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let oldSource = try executableFixture(root: root.url, name: "old", contents: "old-binary")
+        let newSource = try executableFixture(root: root.url, name: "new", contents: "new-binary")
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: oldSource)
+        let previous = try AppBundleInstaller(paths: paths).captureGeneration()
+        let installer = AppBundleInstaller(paths: paths, beforeLeafPublish: { name, phase in
+            if name == paths.stableExecutableURL.lastPathComponent, phase == .beforePublish {
+                throw InjectedInstallFailure.mutation
+            }
+        })
+
+        #expect(throws: InstallerError.self) { try installer.install(executableURL: newSource) }
+
+        #expect(try AppBundleInstaller(paths: paths).captureGeneration() == previous)
+        let names = try FileManager.default.contentsOfDirectory(
+            atPath: paths.stableExecutableURL.deletingLastPathComponent().path
+        )
+        #expect(names.allSatisfy {
+            !$0.hasPrefix(".slate-install-") && !$0.hasPrefix(".slate-quota-leaf-")
+        })
+    }
+
     @Test("app publish detects an allowed-root directory swap and never touches its target")
     func rejectsValidationUseDirectorySwap() throws {
         let root = try TemporaryDirectory()
@@ -410,6 +472,165 @@ struct AppBundleInstallerTests {
         await #expect(throws: CLIError.self) { try await runtime.run(.setup) }
         #expect(backend.generation == prior)
         #expect(backend.mutationCount == 0)
+    }
+
+    @Test("system setup backend accepts only one canonical tool-owned Keychain item")
+    func systemSetupBackendCanonicalSecurityGeneration() throws {
+        let root = try TemporaryDirectory()
+        let service = KeychainStore.requiredService
+        let account = "opencode-go-api-key"
+        let canonical: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecValueData: Data("old-value".utf8),
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock,
+            kSecAttrSynchronizable: false,
+            kSecAttrCreationDate: Date(timeIntervalSince1970: 1),
+            kSecAttrModificationDate: Date(timeIntervalSince1970: 2),
+        ]
+        let security = RecordingSetupSecurityBackend(copyResult: [canonical])
+        let backend = SystemSetupMutationBackend(
+            applicationSupportURL: root.url,
+            security: security,
+            expectedAccessGroup: nil
+        )
+
+        let state = try backend.readSecret(service: service, account: account)
+        try backend.restoreSecret(state, service: service, account: account)
+
+        let query = try #require(security.copyQueries.first)
+        #expect(query[kSecMatchLimit] as? String == kSecMatchLimitAll as String)
+        #expect((query[kSecAttrSynchronizable] as? String) == kSecAttrSynchronizableAny as String)
+        let restored = try #require(security.addedItems.last)
+        #expect(restored[kSecClass] as? String == kSecClassGenericPassword as String)
+        #expect(restored[kSecAttrService] as? String == service)
+        #expect(restored[kSecAttrAccount] as? String == account)
+        #expect(restored[kSecValueData] as? Data == Data("old-value".utf8))
+        #expect(restored[kSecAttrAccessible] as? String == kSecAttrAccessibleAfterFirstUnlock as String)
+        #expect((restored[kSecAttrSynchronizable] as? NSNumber)?.boolValue == false)
+        #expect(restored[kSecAttrCreationDate] == nil)
+        #expect(restored[kSecAttrModificationDate] == nil)
+
+        let absentSecurity = RecordingSetupSecurityBackend()
+        let absentBackend = SystemSetupMutationBackend(
+            applicationSupportURL: root.url,
+            security: absentSecurity,
+            expectedAccessGroup: nil
+        )
+        #expect(try absentBackend.readSecret(service: service, account: account) == .absent)
+        #expect(absentSecurity.updateCalls == 0)
+        #expect(absentSecurity.addedItems.isEmpty)
+        #expect(absentSecurity.deleteQueries.isEmpty)
+    }
+
+    @Test("system setup backend rejects multiple or custom Keychain generations without mutation")
+    func systemSetupBackendRejectsNonToolOwnedItems() throws {
+        let root = try TemporaryDirectory()
+        let service = KeychainStore.requiredService
+        let account = "opencode-go-api-key"
+        let canonical: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecValueData: Data("old-value".utf8),
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock,
+            kSecAttrSynchronizable: false,
+        ]
+        let customItems: [[CFString: Any]] = [
+            canonical.merging([kSecAttrAccessControl: "custom-acl"]) { _, new in new },
+            canonical.merging([kSecAttrAccess: "custom-access"]) { _, new in new },
+            canonical.merging([kSecAttrDescription: "custom-description"]) { _, new in new },
+            canonical.merging([kSecAttrAccessGroup: "custom.group"]) { _, new in new },
+            canonical.merging([kSecAttrSynchronizable: true]) { _, new in new },
+        ]
+        let generations = [[canonical, canonical]] + customItems.map { [$0] }
+
+        for generation in generations {
+            let security = RecordingSetupSecurityBackend(copyResult: generation)
+            let backend = SystemSetupMutationBackend(
+                applicationSupportURL: root.url,
+                security: security,
+                expectedAccessGroup: nil
+            )
+            do {
+                _ = try backend.readSecret(service: service, account: account)
+                Issue.record("expected setup_existing_item")
+            } catch let error as CLIError {
+                #expect(error == .setupExistingItem)
+            }
+            #expect(security.updateCalls == 0)
+            #expect(security.addedItems.isEmpty)
+            #expect(security.deleteQueries.isEmpty)
+        }
+    }
+
+    @Test("production setup backend restores exact Keychain dictionary and configuration bytes and mode")
+    func systemSetupBackendRollsBackExactProductionGeneration() throws {
+        let root = try TemporaryDirectory()
+        let applicationSupport = root.url.appendingPathComponent("Application Support")
+        try FileManager.default.createDirectory(at: applicationSupport, withIntermediateDirectories: true)
+        let configurationURL = ConfigurationStore(
+            applicationSupportURL: applicationSupport
+        ).configurationURL
+        try FileManager.default.createDirectory(
+            at: configurationURL.deletingLastPathComponent(), withIntermediateDirectories: true
+        )
+        let oldConfiguration = Data("raw-old-configuration".utf8)
+        try oldConfiguration.write(to: configurationURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o640], ofItemAtPath: configurationURL.path
+        )
+        let service = KeychainStore.requiredService
+        let firstAccount = "opencode-go-api-key"
+        let secondAccount = "slate-push-url"
+        let security = RecordingSetupSecurityBackend(
+            resultsByAccount: [
+                firstAccount: [.canonical(service: service, account: firstAccount, value: "old-key")],
+                secondAccount: [.canonical(service: service, account: secondAccount, value: "old-url")],
+            ],
+            failUpdateAt: 2
+        )
+        let backend = SystemSetupMutationBackend(
+            applicationSupportURL: applicationSupport,
+            security: security,
+            expectedAccessGroup: nil
+        )
+        let oldConfigurationState = try backend.readConfiguration()
+        try backend.writeConfiguration(Data("forward-configuration".utf8))
+        #expect(try fileMode(configurationURL) & 0o777 == 0o600)
+        try backend.restoreConfiguration(oldConfigurationState)
+        #expect(try Data(contentsOf: configurationURL) == oldConfiguration)
+        #expect(try fileMode(configurationURL) & 0o777 == 0o640)
+        let persistence = TransactionalSetupPersistence(backend: backend)
+        let configuration = CollectorConfiguration(
+            schemaVersion: 1,
+            codexExecutablePath: "/bin/true",
+            timezoneIdentifier: "Asia/Shanghai",
+            codexTimeoutSeconds: 20,
+            openCodeTimeoutSeconds: 10,
+            slateTimeoutSeconds: 15,
+            overallTimeoutSeconds: 45,
+            logLevel: "info",
+            keychainService: service,
+            openCodeKeyAccount: firstAccount,
+            slateURLAccount: secondAccount
+        )
+
+        #expect(throws: (any Error).self) {
+            try persistence.commit(
+                configuration: configuration,
+                openCodeKey: "new-key",
+                slateURL: "https://new.example.test/api/v1/contents/quota/data"
+            )
+        }
+
+        #expect(try Data(contentsOf: configurationURL) == oldConfiguration)
+        #expect(try fileMode(configurationURL) & 0o777 == 0o640)
+        #expect(security.addedItems.count == 2)
+        #expect(security.addedItems.map { $0[kSecValueData] as? Data } == [
+            Data("old-key".utf8), Data("old-url".utf8),
+        ])
     }
 
     @Test(
@@ -603,8 +824,9 @@ struct AppBundleInstallerTests {
             .map { $0 > 1 } == true)
         #expect(events.firstIndex(of: "bootstrap:\(collectorService)")
             .map { $0 > 1 } == true)
-        #expect(try AppBundleInstaller(paths: paths).captureGeneration()
-            == AppBundleGeneration(bundleExecutable: Data("new".utf8), stableExecutable: Data("new".utf8)))
+        let installedApp = try AppBundleInstaller(paths: paths).captureGeneration()
+        #expect(installedApp.bundleExecutable == Data("new".utf8))
+        #expect(installedApp.stableExecutable == Data("new".utf8))
         #expect(await launchctl.generation(service: menuService) == loaded)
         #expect(await launchctl.generation(service: collectorService) == loaded)
     }
@@ -631,8 +853,10 @@ struct AppBundleInstallerTests {
             try await runtime.run(.installLaunchAgent)
         }
 
-        #expect(try AppBundleInstaller(paths: paths).captureGeneration()
-            == AppBundleGeneration(bundleExecutable: nil, stableExecutable: nil))
+        let absentApp = try AppBundleInstaller(paths: paths).captureGeneration()
+        #expect(absentApp.bundleExecutable == nil)
+        #expect(absentApp.stableExecutable == nil)
+        #expect(absentApp.stableLeaf == .absent)
         #expect(try LaunchAgentInstaller(paths: paths).captureGeneration()
             == LaunchAgentGeneration(menuBarPlist: nil, collectorPlist: nil))
         #expect(await launchctl.loadedServices.isEmpty)
@@ -930,6 +1154,73 @@ private func secretSnapshot(_ value: String, label: String) -> SetupSecretAttrib
         label: label,
         comment: "fixture-comment"
     )
+}
+
+private final class RecordingSetupSecurityBackend: SetupSecurityItemBacking, @unchecked Sendable {
+    private let lock = NSLock()
+    private var fallbackResult: [[CFString: Any]]
+    private var resultsByAccount: [String: [[CFString: Any]]]
+    private let failUpdateAt: Int?
+    private var updateOrdinal = 0
+    private(set) var copyQueries: [[CFString: Any]] = []
+    private(set) var addedItems: [[CFString: Any]] = []
+    private(set) var deleteQueries: [[CFString: Any]] = []
+    private(set) var updateCalls = 0
+
+    init(
+        copyResult: [[CFString: Any]] = [],
+        resultsByAccount: [String: [[CFString: Any]]] = [:],
+        failUpdateAt: Int? = nil
+    ) {
+        fallbackResult = copyResult
+        self.resultsByAccount = resultsByAccount
+        self.failUpdateAt = failUpdateAt
+    }
+
+    func copyMatching(_ query: [CFString: Any]) -> (OSStatus, Any?) {
+        lock.withLock {
+            copyQueries.append(query)
+            let account = query[kSecAttrAccount] as? String ?? ""
+            let result = resultsByAccount[account] ?? fallbackResult
+            return result.isEmpty ? (errSecItemNotFound, nil) : (errSecSuccess, result)
+        }
+    }
+
+    func update(_ query: [CFString: Any], attributes: [CFString: Any]) -> OSStatus {
+        lock.withLock {
+            updateCalls += 1
+            updateOrdinal += 1
+            if updateOrdinal == failUpdateAt { return errSecInteractionNotAllowed }
+            return errSecSuccess
+        }
+    }
+
+    func add(_ item: [CFString: Any]) -> OSStatus {
+        lock.withLock {
+            addedItems.append(item)
+            return errSecSuccess
+        }
+    }
+
+    func delete(_ query: [CFString: Any]) -> OSStatus {
+        lock.withLock {
+            deleteQueries.append(query)
+            return errSecSuccess
+        }
+    }
+}
+
+private extension Dictionary where Key == CFString, Value == Any {
+    static func canonical(service: String, account: String, value: String) -> Self {
+        [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecValueData: Data(value.utf8),
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock,
+            kSecAttrSynchronizable: false,
+        ]
+    }
 }
 
 private enum InjectedSetupFailure: Error { case mutation }
@@ -1250,4 +1541,32 @@ extension InstallationPaths {
 private func fileMode(_ url: URL) throws -> Int {
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     return try #require((attributes[.posixPermissions] as? NSNumber)?.intValue)
+}
+
+private func fileInode(_ url: URL) throws -> ino_t {
+    var status = stat()
+    guard lstat(url.path, &status) == 0 else { throw InjectedInstallFailure.mutation }
+    return status.st_ino
+}
+
+private final class LeafRaceHook: @unchecked Sendable {
+    let targetName: String
+    let phase: InstallerLeafPublishPhase
+    let operation: () throws -> Void
+    private let lock = NSLock()
+    private var fired = false
+
+    init(targetName: String, phase: InstallerLeafPublishPhase, operation: @escaping () throws -> Void) {
+        self.targetName = targetName
+        self.phase = phase
+        self.operation = operation
+    }
+
+    func call(name: String, phase: InstallerLeafPublishPhase) throws {
+        try lock.withLock {
+            guard !fired, name == targetName, phase == self.phase else { return }
+            fired = true
+            try operation()
+        }
+    }
 }

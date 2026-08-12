@@ -111,6 +111,41 @@ struct LaunchAgentInstallerTests {
         #expect(try FileManager.default.contentsOfDirectory(atPath: logsVictim.path) == ["sentinel"])
     }
 
+    @Test(
+        "each plist CAS preserves a later leaf successor",
+        arguments: ["menu", "collector"],
+        [InstallerLeafPublishPhase.beforeQuarantine, .beforePublish]
+    )
+    func plistSuccessorWinsCAS(
+        _ target: String,
+        _ phase: InstallerLeafPublishPhase
+    ) throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        _ = try LaunchAgentInstaller(paths: paths).installPlists()
+        let targetURL = target == "menu" ? paths.menuBarPlistURL : paths.collectorPlistURL
+        let successor = paths.launchAgentsURL.appendingPathComponent("\(target)-successor")
+        let successorData = Data("\(target)-successor-data".utf8)
+        try successorData.write(to: successor)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: successor.path)
+        let successorInode = try launchFileInode(successor)
+        let race = LaunchLeafRaceHook(targetName: targetURL.lastPathComponent, phase: phase) {
+            guard rename(successor.path, targetURL.path) == 0 else {
+                throw LaunchLeafRaceError.mutation
+            }
+        }
+        let installer = LaunchAgentInstaller(paths: paths, beforeLeafPublish: race.call)
+
+        #expect(throws: InstallerError.self) { try installer.installPlists() }
+
+        #expect(try Data(contentsOf: targetURL) == successorData)
+        #expect(try launchFileInode(targetURL) == successorInode)
+        let names = try FileManager.default.contentsOfDirectory(atPath: paths.launchAgentsURL.path)
+        #expect(names.allSatisfy {
+            !$0.hasPrefix(".slate-install-") && !$0.hasPrefix(".slate-quota-leaf-")
+        })
+    }
+
     @Test("launch-agent installer rejects a substituted directory without changing its target")
     func launchAgentInstallerRejectsDirectorySymlink() throws {
         let root = try TemporaryDirectory()
@@ -171,6 +206,96 @@ struct LaunchAgentInstallerTests {
         }
     }
 
+    @Test("launchd loaded state recognizes only the exact local missing-service signature")
+    func loadedStateRecognizesOnlyExactMissingServiceSignature() async throws {
+        let root = try TemporaryDirectory()
+        let label = "com.yym8224961.slate-quota-round3-fixture"
+        let service = "gui/\(getuid())/\(label)"
+        let exactMissingService = """
+        Bad request.
+        Could not find service "\(label)" in domain for user gui: \(getuid())
+
+        """
+        let absentController = SystemLaunchctlController(executableURL: try launchctlFixture(
+            root: root.url,
+            name: "explicit-absent",
+            label: label,
+            printStatus: 113,
+            standardOutput: "",
+            standardError: exactMissingService
+        ))
+
+        #expect(try await absentController.installationState(service: service) == .init(
+            loaded: false,
+            disabledOverride: false
+        ))
+
+        let indeterminateResponses: [(name: String, status: Int32, output: String, error: String)] = [
+            ("generic-exit-2", 2, "", "launchctl fixture generic failure\n"),
+            ("eperm", 1, "", "Not privileged to perform operation.\n"),
+            (
+                "domain-error", 113, "",
+                "Bad request.\nCould not find domain for user gui: \(getuid())\n"
+            ),
+        ]
+        for response in indeterminateResponses {
+            let controller = SystemLaunchctlController(executableURL: try launchctlFixture(
+                root: root.url,
+                name: response.name,
+                label: label,
+                printStatus: response.status,
+                standardOutput: response.output,
+                standardError: response.error
+            ))
+
+            do {
+                _ = try await controller.installationState(service: service)
+                Issue.record("\(response.name) must remain indeterminate")
+            } catch {
+                #expect(error as? LaunchctlError == .transport)
+                #expect(String(describing: error).contains(response.error) == false)
+            }
+        }
+    }
+
+    @Test("indeterminate launchd state leaves install and uninstall disk generations untouched")
+    func indeterminateLoadedStatePreventsEveryDiskMutation() async throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let executable = root.url.appendingPathComponent("release-binary")
+        try Data("binary".utf8).write(to: executable)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: executable.path
+        )
+        let launchctl = SystemLaunchctlController(executableURL: try launchctlFixture(
+            root: root.url,
+            name: "disk-transport",
+            label: LaunchAgentInstaller.menuBarLabel,
+            printStatus: 2,
+            standardOutput: "",
+            standardError: "fixture transport failure\n"
+        ))
+        let runtime = CommandRuntime(paths: paths, launchctl: launchctl, executableURL: executable)
+
+        await #expect(throws: LaunchctlError.self) {
+            try await runtime.run(.installLaunchAgent)
+        }
+        #expect(try AppBundleInstaller(paths: paths).captureGeneration().bundleExecutable == nil)
+        #expect(try LaunchAgentInstaller(paths: paths).captureGeneration()
+            == LaunchAgentGeneration(menuBarPlist: nil, collectorPlist: nil))
+
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: executable)
+        _ = try LaunchAgentInstaller(paths: paths).installPlists()
+        let previousApp = try AppBundleInstaller(paths: paths).captureGeneration()
+        let previousAgents = try LaunchAgentInstaller(paths: paths).captureGeneration()
+
+        await #expect(throws: LaunchctlError.self) {
+            try await runtime.run(.uninstallLaunchAgent)
+        }
+        #expect(try AppBundleInstaller(paths: paths).captureGeneration() == previousApp)
+        #expect(try LaunchAgentInstaller(paths: paths).captureGeneration() == previousAgents)
+    }
+
     @Test("uninstall removes only generated runtime artifacts and preserves state")
     func uninstallPreservesConfigurationAndState() throws {
         let root = try TemporaryDirectory()
@@ -207,9 +332,72 @@ struct LaunchAgentInstallerTests {
             .deletingLastPathComponent()
             .deletingLastPathComponent()
     }
+
+    private func launchctlFixture(
+        root: URL,
+        name: String,
+        label: String,
+        printStatus: Int32,
+        standardOutput: String,
+        standardError: String
+    ) throws -> URL {
+        let url = root.appendingPathComponent("launchctl-\(name)")
+        let script = """
+        #!/bin/sh
+        if [ "$1" = "print-disabled" ]; then
+          printf %s \(shellSingleQuoted("disabled services = {\n    \"\(label)\" => false\n}\n"))
+          exit 0
+        fi
+        if [ "$1" = "print" ]; then
+          printf %s \(shellSingleQuoted(standardOutput))
+          printf %s \(shellSingleQuoted(standardError)) >&2
+          exit \(printStatus)
+        fi
+        exit 64
+        """
+        try script.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: url.path
+        )
+        return url
+    }
+
+    private func shellSingleQuoted(_ value: String) -> String {
+        "'" + value.replacingOccurrences(of: "'", with: "'\\\"'\\\"'") + "'"
+    }
 }
 
 private func fileMode(_ url: URL) throws -> Int {
     let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
     return try #require((attributes[.posixPermissions] as? NSNumber)?.intValue)
+}
+
+private enum LaunchLeafRaceError: Error { case mutation }
+
+private func launchFileInode(_ url: URL) throws -> ino_t {
+    var status = stat()
+    guard lstat(url.path, &status) == 0 else { throw LaunchLeafRaceError.mutation }
+    return status.st_ino
+}
+
+private final class LaunchLeafRaceHook: @unchecked Sendable {
+    let targetName: String
+    let phase: InstallerLeafPublishPhase
+    let operation: () throws -> Void
+    private let lock = NSLock()
+    private var fired = false
+
+    init(targetName: String, phase: InstallerLeafPublishPhase, operation: @escaping () throws -> Void) {
+        self.targetName = targetName
+        self.phase = phase
+        self.operation = operation
+    }
+
+    func call(name: String, phase: InstallerLeafPublishPhase) throws {
+        try lock.withLock {
+            guard !fired, name == targetName, phase == self.phase else { return }
+            fired = true
+            try operation()
+        }
+    }
 }

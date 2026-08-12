@@ -87,6 +87,22 @@ struct AppBundleLayout: Sendable {
 struct AppBundleGeneration: Equatable, Sendable {
     let bundleExecutable: Data?
     let stableExecutable: Data?
+    let stableLeaf: InstallerLeafGeneration
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.bundleExecutable == rhs.bundleExecutable
+            && lhs.stableExecutable == rhs.stableExecutable
+    }
+}
+
+enum InstallerLeafPublishPhase: Equatable, Sendable {
+    case beforeQuarantine
+    case beforePublish
+}
+
+enum InstallerLeafGeneration: Equatable, Sendable {
+    case absent
+    case exact(device: dev_t, inode: ino_t, data: Data, mode: mode_t)
 }
 
 /// Owns the exact directory inode used for installer mutations. All leaf work is
@@ -214,6 +230,43 @@ enum InstallerFileSystem {
         try readRegularFile(directory.descriptor, name: name, executable: executable)
     }
 
+    static func captureLeaf(
+        _ directory: InstallerDirectoryHandle,
+        name: String,
+        executable: Bool = false
+    ) throws -> InstallerLeafGeneration {
+        try validateName(name)
+        let file = openat(directory.descriptor, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC)
+        if file < 0, errno == ENOENT { return .absent }
+        guard file >= 0 else { throw InstallerError.unsafeExistingItem }
+        defer { _ = close(file) }
+        var status = stat()
+        guard fstat(file, &status) == 0,
+              status.st_mode & S_IFMT == S_IFREG,
+              status.st_uid == getuid(),
+              status.st_nlink == 1,
+              !executable || status.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH) != 0 else {
+            throw InstallerError.unsafeExistingItem
+        }
+        var output = Data()
+        var buffer = [UInt8](repeating: 0, count: 16_384)
+        while true {
+            let count = Darwin.read(file, &buffer, buffer.count)
+            if count == 0 { break }
+            if count < 0 {
+                if errno == EINTR { continue }
+                throw InstallerError.ioFailure
+            }
+            output.append(buffer, count: count)
+        }
+        return .exact(
+            device: status.st_dev,
+            inode: status.st_ino,
+            data: output,
+            mode: status.st_mode & 0o777
+        )
+    }
+
     static func readRegularFile(
         _ descriptor: Int32,
         name: String,
@@ -249,7 +302,9 @@ enum InstallerFileSystem {
         _ data: Data,
         to directory: InstallerDirectoryHandle,
         name: String,
-        mode: mode_t
+        mode: mode_t,
+        expected: InstallerLeafGeneration,
+        beforePublish: @Sendable (String, InstallerLeafPublishPhase) throws -> Void = { _, _ in }
     ) throws {
         try validateName(name)
         let temporary = ".slate-install-\(UUID().uuidString).tmp"
@@ -259,6 +314,9 @@ enum InstallerFileSystem {
         )
         guard file >= 0 else { throw InstallerError.ioFailure }
         var fileOpen = true
+        let quarantine = ".slate-quota-leaf-\(UUID().uuidString).private"
+        var quarantinePresent = false
+        var quarantinedExpected = false
         defer {
             if fileOpen { _ = close(file) }
             _ = unlinkat(directory.descriptor, temporary, 0)
@@ -270,16 +328,87 @@ enum InstallerFileSystem {
             }
             _ = close(file)
             fileOpen = false
-            if try exists(directory, name: name) {
-                _ = try readRegularFile(directory, name: name)
+            switch expected {
+            case .absent:
+                try beforePublish(name, .beforePublish)
+                guard renameatx_np(
+                    directory.descriptor, temporary,
+                    directory.descriptor, name,
+                    UInt32(RENAME_EXCL)
+                ) == 0 else {
+                    throw errno == EEXIST
+                        ? InstallerError.unsafeExistingItem : InstallerError.ioFailure
+                }
+            case .exact:
+                try beforePublish(name, .beforeQuarantine)
+                guard renameatx_np(
+                    directory.descriptor, name,
+                    directory.descriptor, quarantine,
+                    UInt32(RENAME_EXCL)
+                ) == 0 else {
+                    throw InstallerError.unsafeExistingItem
+                }
+                quarantinePresent = true
+                let isolated = try captureLeaf(directory, name: quarantine)
+                guard isolated == expected else {
+                    if renameatx_np(
+                        directory.descriptor, quarantine,
+                        directory.descriptor, name,
+                        UInt32(RENAME_EXCL)
+                    ) == 0 { quarantinePresent = false }
+                    throw InstallerError.unsafeExistingItem
+                }
+                quarantinedExpected = true
+                try beforePublish(name, .beforePublish)
+                guard renameatx_np(
+                    directory.descriptor, temporary,
+                    directory.descriptor, name,
+                    UInt32(RENAME_EXCL)
+                ) == 0 else {
+                    if errno == EEXIST {
+                        if unlinkat(directory.descriptor, quarantine, 0) == 0 {
+                            quarantinePresent = false
+                            quarantinedExpected = false
+                        }
+                        throw InstallerError.unsafeExistingItem
+                    }
+                    if renameatx_np(
+                        directory.descriptor, quarantine,
+                        directory.descriptor, name,
+                        UInt32(RENAME_EXCL)
+                    ) == 0 {
+                        quarantinePresent = false
+                        quarantinedExpected = false
+                    }
+                    throw InstallerError.ioFailure
+                }
+                guard unlinkat(directory.descriptor, quarantine, 0) == 0 else {
+                    throw InstallerError.ioFailure
+                }
+                quarantinePresent = false
+                quarantinedExpected = false
             }
-            guard renameat(
-                directory.descriptor, temporary, directory.descriptor, name
-            ) == 0, fsync(directory.descriptor) == 0 else {
+            guard fsync(directory.descriptor) == 0 else {
                 throw InstallerError.ioFailure
             }
-        } catch let error as InstallerError { throw error }
-        catch { throw InstallerError.ioFailure }
+        } catch {
+            if quarantinePresent {
+                if renameatx_np(
+                    directory.descriptor, quarantine,
+                    directory.descriptor, name,
+                    UInt32(RENAME_EXCL)
+                ) == 0 {
+                    quarantinePresent = false
+                    quarantinedExpected = false
+                } else if errno == EEXIST, quarantinedExpected,
+                          unlinkat(directory.descriptor, quarantine, 0) == 0 {
+                    quarantinePresent = false
+                    quarantinedExpected = false
+                }
+            }
+            if let installerError = error as? InstallerError { throw installerError }
+            throw InstallerError.ioFailure
+        }
     }
 
     static func ensureOwnerOnlyLog(
@@ -444,6 +573,7 @@ struct AppBundleInstaller: Sendable {
     private let beforeBundleQuarantine: @Sendable () throws -> Void
     private let afterBundleConstructionStep: @Sendable (Int) throws -> Void
     private let afterStableDirectoryOpen: @Sendable () throws -> Void
+    private let beforeLeafPublish: @Sendable (String, InstallerLeafPublishPhase) throws -> Void
 
     init(
         paths: InstallationPaths = .init(),
@@ -451,7 +581,8 @@ struct AppBundleInstaller: Sendable {
         beforeStablePublish: @escaping @Sendable () throws -> Void = {},
         beforeBundleQuarantine: @escaping @Sendable () throws -> Void = {},
         afterBundleConstructionStep: @escaping @Sendable (Int) throws -> Void = { _ in },
-        afterStableDirectoryOpen: @escaping @Sendable () throws -> Void = {}
+        afterStableDirectoryOpen: @escaping @Sendable () throws -> Void = {},
+        beforeLeafPublish: @escaping @Sendable (String, InstallerLeafPublishPhase) throws -> Void = { _, _ in }
     ) {
         self.paths = paths
         self.beforeBundlePublish = beforeBundlePublish
@@ -459,6 +590,7 @@ struct AppBundleInstaller: Sendable {
         self.beforeBundleQuarantine = beforeBundleQuarantine
         self.afterBundleConstructionStep = afterBundleConstructionStep
         self.afterStableDirectoryOpen = afterStableDirectoryOpen
+        self.beforeLeafPublish = beforeLeafPublish
     }
 
     func install(executableURL: URL) throws -> AppBundleLayout {
@@ -477,7 +609,18 @@ struct AppBundleInstaller: Sendable {
     func captureGeneration() throws -> AppBundleGeneration {
         let bundle = try captureBundleExecutable()
         let stable = try captureStableExecutable(matching: bundle)
-        return AppBundleGeneration(bundleExecutable: bundle, stableExecutable: stable)
+        let stableParent = try openStableParent(createMissing: false)
+        let stableLeaf = try stableParent.map {
+            try InstallerFileSystem.captureLeaf(
+                $0, name: paths.stableExecutableURL.lastPathComponent,
+                executable: stable != nil
+            )
+        } ?? .absent
+        return AppBundleGeneration(
+            bundleExecutable: bundle,
+            stableExecutable: stable,
+            stableLeaf: stableLeaf
+        )
     }
 
     func restore(_ generation: AppBundleGeneration) throws {
@@ -485,21 +628,48 @@ struct AppBundleInstaller: Sendable {
            stable != generation.bundleExecutable {
             throw InstallerError.unsafeExistingItem
         }
+        let stableParent = try openStableParent(createMissing: generation.stableExecutable != nil)
+        let currentStable = try stableParent.map {
+            try InstallerFileSystem.captureLeaf(
+                $0, name: paths.stableExecutableURL.lastPathComponent
+            )
+        } ?? .absent
+        if let data = generation.stableExecutable, let stableParent {
+            if currentStable != generation.stableLeaf {
+                let currentBundle = try captureBundleExecutable()
+                let currentData: Data?
+                switch currentStable {
+                case .absent: currentData = nil
+                case let .exact(_, _, bytes, _): currentData = bytes
+                }
+                guard currentData == currentBundle else {
+                    throw InstallerError.unsafeExistingItem
+                }
+                try InstallerFileSystem.atomicWrite(
+                    data, to: stableParent, name: paths.stableExecutableURL.lastPathComponent,
+                    mode: S_IRWXU, expected: currentStable,
+                    beforePublish: beforeLeafPublish
+                )
+            }
+        } else if let stableParent {
+            let currentBundle = try captureBundleExecutable()
+            let currentData: Data?
+            switch currentStable {
+            case .absent: currentData = nil
+            case let .exact(_, _, bytes, _): currentData = bytes
+            }
+            guard currentData == currentBundle else {
+                throw InstallerError.unsafeExistingItem
+            }
+            try InstallerFileSystem.unlinkRegularFile(
+                stableParent, name: paths.stableExecutableURL.lastPathComponent,
+                expected: currentData
+            )
+        }
         if let bundle = generation.bundleExecutable {
             try publishBundle(executableData: bundle)
         } else {
             try removePublicBundleIfPresent()
-        }
-        let stableParent = try openStableParent(createMissing: generation.stableExecutable != nil)
-        if let data = generation.stableExecutable, let stableParent {
-            try InstallerFileSystem.atomicWrite(
-                data, to: stableParent, name: paths.stableExecutableURL.lastPathComponent,
-                mode: S_IRWXU
-            )
-        } else if let stableParent {
-            try InstallerFileSystem.unlinkRegularFile(
-                stableParent, name: paths.stableExecutableURL.lastPathComponent
-            )
         }
     }
 
@@ -531,17 +701,21 @@ struct AppBundleInstaller: Sendable {
 
     private func publish(executableData: Data) throws {
         let previous = try captureGeneration()
+        guard let stableParent = try openStableParent(createMissing: true) else {
+            throw InstallerError.ioFailure
+        }
+        let stableExpected = try InstallerFileSystem.captureLeaf(
+            stableParent, name: paths.stableExecutableURL.lastPathComponent
+        )
         do {
             try publishBundle(executableData: executableData)
-            guard let stableParent = try openStableParent(createMissing: true) else {
-                throw InstallerError.ioFailure
-            }
             try afterStableDirectoryOpen()
             try stableParent.requirePublicIdentity()
             try beforeStablePublish()
             try InstallerFileSystem.atomicWrite(
                 executableData, to: stableParent,
-                name: paths.stableExecutableURL.lastPathComponent, mode: S_IRWXU
+                name: paths.stableExecutableURL.lastPathComponent, mode: S_IRWXU,
+                expected: stableExpected, beforePublish: beforeLeafPublish
             )
         } catch {
             try? restore(previous)

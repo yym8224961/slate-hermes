@@ -78,6 +78,7 @@ enum CLIError: Error, Equatable, Sendable, CustomStringConvertible {
     case workerFailure
     case workerAuthorization
     case setupRollback
+    case setupExistingItem
 
     var publicCode: String {
         switch self {
@@ -90,6 +91,7 @@ enum CLIError: Error, Equatable, Sendable, CustomStringConvertible {
         case .workerFailure: "worker_failure"
         case .workerAuthorization: "worker_authorization"
         case .setupRollback: "setup_rollback"
+        case .setupExistingItem: "setup_existing_item"
         }
     }
 
@@ -254,6 +256,8 @@ struct CommandRuntime: Sendable {
             )
         } catch SetupTransactionError.rollback {
             throw CLIError.setupRollback
+        } catch CLIError.setupExistingItem {
+            throw CLIError.setupExistingItem
         } catch {
             throw CLIError.configuration
         }
@@ -770,6 +774,36 @@ protocol SetupMutationBacking: Sendable {
     func restoreConfiguration(_ state: SetupConfigurationState) throws
 }
 
+/// Narrow low-level seam around Security.framework. Tests exercise the exact
+/// production query/add/update/delete dictionaries without touching a user's
+/// real Keychain.
+protocol SetupSecurityItemBacking: Sendable {
+    func copyMatching(_ query: [CFString: Any]) -> (OSStatus, Any?)
+    func update(_ query: [CFString: Any], attributes: [CFString: Any]) -> OSStatus
+    func add(_ item: [CFString: Any]) -> OSStatus
+    func delete(_ query: [CFString: Any]) -> OSStatus
+}
+
+struct SystemSetupSecurityItemBackend: SetupSecurityItemBacking, Sendable {
+    func copyMatching(_ query: [CFString: Any]) -> (OSStatus, Any?) {
+        var result: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        return (status, result)
+    }
+
+    func update(_ query: [CFString: Any], attributes: [CFString: Any]) -> OSStatus {
+        SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+    }
+
+    func add(_ item: [CFString: Any]) -> OSStatus {
+        SecItemAdd(item as CFDictionary, nil)
+    }
+
+    func delete(_ query: [CFString: Any]) -> OSStatus {
+        SecItemDelete(query as CFDictionary)
+    }
+}
+
 struct TransactionalSetupPersistence: SetupPersisting, Sendable {
     let backend: any SetupMutationBacking
 
@@ -827,13 +861,20 @@ struct TransactionalSetupPersistence: SetupPersisting, Sendable {
 
 struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
     let configurationStore: ConfigurationStore
+    let security: any SetupSecurityItemBacking
+    let expectedAccessGroup: String?
 
-    init(applicationSupportURL: URL) {
+    init(
+        applicationSupportURL: URL,
+        security: any SetupSecurityItemBacking = SystemSetupSecurityItemBackend(),
+        expectedAccessGroup: String? = SystemSetupMutationBackend.defaultAccessGroup()
+    ) {
         configurationStore = ConfigurationStore(applicationSupportURL: applicationSupportURL)
+        self.security = security
+        self.expectedAccessGroup = expectedAccessGroup
     }
 
     func readSecret(service: String, account: String) throws -> SetupSecretState {
-        var result: CFTypeRef?
         let query: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
@@ -841,29 +882,98 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
             kSecAttrSynchronizable: kSecAttrSynchronizableAny,
             kSecReturnData: true,
             kSecReturnAttributes: true,
-            kSecMatchLimit: kSecMatchLimitOne,
+            kSecMatchLimit: kSecMatchLimitAll,
         ]
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let (status, result) = security.copyMatching(query)
         if status == errSecItemNotFound { return .absent }
-        guard status == errSecSuccess,
-              let attributes = result as? [CFString: Any],
-              let data = attributes[kSecValueData] as? Data,
-              String(data: data, encoding: .utf8) != nil else {
+        guard status == errSecSuccess else {
             throw KeychainError(status: status == errSecSuccess ? errSecDecode : status)
+        }
+        guard let items = result as? [[CFString: Any]], items.count == 1,
+              let attributes = items.first else {
+            throw CLIError.setupExistingItem
+        }
+        return try canonicalSecret(
+            attributes, expectedService: service, expectedAccount: account
+        )
+    }
+
+    private func canonicalSecret(
+        _ attributes: [CFString: Any],
+        expectedService: String,
+        expectedAccount: String
+    ) throws -> SetupSecretState {
+        // Creation/modification timestamps are normal read-only Security
+        // metadata. They are deliberately ignored because SecItemAdd does not
+        // accept them. Every other accepted key is part of the exact add
+        // dictionary below; unknown or policy-bearing attributes fail closed.
+        let allowedKeys: Set<String> = [
+            kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData,
+            kSecAttrAccessible, kSecAttrSynchronizable, kSecAttrAccessGroup,
+            kSecAttrCreationDate, kSecAttrModificationDate,
+        ].map { $0 as String }.reduce(into: Set<String>()) { $0.insert($1) }
+        guard attributes.keys.allSatisfy({ allowedKeys.contains($0 as String) }),
+              attributes[kSecClass] as? String == kSecClassGenericPassword as String,
+              attributes[kSecAttrService] as? String == expectedService,
+              attributes[kSecAttrAccount] as? String == expectedAccount,
+              let data = attributes[kSecValueData] as? Data,
+              String(data: data, encoding: .utf8) != nil,
+              attributes[kSecAttrAccessible] as? String
+                == kSecAttrAccessibleAfterFirstUnlock as String else {
+            throw CLIError.setupExistingItem
+        }
+        let synchronizable = (attributes[kSecAttrSynchronizable] as? NSNumber)?.boolValue ?? false
+        guard synchronizable == false else { throw CLIError.setupExistingItem }
+        let accessGroup = attributes[kSecAttrAccessGroup] as? String
+        if accessGroup != expectedAccessGroup {
+            throw CLIError.setupExistingItem
         }
         return .item(SetupSecretAttributes(
             data: data,
-            accessible: attributes[kSecAttrAccessible] as? String,
-            accessGroup: attributes[kSecAttrAccessGroup] as? String,
-            synchronizable: (attributes[kSecAttrSynchronizable] as? NSNumber)?.boolValue,
-            generic: attributes[kSecAttrGeneric] as? Data,
-            label: attributes[kSecAttrLabel] as? String,
-            comment: attributes[kSecAttrComment] as? String
+            accessible: kSecAttrAccessibleAfterFirstUnlock as String,
+            accessGroup: accessGroup,
+            synchronizable: false,
+            generic: nil,
+            label: nil,
+            comment: nil
         ))
     }
 
+    private static func defaultAccessGroup() -> String? {
+        guard let task = SecTaskCreateFromSelf(nil) else { return nil }
+        return SecTaskCopyValueForEntitlement(
+            task, "application-identifier" as CFString, nil
+        ) as? String
+    }
+
     func writeSecretValue(_ value: String, service: String, account: String) throws {
-        try KeychainStore(service: service).write(value, account: account)
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecAttrSynchronizable: kSecAttrSynchronizableAny,
+        ]
+        let updateValues: [CFString: Any] = [
+            kSecValueData: Data(value.utf8),
+            kSecAttrAccessible: kSecAttrAccessibleAfterFirstUnlock,
+        ]
+        let update = security.update(query, attributes: updateValues)
+        switch update {
+        case errSecSuccess:
+            return
+        case errSecItemNotFound:
+            var item: [CFString: Any] = [
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
+                kSecAttrAccount: account,
+                kSecAttrSynchronizable: false,
+            ]
+            updateValues.forEach { item[$0.key] = $0.value }
+            let add = security.add(item)
+            guard add == errSecSuccess else { throw KeychainError(status: add) }
+        default:
+            throw KeychainError(status: update)
+        }
     }
 
     func restoreSecret(_ state: SetupSecretState, service: String, account: String) throws {
@@ -873,7 +983,7 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
             kSecAttrAccount: account,
             kSecAttrSynchronizable: kSecAttrSynchronizableAny,
         ]
-        let delete = SecItemDelete(deleteQuery as CFDictionary)
+        let delete = security.delete(deleteQuery)
         guard delete == errSecSuccess || delete == errSecItemNotFound else {
             throw KeychainError(status: delete)
         }
@@ -896,7 +1006,7 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
             if let value = snapshot.label { item[kSecAttrLabel] = value }
             if let value = snapshot.comment { item[kSecAttrComment] = value }
             if let value = snapshot.accessGroup { item[kSecAttrAccessGroup] = value }
-            let add = SecItemAdd(item as CFDictionary, nil)
+            let add = security.add(item)
             guard add == errSecSuccess else { throw KeychainError(status: add) }
         }
     }
@@ -964,6 +1074,16 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
                 _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
             } else {
                 try FileManager.default.moveItem(at: temporary, to: url)
+            }
+            let published = open(url.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+            guard published >= 0 else { throw CLIError.configuration }
+            defer { _ = close(published) }
+            var status = stat()
+            guard fstat(published, &status) == 0,
+                  status.st_mode & S_IFMT == S_IFREG,
+                  status.st_uid == getuid(),
+                  fchmod(published, mode) == 0 else {
+                throw CLIError.configuration
             }
         } catch {
             throw CLIError.configuration

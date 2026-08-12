@@ -76,9 +76,32 @@ struct SystemLaunchctlController: InstallationLaunchctlControlling, Sendable {
     }
 
     private func loadedState(service: String) -> Bool? {
-        let status = run(["print", service])
-        if status < 0 { return nil }
-        return status == 0
+        let result = runCaptureAll(["print", service])
+        if result.status == 0 { return true }
+        guard result.status == 113,
+              result.standardOutput.isEmpty,
+              let expectedError = missingServiceDiagnostic(for: service),
+              result.standardError == Data(expectedError.utf8) else {
+            return nil
+        }
+        return false
+    }
+
+    private func missingServiceDiagnostic(for service: String) -> String? {
+        let parts = service.split(separator: "/", maxSplits: 2, omittingEmptySubsequences: false)
+        guard parts.count == 3,
+              parts[0] == "gui",
+              parts[1] == Substring(String(getuid())),
+              !parts[2].isEmpty,
+              !parts[2].contains("\n"),
+              !parts[2].contains("\"") else {
+            return nil
+        }
+        return """
+        Bad request.
+        Could not find service "\(parts[2])" in domain for user gui: \(getuid())
+
+        """
     }
 
     private func serviceForPlist(_ url: URL) -> String {
@@ -125,6 +148,47 @@ struct SystemLaunchctlController: InstallationLaunchctlControlling, Sendable {
         process.waitUntilExit()
         let data = output.fileHandleForReading.readDataToEndOfFile()
         return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+    }
+
+    private func runCaptureAll(
+        _ arguments: [String]
+    ) -> (status: Int32, standardOutput: Data, standardError: Data) {
+        guard let standardOutputFile = tmpfile() else {
+            return (-1, Data(), Data())
+        }
+        guard let standardErrorFile = tmpfile() else {
+            fclose(standardOutputFile)
+            return (-1, Data(), Data())
+        }
+        defer {
+            fclose(standardOutputFile)
+            fclose(standardErrorFile)
+        }
+        let standardOutput = FileHandle(
+            fileDescriptor: fileno(standardOutputFile), closeOnDealloc: false
+        )
+        let standardError = FileHandle(
+            fileDescriptor: fileno(standardErrorFile), closeOnDealloc: false
+        )
+        let process = Process()
+        process.executableURL = executableURL
+        process.arguments = arguments
+        process.standardOutput = standardOutput
+        process.standardError = standardError
+        do { try process.run() }
+        catch { return (-1, Data(), Data()) }
+        process.waitUntilExit()
+        do {
+            try standardOutput.seek(toOffset: 0)
+            try standardError.seek(toOffset: 0)
+            return (
+                process.terminationStatus,
+                try standardOutput.readToEnd() ?? Data(),
+                try standardError.readToEnd() ?? Data()
+            )
+        } catch {
+            return (-1, Data(), Data())
+        }
     }
 }
 
@@ -200,13 +264,16 @@ struct LaunchAgentInstaller: Sendable {
 
     let paths: InstallationPaths
     private let afterDirectoriesOpen: @Sendable () throws -> Void
+    private let beforeLeafPublish: @Sendable (String, InstallerLeafPublishPhase) throws -> Void
 
     init(
         paths: InstallationPaths = .init(),
-        afterDirectoriesOpen: @escaping @Sendable () throws -> Void = {}
+        afterDirectoriesOpen: @escaping @Sendable () throws -> Void = {},
+        beforeLeafPublish: @escaping @Sendable (String, InstallerLeafPublishPhase) throws -> Void = { _, _ in }
     ) {
         self.paths = paths
         self.afterDirectoriesOpen = afterDirectoriesOpen
+        self.beforeLeafPublish = beforeLeafPublish
     }
 
     func renderPlists() throws -> LaunchAgentPlists {
@@ -237,6 +304,12 @@ struct LaunchAgentInstaller: Sendable {
               let logs = try openLogs(createMissing: true) else {
             throw InstallerError.ioFailure
         }
+        let menuExpected = try InstallerFileSystem.captureLeaf(
+            launchAgents, name: paths.menuBarPlistURL.lastPathComponent
+        )
+        let collectorExpected = try InstallerFileSystem.captureLeaf(
+            launchAgents, name: paths.collectorPlistURL.lastPathComponent
+        )
         do {
             try afterDirectoriesOpen()
             try launchAgents.requirePublicIdentity()
@@ -250,12 +323,14 @@ struct LaunchAgentInstaller: Sendable {
             try InstallerFileSystem.atomicWrite(
                 rendered.menuBar, to: launchAgents,
                 name: paths.menuBarPlistURL.lastPathComponent,
-                mode: S_IRUSR | S_IWUSR
+                mode: S_IRUSR | S_IWUSR, expected: menuExpected,
+                beforePublish: beforeLeafPublish
             )
             try InstallerFileSystem.atomicWrite(
                 rendered.collector, to: launchAgents,
                 name: paths.collectorPlistURL.lastPathComponent,
-                mode: S_IRUSR | S_IWUSR
+                mode: S_IRUSR | S_IWUSR, expected: collectorExpected,
+                beforePublish: beforeLeafPublish
             )
         } catch {
             try? restore(previous)
@@ -296,6 +371,7 @@ struct LaunchAgentInstaller: Sendable {
     }
 
     func restore(_ generation: LaunchAgentGeneration) throws {
+        _ = try captureGeneration()
         guard let launchAgents = try openLaunchAgents(createMissing: true) else {
             throw InstallerError.ioFailure
         }
@@ -340,8 +416,10 @@ struct LaunchAgentInstaller: Sendable {
         in directory: InstallerDirectoryHandle
     ) throws {
         if let data {
+            let current = try InstallerFileSystem.captureLeaf(directory, name: name)
             try InstallerFileSystem.atomicWrite(
-                data, to: directory, name: name, mode: S_IRUSR | S_IWUSR
+                data, to: directory, name: name, mode: S_IRUSR | S_IWUSR,
+                expected: current, beforePublish: beforeLeafPublish
             )
         } else {
             try InstallerFileSystem.unlinkRegularFile(
