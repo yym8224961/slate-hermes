@@ -81,13 +81,29 @@ struct LaunchAgentInstallerTests {
         ) == LaunchAgentInstaller.collectorPlistTemplate)
     }
 
+    @Test("launchctl enable fails closed when disabled-state query is indeterminate")
+    func enableRejectsNilDisabledState() async throws {
+        let root = try TemporaryDirectory()
+        let launchctl = root.url.appendingPathComponent("launchctl-fixture")
+        try "#!/bin/sh\nexit 1\n".write(to: launchctl, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: launchctl.path
+        )
+        let controller = SystemLaunchctlController(executableURL: launchctl)
+
+        await #expect(throws: LaunchctlError.self) {
+            try await controller.enable(service: "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)")
+        }
+    }
+
     @Test("uninstall removes only generated runtime artifacts and preserves state")
     func uninstallPreservesConfigurationAndState() throws {
         let root = try TemporaryDirectory()
         let paths = InstallationPaths.fixture(root: root.url)
-        try FileManager.default.createDirectory(at: paths.appBundleURL, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: paths.stableExecutableURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data().write(to: paths.stableExecutableURL)
+        let executable = root.url.appendingPathComponent("release-binary")
+        try Data("binary".utf8).write(to: executable)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: executable.path)
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: executable)
         let artifacts = try LaunchAgentInstaller(paths: paths).installPlists()
         let stateDirectory = paths.collectorStateDirectoryURL
         try FileManager.default.createDirectory(at: stateDirectory, withIntermediateDirectories: true)

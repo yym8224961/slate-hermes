@@ -9,7 +9,11 @@ enum LaunchctlError: Error, Equatable, Sendable, CustomStringConvertible {
 }
 
 struct SystemLaunchctlController: LaunchctlControlling, Sendable {
-    private let executableURL = URL(fileURLWithPath: "/bin/launchctl")
+    private let executableURL: URL
+
+    init(executableURL: URL = URL(fileURLWithPath: "/bin/launchctl")) {
+        self.executableURL = executableURL
+    }
 
     func disable(service: String) async throws {
         guard run(["disable", service]) == 0 || disabledOverride(for: service) == true else {
@@ -18,7 +22,7 @@ struct SystemLaunchctlController: LaunchctlControlling, Sendable {
     }
 
     func enable(service: String) async throws {
-        guard run(["enable", service]) == 0 || disabledOverride(for: service) != true else {
+        guard run(["enable", service]) == 0 || disabledOverride(for: service) == false else {
             throw LaunchctlError.transport
         }
     }
@@ -97,6 +101,11 @@ struct LaunchAgentPlists: Sendable {
 struct LaunchAgentArtifacts: Sendable {
     let menuBarPlistURL: URL
     let collectorPlistURL: URL
+}
+
+struct LaunchAgentGeneration: Equatable, Sendable {
+    let menuBarPlist: Data?
+    let collectorPlist: Data?
 }
 
 struct LaunchAgentInstaller: Sendable {
@@ -183,16 +192,22 @@ struct LaunchAgentInstaller: Sendable {
 
     func installPlists() throws -> LaunchAgentArtifacts {
         let rendered = try renderPlists()
-        try createOwnerDirectory(paths.launchAgentsURL)
-        try createOwnerDirectory(paths.logsURL)
-        for log in [
-            paths.menuBarStandardOutputURL, paths.menuBarStandardErrorURL,
-            paths.collectorStandardOutputURL, paths.collectorStandardErrorURL,
-        ] {
-            try ensureOwnerOnlyLog(at: log)
+        let previous = try captureGeneration(rendered: rendered)
+        do {
+            try createAnchoredDirectory(paths.launchAgentsURL)
+            try createAnchoredDirectory(paths.logsURL)
+            for log in [
+                paths.menuBarStandardOutputURL, paths.menuBarStandardErrorURL,
+                paths.collectorStandardOutputURL, paths.collectorStandardErrorURL,
+            ] {
+                try ensureOwnerOnlyLog(at: log)
+            }
+            try atomicWrite(rendered.menuBar, to: paths.menuBarPlistURL)
+            try atomicWrite(rendered.collector, to: paths.collectorPlistURL)
+        } catch {
+            try? restore(previous)
+            throw error
         }
-        try atomicWrite(rendered.menuBar, to: paths.menuBarPlistURL)
-        try atomicWrite(rendered.collector, to: paths.collectorPlistURL)
         return LaunchAgentArtifacts(
             menuBarPlistURL: paths.menuBarPlistURL,
             collectorPlistURL: paths.collectorPlistURL
@@ -200,10 +215,70 @@ struct LaunchAgentInstaller: Sendable {
     }
 
     func removeGeneratedArtifacts() throws {
-        for url in [paths.menuBarPlistURL, paths.collectorPlistURL, paths.stableExecutableURL] {
-            try removeExactGeneratedItem(at: url, allowDirectory: false)
+        let rendered = try renderPlists()
+        let previousAgents = try captureGeneration(rendered: rendered)
+        let appInstaller = AppBundleInstaller(paths: paths)
+        let previousApp = try appInstaller.captureGeneration()
+        do {
+            try appInstaller.removeInstalledArtifacts()
+            for url in [paths.menuBarPlistURL, paths.collectorPlistURL] {
+                if itemExists(url) {
+                    do { try FileManager.default.removeItem(at: url) }
+                    catch { throw InstallerError.ioFailure }
+                }
+            }
+        } catch {
+            try? restore(previousAgents)
+            try? appInstaller.restore(previousApp)
+            throw error
         }
-        try removeExactGeneratedItem(at: paths.appBundleURL, allowDirectory: true)
+    }
+
+    func captureGeneration() throws -> LaunchAgentGeneration {
+        try captureGeneration(rendered: renderPlists())
+    }
+
+    func restore(_ generation: LaunchAgentGeneration) throws {
+        try createAnchoredDirectory(paths.launchAgentsURL)
+        try restore(generation.menuBarPlist, to: paths.menuBarPlistURL)
+        try restore(generation.collectorPlist, to: paths.collectorPlistURL)
+    }
+
+    private func captureGeneration(rendered: LaunchAgentPlists) throws -> LaunchAgentGeneration {
+        LaunchAgentGeneration(
+            menuBarPlist: try captureGeneratedFile(at: paths.menuBarPlistURL, expected: rendered.menuBar),
+            collectorPlist: try captureGeneratedFile(
+                at: paths.collectorPlistURL, expected: rendered.collector
+            )
+        )
+    }
+
+    private func captureGeneratedFile(at url: URL, expected: Data) throws -> Data? {
+        guard itemExists(url) else { return nil }
+        var status = stat()
+        guard lstat(url.path, &status) == 0,
+              status.st_mode & S_IFMT == S_IFREG,
+              status.st_uid == getuid() else {
+            throw InstallerError.unsafeExistingItem
+        }
+        let data: Data
+        do { data = try Data(contentsOf: url) }
+        catch { throw InstallerError.ioFailure }
+        guard data == expected else { throw InstallerError.unsafeExistingItem }
+        return data
+    }
+
+    private func restore(_ data: Data?, to url: URL) throws {
+        if let data {
+            try atomicWrite(data, to: url)
+        } else if itemExists(url) {
+            let expected = url == paths.menuBarPlistURL
+                ? try renderPlists().menuBar
+                : try renderPlists().collector
+            _ = try captureGeneratedFile(at: url, expected: expected)
+            do { try FileManager.default.removeItem(at: url) }
+            catch { throw InstallerError.ioFailure }
+        }
     }
 
     private var allRuntimePathsAreAbsolute: Bool {
@@ -257,6 +332,61 @@ struct LaunchAgentInstaller: Sendable {
             throw InstallerError.unsafeExistingItem
         }
         guard chmod(url.path, S_IRWXU) == 0 else { throw InstallerError.ioFailure }
+    }
+
+    private func createAnchoredDirectory(_ url: URL) throws {
+        let root = paths.homeDirectory.standardizedFileURL
+        let target = url.standardizedFileURL
+        guard target.path.hasPrefix(root.path + "/") else {
+            try createOwnerDirectory(target)
+            return
+        }
+        try ensureAllowedRoot(root)
+        let relative = target.path.dropFirst(root.path.count + 1)
+            .split(separator: "/").map(String.init)
+        var descriptor = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard descriptor >= 0 else { throw InstallerError.unsafeExistingItem }
+        defer { if descriptor >= 0 { _ = close(descriptor) } }
+        for component in relative {
+            guard component != ".", component != "..", !component.isEmpty else {
+                throw InstallerError.invalidPath
+            }
+            if mkdirat(descriptor, component, S_IRWXU) != 0, errno != EEXIST {
+                throw InstallerError.ioFailure
+            }
+            let next = openat(
+                descriptor, component,
+                O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+            )
+            guard next >= 0 else { throw InstallerError.unsafeExistingItem }
+            var status = stat()
+            guard fstat(next, &status) == 0,
+                  status.st_mode & S_IFMT == S_IFDIR,
+                  status.st_uid == getuid(),
+                  fchmod(next, S_IRWXU) == 0 else {
+                _ = close(next)
+                throw InstallerError.unsafeExistingItem
+            }
+            _ = close(descriptor)
+            descriptor = next
+        }
+    }
+
+    private func ensureAllowedRoot(_ url: URL) throws {
+        var status = stat()
+        if lstat(url.path, &status) == 0 {
+            guard status.st_mode & S_IFMT == S_IFDIR, status.st_uid == getuid() else {
+                throw InstallerError.unsafeExistingItem
+            }
+            return
+        }
+        guard errno == ENOENT else { throw InstallerError.ioFailure }
+        try createOwnerDirectory(url)
+    }
+
+    private func itemExists(_ url: URL) -> Bool {
+        var status = stat()
+        return lstat(url.path, &status) == 0
     }
 
     private func ensureOwnerOnlyLog(at url: URL) throws {

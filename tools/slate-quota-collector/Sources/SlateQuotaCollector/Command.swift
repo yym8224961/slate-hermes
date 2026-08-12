@@ -1,6 +1,7 @@
 import AppKit
 import Darwin
 import Foundation
+import Security
 
 enum RequestedCollectionMode: Equatable, Sendable {
     case dryRun
@@ -75,6 +76,7 @@ enum CLIError: Error, Equatable, Sendable, CustomStringConvertible {
     case setupPreflight(String)
     case workerTimeout
     case workerFailure
+    case workerAuthorization
 
     var publicCode: String {
         switch self {
@@ -85,6 +87,7 @@ enum CLIError: Error, Equatable, Sendable, CustomStringConvertible {
         case let .setupPreflight(code): MenuBarViewModel.safePublicCode(code)
         case .workerTimeout: "worker_timeout"
         case .workerFailure: "worker_failure"
+        case .workerAuthorization: "worker_authorization"
         }
     }
 
@@ -133,19 +136,41 @@ struct CommandRuntime: Sendable {
     private let executableURL: URL
     private let supervisor: CollectorProcessSupervisor
     private let menuBarHarness: Bool
+    private let setupInput: @Sendable () throws -> SetupValues
+    private let codexLocator: @Sendable () throws -> URL
+    private let setupPreflight: @Sendable (CollectorConfiguration, String) async throws -> Void
+    private let setupPersistence: any SetupPersisting
 
     init(
         paths: InstallationPaths = .init(),
         launchctl: any LaunchctlControlling = SystemLaunchctlController(),
         executableURL: URL? = nil,
         supervisor: CollectorProcessSupervisor = .init(),
-        menuBarHarness: Bool = ProcessInfo.processInfo.environment["SLATE_QUOTA_MENUBAR_TEST_HARNESS"] == "1"
+        menuBarHarness: Bool = ProcessInfo.processInfo.environment["SLATE_QUOTA_MENUBAR_TEST_HARNESS"] == "1",
+        setupInput: @escaping @Sendable () throws -> SetupValues = {
+            try SecretTerminalReader().readSetupValues()
+        },
+        codexLocator: @escaping @Sendable () throws -> URL = CommandRuntime.locateCodexExecutable,
+        setupPreflight: @escaping @Sendable (CollectorConfiguration, String) async throws -> Void = {
+            configuration, openCodeKey in
+            do { _ = try await CodexRateLimitClient(configuration: configuration).read() }
+            catch { throw CLIError.setupPreflight(CommandRuntime.codexPreflightCode(error)) }
+            do { _ = try await OpenCodeGoUsageClient().read(apiKey: openCodeKey) }
+            catch { throw CLIError.setupPreflight(CommandRuntime.openCodePreflightCode(error)) }
+        },
+        setupPersistence: (any SetupPersisting)? = nil
     ) {
         self.paths = paths
         self.launchctl = launchctl
         self.executableURL = executableURL ?? Self.currentExecutableURL()
         self.supervisor = supervisor
         self.menuBarHarness = menuBarHarness
+        self.setupInput = setupInput
+        self.codexLocator = codexLocator
+        self.setupPreflight = setupPreflight
+        self.setupPersistence = setupPersistence ?? TransactionalSetupPersistence(
+            backend: SystemSetupMutationBackend(applicationSupportURL: paths.applicationSupportURL)
+        )
     }
 
     func run(_ command: CLIArguments) async throws {
@@ -185,7 +210,7 @@ struct CommandRuntime: Sendable {
     }
 
     private func setup() async throws {
-        let input = try SecretTerminalReader().readSetupValues()
+        let input = try setupInput()
         guard input.openCodeKey == input.confirmedOpenCodeKey,
               input.slateURL == input.confirmedSlateURL else {
             throw CLIError.setupMismatch
@@ -199,7 +224,7 @@ struct CommandRuntime: Sendable {
         do { _ = try SlateEndpointPolicy.validate(slateURL) }
         catch { throw CLIError.setupPreflight("slate_endpoint_invalid") }
 
-        let codexExecutable = try Self.locateCodexExecutable()
+        let codexExecutable = try codexLocator()
         let configuration = CollectorConfiguration(
             schemaVersion: 1,
             codexExecutablePath: codexExecutable.path,
@@ -213,22 +238,24 @@ struct CommandRuntime: Sendable {
             openCodeKeyAccount: "opencode-go-api-key",
             slateURLAccount: "slate-push-url"
         )
-        let secrets = KeychainStore(service: configuration.keychainService)
-        try secrets.write(openCodeKey, account: configuration.openCodeKeyAccount)
-        try secrets.write(slateText, account: configuration.slateURLAccount)
-        try ConfigurationStore(applicationSupportURL: paths.applicationSupportURL).save(configuration)
-
-        do { _ = try await CodexRateLimitClient(configuration: configuration).read() }
-        catch { throw CLIError.setupPreflight(Self.codexPreflightCode(error)) }
-        do { _ = try await OpenCodeGoUsageClient().read(apiKey: openCodeKey) }
-        catch { throw CLIError.setupPreflight(Self.openCodePreflightCode(error)) }
+        try await setupPreflight(configuration, openCodeKey)
+        do {
+            try setupPersistence.commit(
+                configuration: configuration,
+                openCodeKey: openCodeKey,
+                slateURL: slateText
+            )
+        } catch {
+            throw CLIError.configuration
+        }
         print("配置完成，只读预检通过")
     }
 
     private func supervise(_ mode: CollectorWorkerMode) async throws {
         let result = try await supervisor.run(
             executableURL: executableURL,
-            arguments: ["collect", "--worker", mode.rawValue]
+            arguments: ["collect", "--worker", mode.rawValue],
+            inheritedWorkerMode: mode.rawValue
         )
         switch result.outcome {
         case .exited(code: 0): return
@@ -238,6 +265,8 @@ struct CommandRuntime: Sendable {
     }
 
     private func runWorker(_ mode: CollectorWorkerMode) async throws {
+        do { try WorkerParentAuthorization.consume(expectedMode: mode.rawValue) }
+        catch { throw CLIError.workerAuthorization }
         guard let lock = try RunLock.acquire(at: paths.applicationSupportURL) else {
             // launchd or a manual collection already owns the single writer.
             return
@@ -288,20 +317,54 @@ struct CommandRuntime: Sendable {
     }
 
     private func install() async throws {
-        _ = try AppBundleInstaller(paths: paths).install(executableURL: executableURL)
-        let artifacts = try LaunchAgentInstaller(paths: paths).installPlists()
         let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
         let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
-        try await launchctl.enable(service: menuService)
-        try await launchctl.bootstrap(plistURL: artifacts.menuBarPlistURL)
-        let enabled = try SettingsStore(applicationSupportURL: paths.applicationSupportURL)
-            .load().automaticCollectionEnabled
-        if enabled {
-            try await launchctl.enable(service: collectorService)
-            try await launchctl.bootstrap(plistURL: artifacts.collectorPlistURL)
-        } else {
-            try await launchctl.disable(service: collectorService)
-            try? await launchctl.bootout(service: collectorService)
+        let appInstaller = AppBundleInstaller(paths: paths)
+        let launchAgentInstaller = LaunchAgentInstaller(paths: paths)
+        let previousApp = try appInstaller.captureGeneration()
+        let previousAgents = try launchAgentInstaller.captureGeneration()
+        let previousMenuLoaded = await launchctl.isLoaded(service: menuService)
+        let previousCollectorLoaded = await launchctl.isLoaded(service: collectorService)
+        var launchMutationBegan = false
+        do {
+            _ = try appInstaller.install(executableURL: executableURL)
+            let artifacts = try launchAgentInstaller.installPlists()
+            launchMutationBegan = true
+            try await launchctl.enable(service: menuService)
+            try await launchctl.bootstrap(plistURL: artifacts.menuBarPlistURL)
+            let enabled = try SettingsStore(applicationSupportURL: paths.applicationSupportURL)
+                .load().automaticCollectionEnabled
+            if enabled {
+                try await launchctl.enable(service: collectorService)
+                try await launchctl.bootstrap(plistURL: artifacts.collectorPlistURL)
+            } else {
+                try await launchctl.disable(service: collectorService)
+                try await launchctl.bootout(service: collectorService)
+            }
+        } catch {
+            do {
+                if launchMutationBegan {
+                    try await launchctl.bootout(service: collectorService)
+                    try await launchctl.bootout(service: menuService)
+                    guard await !launchctl.isLoaded(service: collectorService),
+                          await !launchctl.isLoaded(service: menuService) else {
+                        throw LaunchctlError.transport
+                    }
+                }
+                try launchAgentInstaller.restore(previousAgents)
+                try appInstaller.restore(previousApp)
+                if previousMenuLoaded {
+                    try await launchctl.enable(service: menuService)
+                    try await launchctl.bootstrap(plistURL: paths.menuBarPlistURL)
+                }
+                if previousCollectorLoaded {
+                    try await launchctl.enable(service: collectorService)
+                    try await launchctl.bootstrap(plistURL: paths.collectorPlistURL)
+                }
+            } catch {
+                throw LaunchctlError.transport
+            }
+            throw error
         }
         print("菜单栏与自动采集已安装")
     }
@@ -309,8 +372,12 @@ struct CommandRuntime: Sendable {
     private func uninstall() async throws {
         let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
         let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
-        try? await launchctl.bootout(service: collectorService)
-        try? await launchctl.bootout(service: menuService)
+        try await launchctl.bootout(service: collectorService)
+        try await launchctl.bootout(service: menuService)
+        guard await !launchctl.isLoaded(service: collectorService),
+              await !launchctl.isLoaded(service: menuService) else {
+            throw LaunchctlError.transport
+        }
         try LaunchAgentInstaller(paths: paths).removeGeneratedArtifacts()
         print("程序已卸载；钥匙串、配置、开关与历史状态已保留")
     }
@@ -346,7 +413,7 @@ struct CommandRuntime: Sendable {
         let schedule = scheduleController()
         let actions = RuntimeMenuBarActions(
             schedule: schedule,
-            executableURL: executableURL,
+            executableURL: menuBarWorkerExecutableURL,
             supervisor: supervisor
         )
         let statusReader = SnapshotMenuBarStatusReader(
@@ -369,6 +436,8 @@ struct CommandRuntime: Sendable {
             }
         }
     }
+
+    var menuBarWorkerExecutableURL: URL { paths.stableExecutableURL }
 
     private func scheduleController() -> CollectionScheduleController {
         CollectionScheduleController(
@@ -435,7 +504,11 @@ struct CommandRuntime: Sendable {
         defer { free(resolvedPointer) }
         let bytes = UnsafeRawPointer(resolvedPointer).assumingMemoryBound(to: UInt8.self)
         let resolved = URL(fileURLWithPath: String(decodingCString: bytes, as: UTF8.self))
-        guard resolved.path.hasPrefix("/"), access(resolved.path, X_OK) == 0 else {
+        var status = stat()
+        guard resolved.path.hasPrefix("/"),
+              lstat(resolved.path, &status) == 0,
+              status.st_mode & S_IFMT == S_IFREG,
+              access(resolved.path, R_OK | X_OK) == 0 else {
             throw CLIError.setupPreflight("codex_not_executable")
         }
         return resolved
@@ -466,11 +539,233 @@ struct CommandRuntime: Sendable {
     }
 }
 
-private struct SetupValues {
+struct SetupValues: Equatable, Sendable {
     let openCodeKey: String
     let confirmedOpenCodeKey: String
     let slateURL: String
     let confirmedSlateURL: String
+}
+
+enum SetupSecretState: Equatable, Sendable {
+    case absent
+    case value(String)
+}
+
+struct SetupGeneration: Equatable, Sendable {
+    let openCodeKey: SetupSecretState
+    let slateURL: SetupSecretState
+    let configuration: Data?
+}
+
+protocol SetupPersisting: Sendable {
+    func commit(
+        configuration: CollectorConfiguration,
+        openCodeKey: String,
+        slateURL: String
+    ) throws
+}
+
+protocol SetupMutationBacking: Sendable {
+    func readSecret(service: String, account: String) throws -> SetupSecretState
+    func writeSecret(_ value: String, service: String, account: String) throws
+    func deleteSecret(service: String, account: String) throws
+    func readConfiguration() throws -> Data?
+    func writeConfiguration(_ data: Data) throws
+    func deleteConfiguration() throws
+}
+
+struct TransactionalSetupPersistence: SetupPersisting, Sendable {
+    let backend: any SetupMutationBacking
+
+    func commit(
+        configuration: CollectorConfiguration,
+        openCodeKey: String,
+        slateURL: String
+    ) throws {
+        let previous = try SetupGeneration(
+            openCodeKey: backend.readSecret(
+                service: configuration.keychainService,
+                account: configuration.openCodeKeyAccount
+            ),
+            slateURL: backend.readSecret(
+                service: configuration.keychainService,
+                account: configuration.slateURLAccount
+            ),
+            configuration: backend.readConfiguration()
+        )
+        do {
+            try backend.writeSecret(
+                openCodeKey,
+                service: configuration.keychainService,
+                account: configuration.openCodeKeyAccount
+            )
+            try backend.writeSecret(
+                slateURL,
+                service: configuration.keychainService,
+                account: configuration.slateURLAccount
+            )
+            try backend.writeConfiguration(JSONEncoder().encode(configuration))
+        } catch {
+            do { try restore(previous, configuration: configuration) }
+            catch { throw CLIError.configuration }
+            throw error
+        }
+    }
+
+    private func restore(
+        _ generation: SetupGeneration,
+        configuration: CollectorConfiguration
+    ) throws {
+        try restore(
+            generation.openCodeKey,
+            service: configuration.keychainService,
+            account: configuration.openCodeKeyAccount
+        )
+        try restore(
+            generation.slateURL,
+            service: configuration.keychainService,
+            account: configuration.slateURLAccount
+        )
+        if let data = generation.configuration {
+            try backend.writeConfiguration(data)
+        } else {
+            try backend.deleteConfiguration()
+        }
+    }
+
+    private func restore(_ state: SetupSecretState, service: String, account: String) throws {
+        switch state {
+        case .absent:
+            try backend.deleteSecret(service: service, account: account)
+        case let .value(value):
+            try backend.writeSecret(value, service: service, account: account)
+        }
+    }
+}
+
+struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
+    let configurationStore: ConfigurationStore
+
+    init(applicationSupportURL: URL) {
+        configurationStore = ConfigurationStore(applicationSupportURL: applicationSupportURL)
+    }
+
+    func readSecret(service: String, account: String) throws -> SetupSecretState {
+        var result: CFTypeRef?
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne,
+        ]
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound { return .absent }
+        guard status == errSecSuccess,
+              let data = result as? Data,
+              let value = String(data: data, encoding: .utf8) else {
+            throw KeychainError(status: status == errSecSuccess ? errSecDecode : status)
+        }
+        return .value(value)
+    }
+
+    func writeSecret(_ value: String, service: String, account: String) throws {
+        try KeychainStore(service: service).write(value, account: account)
+    }
+
+    func deleteSecret(service: String, account: String) throws {
+        let query: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw KeychainError(status: status)
+        }
+    }
+
+    func readConfiguration() throws -> Data? {
+        let url = configurationStore.configurationURL
+        let descriptor = open(url.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
+        if descriptor < 0, errno == ENOENT { return nil }
+        guard descriptor >= 0 else { throw CLIError.configuration }
+        defer { _ = close(descriptor) }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0,
+              status.st_mode & S_IFMT == S_IFREG,
+              status.st_uid == getuid(),
+              status.st_size >= 0,
+              status.st_size <= 64 * 1_024 else {
+            throw CLIError.configuration
+        }
+        var data = Data(count: Int(status.st_size))
+        let count = data.withUnsafeMutableBytes { bytes in
+            guard let base = bytes.baseAddress else { return 0 }
+            return Darwin.read(descriptor, base, bytes.count)
+        }
+        guard count == data.count else { throw CLIError.configuration }
+        return data
+    }
+
+    func writeConfiguration(_ data: Data) throws {
+        let url = configurationStore.configurationURL
+        let directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(
+            at: directory, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        var existing = stat()
+        if lstat(url.path, &existing) == 0 {
+            guard existing.st_mode & S_IFMT == S_IFREG,
+                  existing.st_uid == getuid() else {
+                throw CLIError.configuration
+            }
+        } else if errno != ENOENT {
+            throw CLIError.configuration
+        }
+        let temporary = directory.appendingPathComponent(".setup-\(UUID().uuidString).tmp")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        do {
+            try data.write(to: temporary, options: .withoutOverwriting)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o600], ofItemAtPath: temporary.path
+            )
+            if lstat(url.path, &existing) == 0 {
+                _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
+            } else {
+                try FileManager.default.moveItem(at: temporary, to: url)
+            }
+        } catch {
+            throw CLIError.configuration
+        }
+    }
+
+    func deleteConfiguration() throws {
+        let url = configurationStore.configurationURL
+        var status = stat()
+        guard lstat(url.path, &status) == 0 else {
+            if errno == ENOENT { return }
+            throw CLIError.configuration
+        }
+        guard status.st_mode & S_IFMT == S_IFREG, status.st_uid == getuid() else {
+            throw CLIError.configuration
+        }
+        do { try FileManager.default.removeItem(at: url) }
+        catch { throw CLIError.configuration }
+    }
+}
+
+private nonisolated(unsafe) var setupTerminalDescriptor: Int32 = -1
+private nonisolated(unsafe) var setupTerminalOriginalState = termios()
+
+@_cdecl("slateQuotaRestoreTerminalAndReraise")
+private func restoreSetupTerminalAndReraise(_ signalNumber: Int32) {
+    if setupTerminalDescriptor >= 0 {
+        _ = tcsetattr(setupTerminalDescriptor, TCSANOW, &setupTerminalOriginalState)
+    }
+    _ = Darwin.signal(signalNumber, SIG_DFL)
+    _ = Darwin.kill(getpid(), signalNumber)
 }
 
 private struct SecretTerminalReader {
@@ -478,13 +773,35 @@ private struct SecretTerminalReader {
         guard isatty(STDIN_FILENO) == 1 else { throw CLIError.setupInput }
         var original = termios()
         guard tcgetattr(STDIN_FILENO, &original) == 0 else { throw CLIError.setupInput }
+        setupTerminalDescriptor = STDIN_FILENO
+        setupTerminalOriginalState = original
+        let previousInterrupt = Darwin.signal(SIGINT, restoreSetupTerminalAndReraise)
+        let previousTerminate = Darwin.signal(SIGTERM, restoreSetupTerminalAndReraise)
+        let previousHangup = Darwin.signal(SIGHUP, restoreSetupTerminalAndReraise)
+        guard unsafeBitCast(previousInterrupt, to: Int.self) != -1,
+              unsafeBitCast(previousTerminate, to: Int.self) != -1,
+              unsafeBitCast(previousHangup, to: Int.self) != -1 else {
+            _ = Darwin.signal(SIGINT, previousInterrupt)
+            _ = Darwin.signal(SIGTERM, previousTerminate)
+            _ = Darwin.signal(SIGHUP, previousHangup)
+            setupTerminalDescriptor = -1
+            throw CLIError.setupInput
+        }
         var hidden = original
         hidden.c_lflag &= ~tcflag_t(ECHO)
         guard tcsetattr(STDIN_FILENO, TCSAFLUSH, &hidden) == 0 else {
+            _ = Darwin.signal(SIGINT, previousInterrupt)
+            _ = Darwin.signal(SIGTERM, previousTerminate)
+            _ = Darwin.signal(SIGHUP, previousHangup)
+            setupTerminalDescriptor = -1
             throw CLIError.setupInput
         }
         defer {
             _ = tcsetattr(STDIN_FILENO, TCSAFLUSH, &original)
+            _ = Darwin.signal(SIGINT, previousInterrupt)
+            _ = Darwin.signal(SIGTERM, previousTerminate)
+            _ = Darwin.signal(SIGHUP, previousHangup)
+            setupTerminalDescriptor = -1
             print("")
         }
         return SetupValues(
@@ -510,22 +827,84 @@ private struct FixedSnapshot: SnapshotPersisting, Sendable {
     func saveSnapshot(_: CollectorSnapshot) throws {}
 }
 
-private struct RuntimeMenuBarActions: MenuBarActionHandling, Sendable {
-    let schedule: any CollectionScheduleControlling
-    let executableURL: URL
-    let supervisor: CollectorProcessSupervisor
+final class RuntimeMenuBarActions: MenuBarActionHandling, @unchecked Sendable {
+    typealias CollectOperation = @Sendable () async throws -> Void
+    typealias MainActorOperation = @MainActor @Sendable () -> Void
+
+    private let schedule: any CollectionScheduleControlling
+    private let collectOperation: CollectOperation
+    private let quitOperation: MainActorOperation
+    private let busyFeedback: MainActorOperation
+    private let stateLock = NSLock()
+    private var collectionIsActive = false
+
+    init(
+        schedule: any CollectionScheduleControlling,
+        executableURL: URL,
+        supervisor: CollectorProcessSupervisor,
+        quitOperation: @escaping MainActorOperation = { NSApplication.shared.terminate(nil) },
+        busyFeedback: @escaping MainActorOperation = { NSSound.beep() }
+    ) {
+        self.schedule = schedule
+        self.quitOperation = quitOperation
+        self.busyFeedback = busyFeedback
+        collectOperation = {
+            let result = try await supervisor.run(
+                executableURL: executableURL,
+                arguments: ["collect", "--worker", CollectorWorkerMode.pushOnce.rawValue],
+                inheritedWorkerMode: CollectorWorkerMode.pushOnce.rawValue
+            )
+            switch result.outcome {
+            case .exited(code: 0): return
+            case .timedOut: throw CLIError.workerTimeout
+            case .exited, .signaled: throw CLIError.workerFailure
+            }
+        }
+    }
+
+    init(
+        schedule: any CollectionScheduleControlling,
+        collectOperation: @escaping CollectOperation,
+        quitOperation: @escaping MainActorOperation,
+        busyFeedback: @escaping MainActorOperation = {}
+    ) {
+        self.schedule = schedule
+        self.collectOperation = collectOperation
+        self.quitOperation = quitOperation
+        self.busyFeedback = busyFeedback
+    }
 
     func pause() async throws { try await schedule.pause() }
     func resume() async throws { try await schedule.resume() }
+
     func collectOnce() async throws {
-        let result = try await supervisor.run(
-            executableURL: executableURL,
-            arguments: ["collect", "--worker", CollectorWorkerMode.pushOnce.rawValue]
-        )
-        switch result.outcome {
-        case .exited(code: 0): return
-        case .timedOut: throw CLIError.workerTimeout
-        case .exited, .signaled: throw CLIError.workerFailure
+        guard beginCollection() else { throw CLIError.workerFailure }
+        defer { endCollection() }
+        try await collectOperation()
+    }
+
+    @MainActor func quitMenuBar() {
+        stateLock.lock()
+        let isBusy = collectionIsActive
+        stateLock.unlock()
+        if isBusy {
+            busyFeedback()
+        } else {
+            quitOperation()
         }
+    }
+
+    private func beginCollection() -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard !collectionIsActive else { return false }
+        collectionIsActive = true
+        return true
+    }
+
+    private func endCollection() {
+        stateLock.lock()
+        collectionIsActive = false
+        stateLock.unlock()
     }
 }
