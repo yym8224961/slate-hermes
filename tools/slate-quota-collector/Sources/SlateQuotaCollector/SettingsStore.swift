@@ -45,6 +45,11 @@ struct SettingsStore: SettingsPersisting, Sendable {
         _ destinationName: String
     ) -> Int32
     typealias DirectorySync = @Sendable (_ directoryDescriptor: Int32) -> Int32
+    typealias SettingsOpen = @Sendable (
+        _ directoryDescriptor: Int32,
+        _ name: String,
+        _ flags: Int32
+    ) -> Int32
 
     private static let settingsName = "settings.json"
     private static let maximumSettingsBytes = 4_096
@@ -52,6 +57,7 @@ struct SettingsStore: SettingsPersisting, Sendable {
     let applicationSupportURL: URL
     private let rename: Rename
     private let syncDirectory: DirectorySync
+    private let openSettings: SettingsOpen
 
     init(
         applicationSupportURL: URL = FileManager.default.urls(
@@ -61,11 +67,13 @@ struct SettingsStore: SettingsPersisting, Sendable {
         rename: @escaping Rename = { directory, source, destination in
             renameat(directory, source, directory, destination)
         },
-        syncDirectory: @escaping DirectorySync = { fsync($0) }
+        syncDirectory: @escaping DirectorySync = { fsync($0) },
+        openSettings: @escaping SettingsOpen = { openat($0, $1, $2) }
     ) {
         self.applicationSupportURL = applicationSupportURL
         self.rename = rename
         self.syncDirectory = syncDirectory
+        self.openSettings = openSettings
     }
 
     var directoryURL: URL {
@@ -80,10 +88,10 @@ struct SettingsStore: SettingsPersisting, Sendable {
         let directory = try openDirectory()
         defer { _ = close(directory) }
 
-        let descriptor = openat(
+        let descriptor = openSettings(
             directory,
             Self.settingsName,
-            O_RDONLY | O_NOFOLLOW | O_CLOEXEC
+            O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
         )
         guard descriptor >= 0 else {
             if errno == ENOENT { return .enabled }
@@ -91,7 +99,7 @@ struct SettingsStore: SettingsPersisting, Sendable {
         }
         defer { _ = close(descriptor) }
 
-        try validateOwnerOnlyRegularFile(descriptor)
+        try validateOwnerOnlyRegularFile(descriptor, nonRegularError: .ioFailure)
         return try decodeStrict(readBounded(from: descriptor))
     }
 
@@ -173,7 +181,7 @@ struct SettingsStore: SettingsPersisting, Sendable {
         guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
             throw SettingsStoreError.ioFailure
         }
-        try validateOwnerOnlyRegularFile(descriptor)
+        try validateOwnerOnlyRegularFile(descriptor, nonRegularError: .unsafePath)
         guard writeAll(data, to: descriptor), fsync(descriptor) == 0 else {
             throw SettingsStoreError.ioFailure
         }
@@ -204,11 +212,14 @@ struct SettingsStore: SettingsPersisting, Sendable {
         }
     }
 
-    private func validateOwnerOnlyRegularFile(_ descriptor: Int32) throws {
+    private func validateOwnerOnlyRegularFile(
+        _ descriptor: Int32,
+        nonRegularError: SettingsStoreError
+    ) throws {
         var status = stat()
         guard fstat(descriptor, &status) == 0 else { throw SettingsStoreError.ioFailure }
-        guard status.st_mode & S_IFMT == S_IFREG,
-              status.st_uid == getuid(),
+        guard status.st_mode & S_IFMT == S_IFREG else { throw nonRegularError }
+        guard status.st_uid == getuid(),
               status.st_mode & 0o777 == 0o600,
               status.st_nlink == 1 else {
             throw SettingsStoreError.unsafePath
@@ -264,13 +275,30 @@ enum SecureApplicationSupportDirectory {
     }
 
     static func open(applicationSupportURL: URL, createIfMissing: Bool) throws -> Int32 {
-        let directoryURL = url(in: applicationSupportURL)
-        if createIfMissing, mkdir(directoryURL.path, S_IRWXU) != 0, errno != EEXIST {
+        let rootDescriptor = Darwin.open(
+            applicationSupportURL.path,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
+        )
+        guard rootDescriptor >= 0 else {
+            throw errno == ELOOP || errno == ENOTDIR ? Error.unsafePath : Error.ioFailure
+        }
+        defer { _ = close(rootDescriptor) }
+
+        var rootStatus = stat()
+        guard fstat(rootDescriptor, &rootStatus) == 0 else { throw Error.ioFailure }
+        guard rootStatus.st_mode & S_IFMT == S_IFDIR,
+              rootStatus.st_uid == geteuid(),
+              rootStatus.st_nlink >= 1 else {
+            throw Error.unsafePath
+        }
+
+        if createIfMissing, mkdirat(rootDescriptor, directoryName, S_IRWXU) != 0, errno != EEXIST {
             throw Error.ioFailure
         }
 
-        let descriptor = Darwin.open(
-            directoryURL.path,
+        let descriptor = openat(
+            rootDescriptor,
+            directoryName,
             O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC
         )
         guard descriptor >= 0 else {

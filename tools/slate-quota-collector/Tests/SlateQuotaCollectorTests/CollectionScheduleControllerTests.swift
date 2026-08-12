@@ -121,6 +121,54 @@ struct CollectionScheduleControllerTests {
         #expect(throws: SettingsStoreError.self) { try store.load() }
     }
 
+    @Test("owner-only FIFO is opened nonblocking and rejected as settings IO")
+    func settingsFIFOIsRejectedWithoutBlocking() throws {
+        let root = try TemporaryDirectory()
+        let observedFlags = LockedInteger()
+        let store = SettingsStore(applicationSupportURL: root.url, openSettings: { directory, name, flags in
+            observedFlags.value = Int(flags)
+            return openat(directory, name, flags)
+        })
+        try store.save(.enabled)
+        try FileManager.default.removeItem(at: store.settingsURL)
+        #expect(mkfifo(store.settingsURL.path, S_IRUSR | S_IWUSR) == 0)
+        let writerGuard = Darwin.open(
+            store.settingsURL.path,
+            O_RDWR | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
+        )
+        #expect(writerGuard >= 0)
+        defer { _ = close(writerGuard) }
+
+        do {
+            _ = try store.load()
+            Issue.record("Expected FIFO settings entry to fail closed")
+        } catch let error as SettingsStoreError {
+            #expect(error == .ioFailure)
+        }
+
+        #expect(observedFlags.value & Int(O_NONBLOCK) == Int(O_NONBLOCK))
+    }
+
+    @Test("application support root symlink is rejected without touching its target")
+    func settingsRejectApplicationSupportRootSymlink() throws {
+        let root = try TemporaryDirectory()
+        let target = root.url.appendingPathComponent("real-root", isDirectory: true)
+        let rootLink = root.url.appendingPathComponent("application-support-link", isDirectory: true)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: target.path)
+        try FileManager.default.createSymbolicLink(at: rootLink, withDestinationURL: target)
+        let store = SettingsStore(applicationSupportURL: rootLink)
+
+        #expect(throws: SettingsStoreError.unsafePath) {
+            try store.save(.enabled)
+        }
+
+        #expect(try fileMode(target) & 0o777 == 0o755)
+        #expect(FileManager.default.fileExists(
+            atPath: target.appendingPathComponent("SlateQuotaCollector", isDirectory: true).path
+        ) == false)
+    }
+
     @Test("settings publish fsyncs the validated containing directory")
     func settingsPublishSyncsDirectory() throws {
         let root = try TemporaryDirectory()
