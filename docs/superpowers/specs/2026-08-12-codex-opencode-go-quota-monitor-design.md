@@ -1,7 +1,7 @@
 # Codex × OpenCode Go 额度监控设计
 
 日期：2026-08-12  
-状态：设计已确认，等待用户审阅书面规格  
+状态：用户已批准，进入实施计划  
 目标设备：ZecTrix Note4，400 × 300，1bpp  
 目标部署：Slate 运行在 fnOS NAS；额度采集器运行在当前 Mac
 
@@ -354,6 +354,14 @@ Slate 推送 URL 同时允许公开 GET 当前 Dashboard 数据，并把 content
 ```
 
 权限为当前用户可读写。文件只包含上一份已经归一化、允许显示在墨水屏和公开 Dashboard GET 中的 payload。禁止缓存原始 Codex/OpenCode 响应。
+
+### 7.4 跨进程运行状态
+
+```text
+~/Library/Application Support/SlateQuotaCollector/runtime-state.json
+```
+
+launchd 每 5 分钟启动的是新进程，因此“连续第二次双数据源失败”不能只依赖进程内内存。该文件只保存 provider 失败计数、同时失败计数、最近成功/推送时间和脱敏错误码；不保存 Key、Slate URL、contentId、Authorization、上游原始响应或原始错误正文。它与 `last-good.json` 分开并使用当前用户可读写权限。
 
 ## 8. 调度、并发与超时
 
