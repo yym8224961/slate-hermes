@@ -21,14 +21,23 @@ enum RunLock {
 
     struct TestingHooks {
         var failCreateAfterOpen = false
+        var failInitialCreateFstat = false
+        var failAfterQuarantine: RemovalReason?
         var beforeQuarantine: ((RemovalReason, URL) -> Void)?
+        var afterQuarantine: ((RemovalReason, URL) -> Void)?
 
         init(
             failCreateAfterOpen: Bool = false,
-            beforeQuarantine: ((RemovalReason, URL) -> Void)? = nil
+            failInitialCreateFstat: Bool = false,
+            failAfterQuarantine: RemovalReason? = nil,
+            beforeQuarantine: ((RemovalReason, URL) -> Void)? = nil,
+            afterQuarantine: ((RemovalReason, URL) -> Void)? = nil
         ) {
             self.failCreateAfterOpen = failCreateAfterOpen
+            self.failInitialCreateFstat = failInitialCreateFstat
+            self.failAfterQuarantine = failAfterQuarantine
             self.beforeQuarantine = beforeQuarantine
+            self.afterQuarantine = afterQuarantine
         }
     }
 
@@ -106,11 +115,16 @@ enum RunLock {
     private struct InspectedLock {
         let record: Record?
         let identity: FileIdentity
+        let bytes: Data
     }
 
     private static let directoryName = "SlateQuotaCollector"
     private static let lockName = "run.lock"
     private static let maximumRecordBytes = 4_096
+    private static let maximumArtifactBytes = 64 * 1_024
+    // A fixed RENAME_EXCL target bounds current-version crash residue to one file.
+    private static let quarantineName = ".run.lock.recovery"
+    private static let legacyQuarantinePrefix = ".run.lock.quarantine-"
 
     static func directoryURL(in applicationSupportURL: URL) -> URL {
         applicationSupportURL.appendingPathComponent(directoryName, isDirectory: true)
@@ -155,8 +169,10 @@ enum RunLock {
                     testingHooks.beforeQuarantine?(.staleRecovery, url(in: applicationSupportURL))
                     let removed = try quarantineAndRemove(
                         in: directory.descriptor,
-                        expectedIdentity: inspected.identity,
-                        expectedRecord: inspected.record
+                        expected: inspected,
+                        reason: .staleRecovery,
+                        applicationSupportURL: applicationSupportURL,
+                        testingHooks: testingHooks
                     )
                     guard removed else { throw RunLockError.staleRecoveryFailed }
                 }
@@ -221,17 +237,21 @@ enum RunLock {
         }
         var descriptorIsOpen = true
 
-        var status = stat()
-        guard fstat(descriptor, &status) == 0,
-              status.st_mode & S_IFMT == S_IFREG,
-              status.st_uid == geteuid(),
-              status.st_nlink == 1 else {
-            _ = close(descriptor)
-            throw RunLockError.unsafeLockFile
-        }
-        let identity = FileIdentity(status)
+        var createdIdentity: FileIdentity?
         do {
-            if testingHooks.failCreateAfterOpen { throw RunLockError.ioFailure }
+            var status = stat()
+            if testingHooks.failInitialCreateFstat { throw RunLockError.ioFailure }
+            guard fstat(descriptor, &status) == 0 else { throw RunLockError.ioFailure }
+            let identity = FileIdentity(status)
+            createdIdentity = identity
+            guard status.st_mode & S_IFMT == S_IFREG,
+                  status.st_uid == geteuid(),
+                  status.st_nlink == 1 else {
+                throw RunLockError.unsafeLockFile
+            }
+            if testingHooks.failCreateAfterOpen {
+                throw RunLockError.ioFailure
+            }
             guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
                 throw RunLockError.ioFailure
             }
@@ -245,10 +265,21 @@ enum RunLock {
         } catch {
             testingHooks.beforeQuarantine?(.createCleanup, url(in: applicationSupportURL))
             let cleanupResult = Result {
-                try quarantineAndRemove(
+                if createdIdentity == nil {
+                    var retryStatus = stat()
+                    if fstat(descriptor, &retryStatus) == 0 {
+                        createdIdentity = FileIdentity(retryStatus)
+                    }
+                }
+                guard let createdIdentity else { return }
+                let current = try inspectLock(in: directoryDescriptor)
+                guard current.identity == createdIdentity else { return }
+                _ = try quarantineAndRemove(
                     in: directoryDescriptor,
-                    expectedIdentity: identity,
-                    expectedRecord: nil
+                    expected: current,
+                    reason: .createCleanup,
+                    applicationSupportURL: applicationSupportURL,
+                    testingHooks: testingHooks
                 )
             }
             if descriptorIsOpen { _ = close(descriptor) }
@@ -278,8 +309,10 @@ enum RunLock {
             testingHooks.beforeQuarantine?(.release, url(in: applicationSupportURL))
             _ = try quarantineAndRemove(
                 in: directory.descriptor,
-                expectedIdentity: fileIdentity,
-                expectedRecord: record
+                expected: current,
+                reason: .release,
+                applicationSupportURL: applicationSupportURL,
+                testingHooks: testingHooks
             )
         }
     }
@@ -307,21 +340,28 @@ enum RunLock {
               status.st_nlink == 1 else {
             throw RunLockError.unsafeLockFile
         }
-        guard status.st_size >= 0, status.st_size <= maximumRecordBytes else {
-            return InspectedLock(record: nil, identity: FileIdentity(status))
+        guard status.st_size >= 0, status.st_size <= maximumArtifactBytes else {
+            throw RunLockError.unsafeLockFile
         }
 
-        let data = try readBounded(from: descriptor)
-        let record = try? decode(data)
-        return InspectedLock(record: record, identity: FileIdentity(status))
+        let data = try readBounded(from: descriptor, maximumBytes: maximumArtifactBytes)
+        var finalStatus = stat()
+        guard fstat(descriptor, &finalStatus) == 0,
+              FileIdentity(finalStatus) == FileIdentity(status),
+              finalStatus.st_size == status.st_size else {
+            throw RunLockError.ioFailure
+        }
+        let record = data.count <= maximumRecordBytes ? try? decode(data) : nil
+        return InspectedLock(record: record, identity: FileIdentity(status), bytes: data)
     }
 
     private static func quarantineAndRemove(
         in directoryDescriptor: Int32,
-        expectedIdentity: FileIdentity,
-        expectedRecord: Record?
+        expected: InspectedLock,
+        reason: RemovalReason,
+        applicationSupportURL: URL,
+        testingHooks: TestingHooks
     ) throws -> Bool {
-        let quarantineName = ".run.lock.quarantine-\(UUID().uuidString)"
         guard renameatx_np(
             directoryDescriptor,
             lockName,
@@ -333,6 +373,10 @@ enum RunLock {
             throw RunLockError.ioFailure
         }
 
+        let quarantineURL = directoryURL(in: applicationSupportURL).appendingPathComponent(quarantineName)
+        testingHooks.afterQuarantine?(reason, quarantineURL)
+        if testingHooks.failAfterQuarantine == reason { throw RunLockError.ioFailure }
+
         let isolated: InspectedLock
         do {
             isolated = try inspectLock(in: directoryDescriptor, name: quarantineName)
@@ -341,8 +385,7 @@ enum RunLock {
             throw error
         }
 
-        let recordMatches = expectedRecord.map { isolated.record == $0 } ?? true
-        guard isolated.identity == expectedIdentity, recordMatches else {
+        guard isolated.identity == expected.identity, isolated.bytes == expected.bytes else {
             try restoreQuarantine(quarantineName, in: directoryDescriptor)
             return false
         }
@@ -365,7 +408,7 @@ enum RunLock {
             lockName,
             UInt32(RENAME_EXCL)
         ) == 0 else {
-            if errno == EEXIST { return }
+            if errno == EEXIST { throw RunLockError.staleRecoveryFailed }
             throw RunLockError.ioFailure
         }
     }
@@ -384,6 +427,58 @@ enum RunLock {
         return FileIdentity(status)
     }
 
+    private static func recoverControlledQuarantine(in directoryDescriptor: Int32) throws {
+        let artifacts = try controlledQuarantineNames(in: directoryDescriptor)
+        guard artifacts.count <= 1 else { throw RunLockError.staleRecoveryFailed }
+        guard let artifactName = artifacts.first else { return }
+
+        _ = try inspectLock(in: directoryDescriptor, name: artifactName)
+        var activeStatus = stat()
+        if fstatat(directoryDescriptor, lockName, &activeStatus, AT_SYMLINK_NOFOLLOW) == 0 {
+            // The public successor always wins; recovery never mutates run.lock.
+            guard unlinkat(directoryDescriptor, artifactName, 0) == 0 else {
+                throw RunLockError.ioFailure
+            }
+            return
+        }
+        guard errno == ENOENT else { throw RunLockError.ioFailure }
+        guard renameatx_np(
+            directoryDescriptor,
+            artifactName,
+            directoryDescriptor,
+            lockName,
+            UInt32(RENAME_EXCL)
+        ) == 0 else {
+            throw RunLockError.ioFailure
+        }
+    }
+
+    private static func controlledQuarantineNames(in directoryDescriptor: Int32) throws -> [String] {
+        let duplicate = dup(directoryDescriptor)
+        guard duplicate >= 0 else { throw RunLockError.ioFailure }
+        guard let stream = fdopendir(duplicate) else {
+            _ = close(duplicate)
+            throw RunLockError.ioFailure
+        }
+        defer { _ = closedir(stream) }
+
+        var names: [String] = []
+        while let entry = readdir(stream) {
+            var rawName = entry.pointee.d_name
+            let name = withUnsafeBytes(of: &rawName) { bytes -> String in
+                String(cString: bytes.bindMemory(to: CChar.self).baseAddress!)
+            }
+            if name == quarantineName {
+                names.append(name)
+            } else if name.hasPrefix(legacyQuarantinePrefix) {
+                let suffix = String(name.dropFirst(legacyQuarantinePrefix.count))
+                guard UUID(uuidString: suffix) != nil else { throw RunLockError.unsafeLockFile }
+                names.append(name)
+            }
+        }
+        return names
+    }
+
     private static func withLockedDirectory<T>(
         at applicationSupportURL: URL,
         _ operation: (OpenedDirectory) throws -> T
@@ -392,6 +487,7 @@ enum RunLock {
         defer { _ = close(directory.descriptor) }
         guard flock(directory.descriptor, LOCK_EX) == 0 else { throw RunLockError.ioFailure }
         defer { _ = flock(directory.descriptor, LOCK_UN) }
+        try recoverControlledQuarantine(in: directory.descriptor)
         return try operation(directory)
     }
 
@@ -467,11 +563,11 @@ enum RunLock {
         return record
     }
 
-    private static func readBounded(from descriptor: Int32) throws -> Data {
+    private static func readBounded(from descriptor: Int32, maximumBytes: Int) throws -> Data {
         var result = Data()
         var buffer = [UInt8](repeating: 0, count: 512)
-        while result.count <= maximumRecordBytes {
-            let count = Darwin.read(descriptor, &buffer, min(buffer.count, maximumRecordBytes + 1 - result.count))
+        while result.count <= maximumBytes {
+            let count = Darwin.read(descriptor, &buffer, min(buffer.count, maximumBytes + 1 - result.count))
             if count == 0 { return result }
             if count < 0 {
                 if errno == EINTR { continue }

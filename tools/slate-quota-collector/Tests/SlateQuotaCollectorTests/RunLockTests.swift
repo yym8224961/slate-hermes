@@ -154,6 +154,162 @@ struct RunLockTests {
         #expect(try quarantineNames(in: root.url).isEmpty)
     }
 
+    @Test func successorAtRunLockWinsWhenQuarantineRestoreWouldCollide() throws {
+        let root = try TemporaryDirectory()
+        let acquired = try RunLock.acquire(at: root.url, pid: 100, isProcessAlive: { _ in false })
+        let lease = try #require(acquired)
+        let successor = Data(#"{"pid":300,"started_at":"2050-01-01T00:00:00Z"}"#.utf8)
+        let hooks = RunLock.TestingHooks(afterQuarantine: { reason, quarantineURL in
+            guard reason == .release else { return }
+            let handle = try! FileHandle(forWritingTo: quarantineURL)
+            try! handle.truncate(atOffset: 0)
+            try! handle.write(contentsOf: Data("changed".utf8))
+            try! handle.close()
+            try! successor.write(to: RunLock.url(in: root.url), options: .withoutOverwriting)
+        })
+        lease.setTestingHooks(hooks)
+
+        #expect(throws: RunLockError.self) { try lease.release() }
+        #expect(try RunLock.readPID(at: root.url) == 300)
+        #expect(try quarantineNames(in: root.url).isEmpty)
+    }
+
+    @Test func nextAcquireRecoversPostRenameCrashArtifact() throws {
+        let root = try TemporaryDirectory()
+        try RunLock.writeFixture(at: root.url, pid: 100)
+        let hooks = RunLock.TestingHooks(failAfterQuarantine: .staleRecovery)
+
+        #expect(throws: RunLockError.self) {
+            try RunLock.acquire(
+                at: root.url,
+                pid: 200,
+                isProcessAlive: { _ in false },
+                testingHooks: hooks
+            )
+        }
+        #expect(FileManager.default.fileExists(atPath: RunLock.url(in: root.url).path) == false)
+        #expect(try quarantineNames(in: root.url).count == 1)
+
+        let acquired = try RunLock.acquire(at: root.url, pid: 300, isProcessAlive: { _ in false })
+        let recovered = try #require(acquired)
+        #expect(try RunLock.readPID(at: root.url) == 300)
+        #expect(try quarantineNames(in: root.url).isEmpty)
+        try recovered.release()
+    }
+
+    @Test func successorSurvivesWhileNextAcquireCleansCrashArtifact() throws {
+        let root = try TemporaryDirectory()
+        try RunLock.writeFixture(at: root.url, pid: 100)
+        let hooks = RunLock.TestingHooks(failAfterQuarantine: .staleRecovery)
+
+        #expect(throws: RunLockError.self) {
+            try RunLock.acquire(
+                at: root.url,
+                pid: 200,
+                isProcessAlive: { _ in false },
+                testingHooks: hooks
+            )
+        }
+        try Data(#"{"pid":300,"started_at":"2050-01-01T00:00:00.000000000Z"}"#.utf8)
+            .write(to: RunLock.url(in: root.url), options: .withoutOverwriting)
+
+        let contender = try RunLock.acquire(at: root.url, pid: 400, isProcessAlive: { $0 == 300 })
+
+        #expect(contender == nil)
+        #expect(try RunLock.readPID(at: root.url) == 300)
+        #expect(try quarantineNames(in: root.url).isEmpty)
+    }
+
+    @Test func multipleControlledArtifactsFailClosedWithoutRemovingEither() throws {
+        let root = try TemporaryDirectory()
+        try RunLock.writeFixture(at: root.url, pid: 100)
+        let directory = RunLock.directoryURL(in: root.url)
+        let fixed = directory.appendingPathComponent(".run.lock.recovery")
+        let legacy = directory.appendingPathComponent(".run.lock.quarantine-00000000-0000-0000-0000-000000000001")
+        try FileManager.default.moveItem(at: RunLock.url(in: root.url), to: fixed)
+        try Data(#"{"pid":200,"started_at":"2050-01-01T00:00:00Z"}"#.utf8).write(to: legacy)
+
+        #expect(throws: RunLockError.self) {
+            try RunLock.acquire(at: root.url, pid: 300, isProcessAlive: { _ in false })
+        }
+        #expect(FileManager.default.fileExists(atPath: fixed.path))
+        #expect(FileManager.default.fileExists(atPath: legacy.path))
+    }
+
+    @Test func abnormalControlledArtifactFailsClosedAndIsPreserved() throws {
+        let root = try TemporaryDirectory()
+        try RunLock.writeFixture(at: root.url, pid: 100)
+        let recovery = RunLock.directoryURL(in: root.url).appendingPathComponent(".run.lock.recovery")
+        try FileManager.default.removeItem(at: RunLock.url(in: root.url))
+        try FileManager.default.createDirectory(at: recovery, withIntermediateDirectories: false)
+
+        #expect(throws: RunLockError.self) {
+            try RunLock.acquire(at: root.url, pid: 300, isProcessAlive: { _ in false })
+        }
+        var isDirectory: ObjCBool = false
+        #expect(FileManager.default.fileExists(atPath: recovery.path, isDirectory: &isDirectory))
+        #expect(isDirectory.boolValue)
+    }
+
+    @Test func malformedLegacyArtifactNameFailsClosed() throws {
+        let root = try TemporaryDirectory()
+        try RunLock.writeFixture(at: root.url, pid: 100)
+        let malformed = RunLock.directoryURL(in: root.url)
+            .appendingPathComponent(".run.lock.quarantine-not-a-uuid")
+        let original = try Data(contentsOf: RunLock.url(in: root.url))
+        try Data("reserved".utf8).write(to: malformed)
+
+        #expect(throws: RunLockError.self) {
+            try RunLock.acquire(at: root.url, pid: 300, isProcessAlive: { _ in false })
+        }
+        #expect(try Data(contentsOf: RunLock.url(in: root.url)) == original)
+        #expect(FileManager.default.fileExists(atPath: malformed.path))
+    }
+
+    @Test func transientCreateFstatFailureUsesBoundCleanup() throws {
+        let root = try TemporaryDirectory()
+        let hooks = RunLock.TestingHooks(failInitialCreateFstat: true)
+
+        #expect(throws: RunLockError.self) {
+            try RunLock.acquire(
+                at: root.url,
+                pid: 200,
+                isProcessAlive: { _ in false },
+                testingHooks: hooks
+            )
+        }
+
+        #expect(FileManager.default.fileExists(atPath: RunLock.url(in: root.url).path) == false)
+        #expect(try quarantineNames(in: root.url).isEmpty)
+    }
+
+    @Test func sameInodeRewriteAfterInspectionIsNotRemoved() throws {
+        let root = try TemporaryDirectory()
+        try RunLock.writeFixture(at: root.url, pid: 100)
+        let originalInode = try inode(of: RunLock.url(in: root.url))
+        let replacement = Data(#"{"pid":300,"started_at":"2050-01-01T00:00:00Z"}"#.utf8)
+        let hooks = RunLock.TestingHooks(beforeQuarantine: { reason, lockURL in
+            guard reason == .staleRecovery else { return }
+            let handle = try! FileHandle(forWritingTo: lockURL)
+            try! handle.truncate(atOffset: 0)
+            try! handle.write(contentsOf: replacement)
+            try! handle.close()
+            #expect(try! self.inode(of: lockURL) == originalInode)
+        })
+
+        #expect(throws: RunLockError.self) {
+            try RunLock.acquire(
+                at: root.url,
+                pid: 200,
+                isProcessAlive: { _ in false },
+                testingHooks: hooks
+            )
+        }
+
+        #expect(try RunLock.readPID(at: root.url) == 300)
+        #expect(try quarantineNames(in: root.url).isEmpty)
+    }
+
     @Test func oldLeaseDoesNotDeleteAReplacementOwnedByAnotherPID() throws {
         let root = try TemporaryDirectory()
         let acquired = try RunLock.acquire(at: root.url, pid: 100, isProcessAlive: { _ in false })
@@ -327,7 +483,7 @@ struct RunLockTests {
 
     private func quarantineNames(in root: URL) throws -> [String] {
         try FileManager.default.contentsOfDirectory(atPath: RunLock.directoryURL(in: root).path)
-            .filter { $0.hasPrefix(".run.lock.quarantine-") }
+            .filter { $0 == ".run.lock.recovery" || $0.hasPrefix(".run.lock.quarantine-") }
     }
 
     private func childProcessRace(at root: URL, precreateStalePID: pid_t?) throws -> [String] {
