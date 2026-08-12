@@ -13,6 +13,25 @@ enum RunLockError: Error, Equatable, Sendable {
 enum RunLock {
     typealias ProcessLiveness = (pid_t) -> Bool
 
+    enum RemovalReason: Equatable, Sendable {
+        case release
+        case staleRecovery
+        case createCleanup
+    }
+
+    struct TestingHooks {
+        var failCreateAfterOpen = false
+        var beforeQuarantine: ((RemovalReason, URL) -> Void)?
+
+        init(
+            failCreateAfterOpen: Bool = false,
+            beforeQuarantine: ((RemovalReason, URL) -> Void)? = nil
+        ) {
+            self.failCreateAfterOpen = failCreateAfterOpen
+            self.beforeQuarantine = beforeQuarantine
+        }
+    }
+
     final class Lease: @unchecked Sendable {
         private let applicationSupportURL: URL
         private let record: Record
@@ -20,17 +39,24 @@ enum RunLock {
         private let directoryIdentity: FileIdentity
         private let stateLock = NSLock()
         private var released = false
+        private var testingHooks: TestingHooks
 
         fileprivate init(
             applicationSupportURL: URL,
             record: Record,
             fileIdentity: FileIdentity,
-            directoryIdentity: FileIdentity
+            directoryIdentity: FileIdentity,
+            testingHooks: TestingHooks
         ) {
             self.applicationSupportURL = applicationSupportURL
             self.record = record
             self.fileIdentity = fileIdentity
             self.directoryIdentity = directoryIdentity
+            self.testingHooks = testingHooks
+        }
+
+        func setTestingHooks(_ hooks: TestingHooks) {
+            stateLock.withLock { testingHooks = hooks }
         }
 
         func release() throws {
@@ -41,7 +67,8 @@ enum RunLock {
                 at: applicationSupportURL,
                 record: record,
                 fileIdentity: fileIdentity,
-                directoryIdentity: directoryIdentity
+                directoryIdentity: directoryIdentity,
+                testingHooks: testingHooks
             )
             released = true
         }
@@ -76,6 +103,11 @@ enum RunLock {
         let identity: FileIdentity
     }
 
+    private struct InspectedLock {
+        let record: Record?
+        let identity: FileIdentity
+    }
+
     private static let directoryName = "SlateQuotaCollector"
     private static let lockName = "run.lock"
     private static let maximumRecordBytes = 4_096
@@ -91,34 +123,42 @@ enum RunLock {
     static func acquire(
         at applicationSupportURL: URL,
         pid: pid_t,
-        isProcessAlive: ProcessLiveness
+        isProcessAlive: ProcessLiveness,
+        testingHooks: TestingHooks = .init()
     ) throws -> Lease? {
         guard pid > 0 else { throw RunLockError.invalidPID }
 
         return try withLockedDirectory(at: applicationSupportURL) { directory in
             for attempt in 0...1 {
                 let record = Record(pid: pid, startedAt: currentTimestamp())
-                switch try create(record, in: directory.descriptor) {
+                switch try create(
+                    record,
+                    in: directory.descriptor,
+                    applicationSupportURL: applicationSupportURL,
+                    testingHooks: testingHooks
+                ) {
                 case let .created(identity):
                     return Lease(
                         applicationSupportURL: applicationSupportURL,
                         record: record,
                         fileIdentity: identity,
-                        directoryIdentity: directory.identity
+                        directoryIdentity: directory.identity,
+                        testingHooks: testingHooks
                     )
                 case .alreadyExists:
-                    let owner: Record?
-                    do {
-                        owner = try readRecord(in: directory.descriptor).record
-                    } catch RunLockError.invalidRecord {
-                        owner = nil
-                    }
+                    let inspected = try inspectLock(in: directory.descriptor)
 
-                    if let owner, isProcessAlive(owner.pid) {
+                    if let owner = inspected.record, isProcessAlive(owner.pid) {
                         return nil
                     }
                     guard attempt == 0 else { throw RunLockError.staleRecoveryFailed }
-                    try removeStaleRegularLock(in: directory.descriptor)
+                    testingHooks.beforeQuarantine?(.staleRecovery, url(in: applicationSupportURL))
+                    let removed = try quarantineAndRemove(
+                        in: directory.descriptor,
+                        expectedIdentity: inspected.identity,
+                        expectedRecord: inspected.record
+                    )
+                    guard removed else { throw RunLockError.staleRecoveryFailed }
                 }
             }
             throw RunLockError.staleRecoveryFailed
@@ -131,7 +171,10 @@ enum RunLock {
 
     static func readPID(at applicationSupportURL: URL) throws -> pid_t {
         try withLockedDirectory(at: applicationSupportURL) { directory in
-            try readRecord(in: directory.descriptor).record.pid
+            guard let record = try inspectLock(in: directory.descriptor).record else {
+                throw RunLockError.invalidRecord
+            }
+            return record.pid
         }
     }
 
@@ -144,7 +187,12 @@ enum RunLock {
         let record = Record(pid: pid, startedAt: startedAt)
         guard timestampIsValid(startedAt) else { throw RunLockError.invalidRecord }
         try withLockedDirectory(at: applicationSupportURL) { directory in
-            guard case .created = try create(record, in: directory.descriptor) else {
+            guard case .created = try create(
+                record,
+                in: directory.descriptor,
+                applicationSupportURL: applicationSupportURL,
+                testingHooks: .init()
+            ) else {
                 throw RunLockError.ioFailure
             }
         }
@@ -155,7 +203,12 @@ enum RunLock {
         case alreadyExists
     }
 
-    private static func create(_ record: Record, in directoryDescriptor: Int32) throws -> CreateResult {
+    private static func create(
+        _ record: Record,
+        in directoryDescriptor: Int32,
+        applicationSupportURL: URL,
+        testingHooks: TestingHooks
+    ) throws -> CreateResult {
         let descriptor = openat(
             directoryDescriptor,
             lockName,
@@ -166,66 +219,78 @@ enum RunLock {
             if errno == EEXIST { return .alreadyExists }
             throw RunLockError.ioFailure
         }
-
-        var keepFile = false
-        defer {
-            _ = close(descriptor)
-            if !keepFile { _ = unlinkat(directoryDescriptor, lockName, 0) }
-        }
-
-        guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
-            throw RunLockError.ioFailure
-        }
-        let data = try encode(record)
-        try writeAll(data, to: descriptor)
-        guard fsync(descriptor) == 0 else { throw RunLockError.ioFailure }
+        var descriptorIsOpen = true
 
         var status = stat()
         guard fstat(descriptor, &status) == 0,
               status.st_mode & S_IFMT == S_IFREG,
               status.st_uid == geteuid(),
               status.st_nlink == 1 else {
+            _ = close(descriptor)
             throw RunLockError.unsafeLockFile
         }
-        keepFile = true
-        return .created(FileIdentity(status))
+        let identity = FileIdentity(status)
+        do {
+            if testingHooks.failCreateAfterOpen { throw RunLockError.ioFailure }
+            guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
+                throw RunLockError.ioFailure
+            }
+            let data = try encode(record)
+            try writeAll(data, to: descriptor)
+            guard fsync(descriptor) == 0 else { throw RunLockError.ioFailure }
+            let closeResult = close(descriptor)
+            descriptorIsOpen = false
+            guard closeResult == 0 else { throw RunLockError.ioFailure }
+            return .created(identity)
+        } catch {
+            testingHooks.beforeQuarantine?(.createCleanup, url(in: applicationSupportURL))
+            let cleanupResult = Result {
+                try quarantineAndRemove(
+                    in: directoryDescriptor,
+                    expectedIdentity: identity,
+                    expectedRecord: nil
+                )
+            }
+            if descriptorIsOpen { _ = close(descriptor) }
+            if case let .failure(cleanupError) = cleanupResult { throw cleanupError }
+            throw error
+        }
     }
 
     private static func release(
         at applicationSupportURL: URL,
         record: Record,
         fileIdentity: FileIdentity,
-        directoryIdentity: FileIdentity
+        directoryIdentity: FileIdentity,
+        testingHooks: TestingHooks
     ) throws {
         try withLockedDirectory(at: applicationSupportURL) { directory in
             guard directory.identity == directoryIdentity else { return }
-            let pathIdentity: FileIdentity
+            let current: InspectedLock
             do {
-                pathIdentity = try regularFileIdentity(in: directory.descriptor)
-            } catch let error as POSIXError where error.code == .ENOENT {
-                return
-            }
-            guard pathIdentity == fileIdentity else { return }
-            let current: (record: Record, identity: FileIdentity)
-            do {
-                current = try readRecord(in: directory.descriptor)
+                current = try inspectLock(in: directory.descriptor)
             } catch let error as POSIXError where error.code == .ENOENT {
                 return
             } catch RunLockError.invalidRecord {
                 return
             }
             guard current.record == record, current.identity == fileIdentity else { return }
-            guard unlinkat(directory.descriptor, lockName, 0) == 0 else {
-                if errno == ENOENT { return }
-                throw RunLockError.ioFailure
-            }
+            testingHooks.beforeQuarantine?(.release, url(in: applicationSupportURL))
+            _ = try quarantineAndRemove(
+                in: directory.descriptor,
+                expectedIdentity: fileIdentity,
+                expectedRecord: record
+            )
         }
     }
 
-    private static func readRecord(in directoryDescriptor: Int32) throws -> (record: Record, identity: FileIdentity) {
+    private static func inspectLock(
+        in directoryDescriptor: Int32,
+        name: String = lockName
+    ) throws -> InspectedLock {
         let descriptor = openat(
             directoryDescriptor,
-            lockName,
+            name,
             O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC
         )
         guard descriptor >= 0 else {
@@ -243,24 +308,71 @@ enum RunLock {
             throw RunLockError.unsafeLockFile
         }
         guard status.st_size >= 0, status.st_size <= maximumRecordBytes else {
-            throw RunLockError.invalidRecord
+            return InspectedLock(record: nil, identity: FileIdentity(status))
         }
 
         let data = try readBounded(from: descriptor)
-        return (try decode(data), FileIdentity(status))
+        let record = try? decode(data)
+        return InspectedLock(record: record, identity: FileIdentity(status))
     }
 
-    private static func removeStaleRegularLock(in directoryDescriptor: Int32) throws {
-        _ = try regularFileIdentity(in: directoryDescriptor)
-        guard unlinkat(directoryDescriptor, lockName, 0) == 0 else {
-            if errno == ENOENT { return }
+    private static func quarantineAndRemove(
+        in directoryDescriptor: Int32,
+        expectedIdentity: FileIdentity,
+        expectedRecord: Record?
+    ) throws -> Bool {
+        let quarantineName = ".run.lock.quarantine-\(UUID().uuidString)"
+        guard renameatx_np(
+            directoryDescriptor,
+            lockName,
+            directoryDescriptor,
+            quarantineName,
+            UInt32(RENAME_EXCL)
+        ) == 0 else {
+            if errno == ENOENT { return false }
+            throw RunLockError.ioFailure
+        }
+
+        let isolated: InspectedLock
+        do {
+            isolated = try inspectLock(in: directoryDescriptor, name: quarantineName)
+        } catch {
+            try restoreQuarantine(quarantineName, in: directoryDescriptor)
+            throw error
+        }
+
+        let recordMatches = expectedRecord.map { isolated.record == $0 } ?? true
+        guard isolated.identity == expectedIdentity, recordMatches else {
+            try restoreQuarantine(quarantineName, in: directoryDescriptor)
+            return false
+        }
+        let pathIdentity = try regularFileIdentity(named: quarantineName, in: directoryDescriptor)
+        guard pathIdentity == isolated.identity else {
+            try restoreQuarantine(quarantineName, in: directoryDescriptor)
+            return false
+        }
+        guard unlinkat(directoryDescriptor, quarantineName, 0) == 0 else {
+            throw RunLockError.ioFailure
+        }
+        return true
+    }
+
+    private static func restoreQuarantine(_ quarantineName: String, in directoryDescriptor: Int32) throws {
+        guard renameatx_np(
+            directoryDescriptor,
+            quarantineName,
+            directoryDescriptor,
+            lockName,
+            UInt32(RENAME_EXCL)
+        ) == 0 else {
+            if errno == EEXIST { return }
             throw RunLockError.ioFailure
         }
     }
 
-    private static func regularFileIdentity(in directoryDescriptor: Int32) throws -> FileIdentity {
+    private static func regularFileIdentity(named name: String, in directoryDescriptor: Int32) throws -> FileIdentity {
         var status = stat()
-        guard fstatat(directoryDescriptor, lockName, &status, AT_SYMLINK_NOFOLLOW) == 0 else {
+        guard fstatat(directoryDescriptor, name, &status, AT_SYMLINK_NOFOLLOW) == 0 else {
             if errno == ENOENT { throw POSIXError(.ENOENT) }
             throw RunLockError.ioFailure
         }
@@ -406,8 +518,13 @@ enum RunLock {
 
     private static func processIsAlive(_ pid: pid_t) -> Bool {
         guard pid > 0 else { return false }
-        if kill(pid, 0) == 0 { return true }
-        return switch errno {
+        let result = kill(pid, 0)
+        return classifyProcessLiveness(killResult: result, errorNumber: errno)
+    }
+
+    static func classifyProcessLiveness(killResult: Int32, errorNumber: Int32) -> Bool {
+        if killResult == 0 { return true }
+        return switch errorNumber {
         case EPERM: true
         case ESRCH: false
         default: true
