@@ -17,6 +17,24 @@ enum AutomaticCollectionStatus: Equatable, Sendable {
     case transitioning(String)
 }
 
+enum CollectionScheduleError: Error, Equatable, Sendable, CustomStringConvertible {
+    case transitionBusy
+    case unsafeTransitionLease
+    case ioFailure
+
+    var publicCode: String {
+        switch self {
+        case .transitionBusy: "schedule_busy"
+        case .unsafeTransitionLease: "schedule_lease"
+        case .ioFailure: "schedule_io"
+        }
+    }
+
+    var description: String {
+        "CollectionScheduleError(code: \(publicCode))"
+    }
+}
+
 protocol CollectionScheduleControlling: Sendable {
     func status() async throws -> AutomaticCollectionStatus
     func pause() async throws
@@ -39,6 +57,7 @@ actor CollectionScheduleController: CollectionScheduleControlling {
     private let lockIsHeld: LockProbe
     private let sleepNanoseconds: Sleep
     private var transition: String?
+    private var transitionGeneration: UInt64 = 0
 
     init(
         settings: any SettingsPersisting,
@@ -59,15 +78,38 @@ actor CollectionScheduleController: CollectionScheduleControlling {
     }
 
     func status() async throws -> AutomaticCollectionStatus {
-        if let transition { return .transitioning(transition) }
-        guard try settings.load().automaticCollectionEnabled else { return .disabled }
-        return await launchctl.isLoaded(service: service) ? .enabledLoaded : .enabledNotLoaded
+        while true {
+            if let transition { return .transitioning(transition) }
+            if try CollectionTransitionLease.isHeld(in: applicationSupportURL) {
+                return .transitioning("正在切换")
+            }
+            let generation = transitionGeneration
+            let before = try settings.load()
+            guard before.automaticCollectionEnabled else {
+                if let transition { return .transitioning(transition) }
+                if try CollectionTransitionLease.isHeld(in: applicationSupportURL) {
+                    return .transitioning("正在切换")
+                }
+                guard generation == transitionGeneration else { continue }
+                return .disabled
+            }
+
+            let loaded = await launchctl.isLoaded(service: service)
+
+            if let transition { return .transitioning(transition) }
+            if try CollectionTransitionLease.isHeld(in: applicationSupportURL) {
+                return .transitioning("正在切换")
+            }
+            guard generation == transitionGeneration else { continue }
+            let after = try settings.load()
+            guard after == before else { continue }
+            return loaded ? .enabledLoaded : .enabledNotLoaded
+        }
     }
 
     func pause() async throws {
-        if transition != nil { return }
-        transition = "正在关闭"
-        defer { transition = nil }
+        let lease = try beginTransition(label: "正在关闭")
+        defer { finishTransition(lease) }
 
         try settings.save(.init(schemaVersion: 1, automaticCollectionEnabled: false))
         try await launchctl.disable(service: service)
@@ -76,9 +118,8 @@ actor CollectionScheduleController: CollectionScheduleControlling {
     }
 
     func resume() async throws {
-        if transition != nil { return }
-        transition = "正在开启"
-        defer { transition = nil }
+        let lease = try beginTransition(label: "正在开启")
+        defer { finishTransition(lease) }
 
         try settings.save(.enabled)
         try await launchctl.enable(service: service)
@@ -89,6 +130,20 @@ actor CollectionScheduleController: CollectionScheduleControlling {
         try settings.load().automaticCollectionEnabled
     }
 
+    private func beginTransition(label: String) throws -> CollectionTransitionLease {
+        guard transition == nil else { throw CollectionScheduleError.transitionBusy }
+        let lease = try CollectionTransitionLease.acquire(in: applicationSupportURL)
+        transition = label
+        transitionGeneration &+= 1
+        return lease
+    }
+
+    private func finishTransition(_ lease: CollectionTransitionLease) {
+        transition = nil
+        transitionGeneration &+= 1
+        lease.release()
+    }
+
     private func waitForCurrentRun() async throws {
         let lockURL = RunLock.url(in: applicationSupportURL)
         var waited: UInt64 = 0
@@ -96,5 +151,91 @@ actor CollectionScheduleController: CollectionScheduleControlling {
             try await sleepNanoseconds(Self.pollIntervalNanoseconds)
             waited += Self.pollIntervalNanoseconds
         }
+    }
+}
+
+final class CollectionTransitionLease: @unchecked Sendable {
+    private static let lockName = "transition.lock"
+    private let descriptor: Int32
+    private let stateLock = NSLock()
+    private var released = false
+
+    private init(descriptor: Int32) {
+        self.descriptor = descriptor
+    }
+
+    static func url(in applicationSupportURL: URL) -> URL {
+        SecureApplicationSupportDirectory.url(in: applicationSupportURL)
+            .appendingPathComponent(lockName)
+    }
+
+    static func acquire(in applicationSupportURL: URL) throws -> CollectionTransitionLease {
+        let directory: Int32
+        do {
+            directory = try SecureApplicationSupportDirectory.open(
+                applicationSupportURL: applicationSupportURL,
+                createIfMissing: true
+            )
+        } catch SecureApplicationSupportDirectory.Error.unsafePath {
+            throw CollectionScheduleError.unsafeTransitionLease
+        } catch {
+            throw CollectionScheduleError.ioFailure
+        }
+        defer { _ = close(directory) }
+
+        let descriptor = openat(
+            directory,
+            lockName,
+            O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC,
+            S_IRUSR | S_IWUSR
+        )
+        guard descriptor >= 0 else {
+            throw errno == ELOOP ? CollectionScheduleError.unsafeTransitionLease : .ioFailure
+        }
+        var status = stat()
+        guard fstat(descriptor, &status) == 0 else {
+            _ = close(descriptor)
+            throw CollectionScheduleError.ioFailure
+        }
+        guard status.st_mode & S_IFMT == S_IFREG,
+              status.st_uid == getuid(),
+              status.st_mode & 0o777 == 0o600,
+              status.st_nlink == 1 else {
+            _ = close(descriptor)
+            throw CollectionScheduleError.unsafeTransitionLease
+        }
+
+        guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else {
+            let lockError = errno
+            _ = close(descriptor)
+            if lockError == EWOULDBLOCK || lockError == EAGAIN {
+                throw CollectionScheduleError.transitionBusy
+            }
+            throw CollectionScheduleError.ioFailure
+        }
+        return CollectionTransitionLease(descriptor: descriptor)
+    }
+
+    static func isHeld(in applicationSupportURL: URL) throws -> Bool {
+        do {
+            let lease = try acquire(in: applicationSupportURL)
+            lease.release()
+            return false
+        } catch CollectionScheduleError.transitionBusy {
+            return true
+        }
+    }
+
+    func release() {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard !released else { return }
+        _ = flock(descriptor, LOCK_UN)
+        _ = close(descriptor)
+        released = true
+    }
+
+    deinit {
+        release()
     }
 }

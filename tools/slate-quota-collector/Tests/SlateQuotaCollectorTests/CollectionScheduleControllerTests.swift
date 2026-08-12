@@ -34,10 +34,7 @@ struct CollectionScheduleControllerTests {
     func settingsRejectMalformedSchemas(_ json: String) throws {
         let root = try TemporaryDirectory()
         let store = SettingsStore(applicationSupportURL: root.url)
-        try FileManager.default.createDirectory(
-            at: store.settingsURL.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
+        try store.save(.enabled)
         try Data(json.utf8).write(to: store.settingsURL)
 
         #expect(throws: SettingsStoreError.self) {
@@ -59,7 +56,7 @@ struct CollectionScheduleControllerTests {
         let root = try TemporaryDirectory()
         let initial = SettingsStore(applicationSupportURL: root.url)
         try initial.save(.init(schemaVersion: 1, automaticCollectionEnabled: false))
-        let failing = SettingsStore(applicationSupportURL: root.url, rename: { _, _ in
+        let failing = SettingsStore(applicationSupportURL: root.url, rename: { _, _, _ in
             errno = EIO
             return -1
         })
@@ -79,16 +76,81 @@ struct CollectionScheduleControllerTests {
     func temporarySettingsFileIsOwnerOnly() throws {
         let root = try TemporaryDirectory()
         let observedMode = LockedInteger()
-        let store = SettingsStore(applicationSupportURL: root.url, rename: { source, destination in
-            let attributes = try! FileManager.default.attributesOfItem(atPath: source)
-            observedMode.value = (attributes[.posixPermissions] as! NSNumber).intValue
-            return Darwin.rename(source, destination)
+        let store = SettingsStore(applicationSupportURL: root.url, rename: { directory, source, destination in
+            var status = stat()
+            #expect(fstatat(directory, source, &status, AT_SYMLINK_NOFOLLOW) == 0)
+            observedMode.value = Int(status.st_mode)
+            return renameat(directory, source, directory, destination)
         })
 
         try store.save(.init(schemaVersion: 1, automaticCollectionEnabled: true))
 
         #expect(observedMode.value & 0o777 == 0o600)
         #expect(try fileMode(store.directoryURL) & 0o777 == 0o700)
+    }
+
+    @Test("settings reject a substituted directory without modifying its target")
+    func settingsRejectDirectorySymlink() throws {
+        let root = try TemporaryDirectory()
+        let unrelated = root.url.appendingPathComponent("unrelated", isDirectory: true)
+        try FileManager.default.createDirectory(at: unrelated, withIntermediateDirectories: false)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: unrelated.path)
+        let store = SettingsStore(applicationSupportURL: root.url)
+        try FileManager.default.createSymbolicLink(at: store.directoryURL, withDestinationURL: unrelated)
+
+        #expect(throws: SettingsStoreError.self) {
+            try store.save(.enabled)
+        }
+
+        #expect(try fileMode(unrelated) & 0o777 == 0o755)
+        #expect(FileManager.default.fileExists(atPath: unrelated.appendingPathComponent("settings.json").path) == false)
+    }
+
+    @Test("settings load rejects symlink and non-owner-only existing files")
+    func settingsRejectUnsafeExistingFiles() throws {
+        let root = try TemporaryDirectory()
+        let store = SettingsStore(applicationSupportURL: root.url)
+        try store.save(.enabled)
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: store.settingsURL.path)
+        #expect(throws: SettingsStoreError.self) { try store.load() }
+
+        try FileManager.default.removeItem(at: store.settingsURL)
+        let target = root.url.appendingPathComponent("target.json")
+        try Data(#"{"schema_version":1,"automatic_collection_enabled":false}"#.utf8).write(to: target)
+        try FileManager.default.createSymbolicLink(at: store.settingsURL, withDestinationURL: target)
+        #expect(throws: SettingsStoreError.self) { try store.load() }
+    }
+
+    @Test("settings publish fsyncs the validated containing directory")
+    func settingsPublishSyncsDirectory() throws {
+        let root = try TemporaryDirectory()
+        let directorySyncs = LockedInteger()
+        let store = SettingsStore(applicationSupportURL: root.url, syncDirectory: { descriptor in
+            var status = stat()
+            #expect(fstat(descriptor, &status) == 0)
+            #expect(status.st_mode & S_IFMT == S_IFDIR)
+            directorySyncs.value += 1
+            return fsync(descriptor)
+        })
+
+        try store.save(.enabled)
+
+        #expect(directorySyncs.value == 1)
+    }
+
+    @Test("directory sync failure is reported after the complete atomic value is visible")
+    func directorySyncFailureReportsPublishedValue() throws {
+        let root = try TemporaryDirectory()
+        let store = SettingsStore(applicationSupportURL: root.url, syncDirectory: { _ in
+            errno = EIO
+            return -1
+        })
+
+        #expect(throws: SettingsStoreError.self) {
+            try store.save(.init(schemaVersion: 1, automaticCollectionEnabled: false))
+        }
+
+        #expect(try SettingsStore(applicationSupportURL: root.url).load().automaticCollectionEnabled == false)
     }
 
     @Test("pause persists false, disables, waits for lock, then boots out")
@@ -217,10 +279,11 @@ struct CollectionScheduleControllerTests {
     func statusShowsPauseTransition() async throws {
         let events = LockedScheduleEvents()
         let launchctl = SuspendingLaunchctl(events: events)
+        let root = try TemporaryDirectory()
         let controller = CollectionScheduleController(
             settings: StubSettingsStore(enabled: true, events: events),
             launchctl: launchctl,
-            applicationSupportURL: URL(fileURLWithPath: "/tmp/slate-schedule-transition", isDirectory: true),
+            applicationSupportURL: root.url,
             collectorPlistURL: URL(fileURLWithPath: "/tmp/collector.plist"),
             uid: 501,
             lockIsHeld: { _ in false },
@@ -234,6 +297,175 @@ struct CollectionScheduleControllerTests {
         await launchctl.releaseDisable()
         try await operation.value
         #expect(try await controller.status() == .disabled)
+    }
+
+    @Test("status rechecks when pause begins while launchd status is suspended")
+    func statusDoesNotPublishPreTransitionState() async throws {
+        let events = LockedScheduleEvents()
+        let launchctl = DualSuspendingLaunchctl(events: events, loaded: true)
+        let root = try TemporaryDirectory()
+        let controller = CollectionScheduleController(
+            settings: StubSettingsStore(enabled: true, events: events),
+            launchctl: launchctl,
+            applicationSupportURL: root.url,
+            collectorPlistURL: root.url.appendingPathComponent("collector.plist"),
+            uid: 501,
+            lockIsHeld: { _ in false },
+            sleepNanoseconds: { _ in }
+        )
+        let status = Task { try await controller.status() }
+        await launchctl.waitUntilStatusEntered()
+        let pause = Task { try await controller.pause() }
+        await launchctl.waitUntilDisableEntered()
+
+        await launchctl.releaseStatus()
+        let observed = try await status.value
+        #expect(observed == .transitioning("正在关闭"))
+
+        await launchctl.releaseDisable()
+        try await pause.value
+        #expect(try await controller.status() == .disabled)
+    }
+
+    @Test("opposite same-actor transition returns explicit busy instead of false success")
+    func sameActorOpposingTransitionReturnsBusy() async throws {
+        let events = LockedScheduleEvents()
+        let launchctl = SuspendingLaunchctl(events: events)
+        let settings = StubSettingsStore(enabled: true, events: events)
+        let root = try TemporaryDirectory()
+        let controller = CollectionScheduleController(
+            settings: settings,
+            launchctl: launchctl,
+            applicationSupportURL: root.url,
+            collectorPlistURL: root.url.appendingPathComponent("collector.plist"),
+            uid: 501,
+            lockIsHeld: { _ in false },
+            sleepNanoseconds: { _ in }
+        )
+        let pause = Task { try await controller.pause() }
+        await launchctl.waitUntilDisableEntered()
+
+        do {
+            try await controller.resume()
+            Issue.record("Expected a closed transition-busy error")
+        } catch let error as CollectionScheduleError {
+            #expect(error == .transitionBusy)
+        }
+
+        #expect(events.values.contains("settings.true") == false)
+        #expect(events.values.contains("launchctl.enable") == false)
+        #expect(events.values.contains("launchctl.bootstrap") == false)
+        await launchctl.releaseDisable()
+        try await pause.value
+        #expect(try settings.load().automaticCollectionEnabled == false)
+    }
+
+    @Test("two controllers serialize the durable switch and launchd sequence with one file lease")
+    func twoControllersCannotInterleaveTransitions() async throws {
+        let root = try TemporaryDirectory()
+        let events = LockedScheduleEvents()
+        let settingsA = SettingsStore(applicationSupportURL: root.url)
+        let settingsB = SettingsStore(applicationSupportURL: root.url)
+        try settingsA.save(.enabled)
+        let launchctl = SuspendingLaunchctl(events: events)
+        let pauseController = CollectionScheduleController(
+            settings: settingsA,
+            launchctl: launchctl,
+            applicationSupportURL: root.url,
+            collectorPlistURL: root.url.appendingPathComponent("collector.plist"),
+            uid: 501,
+            lockIsHeld: { _ in false },
+            sleepNanoseconds: { _ in }
+        )
+        let resumeController = CollectionScheduleController(
+            settings: settingsB,
+            launchctl: launchctl,
+            applicationSupportURL: root.url,
+            collectorPlistURL: root.url.appendingPathComponent("collector.plist"),
+            uid: 501,
+            lockIsHeld: { _ in false },
+            sleepNanoseconds: { _ in }
+        )
+        let pause = Task { try await pauseController.pause() }
+        await launchctl.waitUntilDisableEntered()
+
+        do {
+            try await resumeController.resume()
+            Issue.record("Expected the second controller to observe the transition lease")
+        } catch let error as CollectionScheduleError {
+            #expect(error == .transitionBusy)
+        }
+
+        #expect(events.values.contains("settings.true") == false)
+        #expect(events.values.contains("launchctl.enable") == false)
+        #expect(events.values.contains("launchctl.bootstrap") == false)
+        await launchctl.releaseDisable()
+        try await pause.value
+        #expect(try settingsA.load().automaticCollectionEnabled == false)
+        #expect(await launchctl.loadedState() == false)
+        #expect(try fileMode(CollectionTransitionLease.url(in: root.url)) & 0o777 == 0o600)
+    }
+
+    @Test("status observes another controller's transition lease")
+    func statusObservesCrossControllerTransition() async throws {
+        let root = try TemporaryDirectory()
+        let settings = SettingsStore(applicationSupportURL: root.url)
+        try settings.save(.enabled)
+        let events = LockedScheduleEvents()
+        let launchctl = SuspendingLaunchctl(events: events)
+        let owner = CollectionScheduleController(
+            settings: settings,
+            launchctl: launchctl,
+            applicationSupportURL: root.url,
+            collectorPlistURL: root.url.appendingPathComponent("collector.plist"),
+            uid: 501,
+            lockIsHeld: { _ in false },
+            sleepNanoseconds: { _ in }
+        )
+        let observer = CollectionScheduleController(
+            settings: settings,
+            launchctl: launchctl,
+            applicationSupportURL: root.url,
+            collectorPlistURL: root.url.appendingPathComponent("collector.plist"),
+            uid: 501,
+            lockIsHeld: { _ in false },
+            sleepNanoseconds: { _ in }
+        )
+        let pause = Task { try await owner.pause() }
+        await launchctl.waitUntilDisableEntered()
+
+        #expect(try await observer.status() == .transitioning("正在切换"))
+
+        await launchctl.releaseDisable()
+        try await pause.value
+    }
+
+    @Test("transition lease rejects symlinks, hard links, and loose modes")
+    func transitionLeaseRejectsUnsafeEntries() throws {
+        for variant in UnsafeLeaseVariant.allCases {
+            let root = try TemporaryDirectory()
+            let settings = SettingsStore(applicationSupportURL: root.url)
+            try settings.save(.enabled)
+            let leaseURL = CollectionTransitionLease.url(in: root.url)
+            let target = root.url.appendingPathComponent("lease-target")
+            try Data("unchanged".utf8).write(to: target)
+
+            switch variant {
+            case .symlink:
+                try FileManager.default.createSymbolicLink(at: leaseURL, withDestinationURL: target)
+            case .hardLink:
+                try FileManager.default.linkItem(at: target, to: leaseURL)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: leaseURL.path)
+            case .looseMode:
+                try Data().write(to: leaseURL)
+                try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: leaseURL.path)
+            }
+
+            #expect(throws: CollectionScheduleError.unsafeTransitionLease) {
+                try CollectionTransitionLease.acquire(in: root.url)
+            }
+            #expect(try Data(contentsOf: target) == Data("unchanged".utf8))
+        }
     }
 
     @Test("disabled scheduled gate returns using settings only")
@@ -258,10 +490,11 @@ struct CollectionScheduleControllerTests {
         events: LockedScheduleEvents,
         lock: SequencedLockProbe
     ) -> CollectionScheduleController {
-        CollectionScheduleController(
+        let applicationSupportURL = try! TemporaryDirectory().url
+        return CollectionScheduleController(
             settings: settings,
             launchctl: launchctl,
-            applicationSupportURL: URL(fileURLWithPath: "/tmp/slate-schedule-tests", isDirectory: true),
+            applicationSupportURL: applicationSupportURL,
             collectorPlistURL: URL(fileURLWithPath: "/tmp/com.yym8224961.slate-quota-collector.plist"),
             uid: 501,
             lockIsHeld: { lock.isHeld(at: $0) },
@@ -380,6 +613,7 @@ private actor SuspendingLaunchctl: LaunchctlControlling {
     private var disableEntered = false
     private var disableWaiters: [CheckedContinuation<Void, Never>] = []
     private var disableRelease: CheckedContinuation<Void, Never>?
+    private var loaded = true
 
     init(events: LockedScheduleEvents) {
         self.events = events
@@ -397,11 +631,81 @@ private actor SuspendingLaunchctl: LaunchctlControlling {
     func bootstrap(plistURL: URL) async throws {}
 
     func bootout(service: String) async throws {
+        loaded = false
         events.append("launchctl.bootout")
     }
 
     func isLoaded(service: String) async -> Bool {
-        false
+        loaded
+    }
+
+    func waitUntilDisableEntered() async {
+        if disableEntered { return }
+        await withCheckedContinuation { disableWaiters.append($0) }
+    }
+
+    func releaseDisable() {
+        disableRelease?.resume()
+        disableRelease = nil
+    }
+
+    func loadedState() -> Bool { loaded }
+}
+
+private actor DualSuspendingLaunchctl: LaunchctlControlling {
+    private let events: LockedScheduleEvents
+    private var loaded: Bool
+    private var statusEntered = false
+    private var statusWaiters: [CheckedContinuation<Void, Never>] = []
+    private var statusRelease: CheckedContinuation<Void, Never>?
+    private var disableEntered = false
+    private var disableWaiters: [CheckedContinuation<Void, Never>] = []
+    private var disableRelease: CheckedContinuation<Void, Never>?
+
+    init(events: LockedScheduleEvents, loaded: Bool) {
+        self.events = events
+        self.loaded = loaded
+    }
+
+    func disable(service: String) async throws {
+        events.append("launchctl.disable")
+        disableEntered = true
+        disableWaiters.forEach { $0.resume() }
+        disableWaiters.removeAll()
+        await withCheckedContinuation { disableRelease = $0 }
+    }
+
+    func enable(service: String) async throws {
+        loaded = true
+        events.append("launchctl.enable")
+    }
+
+    func bootstrap(plistURL: URL) async throws {
+        loaded = true
+        events.append("launchctl.bootstrap")
+    }
+
+    func bootout(service: String) async throws {
+        loaded = false
+        events.append("launchctl.bootout")
+    }
+
+    func isLoaded(service: String) async -> Bool {
+        statusEntered = true
+        statusWaiters.forEach { $0.resume() }
+        statusWaiters.removeAll()
+        await withCheckedContinuation { statusRelease = $0 }
+        return loaded
+    }
+
+    func waitUntilStatusEntered() async {
+        if statusEntered { return }
+        await withCheckedContinuation { statusWaiters.append($0) }
+    }
+
+    func releaseStatus() {
+        statusRelease?.resume()
+        statusRelease = nil
     }
 
     func waitUntilDisableEntered() async {
@@ -435,4 +739,10 @@ private final class SequencedLockProbe: @unchecked Sendable {
             return states.isEmpty ? false : states.removeFirst()
         }
     }
+}
+
+private enum UnsafeLeaseVariant: CaseIterable {
+    case symlink
+    case hardLink
+    case looseMode
 }
