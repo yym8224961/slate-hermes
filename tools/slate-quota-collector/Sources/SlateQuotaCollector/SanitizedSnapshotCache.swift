@@ -19,14 +19,17 @@ enum SnapshotCacheError: Error, Equatable, Sendable, CustomStringConvertible {
 
 struct SanitizedSnapshotCache: SnapshotPersisting, Sendable {
     let applicationSupportURL: URL
+    private let sensitiveValueValidator: SensitiveValueValidator
 
     init(
         applicationSupportURL: URL = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
-        )[0]
+        )[0],
+        sensitiveValues: [String] = []
     ) {
         self.applicationSupportURL = applicationSupportURL
+        sensitiveValueValidator = SensitiveValueValidator(sensitiveValues: sensitiveValues)
     }
 
     var directoryURL: URL {
@@ -51,12 +54,14 @@ struct SanitizedSnapshotCache: SnapshotPersisting, Sendable {
         } catch {
             throw SnapshotCacheError.ioFailure
         }
+        try sensitiveValueValidator.validate(data)
         return try SanitizedLastGood.decodeStrict(data)
     }
 
     func saveLastGood(_ value: SanitizedLastGood) throws {
         let data = try encode(value)
         _ = try SanitizedLastGood.decodeStrict(data)
+        try sensitiveValueValidator.validate(data)
         try atomicWrite(data, to: lastGoodURL)
     }
 
@@ -79,12 +84,14 @@ struct SanitizedSnapshotCache: SnapshotPersisting, Sendable {
         } catch {
             throw SnapshotCacheError.ioFailure
         }
+        try sensitiveValueValidator.validate(data)
         return try CollectorRuntimeState.decodeStrict(data)
     }
 
     func saveRuntimeState(_ value: CollectorRuntimeState) throws {
         let data = try encode(value)
         _ = try CollectorRuntimeState.decodeStrict(data)
+        try sensitiveValueValidator.validate(data)
         try atomicWrite(data, to: runtimeStateURL)
     }
 
@@ -120,6 +127,10 @@ struct SanitizedSnapshotCache: SnapshotPersisting, Sendable {
 
         let descriptor = open(temporary.path, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
         guard descriptor >= 0 else { throw SnapshotCacheError.ioFailure }
+        guard fchmod(descriptor, S_IRUSR | S_IWUSR) == 0 else {
+            _ = close(descriptor)
+            throw SnapshotCacheError.ioFailure
+        }
 
         var writeSucceeded = true
         data.withUnsafeBytes { rawBuffer in
@@ -143,6 +154,40 @@ struct SanitizedSnapshotCache: SnapshotPersisting, Sendable {
         guard rename(temporary.path, destination.path) == 0 else {
             throw SnapshotCacheError.ioFailure
         }
+    }
+}
+
+private struct SensitiveValueValidator: Sendable {
+    private let sensitiveValues: [String]
+
+    init(sensitiveValues: [String]) {
+        self.sensitiveValues = sensitiveValues.filter { !$0.isEmpty }
+    }
+
+    func validate(_ data: Data) throws {
+        let object: Any
+        do {
+            object = try JSONSerialization.jsonObject(with: data)
+        } catch {
+            throw SnapshotCacheError.cacheCorrupt
+        }
+        guard containsSensitiveValue(in: object) == false else {
+            throw SnapshotCacheError.cacheCorrupt
+        }
+    }
+
+    private func containsSensitiveValue(in value: Any) -> Bool {
+        if let text = value as? String {
+            return text.localizedCaseInsensitiveContains("authorization")
+                || sensitiveValues.contains(where: text.contains)
+        }
+        if let dictionary = value as? [String: Any] {
+            return dictionary.values.contains(where: containsSensitiveValue)
+        }
+        if let array = value as? [Any] {
+            return array.contains(where: containsSensitiveValue)
+        }
+        return false
     }
 }
 

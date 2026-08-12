@@ -4,39 +4,45 @@ protocol RedactingLogSink: Sendable {
     func write(_ message: String)
 }
 
+enum PublicLogCode: String, CaseIterable, Sendable {
+    case collectorStarted = "collector_started"
+    case collectorSucceeded = "collector_succeeded"
+    case providerFailed = "provider_failed"
+    case pushFailed = "push_failed"
+    case cacheCorrupt = "cache_corrupt"
+    case cacheIO = "cache_io"
+    case timeout
+    case unauthorized
+    case unauthenticated
+    case unconfigured
+    case subscriptionRequired = "subscription_required"
+    case rateLimited = "rate_limited"
+    case serverError = "server_error"
+    case invalidData = "invalid_data"
+    case invalidResponse = "invalid_response"
+    case launchFailed = "launch_failed"
+    case inputFailed = "input_failed"
+    case transportError = "transport_error"
+    case httpError = "http_error"
+}
+
 struct RedactingLogger: Sendable {
     private let sink: any RedactingLogSink
-    private let secrets: [String]
 
-    init(sink: any RedactingLogSink, secrets: [String]) {
+    init(sink: any RedactingLogSink) {
         self.sink = sink
-        self.secrets = secrets.filter { !$0.isEmpty }
     }
 
-    func error(code: String, detail: String? = nil) {
+    func error(code: PublicLogCode, detail: String? = nil) {
         write(level: "error", code: code, hasDetail: detail != nil)
     }
 
-    func info(code: String, detail: String? = nil) {
+    func info(code: PublicLogCode, detail: String? = nil) {
         write(level: "info", code: code, hasDetail: detail != nil)
     }
 
-    private func write(level: String, code: String, hasDetail: Bool) {
-        let publicCode = sanitizedPublicCode(code)
+    private func write(level: String, code: PublicLogCode, hasDetail: Bool) {
         let suffix = hasDetail ? " detail=[REDACTED]" : ""
-        sink.write("level=\(level) code=\(publicCode)\(suffix)")
-    }
-
-    private func sanitizedPublicCode(_ code: String) -> String {
-        guard !secrets.contains(where: { code.localizedCaseInsensitiveContains($0) }) else {
-            return "invalid_log_code"
-        }
-        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_.-")
-        guard !code.isEmpty,
-              code.count <= 64,
-              code.unicodeScalars.allSatisfy(allowed.contains) else {
-            return "invalid_log_code"
-        }
-        return code
+        sink.write("level=\(level) code=\(code.rawValue)\(suffix)")
     }
 }

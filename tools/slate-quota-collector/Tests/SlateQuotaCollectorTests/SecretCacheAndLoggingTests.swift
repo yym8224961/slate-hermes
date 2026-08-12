@@ -56,12 +56,9 @@ import Testing
     @Test func cacheAndLogsNeverContainKnownSecretsAuthorizationURLContentIDOrRawBody() throws {
         let sink = StringLogSink()
         let capabilityURL = "https://slate.local/api/v1/contents/secret-id/data"
-        let logger = RedactingLogger(
-            sink: sink,
-            secrets: ["go-test-secret", capabilityURL]
-        )
+        let logger = RedactingLogger(sink: sink)
         logger.error(
-            code: "push_failed",
+            code: .pushFailed,
             detail: #"Authorization: Bearer go-test-secret at https://slate.local/api/v1/contents/secret-id/data body={"contentId":"secret-id","private":"raw-body-marker"}"#
         )
 
@@ -73,6 +70,26 @@ import Testing
             #expect(sinkBytes.range(of: Data(forbidden.utf8)) == nil)
         }
         #expect(sink.output.contains("push_failed"))
+    }
+
+    @Test func publicLogCodeRejectsSecretIDAPIKeyAndCapabilityURLInputs() {
+        let sink = StringLogSink()
+        let logger = RedactingLogger(sink: sink)
+        let untrustedCodes = [
+            "secret-id",
+            "malicious-test-api-key-9f2c",
+            "https://slate.local/api/v1/contents/secret-id/data",
+        ]
+
+        for untrustedCode in untrustedCodes {
+            let code = PublicLogCode(rawValue: untrustedCode)
+            #expect(code == nil)
+            if let code {
+                logger.error(code: code)
+            }
+        }
+        #expect(PublicLogCode(rawValue: "push_failed") == .pushFailed)
+        #expect(sink.output.isEmpty)
     }
 
     @Test func cacheRejectsRawProviderKeysAtAnyDepth() throws {
@@ -112,8 +129,8 @@ import Testing
 
         #expect(try cache.loadLastGood() == lastGood)
         #expect(try cache.loadRuntimeState() == runtime)
-        #expect(try fileMode(cache.lastGoodURL) & 0o077 == 0)
-        #expect(try fileMode(cache.runtimeStateURL) & 0o077 == 0)
+        #expect(try fileMode(cache.lastGoodURL) & 0o777 == 0o600)
+        #expect(try fileMode(cache.runtimeStateURL) & 0o777 == 0o600)
 
         let allBytes = try Data(contentsOf: cache.lastGoodURL) + Data(contentsOf: cache.runtimeStateURL)
         for forbidden in [
@@ -121,6 +138,47 @@ import Testing
             "rateLimits", "rollingUsage", "apiKey", "token",
         ] {
             #expect(allBytes.range(of: Data(forbidden.utf8)) == nil)
+        }
+    }
+
+    @Test func cacheRejectsSensitiveDisplayValuesBeforeAnyApplicationSupportFileIsWritten() throws {
+        let apiKey = "malicious-test-api-key-9f2c\"escaped"
+        let capabilityURL = "https://slate.local/api/v1/contents/malicious-content-id/data"
+        let contentID = "malicious-content-id"
+        let rawBodyMarker = "malicious-raw-body-marker"
+        let authorization = "Authorization: Bearer \(apiKey)"
+        let attacks: [(SensitivePlacement, String)] = [
+            (.header, apiKey),
+            (.summary, authorization),
+            (.rollingValue, capabilityURL),
+            (.footerLeft, contentID),
+            (.footerRight, rawBodyMarker),
+        ]
+
+        for (placement, maliciousValue) in attacks {
+            let root = try TemporaryDirectory()
+            let safeFile = root.url.appendingPathComponent("preexisting-safe.txt")
+            try Data("safe".utf8).write(to: safeFile)
+            let cache = SanitizedSnapshotCache(
+                applicationSupportURL: root.url,
+                sensitiveValues: [apiKey, capabilityURL, contentID, rawBodyMarker]
+            )
+
+            #expect(throws: SnapshotCacheError.cacheCorrupt) {
+                try cache.saveLastGood(maliciousLastGood(maliciousValue, at: placement))
+            }
+
+            #expect(FileManager.default.fileExists(atPath: cache.lastGoodURL.path) == false)
+            let files = try allRegularFiles(below: root.url)
+            #expect(files.count == 1)
+            #expect(files.first?.lastPathComponent == safeFile.lastPathComponent)
+            #expect(files.contains { $0.lastPathComponent.hasPrefix(".snapshot-") } == false)
+            for file in files {
+                let bytes = try Data(contentsOf: file)
+                for forbidden in [apiKey, authorization, capabilityURL, contentID, rawBodyMarker] {
+                    #expect(bytes.range(of: Data(forbidden.utf8)) == nil)
+                }
+            }
         }
     }
 
@@ -160,6 +218,55 @@ import Testing
     private func fileMode(_ url: URL) throws -> Int {
         let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
         return try #require((attributes[.posixPermissions] as? NSNumber)?.intValue)
+    }
+
+    private func allRegularFiles(below root: URL) throws -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: [.isRegularFileKey]
+        ) else {
+            return []
+        }
+        return try enumerator.compactMap { element in
+            let url = try #require(element as? URL)
+            return try url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true
+                ? url
+                : nil
+        }
+    }
+
+    private func maliciousLastGood(
+        _ value: String,
+        at placement: SensitivePlacement
+    ) -> SanitizedLastGood {
+        SanitizedLastGood(
+            schemaVersion: 1,
+            codex: CodexDisplaySnapshot(
+                status: .ok,
+                sourceCollectedAt: Date(timeIntervalSince1970: 0),
+                headerLeft: placement == .header ? value : "CODEX",
+                summaryLabel: placement == .summary ? value : "safe",
+                rolling: QuotaWindow(
+                    label: "5 hours",
+                    remainingPercent: 80,
+                    valueText: placement == .rollingValue ? value : "80%",
+                    resetAt: nil
+                ),
+                weekly: QuotaWindow(
+                    label: "week",
+                    remainingPercent: 70,
+                    valueText: "70%",
+                    resetAt: nil
+                ),
+                footerLeft: placement == .footerLeft ? value : "safe",
+                footerRight: placement == .footerRight ? value : "safe"
+            ),
+            openCodeGo: nil
+        )
+    }
+
+    private enum SensitivePlacement {
+        case header, summary, rollingValue, footerLeft, footerRight
     }
 }
 
