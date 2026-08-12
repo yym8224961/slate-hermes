@@ -4,6 +4,21 @@ import Testing
 @testable import SlateQuotaCollector
 
 @Suite struct SecretCacheAndLoggingTests {
+    @Test func snapshotCacheInitializerHasNoFailOpenSensitiveValuesDefault() throws {
+        let testFile = URL(fileURLWithPath: #filePath)
+        let packageRoot = testFile
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let sourceURL = packageRoot
+            .appendingPathComponent("Sources/SlateQuotaCollector/SanitizedSnapshotCache.swift")
+        let source = try String(contentsOf: sourceURL, encoding: .utf8)
+        let unsafeDefault = try Regex(#"sensitiveValues\s*:\s*\[String\]\s*="#)
+
+        #expect(source.firstMatch(of: unsafeDefault) == nil)
+        #expect(source.contains("sensitiveValues: [String]"))
+    }
+
     @Test func keychainRoundTripUsesGenericPasswordServiceAccountAndAfterFirstUnlock() throws {
         let backend = RecordingKeychainBackend()
         let store = KeychainStore(
@@ -107,7 +122,10 @@ import Testing
 
     @Test func cacheRoundTripsStrictSanitizedSnapshotsAsOwnerOnlyAtomicFiles() throws {
         let root = try TemporaryDirectory()
-        let cache = SanitizedSnapshotCache(applicationSupportURL: root.url)
+        let cache = SanitizedSnapshotCache(
+            applicationSupportURL: root.url,
+            sensitiveValues: []
+        )
         let lastGood = SanitizedLastGood(
             schemaVersion: 1,
             codex: .fixture(),
@@ -184,7 +202,10 @@ import Testing
 
     @Test func cacheRejectsInvalidRuntimeProviderAndErrorCodesBeforeWriting() throws {
         let root = try TemporaryDirectory()
-        let cache = SanitizedSnapshotCache(applicationSupportURL: root.url)
+        let cache = SanitizedSnapshotCache(
+            applicationSupportURL: root.url,
+            sensitiveValues: []
+        )
         let runtime = CollectorRuntimeState(
             schemaVersion: 1,
             codexFailures: 0,

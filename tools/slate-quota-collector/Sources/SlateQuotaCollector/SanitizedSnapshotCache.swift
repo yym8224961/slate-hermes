@@ -26,7 +26,7 @@ struct SanitizedSnapshotCache: SnapshotPersisting, Sendable {
             for: .applicationSupportDirectory,
             in: .userDomainMask
         )[0],
-        sensitiveValues: [String] = []
+        sensitiveValues: [String]
     ) {
         self.applicationSupportURL = applicationSupportURL
         sensitiveValueValidator = SensitiveValueValidator(sensitiveValues: sensitiveValues)
