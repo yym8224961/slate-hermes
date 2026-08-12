@@ -832,7 +832,7 @@ struct SlateIngestReceipt: Decodable, Equatable, Sendable {
 }
 ```
 
-408、429、5xx 和瞬时 `URLError` 等待 1 秒后只重试一次；401、403、404 及其他 4xx 不重试。错误公开值仅含 `slate_http_<status>` 或 `slate_transport_<code>`，不含 URL/body。GET 回读直接把后端返回的 inner `data` 解码为 `SlateDashboardData`。15 秒是每次请求的上限，重试仍受 Task 9 的整轮 45 秒硬上限。
+408、429、5xx 和瞬时 `URLError` 等待 1 秒后只重试一次；401、403、404 及其他 4xx 不重试。错误公开值仅含 `slate_http_<status>` 或 `slate_transport_<code>`，不含 URL/body。GET 回读直接把后端返回的 inner `data` 解码为 `SlateDashboardData`。15 秒是每次请求的上限；重试仍受 Task 9 的 45 秒协作式 collection deadline 约束，Task 12 的独立 worker 进程监督器另行提供 45 秒 wall-clock 硬上限。
 
 - [ ] **Step 5: 跑绿并验证重试次数**
 
