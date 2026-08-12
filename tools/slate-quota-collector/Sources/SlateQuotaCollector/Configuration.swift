@@ -48,7 +48,10 @@ struct CollectorConfiguration: Codable, Equatable, Sendable {
             throw ConfigurationError.invalidConfiguration
         }
         guard configuration.schemaVersion == 1 else { throw ConfigurationError.invalidSchemaVersion }
-        guard TimeZone(identifier: configuration.timezoneIdentifier) != nil else { throw ConfigurationError.invalidTimezone }
+        guard configuration.timezoneIdentifier == "Asia/Shanghai",
+              TimeZone(identifier: configuration.timezoneIdentifier) != nil else {
+            throw ConfigurationError.invalidTimezone
+        }
         guard configuration.codexTimeoutSeconds == 20,
               configuration.openCodeTimeoutSeconds == 10,
               configuration.slateTimeoutSeconds == 15,

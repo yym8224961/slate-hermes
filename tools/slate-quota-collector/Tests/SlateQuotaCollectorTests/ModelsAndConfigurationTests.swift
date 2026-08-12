@@ -20,6 +20,13 @@ import Testing
         }
     }
 
+    @Test func configurationRejectsValidButUnsupportedTimezone() throws {
+        let bytes = Data(#"{"schemaVersion":1,"codexExecutablePath":"/usr/local/bin/codex","timezoneIdentifier":"UTC","codexTimeoutSeconds":20,"openCodeTimeoutSeconds":10,"slateTimeoutSeconds":15,"overallTimeoutSeconds":45,"logLevel":"info","keychainService":"com.yym8224961.slate-quota-collector","openCodeKeyAccount":"opencode-go-api-key","slateURLAccount":"slate-push-url"}"#.utf8)
+        #expect(throws: ConfigurationError.self) {
+            try CollectorConfiguration.decodeStrict(bytes)
+        }
+    }
+
     @Test func configurationStoreWritesOwnerOnlyFile() throws {
         let root = try TemporaryDirectory()
         let store = ConfigurationStore(applicationSupportURL: root.url)
