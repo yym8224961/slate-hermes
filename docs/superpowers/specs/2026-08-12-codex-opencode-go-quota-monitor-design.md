@@ -1,7 +1,7 @@
 # Codex × OpenCode Go 额度监控设计
 
 日期：2026-08-12  
-状态：用户已批准菜单栏设计，等待书面规格复核  
+状态：用户已批准书面规格，进入 Subagent-Driven 实施  
 目标设备：ZecTrix Note4，400 × 300，1bpp  
 目标部署：Slate 运行在 fnOS NAS；额度采集器运行在当前 Mac
 

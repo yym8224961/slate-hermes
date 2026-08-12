@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在当前 Mac 上交付一个每 5 分钟采集 Codex 与 OpenCode Go 官方额度数据、统一为剩余额度并安全推送到 Slate 自定义 Dashboard 的原生采集器。
+**Goal:** 在当前 Mac 上交付一个带登录自启菜单栏开关的原生应用，每 5 分钟采集 Codex 与 OpenCode Go 官方额度数据、统一为剩余额度并安全推送到 Slate 自定义 Dashboard。
 
-**Architecture:** 新工具作为独立 Swift Package 放在 `tools/slate-quota-collector/`，通过小型协议隔离 Codex JSON-RPC、OpenCode HTTPS、钥匙串、文件缓存、Slate ingest 和 launchd。纯函数归一化与失败决策先用单元测试固定，再接入真实传输；Slate 模板继续由现有 TypeScript schema 和 1bpp renderer 做兼容性验证，不改固件、数据库或 Hermes 链路。
+**Architecture:** 新工具作为独立 Swift Package 放在 `tools/slate-quota-collector/`，同一个可执行文件同时提供短生命周期 collector、AppKit 菜单栏入口和 CLI；菜单栏与定时采集由两个独立用户级 LaunchAgent 管理。小型协议隔离 Codex JSON-RPC、OpenCode HTTPS、钥匙串、文件缓存、Slate ingest、持久开关和 launchctl；纯函数归一化与失败决策先用单元测试固定，再接入真实传输，Slate 模板继续由现有 TypeScript schema 和 1bpp renderer 验证。
 
-**Tech Stack:** Swift 6.2、Swift Package Manager、Foundation、Security、Darwin、macOS 13+、Bun test、现有 Slate `DashboardTemplate`/`DynamicFrameRendererService`。
+**Tech Stack:** Swift 6.2、Swift Package Manager、Foundation、Security、Darwin、AppKit、macOS 13+、Bun test、现有 Slate `DashboardTemplate`/`DynamicFrameRendererService`。
 
 ## Global Constraints
 
@@ -18,7 +18,13 @@
 - OpenCode Go 只调用 `GET https://opencode.ai/zen/go/v1/usage`，未知状态、缺字段、非 JSON 与 HTTP 错误全部 fail closed。
 - OpenCode Go Key 与完整 Slate capability URL 只存在当前用户登录钥匙串；不得出现在参数、plist、配置、缓存、日志或测试快照中。
 - `last-good.json` 只保存已归一化、可公开展示的 provider 快照；另用 `runtime-state.json` 保存跨进程失败计数、最近成功/推送时间和脱敏错误码。
-- launchd 固定 `RunAtLoad=true`、`StartInterval=300`；Codex/OpenCode/Slate/整轮超时固定为 20/10/15/45 秒。
+- 自动采集开关只写入 0600 的 `settings.json`，字段严格为 `schema_version` 和 `automatic_collection_enabled`；手动采集不受开关限制。
+- 菜单栏 App 固定安装为 `~/Applications/Slate 额度监控.app`，`LSUIElement=true`，不显示 Dock 图标，并在当前用户登录后自动出现。
+- 菜单栏与 collector 使用独立 label：`com.yym8224961.slate-quota-menubar` 和 `com.yym8224961.slate-quota-collector`；关闭 collector 不影响菜单栏。
+- collector launchd 固定 `RunAtLoad=true`、`StartInterval=300`；Codex/OpenCode/Slate/整轮超时固定为 20/10/15/45 秒。
+- 关闭自动采集先持久写 false，再等待当前锁最多 45 秒后 bootout；恢复时立即采集一次再按 300 秒运行。
+- “退出菜单栏”只关闭 UI，不改变自动采集；“立即采集一次”在关闭状态仍可用并争用同一把运行锁。
+- 第一版只生成当前用户本机使用的 `.app`，不增加 Developer ID 签名、公证、App Store 或跨 Mac 更新机制。
 - 同一轮并发读取两个 provider，随后串行执行决策、缓存和推送；进程锁阻止旧快照覆盖新快照。
 - HTTP Slate URL 只允许 localhost、`.local` 或 RFC1918/链路本地地址；其他地址必须使用 HTTPS。
 - 不修改 Prisma/MySQL、固件、Hermes、现有认证或 Slate capability 鉴权；当前工作区这些区域的未提交改动全部视为用户所有。
@@ -46,7 +52,13 @@ tools/slate-quota-collector/
 │   ├── RunLock.swift                                  # O_EXCL 锁、PID 存活与陈旧锁恢复
 │   ├── SlateIngestClient.swift                        # endpoint 校验、POST、一次短重试
 │   ├── CollectorService.swift                         # 并发采集、45 秒总限时、缓存与推送编排
-│   └── LaunchAgentInstaller.swift                     # 稳定二进制、plist、bootstrap/bootout/status
+│   ├── SettingsStore.swift                            # settings.json 严格 schema 与 0600 原子写
+│   ├── CollectionScheduleController.swift             # pause/resume、双 job 状态和 scheduled gate
+│   ├── MenuBarViewModel.swift                         # 脱敏状态到菜单文案/图标的纯映射
+│   ├── MenuBarController.swift                        # NSStatusItem、NSMenu 与异步 action
+│   ├── StatusWindowController.swift                   # 原生详细状态小窗口
+│   ├── AppBundleInstaller.swift                       # .app/Info.plist/LSUIElement 生成
+│   └── LaunchAgentInstaller.swift                     # 双 plist、bootstrap/bootout/status
 ├── Tests/SlateQuotaCollectorTests/
 │   ├── ModelsAndConfigurationTests.swift
 │   ├── TestSupport.swift
@@ -59,9 +71,15 @@ tools/slate-quota-collector/
 │   ├── RunLockTests.swift
 │   ├── SlateIngestClientTests.swift
 │   ├── CollectorServiceTests.swift
+│   ├── CollectionScheduleControllerTests.swift
+│   ├── MenuBarViewModelTests.swift
+│   ├── MenuBarControllerTests.swift
+│   ├── AppBundleInstallerTests.swift
 │   └── LaunchAgentInstallerTests.swift
 ├── Resources/
-│   └── com.yym8224961.slate-quota-collector.plist.template
+│   ├── Info.plist.template
+│   ├── com.yym8224961.slate-quota-collector.plist.template
+│   └── com.yym8224961.slate-quota-menubar.plist.template
 ├── templates/
 │   ├── slate-dashboard-template.json
 │   └── initial-data.json
@@ -99,6 +117,7 @@ protocol SnapshotPersisting: Sendable {
     func loadRuntimeState() throws -> CollectorRuntimeState
     func saveRuntimeState(_ value: CollectorRuntimeState) throws
 }
+
 ```
 
 所有 Swift 测试文件都用与文件同名的 `@Suite struct` 包裹，因此计划中的 `swift test --filter <文件名>` 可稳定命中。代码片段中的 `.fixture`、`.fixtureNow`、`TemporaryDirectory` 和基础 JSON 数据由 `Tests/SlateQuotaCollectorTests/TestSupport.swift` 提供；某个 transport 特有的记录器则定义在首次使用它的测试文件底部，后续测试直接复用，不复制实现。
@@ -115,7 +134,7 @@ protocol SnapshotPersisting: Sendable {
 
 **Interfaces:**
 - Consumes: Foundation `Codable`, `Date`, `URL`, `FileManager`。
-- Produces: 原始 DTO、`ProviderStatus`、`QuotaWindow`、`CodexDisplaySnapshot`、`OpenCodeGoDisplaySnapshot`、`SlateDashboardData`、`SlateEnvelope`、`CollectorConfiguration`、五个核心协议。
+- Produces: 原始 DTO、`ProviderStatus`、`QuotaWindow`、`CodexDisplaySnapshot`、`OpenCodeGoDisplaySnapshot`、`SlateDashboardData`、`SlateEnvelope`、`CollectorConfiguration`、数据访问五个核心协议；`CollectionScheduleControlling` 在 Task 10 实现。
 
 - [ ] **Step 1: 写领域模型和配置的失败测试**
 
@@ -174,7 +193,7 @@ let package = Package(
         .executableTarget(
             name: "SlateQuotaCollector",
             path: "Sources/SlateQuotaCollector",
-            linkerSettings: [.linkedFramework("Security")]
+            linkerSettings: [.linkedFramework("Security"), .linkedFramework("AppKit")]
         ),
         .testTarget(
             name: "SlateQuotaCollectorTests",
@@ -281,7 +300,7 @@ struct CollectorConfiguration: Codable, Equatable, Sendable {
 enum Command {
     static func main() async {
         if CommandLine.arguments.dropFirst().first == "--help" {
-            print("slate-quota-collector setup|collect|install-launch-agent|status|uninstall-launch-agent")
+            print("slate-quota-collector setup|collect|pause|resume|install-launch-agent|status|uninstall-launch-agent")
             return
         }
         print("尚未选择命令；使用 --help 查看用法")
@@ -977,59 +996,267 @@ rtk git add tools/slate-quota-collector/Sources/SlateQuotaCollector/CollectorSer
 rtk git commit -m "feat(quota): 编排双服务采集与推送"
 ```
 
-### Task 10: CLI、稳定安装路径与 LaunchAgent
+### Task 10: 持久自动采集开关与调度控制器
 
 **Files:**
-- Modify: `tools/slate-quota-collector/Sources/SlateQuotaCollector/Command.swift`
-- Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/LaunchAgentInstaller.swift`
-- Create: `tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-collector.plist.template`
-- Create: `tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/LaunchAgentInstallerTests.swift`
+- Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/SettingsStore.swift`
+- Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/CollectionScheduleController.swift`
+- Create: `tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/CollectionScheduleControllerTests.swift`
 
 **Interfaces:**
-- Consumes: 所有既有组件和当前用户目录。
-- Produces: 六个批准命令、稳定二进制路径、launchd plist、`status` 脱敏报告。
+- Consumes: Task 8 的 `RunLock` 路径、当前 uid、collector plist 路径和注入的 launchctl transport。
+- Produces: `CollectorSettings`、`SettingsPersisting`、`AutomaticCollectionStatus`、`CollectionScheduleControlling`、`shouldRunScheduledCollection()`。
 
-- [ ] **Step 1: 写命令解析、plist 和卸载保留数据测试**
+- [ ] **Step 1: 写持久开关、pause/resume 顺序和 scheduled gate 的失败测试**
 
 ```swift
-@Test func parsesApprovedCommandsOnly() throws {
-    #expect(try CLIArguments(["collect", "--dry-run"]) == .collect(.dryRun))
-    #expect(try CLIArguments(["collect", "--once"]) == .collect(.pushOnce))
-    #expect(try CLIArguments(["setup"]) == .setup)
-    #expect(throws: CLIError.self) { try CLIArguments(["collect", "--api-key", "secret"]) }
+@Test func settingsDefaultToEnabledAndWriteOwnerOnly() throws {
+    let root = try TemporaryDirectory()
+    let store = SettingsStore(applicationSupportURL: root.url)
+    #expect(try store.load().automaticCollectionEnabled)
+    try store.save(.init(schemaVersion: 1, automaticCollectionEnabled: false))
+    #expect(try store.load().automaticCollectionEnabled == false)
+    #expect(try store.fileMode() & 0o077 == 0)
 }
 
-@Test func launchAgentUsesStableAbsolutePathsAndFiveMinutes() throws {
-    let plist = try LaunchAgentInstaller.renderPlist(executable: Self.installedBinary)
-    #expect(plist["Label"] as? String == "com.yym8224961.slate-quota-collector")
-    #expect(plist["RunAtLoad"] as? Bool == true)
-    #expect(plist["StartInterval"] as? Int == 300)
-    #expect(plist.description.contains("$PATH") == false)
+@Test func pausePersistsFalseBeforeWaitingAndBootout() async throws {
+    let events = EventRecorder()
+    let controller = CollectionScheduleController.fixture(events: events, lockStates: [.held, .released])
+    try await controller.pause()
+    #expect(await events.order == ["settings.false", "launchctl.disable", "lock.wait", "launchctl.bootout"])
 }
 
-@Test func uninstallKeepsKeychainAndCache() throws {
-    let fs = RecordingInstallerFileSystem()
-    try LaunchAgentInstaller(fileSystem: fs, launchctl: StubLaunchctl()).uninstall()
-    #expect(fs.removed.contains(Self.plistURL))
-    #expect(fs.removed.contains(Self.lastGoodURL) == false)
-    #expect(fs.keychainDeleteCount == 0)
+@Test func resumePersistsTrueThenEnablesAndBootstraps() async throws {
+    let events = EventRecorder()
+    try await CollectionScheduleController.fixture(events: events).resume()
+    #expect(await events.order == ["settings.true", "launchctl.enable", "launchctl.bootstrap"])
 }
 
-@Test func auditedResourceMatchesEmbeddedTemplate() throws {
-    let resource = try String(contentsOf: Self.resourceTemplateURL, encoding: .utf8)
-    #expect(resource == LaunchAgentInstaller.plistTemplate)
+@Test func disabledScheduledGateReturnsBeforeCollectorConstruction() throws {
+    let store = StubSettingsStore(enabled: false)
+    #expect(try CollectionScheduleController.shouldRunScheduledCollection(settings: store) == false)
 }
 ```
 
-- [ ] **Step 2: 运行测试并确认命令与安装器行为缺失**
+- [ ] **Step 2: 运行测试并确认调度类型不存在**
 
-Run: `rtk swift test --package-path tools/slate-quota-collector --filter LaunchAgentInstallerTests`
+Run: `rtk swift test --package-path tools/slate-quota-collector --filter CollectionScheduleControllerTests`
 
-Expected: FAIL，报告 `CLIArguments` 或 `LaunchAgentInstaller` 未定义。
+Expected: FAIL，报告 `SettingsStore` 或 `CollectionScheduleController` 未定义。
+
+- [ ] **Step 3: 实现严格 settings schema 与调度协议**
+
+```swift
+struct CollectorSettings: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    let automaticCollectionEnabled: Bool
+}
+
+protocol SettingsPersisting: Sendable {
+    func load() throws -> CollectorSettings
+    func save(_ value: CollectorSettings) throws
+}
+
+protocol LaunchctlControlling: Sendable {
+    func disable(service: String) async throws
+    func enable(service: String) async throws
+    func bootstrap(plistURL: URL) async throws
+    func bootout(service: String) async throws
+    func isLoaded(service: String) async -> Bool
+}
+
+enum AutomaticCollectionStatus: Equatable, Sendable {
+    case enabledLoaded
+    case enabledNotLoaded
+    case disabled
+    case transitioning(String)
+}
+
+protocol CollectionScheduleControlling: Sendable {
+    func status() async throws -> AutomaticCollectionStatus
+    func pause() async throws
+    func resume() async throws
+}
+```
+
+`SettingsStore` 固定读写 `settings.json`，缺文件返回 enabled=true；额外 key、schema 非 1、非布尔值全部拒绝。原子临时文件与目标文件均 0600。
+
+- [ ] **Step 4: 实现不强杀当前轮的 pause 和立即运行的 resume**
+
+`pause()` 先保存 false，再执行 `launchctl disable gui/<uid>/com.yym8224961.slate-quota-collector`，每 250ms 检查 `run.lock`，最多等待 45 秒，最后 bootout collector service。因为 scheduled gate 在构造 Keychain/provider client 之前读 false，等待期间的新触发只启动短进程并立即成功退出。`resume()` 保存 true、enable service、bootstrap collector plist；plist 的 RunAtLoad 触发一次即时采集。
+
+Run: `rtk swift test --package-path tools/slate-quota-collector --filter CollectionScheduleControllerTests`
+
+Expected: PASS；关闭顺序、45 秒上限、无锁快速路径、重复 pause/resume 幂等和 scheduled gate 全部通过。
+
+- [ ] **Step 5: 提交持久开关与调度控制器**
+
+```bash
+rtk git add tools/slate-quota-collector/Sources/SlateQuotaCollector/SettingsStore.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/CollectionScheduleController.swift tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/CollectionScheduleControllerTests.swift
+rtk git commit -m "feat(quota): 增加持久自动采集开关"
+```
+
+### Task 11: 原生菜单栏 App 与脱敏状态窗口
+
+**Files:**
+- Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/MenuBarViewModel.swift`
+- Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/MenuBarController.swift`
+- Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/StatusWindowController.swift`
+- Create: `tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/MenuBarViewModelTests.swift`
+- Create: `tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/MenuBarControllerTests.swift`
+
+**Interfaces:**
+- Consumes: `CollectionScheduleControlling`、Task 5 的脱敏 last-good/runtime state、Task 9 的手动 `collect(.pushOnce)` 入口。
+- Produces: `MenuBarPresentation`、`MenuBarActionHandling`、`@MainActor MenuBarController.run()` 和原生详细状态窗口。
+
+- [ ] **Step 1: 写图标、菜单文案和退出语义的失败测试**
+
+```swift
+@Test func enabledPresentationUsesChartIconAndCheckedToggle() {
+    let value = MenuBarViewModel().presentation(snapshot: .healthy, schedule: .enabledLoaded, busy: nil)
+    #expect(value.iconSystemName == "chart.bar.fill")
+    #expect(value.automaticCollectionChecked)
+    #expect(value.codexLine == "正常 · 剩余 91%")
+    #expect(value.openCodeGoLine == "注意 · 剩余 18%")
+}
+
+@Test func pausedAndErrorIconsDoNotDependOnColor() {
+    #expect(MenuBarViewModel().presentation(snapshot: .healthy, schedule: .disabled, busy: nil).iconSystemName == "pause.circle")
+    #expect(MenuBarViewModel().presentation(snapshot: .providerError, schedule: .enabledLoaded, busy: nil).iconSystemName == "exclamationmark.triangle")
+}
+
+@MainActor @Test func menuContainsApprovedItemsAndQuitDoesNotPause() async throws {
+    let actions = RecordingMenuBarActions()
+    let controller = MenuBarController(actions: actions, statusReader: .fixture)
+    controller.refresh()
+    #expect(controller.menuTitles == ["Slate 额度监控", "每 5 分钟自动采集", "立即采集一次", "Codex", "OpenCode Go", "最后推送", "查看详细状态", "退出菜单栏"])
+    controller.perform(.quitMenuBar)
+    #expect(await actions.pauseCount == 0)
+    #expect(await actions.quitCount == 1)
+}
+```
+
+- [ ] **Step 2: 运行测试并确认菜单栏类型不存在**
+
+Run: `rtk swift test --package-path tools/slate-quota-collector --filter MenuBar`
+
+Expected: FAIL，报告 `MenuBarViewModel` 或 `MenuBarController` 未定义。
+
+- [ ] **Step 3: 实现纯展示模型和无 secret 状态读取**
+
+```swift
+struct MenuBarPresentation: Equatable, Sendable {
+    let iconSystemName: String
+    let automaticCollectionChecked: Bool
+    let automaticCollectionTitle: String
+    let codexLine: String
+    let openCodeGoLine: String
+    let lastPushLine: String
+    let busyLine: String?
+}
+
+enum MenuBarAction: Sendable {
+    case toggleAutomaticCollection
+    case collectOnce
+    case showDetailedStatus
+    case quitMenuBar
+}
+
+struct MenuBarStatusSnapshot: Equatable, Sendable {
+    let codexSummary: String
+    let openCodeGoSummary: String
+    let lastSuccessAt: Date?
+    let lastPushAt: Date?
+    let publicErrorCodes: [String: String]
+}
+
+protocol MenuBarStatusReading: Sendable {
+    func readStatus() throws -> MenuBarStatusSnapshot
+}
+
+protocol MenuBarActionHandling: Sendable {
+    func pause() async throws
+    func resume() async throws
+    func collectOnce() async throws
+    @MainActor func showDetailedStatus()
+    @MainActor func quitMenuBar()
+}
+```
+
+ViewModel 只读取展示 snapshot、schedule status 和 busy 状态，不持有 `SecretStoring`。provider 行使用已有 summary/status；没有可信数据时显示“无可信数据”，不得把 0% 误写成已耗尽。
+
+- [ ] **Step 4: 实现 NSStatusItem、异步 action 和详细状态 NSPanel**
+
+`MenuBarController` 标记 `@MainActor`，创建 `NSStatusBar.system.statusItem` 和 `NSMenu`。toggle/pause/resume/collect 在 detached Task 中执行，主线程只更新“正在关闭”“正在开启”“正在采集”；期间禁用重复 action但菜单继续响应。`StatusWindowController` 的 NSPanel 固定显示自动采集状态、两个 provider 状态、最近成功/推送时间和脱敏错误码；不显示配置路径、URL、contentId 或 raw error。Quit 调用 `NSApplication.shared.terminate(nil)`，绝不调用 pause。
+
+Run: `rtk swift test --package-path tools/slate-quota-collector --filter MenuBar`
+
+Expected: PASS；健康/暂停/错误/无数据/busy 文案、菜单项顺序、异步禁用和退出不暂停均通过。
+
+- [ ] **Step 5: 提交菜单栏 App 控制器**
+
+```bash
+rtk git add tools/slate-quota-collector/Sources/SlateQuotaCollector/MenuBarViewModel.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/MenuBarController.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/StatusWindowController.swift tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/MenuBarViewModelTests.swift tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/MenuBarControllerTests.swift
+rtk git commit -m "feat(quota): 增加原生菜单栏控制界面"
+```
+
+### Task 12: CLI、App bundle 与双 LaunchAgent 安装
+
+**Files:**
+- Modify: `tools/slate-quota-collector/Sources/SlateQuotaCollector/Command.swift`
+- Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/AppBundleInstaller.swift`
+- Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/LaunchAgentInstaller.swift`
+- Create: `tools/slate-quota-collector/Resources/Info.plist.template`
+- Create: `tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-collector.plist.template`
+- Create: `tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-menubar.plist.template`
+- Create: `tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/AppBundleInstallerTests.swift`
+- Create: `tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/LaunchAgentInstallerTests.swift`
+
+**Interfaces:**
+- Consumes: Tasks 1–11 全部组件和当前用户目录。
+- Produces: 八个用户命令、两个内部入口、稳定 collector binary、`Slate 额度监控.app`、双 plist 和脱敏 `status`。
+
+- [ ] **Step 1: 写命令解析、App bundle 和双 plist 的失败测试**
+
+```swift
+@Test func parsesApprovedAndInternalCommandsWithoutSecretArguments() throws {
+    #expect(try CLIArguments(["collect", "--dry-run"]) == .collect(.dryRun))
+    #expect(try CLIArguments(["collect", "--once"]) == .collect(.pushOnce))
+    #expect(try CLIArguments(["collect", "--scheduled"]) == .collectScheduled)
+    #expect(try CLIArguments(["--menu-bar"]) == .menuBar)
+    #expect(try CLIArguments(["pause"]) == .pause)
+    #expect(try CLIArguments(["resume"]) == .resume)
+    #expect(throws: CLIError.self) { try CLIArguments(["collect", "--api-key", "secret"]) }
+}
+
+@Test func appBundleIsAgentOnlyAndUsesAbsoluteExecutable() throws {
+    let bundle = try AppBundleInstaller(fileSystem: .recording).build(executable: Self.releaseBinary)
+    #expect(bundle.url.path == NSString(string: "~/Applications/Slate 额度监控.app").expandingTildeInPath)
+    #expect(bundle.info["CFBundleIdentifier"] as? String == "com.yym8224961.slate-quota-menubar")
+    #expect(bundle.info["LSUIElement"] as? Bool == true)
+    #expect(bundle.info["CFBundleExecutable"] as? String == "slate-quota-collector")
+}
+
+@Test func installsIndependentMenuBarAndCollectorJobs() throws {
+    let plists = try LaunchAgentInstaller.renderPlists(paths: .fixture)
+    #expect(plists.menuBar["Label"] as? String == "com.yym8224961.slate-quota-menubar")
+    #expect(plists.menuBar["RunAtLoad"] as? Bool == true)
+    #expect(plists.menuBar["StartInterval"] == nil)
+    #expect(plists.collector["Label"] as? String == "com.yym8224961.slate-quota-collector")
+    #expect(plists.collector["StartInterval"] as? Int == 300)
+    #expect((plists.collector["ProgramArguments"] as? [String])?.suffix(2) == ["collect", "--scheduled"])
+}
+```
+
+- [ ] **Step 2: 运行测试并确认安装类型不存在**
+
+Run: `rtk swift test --package-path tools/slate-quota-collector --filter 'AppBundleInstallerTests|LaunchAgentInstallerTests'`
+
+Expected: FAIL，报告 `AppBundleInstaller` 或双 plist 安装行为不存在。
 
 - [ ] **Step 3: 实现 setup 的无回显输入和只读预检**
 
-`setup` 用 `termios` 临时关闭 echo，从 stdin 读取两次 OpenCode Key 和两次 Slate URL并做相等校验；不允许 secret 命令参数。用 `/usr/bin/which codex` 定位后调用 `realpath` 保存绝对路径，写配置与钥匙串，再各做一次 Codex/OpenCode 只读预检和 Slate URL 本地校验；预检失败保留已写配置并只显示脱敏 code，方便修复后重跑。
+`setup` 用 `termios` 关闭 echo，分别两次读取并校验 OpenCode Key 与 Slate URL；不允许 secret 参数。用 `/usr/bin/which codex` + `realpath` 保存绝对路径，写配置/钥匙串，再做 Codex/OpenCode 只读预检和 Slate URL 本地验证。预检失败只输出脱敏 code。
 
 ```text
 OpenCode Go API Key（输入不会显示）：
@@ -1038,39 +1265,34 @@ Slate 推送 URL（输入不会显示）：
 再次输入 Slate 推送 URL：
 ```
 
-- [ ] **Step 4: 实现 collect、status 与稳定二进制安装**
+- [ ] **Step 4: 生成本机 `.app`、稳定 binary 和两个审计可读 plist**
 
-`LaunchAgentInstaller.swift` 内嵌与 Resources 文件逐字一致的 XML 模板，使安装后的单文件二进制不依赖源码目录；`Resources/com.yym8224961.slate-quota-collector.plist.template` 是供人工审计和打包复用的同源副本，测试强制两者一致。`install-launch-agent` 把当前 release 可执行文件原子复制到 `~/Library/Application Support/SlateQuotaCollector/bin/slate-quota-collector`，权限 0700；把模板替换成绝对 binary/log path 后写 `~/Library/LaunchAgents/com.yym8224961.slate-quota-collector.plist`，再执行 `launchctl bootout gui/<uid>/<label>`（不存在可忽略）和 `launchctl bootstrap gui/<uid> <plist>`。标准输出/错误分别写 Application Support 下 0600 日志文件。
+Info.plist 固定包含 `CFBundlePackageType=APPL`、`CFBundleIdentifier=com.yym8224961.slate-quota-menubar`、`CFBundleName=Slate 额度监控`、`CFBundleExecutable=slate-quota-collector`、`LSUIElement=true`、`LSMinimumSystemVersion=13.0`。同一 release binary 分别复制到 `.app/Contents/MacOS/` 和 Application Support `bin/`，权限 0700；三个模板的内嵌字符串与 Resources 文件逐字测试一致。
 
-plist 模板固定包含：
+collector plist 使用 `collect --scheduled`、RunAtLoad 和 StartInterval 300；menu bar plist 使用 app binary `--menu-bar`、RunAtLoad，无 StartInterval/KeepAlive。所有路径绝对化，日志文件 0600，不出现 Key、Slate URL 或 contentId。
 
-```xml
-<key>Label</key><string>com.yym8224961.slate-quota-collector</string>
-<key>ProgramArguments</key>
-<array><string>__EXECUTABLE__</string><string>collect</string><string>--once</string></array>
-<key>RunAtLoad</key><true/>
-<key>StartInterval</key><integer>300</integer>
-<key>ProcessType</key><string>Background</string>
-```
+- [ ] **Step 5: 接线用户命令、内部入口、安装与卸载**
 
-`status` 只读 runtime-state 和 `launchctl print gui/<uid>/<label>` 的退出码，显示最近成功/推送时间、provider status、脱敏错误码和 loaded/not loaded。`uninstall-launch-agent` 只 bootout 并删除 plist，保留 binary、配置、钥匙串、缓存。
+可见帮助只列出 `setup`、`collect --dry-run`、`collect --once`、`pause`、`resume`、`install-launch-agent`、`status`、`uninstall-launch-agent`。`collect --scheduled` 在构造 Keychain/clients 前调用 Task 10 gate；`--menu-bar` 运行 `NSApplication` 与 Task 11 controller。安装先生成 app/binary/plists，再 bootstrap menu bar，按 settings 决定是否 bootstrap collector。卸载 bootout/删除两个 plist、`.app` 和稳定 binary，但保留 Keychain、config、settings、last-good、runtime-state。
 
-- [ ] **Step 5: 运行 CLI/installer 测试与 release build**
+`status` 只显示自动采集开关、menu bar/collector loaded 状态、最近成功/推送、provider 状态和脱敏错误码。
 
-Run: `rtk swift test --package-path tools/slate-quota-collector --filter LaunchAgentInstallerTests`
+- [ ] **Step 6: 运行 CLI、bundle、plist 和 release build 验证**
+
+Run: `rtk swift test --package-path tools/slate-quota-collector --filter 'AppBundleInstallerTests|LaunchAgentInstallerTests'`
 
 Run: `rtk swift build --package-path tools/slate-quota-collector -c release`
 
-Expected: PASS；release 可执行文件存在，`--help` 只列出批准的六个命令，plist 不含 secret 或相对路径。
+Expected: PASS；App bundle 通过 property-list 解码，两个 agent 可独立 loaded/disabled，帮助无内部入口和 secret 参数，release binary 可启动 `--menu-bar` 测试 harness。
 
-- [ ] **Step 6: 提交 CLI 与 LaunchAgent**
+- [ ] **Step 7: 提交 CLI、App bundle 与双 LaunchAgent**
 
 ```bash
-rtk git add tools/slate-quota-collector/Sources/SlateQuotaCollector/Command.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/LaunchAgentInstaller.swift tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-collector.plist.template tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/LaunchAgentInstallerTests.swift
-rtk git commit -m "feat(quota): 安装五分钟 LaunchAgent"
+rtk git add tools/slate-quota-collector/Sources/SlateQuotaCollector/Command.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/AppBundleInstaller.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/LaunchAgentInstaller.swift tools/slate-quota-collector/Resources/Info.plist.template tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-collector.plist.template tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-menubar.plist.template tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/AppBundleInstallerTests.swift tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/LaunchAgentInstallerTests.swift
+rtk git commit -m "feat(quota): 安装菜单栏 App 与双 LaunchAgent"
 ```
 
-### Task 11: Slate A5 模板、初始数据与渲染回归
+### Task 13: Slate A5 模板、初始数据与渲染回归
 
 **Files:**
 - Create: `tools/slate-quota-collector/templates/slate-dashboard-template.json`
@@ -1157,14 +1379,14 @@ rtk git add tools/slate-quota-collector/templates/slate-dashboard-template.json 
 rtk git commit -m "feat(quota): 交付双服务 A5 额度模板"
 ```
 
-### Task 12: 使用说明、全套自动化验证与真实安装检查点
+### Task 14: 使用说明、全套自动化验证与真实安装检查点
 
 **Files:**
 - Create: `tools/slate-quota-collector/README.md`
 - Modify: `tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/CollectorServiceTests.swift`
 
 **Interfaces:**
-- Consumes: Tasks 1–11 的最终命令、路径、错误码和模板文件。
+- Consumes: Tasks 1–13 的最终命令、菜单栏 App、路径、错误码和模板文件。
 - Produces: 从 Slate 建帧到 Mac 安装、验证、轮换、卸载的中文运行手册，以及全链路 fake transport 测试。
 
 - [ ] **Step 1: 写端到端 fake transport 失败测试**
@@ -1205,12 +1427,14 @@ README 必须包含：
 1. 要求 macOS 13+、Swift 6.2、同用户 Codex ChatGPT 登录、OpenCode Go API Key、Slate capability URL；
 2. release build 命令；
 3. Slate 新建“外部数据”、帧名“额度监控”、5 分钟刷新、粘贴两个 JSON 文件；
-4. `setup`、`collect --dry-run`、`collect --once`、`install-launch-agent`、`status`、`uninstall-launch-agent` 的预期输出；
+4. `setup`、`collect --dry-run`、`collect --once`、`pause`、`resume`、`install-launch-agent`、`status`、`uninstall-launch-agent` 的预期输出；
 5. 锁屏/休眠/注销语义，10 分钟 stale 规则；
 6. 401、403、Codex 未登录、push 404、双源失败的处理；
 7. capability URL 泄漏后删除旧 Slate 内容并重建的轮换流程；
 8. 卸载不删除钥匙串/缓存，以及用“钥匙串访问”App手工删除两个 account 的明确步骤；
-9. 服务器渲染成功、Slate GET 回读和真实 Note4 下一次同步显示是三个不同证明面。
+9. 服务器渲染成功、Slate GET 回读和真实 Note4 下一次同步显示是三个不同证明面；
+10. 菜单栏登录自启、开关持久化、关闭状态手动采集、退出 UI 不停采集和双 LaunchAgent 的操作说明；
+11. 第一版 `.app` 仅供当前 Mac 本地安装，未做 Developer ID 签名、公证或跨 Mac 分发。
 
 - [ ] **Step 5: 运行全套静态和自动化验证**
 
@@ -1218,13 +1442,15 @@ Run: `rtk swift test --package-path tools/slate-quota-collector`
 
 Run: `rtk swift build --package-path tools/slate-quota-collector -c release`
 
+Run: `rtk plutil -lint tools/slate-quota-collector/Resources/Info.plist.template tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-collector.plist.template tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-menubar.plist.template`
+
 Run: `rtk bun test shared/src/dynamic/slate-quota-template.test.ts backend/src/modules/dynamic-content/rendering/slate-quota-dashboard.test.ts`
 
 Run: `rtk bun run --cwd shared typecheck`
 
 Run: `rtk git diff --check`
 
-Expected: 所有命令成功；Swift 测试包含真实短进程 fixture 和 fake HTTP 全链路；TypeScript schema/renderer 无回归；diff 无空白错误。
+Expected: 所有命令成功；Swift 测试包含真实短进程 fixture、fake HTTP 全链路和菜单栏/双 agent 测试；三个 plist 合法；TypeScript schema/renderer 无回归；diff 无空白错误。
 
 - [ ] **Step 6: 扫描仓库交付物中的 secret 和越界改动**
 
@@ -1232,9 +1458,9 @@ Run: `rtk grep -n -i 'authorization\|bearer \|opencode.*api.*key.*[:=]\|/api/v1/
 
 Expected: 只命中说明文字、测试假值和固定字段名，不出现真实 Key、真实 contentId 或真实完整 URL。
 
-Run: `rtk git diff --name-only HEAD~11`
+Run: `rtk git diff --name-only HEAD~13`
 
-Expected: 只包含本计划列出的 `tools/slate-quota-collector/`、两个新测试文件和文档；不包含 Prisma、Hermes、固件或插件文件。
+Expected: 只包含本计划列出的 `tools/slate-quota-collector/`、两个新 TypeScript 测试文件和文档；不包含 Prisma、Hermes、固件或插件文件。
 
 - [ ] **Step 7: 提交 README 与端到端测试**
 
@@ -1267,16 +1493,24 @@ Run: `rtk tools/slate-quota-collector/.build/release/slate-quota-collector insta
 
 Run: `rtk tools/slate-quota-collector/.build/release/slate-quota-collector status`
 
-Expected: LaunchAgent loaded；先由 RunAtLoad 完成一次，再在 300 秒后完成第二次，两个 `lastPushAt` 间隔约 5 分钟；每次都有新 `rendered_at`/ETag 或明确的服务端去重行为。等待期间每 60 秒可读一次 `status`，不额外请求 provider。
+Expected: menu bar 与 collector 两个 LaunchAgent loaded，`~/Applications/Slate 额度监控.app` 的 Info.plist 显示 `LSUIElement=true`；菜单栏图标出现且无 Dock 图标。collector 先由 RunAtLoad 完成一次，再在 300 秒后完成第二次，两个 `lastPushAt` 间隔约 5 分钟；每次都有新 `rendered_at`/ETag 或明确的服务端去重行为。等待期间每 60 秒可读一次 `status`，不额外请求 provider。
 
-- [ ] **Step 11: 在 Web 预览与真实 Note4 做最终视觉验收**
+- [ ] **Step 11: 验证菜单栏开关、手动采集与恢复**
+
+在菜单栏关闭“每 5 分钟自动采集”，确认图标变为 `pause.circle`、菜单栏仍存在、`status` 显示 disabled；等待超过 5 分钟，`lastPushAt` 不变化且日志没有 provider 请求。关闭状态点击“立即采集一次”，确认只新增一轮并保持 disabled。再从菜单栏恢复，确认立即采集一次并重新进入 300 秒调度。点击“退出菜单栏”后确认 collector 开关/loaded 状态不变；重新启动 `.app` 恢复图标。
+
+- [ ] **Step 12: 验证登录自启而不擅自注销用户**
+
+自动化先验证 menu bar plist 的 RunAtLoad、绝对 app executable、无 StartInterval/KeepAlive 和独立 label。真实“注销并重新登录”会中断当前桌面会话，执行代理不得自行触发；在最终交付时请用户选择方便的时间手动重新登录，随后回读 menu bar job 和 settings，确认图标自动出现且开关保持注销前状态。
+
+- [ ] **Step 13: 在 Web 预览与真实 Note4 做最终视觉验收**
 
 Web 预览和设备均确认：状态栏“额度监控”几何居中；Codex/OpenCode Go 纵排；5 条额度条字号和间距符合 A5；Codex 缺失窗口显示空心“未提供”；“余额接续 开启/关闭”保留；底部没有采集周期小字和额外留白。记录服务器 ETag、设备同步时间和一张真实屏幕照片，明确区分服务器渲染与设备显示证明。
 
 ## 自审结果
 
-- **规格覆盖：** Tasks 2–4 覆盖两个官方数据源与全部窗口语义；Tasks 5–9 覆盖密钥、缓存、失败、锁、超时、重试和调度；Task 10 覆盖六个 CLI 命令；Task 11 覆盖最终 A5 模板与 1bpp 渲染；Task 12 覆盖真实安装和三层证明。
+- **规格覆盖：** Tasks 2–4 覆盖两个官方数据源与全部窗口语义；Tasks 5–9 覆盖密钥、缓存、失败、锁、超时、重试和采集编排；Task 10 覆盖持久开关与 scheduled gate；Task 11 覆盖菜单栏/详细状态 UI；Task 12 覆盖八个用户命令、`.app` 与双 LaunchAgent；Task 13 覆盖最终 A5 模板与 1bpp 渲染；Task 14 覆盖真实安装、开关和三层证明。
 - **实现补充：** 新增独立 `runtime-state.json`，解决 launchd 每轮新进程无法仅靠内存识别“连续第二次双源失败”的问题；它不改变批准的凭据边界。
-- **范围检查：** 单一子项目即可独立构建、测试、安装和卸载；现有 backend 只新增隔离的 renderer 测试，不修改生产服务。
-- **类型一致性：** 所有后续任务沿用文件职责章节的五个协议、`SlateEnvelope`、`SanitizedLastGood`、`CollectorRuntimeState`、`CollectionDecision` 和 `CollectionReport`，没有平行命名。
-- **完成边界：** 自动化通过不等于真实部署完成；只有 Task 12 的真实只读 provider、Slate ETag/GET、两次 LaunchAgent 和 Note4 实机证明全部取得后才称为完成。
+- **范围检查：** 菜单栏与采集核心仍是同一 Swift Package/二进制的两个入口，不引入 XPC、App Store、公证或独立前端；现有 backend 只新增隔离的 renderer 测试，不修改生产服务。
+- **类型一致性：** 所有后续任务沿用 `SlateEnvelope`、`SanitizedLastGood`、`CollectorRuntimeState`、`CollectionDecision`、`CollectionReport`、`CollectorSettings`、`AutomaticCollectionStatus` 和 `CollectionScheduleControlling`，菜单栏/CLI 共用一套 schedule 逻辑。
+- **完成边界：** 自动化通过不等于真实部署完成；只有 Task 14 的真实只读 provider、Slate ETag/GET、双 LaunchAgent、菜单开关、两次五分钟采集和 Note4 实机证明全部取得后才称为完成。注销/登录证明需要用户在方便时手动配合，代理不会自行中断桌面会话。
