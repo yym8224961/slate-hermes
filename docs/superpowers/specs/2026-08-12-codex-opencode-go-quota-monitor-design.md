@@ -1,7 +1,7 @@
 # Codex × OpenCode Go 额度监控设计
 
 日期：2026-08-12  
-状态：用户已批准，进入实施计划  
+状态：用户已批准菜单栏设计，等待书面规格复核  
 目标设备：ZecTrix Note4，400 × 300，1bpp  
 目标部署：Slate 运行在 fnOS NAS；额度采集器运行在当前 Mac
 
@@ -15,6 +15,8 @@
 - 单个数据源失败、未登录、未配置、限流或数据过期时的可信状态。
 
 所有额度条统一表示“剩余额度”：条越长，可用额度越多。监控不得通过发送模型请求来探测额度，也不得把 Codex 或 OpenCode Go 的登录凭据复制到 Slate、NAS、模板数据或日志中。
+
+当前 Mac 同时安装一个原生菜单栏 App。用户可以像普通 Mac 软件一样查看状态、关闭或恢复每 5 分钟自动采集，并在自动采集关闭时手动执行一次刷新。
 
 ## 2. 已确认的产品决策
 
@@ -48,12 +50,37 @@
 - 不把 OpenCode Go API Key 放进 Slate 主服务、MySQL、Docker 环境或 Dashboard 数据；
 - 第一版不追求 Mac 离线时的 24 小时连续采集。
 
+### 2.3 菜单栏控制
+
+菜单栏 App 采用用户批准的“UI 与采集任务分离”方案：
+
+- App 安装为 `~/Applications/Slate 额度监控.app`；
+- 使用原生 AppKit `NSStatusItem`，`LSUIElement=true`，不显示 Dock 图标；
+- 当前用户登录后自动出现；菜单栏 App 与定时采集分别由独立的用户级 LaunchAgent 管理；
+- 菜单栏一直保留“每 5 分钟自动采集”开关，关闭采集不退出 App；
+- 关闭状态跨重启、注销和重新登录保持；
+- “立即采集一次”忽略自动采集开关，但仍使用同一把运行锁，不允许并发覆盖；
+- “退出菜单栏”只退出 UI，不改变自动采集开关；下次登录时菜单栏重新出现；
+- 关闭自动采集不删除钥匙串、配置、last-known-good、runtime state 或 Slate 当前画面。
+
+曾比较但未采用的方向：
+
+- 菜单栏 App 自己用 Timer 每 5 分钟采集：文件更少，但 UI 退出或崩溃会同时停止后台采集；
+- 完整 GUI App + XPC helper：隔离完整，但第一版的签名、打包和通信复杂度超过实际需要。
+
 ## 3. 系统边界与数据流
 
 ```text
-Mac launchd（每 300 秒）
-        │
-        └── SlateQuotaCollector（原生 macOS 可执行文件）
+com.yym8224961.slate-quota-menubar
+        └── Slate 额度监控.app --menu-bar
+              ├── 自动采集开关
+              ├── 立即采集一次
+              ├── 脱敏状态/最近推送时间
+              └── CollectionScheduleController
+                         │ enable / disable
+                         ▼
+com.yym8224961.slate-quota-collector（每 300 秒）
+        └── SlateQuotaCollector collect --scheduled
               ├── CodexAdapter
               │     └── codex app-server --stdio
               │           └── account/rateLimits/read
@@ -73,7 +100,7 @@ Mac launchd（每 300 秒）
                                 └── 设备下次同步时显示
 ```
 
-采集器使用 Swift 6 原生编译，依赖 macOS Foundation 与 Security framework，不要求另外安装 Node、Bun、Python 或常驻容器。项目放置在：
+采集器使用 Swift 6 原生编译，依赖 macOS Foundation、Security 与 AppKit framework，不要求另外安装 Node、Bun、Python 或常驻容器。项目放置在：
 
 ```text
 tools/slate-quota-collector/
@@ -85,10 +112,16 @@ tools/slate-quota-collector/
 │   ├── QuotaNormalizer.swift
 │   ├── KeychainStore.swift
 │   ├── SanitizedSnapshotCache.swift
-│   └── SlateIngestClient.swift
+│   ├── SlateIngestClient.swift
+│   ├── CollectionScheduleController.swift
+│   ├── MenuBarViewModel.swift
+│   ├── MenuBarController.swift
+│   └── AppBundleInstaller.swift
 ├── Tests/SlateQuotaCollectorTests/
 ├── Resources/
-│   └── com.yym8224961.slate-quota-collector.plist.template
+│   ├── Info.plist.template
+│   ├── com.yym8224961.slate-quota-collector.plist.template
+│   └── com.yym8224961.slate-quota-menubar.plist.template
 ├── templates/
 │   ├── slate-dashboard-template.json
 │   └── initial-data.json
@@ -102,7 +135,11 @@ tools/slate-quota-collector/
 - `QuotaNormalizer` 是唯一处理窗口识别、百分比、阈值、时间和显示文案的模块；
 - `KeychainStore` 是唯一读取敏感配置的模块；
 - `SanitizedSnapshotCache` 拒绝保存任何未归一化的上游响应；
-- `SlateIngestClient` 只接受已经通过 schema 校验的展示 payload。
+- `SlateIngestClient` 只接受已经通过 schema 校验的展示 payload；
+- `CollectionScheduleController` 是读写自动采集开关和控制 collector LaunchAgent 的唯一入口；
+- `MenuBarViewModel` 只把脱敏缓存/运行状态变成菜单文案和图标状态；
+- `MenuBarController` 只负责 AppKit 菜单事件，不直接解析 provider 响应或读取 secret；
+- `AppBundleInstaller` 只负责生成 `.app`、Info.plist 和两个 LaunchAgent。
 
 ## 4. 真实数据源
 
@@ -347,6 +384,14 @@ Slate 推送 URL 同时允许公开 GET 当前 Dashboard 数据，并把 content
 
 不保存实际 Key 或 URL。
 
+自动采集开关单独保存到：
+
+```text
+~/Library/Application Support/SlateQuotaCollector/settings.json
+```
+
+内容严格为 `schema_version` 和 `automatic_collection_enabled`，权限 0600。它是 UI 与 `collect --scheduled` 共同使用的持久化事实源，不保存任何 provider 或 Slate 凭据。手动 `collect --once` 不受此开关限制。
+
 ### 7.3 last-known-good
 
 ```text
@@ -363,17 +408,31 @@ Slate 推送 URL 同时允许公开 GET 当前 Dashboard 数据，并把 content
 
 launchd 每 5 分钟启动的是新进程，因此“连续第二次双数据源失败”不能只依赖进程内内存。该文件只保存 provider 失败计数、同时失败计数、最近成功/推送时间和脱敏错误码；不保存 Key、Slate URL、contentId、Authorization、上游原始响应或原始错误正文。它与 `last-good.json` 分开并使用当前用户可读写权限。
 
-## 8. 调度、并发与超时
+## 8. 调度、菜单栏与超时
 
-launchd job：
+两个独立 launchd job：
 
 ```text
-label: com.yym8224961.slate-quota-collector
-RunAtLoad: true
-StartInterval: 300
+com.yym8224961.slate-quota-menubar
+  RunAtLoad: true
+  ProgramArguments: Slate 额度监控.app/Contents/MacOS/slate-quota-collector --menu-bar
+
+com.yym8224961.slate-quota-collector
+  RunAtLoad: true
+  StartInterval: 300
+  ProgramArguments: slate-quota-collector collect --scheduled
 ```
 
 安装时解析并写入 collector 可执行文件和 Codex CLI 的绝对路径，避免依赖 launchd 的精简 PATH。每轮同时读取两个 provider，随后串行执行 normalize、cache 和 push。
+
+自动采集开关语义：
+
+- 关闭时先原子写入 `automatic_collection_enabled=false`，使之后启动的 `collect --scheduled` 在任何网络请求前成功退出；
+- 随后持久化 disable collector LaunchAgent，并等待当前 `run.lock` 最多 45 秒；当前轮允许正常完成，不在 Slate POST 中途强杀；
+- 锁释放或等待达到上限后 bootout collector job；菜单栏 job 不受影响；
+- 开启时先写入 `true`，再 enable/bootstrap collector job；`RunAtLoad` 立即采集一次，之后每 300 秒执行；
+- 手动“立即采集一次”走 `collect --once` 语义并争用同一把运行锁，关闭自动采集时仍可使用；
+- 菜单栏 UI 操作异步执行，开关切换和手动采集期间保持可响应并显示“正在关闭”“正在采集”等状态。
 
 超时：
 
@@ -444,6 +503,8 @@ CLI 需要以下命令：
 slate-quota-collector setup
 slate-quota-collector collect --dry-run
 slate-quota-collector collect --once
+slate-quota-collector pause
+slate-quota-collector resume
 slate-quota-collector install-launch-agent
 slate-quota-collector status
 slate-quota-collector uninstall-launch-agent
@@ -452,9 +513,39 @@ slate-quota-collector uninstall-launch-agent
 - `setup`：无回显收集 OpenCode Go Key 与 Slate URL，写入钥匙串，定位 Codex CLI，做只读账户与端点预检；
 - `--dry-run`：读取两个 provider，输出脱敏后的 payload，不 POST；
 - `--once`：采集并执行一次真实 Slate POST；
-- `install-launch-agent`：安装并加载每 300 秒运行的用户级 LaunchAgent；
-- `status`：只显示最近一次成功时间、各 provider 状态、LaunchAgent 状态和脱敏错误码；
-- `uninstall-launch-agent`：停止并移除 LaunchAgent，不自动删除钥匙串或 last-known-good；清除数据需要单独显式命令。
+- `pause`：持久关闭自动采集，保留菜单栏、手动采集、配置、钥匙串和缓存；
+- `resume`：恢复自动采集并立即运行一次；
+- `install-launch-agent`：生成 `~/Applications/Slate 额度监控.app`，安装并加载菜单栏与 collector 两个用户级 LaunchAgent；
+- `status`：只显示自动采集开关、菜单栏/collector job、最近一次成功/推送、各 provider 状态和脱敏错误码；
+- `uninstall-launch-agent`：停止并移除两个 LaunchAgent 和生成的 `.app`，不自动删除钥匙串、settings 或 last-known-good；清除数据需要单独显式命令。
+
+内部入口 `--menu-bar` 和 `collect --scheduled` 只供 App bundle/launchd 使用，不接受 secret 参数，也不作为普通用户操作命令展示。
+
+### 10.3 菜单栏 App
+
+菜单栏使用系统模板 SF Symbols，不依赖颜色表达状态：
+
+- 自动采集开启：`chart.bar.fill`；
+- 自动采集关闭：`pause.circle`；
+- 最近一轮存在错误：`exclamationmark.triangle`。
+
+点击图标显示：
+
+```text
+Slate 额度监控
+
+✓ 每 5 分钟自动采集
+  立即采集一次
+
+Codex          正常 · 剩余 91%
+OpenCode Go    注意 · 剩余 18%
+最后推送       今天 16:30
+
+  查看详细状态
+  退出菜单栏
+```
+
+状态数值来自脱敏的 last-good/runtime state，不触发 provider 网络调用。详细状态使用一个原生小窗口，显示自动采集状态、两个 provider 状态、最近成功/推送时间和脱敏错误码；不显示 Key、Slate URL、contentId、Authorization 或原始错误正文。菜单栏开关与 `pause/resume` CLI 调用同一个 `CollectionScheduleController`，不存在两套状态逻辑。
 
 ## 11. 验证与验收
 
@@ -475,6 +566,7 @@ slate-quota-collector uninstall-launch-agent
 - 阈值：21%、20%、10%、9%、1%、0%；
 - last-known-good：单源失败、双源第一次失败、双源连续第二次失败、恢复；
 - secret redaction：日志、错误和缓存中不出现测试 Key、Authorization 或完整 Slate URL。
+- 菜单栏：开关跨重新启动保持、关闭后 scheduled run 在网络前退出、手动采集仍可用、退出 UI 不改变采集状态、菜单文案只来自脱敏状态。
 
 ### 11.3 集成验证
 
@@ -486,6 +578,10 @@ slate-quota-collector uninstall-launch-agent
 - `collect --once` 后读取 Slate `GET .../data`，确认数据与模板一致且不存在 secret；
 - 检查 Slate POST 返回新的 `image_etag`、`manifest_etag` 和 `rendered_at`；
 - 在 Web 预览和真实 Note4 上分别验证一帧，区分“服务器已渲染”与“设备已在下一次同步显示”。
+- 安装生成的 `.app` 通过 `plutil`，`LSUIElement=true`，启动后不显示 Dock 图标；
+- 菜单栏与 collector 两个 LaunchAgent 可独立启停；关闭自动采集后等待超过 5 分钟不产生 provider 请求，菜单栏仍在；
+- 关闭状态下点击“立即采集一次”成功更新一次 Slate，但自动采集仍保持关闭；
+- 注销并重新登录后菜单栏自动出现，自动采集开关保持注销前状态。
 
 ### 11.4 完成标准
 
@@ -495,6 +591,7 @@ slate-quota-collector uninstall-launch-agent
 - 两个真实数据源各取得一次只读成功响应；
 - Mac 钥匙串中存在两个所需 secret，普通配置和日志中不存在 secret；
 - LaunchAgent 已安装，连续完成至少两次间隔约 5 分钟的自动推送；
+- `Slate 额度监控.app` 已安装并能在登录后自动出现；关闭/恢复开关、手动采集和详细状态均取得真实运行证明；
 - Slate 当前数据、渲染 ETag 与真实设备显示均得到回读或实机证明；
 - 模拟单源失败不会归零，模拟双源失败符合第 9 节；
 - 不修改 Slate 固件、主服务凭据模型、MySQL schema 或现有 Hermes 链路。
@@ -511,6 +608,8 @@ slate-quota-collector uninstall-launch-agent
 - 给缺失窗口动态绘制斜线 progress；
 - 采集或展示邮箱、组织、原始账单明细、prompt、会话或模型使用内容；
 - Mac 休眠期间补齐历史快照。
+- App Store、公证、Developer ID 签名或面向其他 Mac 的分发包；第一版是当前用户本机安装的原生 `.app`；
+- 完整偏好设置窗口、通知中心提醒或菜单栏历史曲线。
 
 ## 13. 风险与后续
 
@@ -519,3 +618,4 @@ slate-quota-collector uninstall-launch-agent
 - Slate capability URL 同时可读写，未来若做平台级硬化，应增加独立 ingest token、日志 URL 脱敏和凭证轮换；
 - 如果用户以后要求 Mac 离线仍连续采集，应另开 NAS collector 设计，不在当前工具中静默扩展凭据边界；
 - 如果 16px 仍不够大，只能减少字段或为 Slate renderer 增加新的字体资产，不能通过当前模板 JSON继续放大。
+- 本机未签名 `.app` 由安装命令直接生成并在当前用户环境运行；如果以后要复制到其他 Mac，需要另行增加 Developer ID 签名、公证和升级机制。
