@@ -21,6 +21,7 @@ build/
 .vscode/
 .claude/
 .gemini/
+.superpowers/
 *.swp
 *.swo
 *~
