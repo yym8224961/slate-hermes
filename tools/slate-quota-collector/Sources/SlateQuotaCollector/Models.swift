@@ -155,6 +155,29 @@ struct CollectorRuntimeState: Codable, Equatable, Sendable {
     var lastErrorCodes: [String: String]
 }
 
+struct CollectorSnapshot: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    var lastGood: SanitizedLastGood
+    var runtimeState: CollectorRuntimeState
+
+    static var empty: Self {
+        Self(
+            schemaVersion: 1,
+            lastGood: SanitizedLastGood(schemaVersion: 1, codex: nil, openCodeGo: nil),
+            runtimeState: CollectorRuntimeState(
+                schemaVersion: 1,
+                codexFailures: 0,
+                openCodeGoFailures: 0,
+                simultaneousFailures: 0,
+                lastSuccessAt: nil,
+                lastPushAt: nil,
+                providerStatuses: [:],
+                lastErrorCodes: [:]
+            )
+        )
+    }
+}
+
 protocol CodexRateLimitReading: Sendable {
     func read() async throws -> CodexRateLimitsReadResult
 }
@@ -174,10 +197,8 @@ protocol SlateIngesting: Sendable {
 }
 
 protocol SnapshotPersisting: Sendable {
-    func loadLastGood() throws -> SanitizedLastGood
-    func saveLastGood(_ value: SanitizedLastGood) throws
-    func loadRuntimeState() throws -> CollectorRuntimeState
-    func saveRuntimeState(_ value: CollectorRuntimeState) throws
+    func loadSnapshot() throws -> CollectorSnapshot
+    func saveSnapshot(_ value: CollectorSnapshot) throws
 }
 
 extension JSONEncoder {

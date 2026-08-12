@@ -17,7 +17,7 @@
 - Codex 只认 `rateLimitsByLimitId.codex`，或 `rateLimits.limitId == "codex"` 的回退值；用 `windowDurationMins == 300/10080` 识别 5 小时/周，不混入 `codex_bengalfox`。
 - OpenCode Go 只调用 `GET https://opencode.ai/zen/go/v1/usage`，未知状态、缺字段、非 JSON 与 HTTP 错误全部 fail closed。
 - OpenCode Go Key 与完整 Slate capability URL 只存在当前用户登录钥匙串；不得出现在参数、plist、配置、缓存、日志或测试快照中。
-- `last-good.json` 只保存已归一化、可公开展示的 provider 快照；另用 `runtime-state.json` 保存跨进程失败计数、最近成功/推送时间和脱敏错误码。
+- `snapshot-state.json` 以一个原子状态包同时保存已归一化、可公开展示的 provider 快照，以及跨进程失败计数、最近成功/推送时间和脱敏错误码；两部分不会出现跨文件的部分提交。
 - 自动采集开关只写入 0600 的 `settings.json`，字段严格为 `schema_version` 和 `automatic_collection_enabled`；手动采集不受开关限制。
 - 菜单栏 App 固定安装为 `~/Applications/Slate 额度监控.app`，`LSUIElement=true`，不显示 Dock 图标，并在当前用户登录后自动出现。
 - 菜单栏与 collector 使用独立 label：`com.yym8224961.slate-quota-menubar` 和 `com.yym8224961.slate-quota-collector`；关闭 collector 不影响菜单栏。
@@ -47,7 +47,7 @@ tools/slate-quota-collector/
 │   ├── OpenCodeGoUsageClient.swift                    # 官方 usage HTTPS 客户端
 │   ├── KeychainStore.swift                            # Security.framework secret 读写
 │   ├── RedactingLogger.swift                          # 脱敏错误码和日志输出
-│   ├── SanitizedSnapshotCache.swift                   # last-good 与 runtime-state 原子持久化
+│   ├── SanitizedSnapshotCache.swift                   # last-good 与 runtime-state 单包原子持久化
 │   ├── FailurePolicy.swift                            # 单源/双源失败、stale、恢复决策
 │   ├── RunLock.swift                                  # O_EXCL 锁、PID 存活与陈旧锁恢复
 │   ├── SlateIngestClient.swift                        # endpoint 校验、POST、一次短重试
@@ -663,7 +663,7 @@ struct CollectorRuntimeState: Codable, Equatable, Sendable {
 }
 ```
 
-`last-good.json` 和 `runtime-state.json` 使用同一原子写工具但分别严格验证 key。禁止出现 `authorization`、`apiKey`、`token`、`pushURL`、`contentId`、`rateLimits`、`rollingUsage` 等原始/敏感 key；加载损坏文件时返回明确的 `cache_corrupt`，不把正文打到日志。
+`snapshot-state.json` 是单一原子 JSON 状态包，外层、last-good 与 runtime-state 内层都严格验证 key。禁止出现 `authorization`、`apiKey`、`token`、`pushURL`、`contentId`、`rateLimits`、`rollingUsage` 等原始/敏感 key；加载损坏文件时返回明确的 `cache_corrupt`，不把正文打到日志。
 
 - [ ] **Step 5: 跑绿并对生成文件做字节级 secret 扫描**
 
@@ -977,7 +977,7 @@ async let goResult = capture { try await openCode.read(apiKey: goKey) }
 let (rawCodex, rawGo) = await (codexResult, goResult)
 ```
 
-两个结果分别归一化后交给 `FailurePolicy`。先原子保存更新后的 last-good 和 runtime state，再按 decision 决定是否推送；POST 成功后立即 GET 当前 inner data 并与本轮 `envelope.data` 强相等，成功才设置 `readbackVerified=true` 并更新 `lastPushAt`。POST 或回读失败都不删除 last-good，也不重新请求 provider。`.dryRun` 返回/打印脱敏 envelope，但不读 Slate URL、不推送、不改变 `lastPushAt`。
+两个结果分别归一化后交给 `FailurePolicy`。先把更新后的 last-good 和 runtime state 作为一个原子状态包保存，再按 decision 决定是否推送；POST 成功后立即 GET 当前 inner data 并与本轮 `envelope.data` 强相等，成功才设置 `readbackVerified=true` 并更新 `lastPushAt`。POST 或回读失败都不删除 last-good，也不重新请求 provider。`.dryRun` 返回/打印脱敏 envelope，但不读 Slate URL、不推送、不改变 `lastPushAt`。
 
 - [ ] **Step 4: 在最外层加入可取消的 45 秒 deadline**
 
@@ -1273,7 +1273,7 @@ collector plist 使用 `collect --scheduled`、RunAtLoad 和 StartInterval 300�
 
 - [ ] **Step 5: 接线用户命令、内部入口、安装与卸载**
 
-可见帮助只列出 `setup`、`collect --dry-run`、`collect --once`、`pause`、`resume`、`install-launch-agent`、`status`、`uninstall-launch-agent`。`collect --scheduled` 在构造 Keychain/clients 前调用 Task 10 gate；`--menu-bar` 运行 `NSApplication` 与 Task 11 controller。安装先生成 app/binary/plists，再 bootstrap menu bar，按 settings 决定是否 bootstrap collector。卸载 bootout/删除两个 plist、`.app` 和稳定 binary，但保留 Keychain、config、settings、last-good、runtime-state。
+可见帮助只列出 `setup`、`collect --dry-run`、`collect --once`、`pause`、`resume`、`install-launch-agent`、`status`、`uninstall-launch-agent`。`collect --scheduled` 在构造 Keychain/clients 前调用 Task 10 gate；`--menu-bar` 运行 `NSApplication` 与 Task 11 controller。安装先生成 app/binary/plists，再 bootstrap menu bar，按 settings 决定是否 bootstrap collector。卸载 bootout/删除两个 plist、`.app` 和稳定 binary，但保留 Keychain、config、settings 和 `snapshot-state.json` 脱敏状态包。
 
 `status` 只显示自动采集开关、menu bar/collector loaded 状态、最近成功/推送、provider 状态和脱敏错误码。
 
@@ -1510,7 +1510,7 @@ Web 预览和设备均确认：状态栏“额度监控”几何居中；Codex/O
 ## 自审结果
 
 - **规格覆盖：** Tasks 2–4 覆盖两个官方数据源与全部窗口语义；Tasks 5–9 覆盖密钥、缓存、失败、锁、超时、重试和采集编排；Task 10 覆盖持久开关与 scheduled gate；Task 11 覆盖菜单栏/详细状态 UI；Task 12 覆盖八个用户命令、`.app` 与双 LaunchAgent；Task 13 覆盖最终 A5 模板与 1bpp 渲染；Task 14 覆盖真实安装、开关和三层证明。
-- **实现补充：** 新增独立 `runtime-state.json`，解决 launchd 每轮新进程无法仅靠内存识别“连续第二次双源失败”的问题；它不改变批准的凭据边界。
+- **实现补充：** `snapshot-state.json` 内嵌 runtime state，解决 launchd 每轮新进程无法仅靠内存识别“连续第二次双源失败”的问题；它与 last-good 同包原子发布，不改变批准的凭据边界。
 - **范围检查：** 菜单栏与采集核心仍是同一 Swift Package/二进制的两个入口，不引入 XPC、App Store、公证或独立前端；现有 backend 只新增隔离的 renderer 测试，不修改生产服务。
 - **类型一致性：** 所有后续任务沿用 `SlateEnvelope`、`SanitizedLastGood`、`CollectorRuntimeState`、`CollectionDecision`、`CollectionReport`、`CollectorSettings`、`AutomaticCollectionStatus` 和 `CollectionScheduleControlling`，菜单栏/CLI 共用一套 schedule 逻辑。
 - **完成边界：** 自动化通过不等于真实部署完成；只有 Task 14 的真实只读 provider、Slate ETag/GET、双 LaunchAgent、菜单开关、两次五分钟采集和 Note4 实机证明全部取得后才称为完成。注销/登录证明需要用户在方便时手动配合，代理不会自行中断桌面会话。

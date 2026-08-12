@@ -142,21 +142,43 @@ import Testing
             lastErrorCodes: ["codex": "timeout", "opencode_go": "rate_limited"]
         )
 
-        try cache.saveLastGood(lastGood)
-        try cache.saveRuntimeState(runtime)
+        let snapshot = CollectorSnapshot(schemaVersion: 1, lastGood: lastGood, runtimeState: runtime)
+        try cache.saveSnapshot(snapshot)
 
-        #expect(try cache.loadLastGood() == lastGood)
-        #expect(try cache.loadRuntimeState() == runtime)
-        #expect(try fileMode(cache.lastGoodURL) & 0o777 == 0o600)
-        #expect(try fileMode(cache.runtimeStateURL) & 0o777 == 0o600)
+        #expect(try cache.loadSnapshot() == snapshot)
+        #expect(try fileMode(cache.snapshotURL) & 0o777 == 0o600)
 
-        let allBytes = try Data(contentsOf: cache.lastGoodURL) + Data(contentsOf: cache.runtimeStateURL)
+        let allBytes = try Data(contentsOf: cache.snapshotURL)
         for forbidden in [
             "go-test-secret", "Authorization", "pushURL", "contentId",
             "rateLimits", "rollingUsage", "apiKey", "token",
         ] {
             #expect(allBytes.range(of: Data(forbidden.utf8)) == nil)
         }
+    }
+
+    @Test func atomicSnapshotBundlePublishesLastGoodAndRuntimeAsOneGeneration() throws {
+        let root = try TemporaryDirectory()
+        let cache = SanitizedSnapshotCache(applicationSupportURL: root.url, sensitiveValues: [])
+        let snapshot = CollectorSnapshot(
+            schemaVersion: 1,
+            lastGood: SanitizedLastGood(schemaVersion: 1, codex: .fixture(), openCodeGo: .fixture()),
+            runtimeState: CollectorRuntimeState(
+                schemaVersion: 1,
+                codexFailures: 1,
+                openCodeGoFailures: 2,
+                simultaneousFailures: 3,
+                lastSuccessAt: Date(timeIntervalSince1970: 1_700_000_000),
+                lastPushAt: Date(timeIntervalSince1970: 1_700_000_100),
+                providerStatuses: ["codex": .attention, "opencode_go": .critical],
+                lastErrorCodes: ["codex": "timeout", "opencode_go": "rate_limited"]
+            )
+        )
+
+        try cache.saveSnapshot(snapshot)
+
+        #expect(try cache.loadSnapshot() == snapshot)
+        #expect(try fileMode(cache.snapshotURL) & 0o777 == 0o600)
     }
 
     @Test func cacheRejectsSensitiveDisplayValuesBeforeAnyApplicationSupportFileIsWritten() throws {
@@ -183,10 +205,14 @@ import Testing
             )
 
             #expect(throws: SnapshotCacheError.cacheCorrupt) {
-                try cache.saveLastGood(maliciousLastGood(maliciousValue, at: placement))
+                try cache.saveSnapshot(CollectorSnapshot(
+                    schemaVersion: 1,
+                    lastGood: maliciousLastGood(maliciousValue, at: placement),
+                    runtimeState: .emptyFixture
+                ))
             }
 
-            #expect(FileManager.default.fileExists(atPath: cache.lastGoodURL.path) == false)
+            #expect(FileManager.default.fileExists(atPath: cache.snapshotURL.path) == false)
             let files = try allRegularFiles(below: root.url)
             #expect(files.count == 1)
             #expect(files.first?.lastPathComponent == safeFile.lastPathComponent)
@@ -218,9 +244,51 @@ import Testing
         )
 
         #expect(throws: SnapshotCacheError.self) {
-            try cache.saveRuntimeState(runtime)
+            try cache.saveSnapshot(CollectorSnapshot(
+                schemaVersion: 1,
+                lastGood: .init(schemaVersion: 1, codex: nil, openCodeGo: nil),
+                runtimeState: runtime
+            ))
         }
-        #expect(FileManager.default.fileExists(atPath: cache.runtimeStateURL.path) == false)
+        #expect(FileManager.default.fileExists(atPath: cache.snapshotURL.path) == false)
+    }
+
+    @Test func failedAtomicPublishLeavesTheCompletePreviousGenerationReadable() throws {
+        let root = try TemporaryDirectory()
+        let initialCache = SanitizedSnapshotCache(applicationSupportURL: root.url, sensitiveValues: [])
+        let old = CollectorSnapshot(
+            schemaVersion: 1,
+            lastGood: .init(schemaVersion: 1, codex: .fixture(), openCodeGo: nil),
+            runtimeState: .emptyFixture
+        )
+        try initialCache.saveSnapshot(old)
+
+        let failingCache = SanitizedSnapshotCache(
+            applicationSupportURL: root.url,
+            sensitiveValues: [],
+            rename: { _, _ in -1 }
+        )
+        var newer = old
+        newer.lastGood = .init(schemaVersion: 1, codex: nil, openCodeGo: .fixture())
+        newer.runtimeState.codexFailures = 9
+
+        #expect(throws: SnapshotCacheError.ioFailure) {
+            try failingCache.saveSnapshot(newer)
+        }
+
+        #expect(try initialCache.loadSnapshot() == old)
+        #expect(try fileMode(initialCache.snapshotURL) & 0o777 == 0o600)
+        let files = try allRegularFiles(below: root.url)
+        #expect(files.count == 1)
+        #expect(files.first?.lastPathComponent == initialCache.snapshotURL.lastPathComponent)
+        #expect(files.contains { $0.lastPathComponent.hasPrefix(".snapshot-") } == false)
+    }
+
+    @Test func atomicSnapshotBundleRejectsUnknownOuterKeys() {
+        let bytes = Data(#"{"schemaVersion":1,"lastGood":{},"runtimeState":{},"apiKey":"secret"}"#.utf8)
+        #expect(throws: SnapshotCacheError.cacheCorrupt) {
+            try CollectorSnapshot.decodeStrict(bytes)
+        }
     }
 
     @Test func corruptCacheReturnsOnlyPublicCacheCorruptCode() throws {
@@ -289,6 +357,10 @@ import Testing
     private enum SensitivePlacement {
         case header, summary, rollingValue, footerLeft, footerRight
     }
+}
+
+private extension CollectorRuntimeState {
+    static var emptyFixture: Self { CollectorSnapshot.empty.runtimeState }
 }
 
 private final class RecordingKeychainBackend: KeychainBackend, @unchecked Sendable {

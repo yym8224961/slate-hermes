@@ -16,6 +16,7 @@ struct CollectionReport: Sendable {
 enum CollectorError: Error, Equatable, Sendable, CustomStringConvertible {
     case overallTimeout
     case cacheLoad(publicCode: String)
+    case internalFailure
 
     var description: String {
         switch self {
@@ -23,6 +24,8 @@ enum CollectorError: Error, Equatable, Sendable, CustomStringConvertible {
             "CollectorError(code: overall_timeout)"
         case let .cacheLoad(publicCode):
             "CollectorError(code: \(publicCode))"
+        case .internalFailure:
+            "CollectorError(code: internal_failure)"
         }
     }
 }
@@ -72,68 +75,68 @@ struct CollectorService: Sendable {
         self.overallTimeout = overallTimeout
     }
 
-    /// Races the collection against an unstructured deadline. The loser is
-    /// cancelled, but is deliberately not awaited: a misbehaving transport
-    /// therefore cannot extend the externally observable hard deadline.
+    /// Owns both the collection and deadline tasks until they have terminated.
+    /// Production dependencies are cancellation-cooperative and independently
+    /// bounded to 20/10/15 seconds, so cancellation cannot leave side effects
+    /// running after this method returns.
     func collect(mode: CollectionMode) async throws -> CollectionReport {
-        let workTask = Task { try await collectWithoutDeadline(mode: mode) }
-        let deadlineTask = Task<CollectionReport, any Error> {
-            try await deadlineSleep(overallTimeout)
-            try Task.checkCancellation()
-            throw CollectorError.overallTimeout
+        let deadlineToken = CollectorDeadlineToken()
+        let result = await withTaskGroup(
+            of: CollectorRaceResult.self,
+            returning: CollectorRaceResult.self
+        ) { group in
+            group.addTask {
+                do {
+                    return .workSucceeded(try await collectWithoutDeadline(
+                        mode: mode,
+                        deadlineToken: deadlineToken
+                    ))
+                } catch let error as CollectorError {
+                    return .workFailed(error)
+                } catch is CancellationError {
+                    return .cancelled
+                } catch {
+                    return .workFailed(.internalFailure)
+                }
+            }
+            group.addTask {
+                do {
+                    try await deadlineSleep(overallTimeout)
+                    try Task.checkCancellation()
+                    deadlineToken.expire()
+                    return .deadline
+                } catch is CancellationError {
+                    return .cancelled
+                } catch {
+                    deadlineToken.expire()
+                    return .deadline
+                }
+            }
+
+            var first = await group.next() ?? .cancelled
+            if case .cancelled = first {
+                first = await group.next() ?? .cancelled
+            }
+            group.cancelAll()
+            while await group.next() != nil {}
+            return first
         }
 
-        return try await withTaskCancellationHandler {
-            do {
-                let report = try await withCheckedThrowingContinuation {
-                    (continuation: CheckedContinuation<CollectionReport, any Error>) in
-                    let race = CollectorRace(continuation)
-                    Task {
-                        do {
-                            if race.resolve(.success(try await workTask.value)) {
-                                deadlineTask.cancel()
-                            }
-                        } catch {
-                            if race.resolve(.failure(error)) {
-                                deadlineTask.cancel()
-                            }
-                        }
-                    }
-                    Task {
-                        do {
-                            if race.resolve(.success(try await deadlineTask.value)) {
-                                workTask.cancel()
-                            }
-                        } catch {
-                            if race.resolve(.failure(error)) {
-                                workTask.cancel()
-                            }
-                        }
-                    }
-                }
-                workTask.cancel()
-                deadlineTask.cancel()
-                return report
-            } catch {
-                workTask.cancel()
-                deadlineTask.cancel()
-                throw error
-            }
-        } onCancel: {
-            workTask.cancel()
-            deadlineTask.cancel()
-        }
+        return try result.get()
     }
 
-    private func collectWithoutDeadline(mode: CollectionMode) async throws -> CollectionReport {
-        let lastGood: SanitizedLastGood
-        let runtimeState: CollectorRuntimeState
+    private func collectWithoutDeadline(
+        mode: CollectionMode,
+        deadlineToken: CollectorDeadlineToken
+    ) async throws -> CollectionReport {
+        try deadlineToken.checkActive()
+        let persistedSnapshot: CollectorSnapshot
         do {
-            lastGood = try snapshots.loadLastGood()
-            runtimeState = try snapshots.loadRuntimeState()
+            persistedSnapshot = try snapshots.loadSnapshot()
         } catch {
             throw CollectorError.cacheLoad(publicCode: Self.cachePublicCode(error))
         }
+        try deadlineToken.checkActive()
 
         let credential: Result<String, ProviderFailure>
         do {
@@ -144,25 +147,32 @@ struct CollectorService: Sendable {
         } catch {
             credential = .failure(.unconfigured)
         }
+        try deadlineToken.checkActive()
 
         async let codexRaw = readCodex()
         async let openCodeRaw = readOpenCodeGo(credential: credential)
         let (rawCodex, rawOpenCode) = try await (codexRaw, openCodeRaw)
-        try Task.checkCancellation()
+        try deadlineToken.checkActive()
 
         let collectedAt = now()
         let decision = failurePolicy.decide(
             codex: normalizeCodex(rawCodex, collectedAt: collectedAt),
             openCodeGo: normalizeOpenCodeGo(rawOpenCode, collectedAt: collectedAt),
-            lastGood: lastGood,
-            state: runtimeState,
+            lastGood: persistedSnapshot.lastGood,
+            state: persistedSnapshot.runtimeState,
             now: collectedAt
         )
 
         do {
-            try snapshots.saveLastGood(decision.lastGood)
-            try snapshots.saveRuntimeState(decision.runtimeState)
+            try deadlineToken.performIfActive {
+                try snapshots.saveSnapshot(CollectorSnapshot(
+                    schemaVersion: 1,
+                    lastGood: decision.lastGood,
+                    runtimeState: decision.runtimeState
+                ))
+            }
         } catch {
+            if error is CancellationError { throw error }
             return CollectionReport(
                 envelope: nil,
                 pushed: false,
@@ -171,6 +181,7 @@ struct CollectorService: Sendable {
                 publicErrorCodes: ["cache": Self.cachePublicCode(error)]
             )
         }
+        try deadlineToken.checkActive()
 
         let providerCodes = decision.runtimeState.lastErrorCodes
         guard mode == .pushOnce, decision.shouldPush, let envelope = decision.envelope else {
@@ -191,6 +202,7 @@ struct CollectorService: Sendable {
             }
             capabilityURL = parsed
         } catch {
+            if error is CancellationError { throw error }
             return report(
                 envelope: envelope,
                 pushed: false,
@@ -200,9 +212,11 @@ struct CollectorService: Sendable {
                 slateCode: Self.slatePublicCode(error, missingIsUnconfigured: true)
             )
         }
+        try deadlineToken.checkActive()
 
         let rawReceipt: SlateIngestReceipt
         do {
+            try deadlineToken.checkActive()
             rawReceipt = try await slate.push(envelope, capabilityURL: capabilityURL)
         } catch is CancellationError {
             throw CancellationError()
@@ -216,10 +230,12 @@ struct CollectorService: Sendable {
                 slateCode: Self.slatePublicCode(error)
             )
         }
+        try deadlineToken.checkActive()
         let receipt = Self.sanitizedReceipt(rawReceipt)
 
         let readback: SlateDashboardData
         do {
+            try deadlineToken.checkActive()
             readback = try await slate.readCurrentData(capabilityURL: capabilityURL)
         } catch is CancellationError {
             throw CancellationError()
@@ -233,6 +249,7 @@ struct CollectorService: Sendable {
                 slateCode: Self.slatePublicCode(error)
             )
         }
+        try deadlineToken.checkActive()
 
         guard readback == envelope.data else {
             return report(
@@ -248,8 +265,15 @@ struct CollectorService: Sendable {
         var verifiedState = decision.runtimeState
         verifiedState.lastPushAt = now()
         do {
-            try snapshots.saveRuntimeState(verifiedState)
+            try deadlineToken.performIfActive {
+                try snapshots.saveSnapshot(CollectorSnapshot(
+                    schemaVersion: 1,
+                    lastGood: decision.lastGood,
+                    runtimeState: verifiedState
+                ))
+            }
         } catch {
+            if error is CancellationError { throw error }
             var codes = providerCodes
             codes["cache"] = Self.cachePublicCode(error)
             return CollectionReport(
@@ -260,6 +284,7 @@ struct CollectorService: Sendable {
                 publicErrorCodes: codes
             )
         }
+        try deadlineToken.checkActive()
 
         return CollectionReport(
             envelope: envelope,
@@ -384,21 +409,43 @@ struct CollectorService: Sendable {
     }
 }
 
-private final class CollectorRace<Value: Sendable>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, any Error>?
+private enum CollectorRaceResult: Sendable {
+    case workSucceeded(CollectionReport)
+    case workFailed(CollectorError)
+    case deadline
+    case cancelled
 
-    init(_ continuation: CheckedContinuation<Value, any Error>) {
-        self.continuation = continuation
+    func get() throws -> CollectionReport {
+        switch self {
+        case let .workSucceeded(report): return report
+        case let .workFailed(error): throw error
+        case .deadline: throw CollectorError.overallTimeout
+        case .cancelled: throw CancellationError()
+        }
+    }
+}
+
+private final class CollectorDeadlineToken: @unchecked Sendable {
+    private let stateLock = NSLock()
+    private let sideEffectLock = NSLock()
+    private var expired = false
+
+    func expire() {
+        stateLock.withLock { expired = true }
     }
 
-    @discardableResult
-    func resolve(_ result: Result<Value, any Error>) -> Bool {
-        let continuation = lock.withLock {
-            defer { self.continuation = nil }
-            return self.continuation
+    func checkActive() throws {
+        try Task.checkCancellation()
+        guard stateLock.withLock({ !expired }) else { throw CancellationError() }
+    }
+
+    func performIfActive<T>(_ operation: () throws -> T) throws -> T {
+        try Task.checkCancellation()
+        return try sideEffectLock.withLock {
+            guard stateLock.withLock({ !expired }), !Task.isCancelled else {
+                throw CancellationError()
+            }
+            return try operation()
         }
-        continuation?.resume(with: result)
-        return continuation != nil
     }
 }

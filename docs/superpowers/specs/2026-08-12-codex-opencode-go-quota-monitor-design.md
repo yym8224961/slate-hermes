@@ -395,18 +395,18 @@ Slate 推送 URL 同时允许公开 GET 当前 Dashboard 数据，并把 content
 ### 7.3 last-known-good
 
 ```text
-~/Library/Application Support/SlateQuotaCollector/last-good.json
+~/Library/Application Support/SlateQuotaCollector/snapshot-state.json
 ```
 
-权限为当前用户可读写。文件只包含上一份已经归一化、允许显示在墨水屏和公开 Dashboard GET 中的 payload。禁止缓存原始 Codex/OpenCode 响应。
+权限为当前用户可读写。该单一原子 JSON 状态包的 `lastGood` 部分只包含上一份已经归一化、允许显示在墨水屏和公开 Dashboard GET 中的 payload。禁止缓存原始 Codex/OpenCode 响应。
 
 ### 7.4 跨进程运行状态
 
 ```text
-~/Library/Application Support/SlateQuotaCollector/runtime-state.json
+~/Library/Application Support/SlateQuotaCollector/snapshot-state.json
 ```
 
-launchd 每 5 分钟启动的是新进程，因此“连续第二次双数据源失败”不能只依赖进程内内存。该文件只保存 provider 失败计数、同时失败计数、最近成功/推送时间和脱敏错误码；不保存 Key、Slate URL、contentId、Authorization、上游原始响应或原始错误正文。它与 `last-good.json` 分开并使用当前用户可读写权限。
+launchd 每 5 分钟启动的是新进程，因此“连续第二次双数据源失败”不能只依赖进程内内存。同一状态包的 `runtimeState` 部分只保存 provider 失败计数、同时失败计数、最近成功/推送时间和脱敏错误码；不保存 Key、Slate URL、contentId、Authorization、上游原始响应或原始错误正文。`lastGood` 与 `runtimeState` 在一次 fsync + rename 中共同发布，不允许跨文件的部分提交。
 
 ## 8. 调度、菜单栏与超时
 
@@ -545,7 +545,7 @@ OpenCode Go    注意 · 剩余 18%
   退出菜单栏
 ```
 
-状态数值来自脱敏的 last-good/runtime state，不触发 provider 网络调用。详细状态使用一个原生小窗口，显示自动采集状态、两个 provider 状态、最近成功/推送时间和脱敏错误码；不显示 Key、Slate URL、contentId、Authorization 或原始错误正文。菜单栏开关与 `pause/resume` CLI 调用同一个 `CollectionScheduleController`，不存在两套状态逻辑。
+状态数值来自脱敏的 `snapshot-state.json` 状态包，不触发 provider 网络调用。详细状态使用一个原生小窗口，显示自动采集状态、两个 provider 状态、最近成功/推送时间和脱敏错误码；不显示 Key、Slate URL、contentId、Authorization 或原始错误正文。菜单栏开关与 `pause/resume` CLI 调用同一个 `CollectionScheduleController`，不存在两套状态逻辑。
 
 ## 11. 验证与验收
 

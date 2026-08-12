@@ -18,81 +18,52 @@ enum SnapshotCacheError: Error, Equatable, Sendable, CustomStringConvertible {
 }
 
 struct SanitizedSnapshotCache: SnapshotPersisting, Sendable {
+    typealias Rename = @Sendable (_ source: String, _ destination: String) -> Int32
+
     let applicationSupportURL: URL
     private let sensitiveValueValidator: SensitiveValueValidator
+    private let rename: Rename
 
     init(
         applicationSupportURL: URL = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         )[0],
-        sensitiveValues: [String]
+        sensitiveValues: [String],
+        rename: @escaping Rename = { Darwin.rename($0, $1) }
     ) {
         self.applicationSupportURL = applicationSupportURL
         sensitiveValueValidator = SensitiveValueValidator(sensitiveValues: sensitiveValues)
+        self.rename = rename
     }
 
     var directoryURL: URL {
         applicationSupportURL.appendingPathComponent("SlateQuotaCollector", isDirectory: true)
     }
 
-    var lastGoodURL: URL {
-        directoryURL.appendingPathComponent("last-good.json")
+    var snapshotURL: URL {
+        directoryURL.appendingPathComponent("snapshot-state.json")
     }
 
-    var runtimeStateURL: URL {
-        directoryURL.appendingPathComponent("runtime-state.json")
-    }
-
-    func loadLastGood() throws -> SanitizedLastGood {
-        guard FileManager.default.fileExists(atPath: lastGoodURL.path) else {
-            return SanitizedLastGood(schemaVersion: 1, codex: nil, openCodeGo: nil)
+    func loadSnapshot() throws -> CollectorSnapshot {
+        guard FileManager.default.fileExists(atPath: snapshotURL.path) else {
+            return .empty
         }
         let data: Data
         do {
-            data = try Data(contentsOf: lastGoodURL)
+            data = try Data(contentsOf: snapshotURL)
         } catch {
             throw SnapshotCacheError.ioFailure
         }
         try sensitiveValueValidator.validate(data)
-        return try SanitizedLastGood.decodeStrict(data)
+        return try CollectorSnapshot.decodeStrict(data)
     }
 
-    func saveLastGood(_ value: SanitizedLastGood) throws {
+    func saveSnapshot(_ value: CollectorSnapshot) throws {
         let data = try encode(value)
-        _ = try SanitizedLastGood.decodeStrict(data)
+        _ = try CollectorSnapshot.decodeStrict(data)
         try sensitiveValueValidator.validate(data)
-        try atomicWrite(data, to: lastGoodURL)
-    }
-
-    func loadRuntimeState() throws -> CollectorRuntimeState {
-        guard FileManager.default.fileExists(atPath: runtimeStateURL.path) else {
-            return CollectorRuntimeState(
-                schemaVersion: 1,
-                codexFailures: 0,
-                openCodeGoFailures: 0,
-                simultaneousFailures: 0,
-                lastSuccessAt: nil,
-                lastPushAt: nil,
-                providerStatuses: [:],
-                lastErrorCodes: [:]
-            )
-        }
-        let data: Data
-        do {
-            data = try Data(contentsOf: runtimeStateURL)
-        } catch {
-            throw SnapshotCacheError.ioFailure
-        }
-        try sensitiveValueValidator.validate(data)
-        return try CollectorRuntimeState.decodeStrict(data)
-    }
-
-    func saveRuntimeState(_ value: CollectorRuntimeState) throws {
-        let data = try encode(value)
-        _ = try CollectorRuntimeState.decodeStrict(data)
-        try sensitiveValueValidator.validate(data)
-        try atomicWrite(data, to: runtimeStateURL)
+        try atomicWrite(data, to: snapshotURL)
     }
 
     private func encode<T: Encodable>(_ value: T) throws -> Data {
@@ -240,6 +211,35 @@ extension CollectorRuntimeState {
         guard value.lastErrorCodes.values.allSatisfy(StrictSnapshotSchema.isPublicErrorCode) else {
             throw SnapshotCacheError.cacheCorrupt
         }
+        return value
+    }
+}
+
+extension CollectorSnapshot {
+    static func decodeStrict(_ data: Data) throws -> Self {
+        let object = try StrictSnapshotSchema.object(from: data)
+        try StrictSnapshotSchema.requireKeys(
+            object,
+            allowed: ["schemaVersion", "lastGood", "runtimeState"],
+            required: ["schemaVersion", "lastGood", "runtimeState"]
+        )
+        guard let lastGoodObject = object["lastGood"],
+              let runtimeObject = object["runtimeState"] else {
+            throw SnapshotCacheError.cacheCorrupt
+        }
+        let lastGoodData: Data
+        let runtimeData: Data
+        do {
+            lastGoodData = try JSONSerialization.data(withJSONObject: lastGoodObject)
+            runtimeData = try JSONSerialization.data(withJSONObject: runtimeObject)
+        } catch {
+            throw SnapshotCacheError.cacheCorrupt
+        }
+        _ = try SanitizedLastGood.decodeStrict(lastGoodData)
+        _ = try CollectorRuntimeState.decodeStrict(runtimeData)
+
+        let value: Self = try StrictSnapshotSchema.decode(Self.self, from: data)
+        guard value.schemaVersion == 1 else { throw SnapshotCacheError.cacheCorrupt }
         return value
     }
 }

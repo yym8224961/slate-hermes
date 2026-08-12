@@ -22,14 +22,14 @@ struct CollectorServiceTests {
         #expect(report.receipt?.id == "redacted")
         #expect(report.publicErrorCodes.isEmpty)
         #expect(events.providersOverlapped)
-        #expect(events.happenedBefore("codex.start", "cache.lastGood"))
-        #expect(events.happenedBefore("opencode.start", "cache.lastGood"))
-        #expect(events.happenedBefore("codex.end", "cache.lastGood"))
-        #expect(events.happenedBefore("opencode.end", "cache.lastGood"))
-        #expect(events.suffix(from: "cache.lastGood") == [
-            "cache.lastGood", "cache.runtime", "slate.push", "slate.readback", "cache.runtime",
+        #expect(events.happenedBefore("codex.start", "cache.snapshot"))
+        #expect(events.happenedBefore("opencode.start", "cache.snapshot"))
+        #expect(events.happenedBefore("codex.end", "cache.snapshot"))
+        #expect(events.happenedBefore("opencode.end", "cache.snapshot"))
+        #expect(events.suffix(from: "cache.snapshot") == [
+            "cache.snapshot", "slate.push", "slate.readback", "cache.snapshot",
         ])
-        #expect(try snapshots.loadRuntimeState().lastPushAt == now)
+        #expect(try snapshots.loadSnapshot().runtimeState.lastPushAt == now)
     }
 
     @Test("dry run never reads Slate URL, pushes, reads back, or changes lastPushAt")
@@ -49,7 +49,7 @@ struct CollectorServiceTests {
         #expect(secrets.readAccounts.contains("slate-push-url") == false)
         #expect(await slate.pushCount == 0)
         #expect(await slate.readbackCount == 0)
-        #expect(try snapshots.loadRuntimeState().lastPushAt == earlier)
+        #expect(try snapshots.loadSnapshot().runtimeState.lastPushAt == earlier)
     }
 
     @Test("single provider failure uses stale cache and still pushes the successful provider")
@@ -70,7 +70,7 @@ struct CollectorServiceTests {
         #expect(report.envelope?.data.codex.status == .stale)
         #expect(report.envelope?.data.opencodeGo.status == .ok)
         #expect(report.publicErrorCodes["codex"] == "timeout")
-        let runtime = try snapshots.loadRuntimeState()
+        let runtime = try snapshots.loadSnapshot().runtimeState
         #expect(runtime.codexFailures == 1)
         #expect(runtime.openCodeGoFailures == 0)
         #expect(runtime.simultaneousFailures == 0)
@@ -101,19 +101,19 @@ struct CollectorServiceTests {
         let first = try await service.collect(mode: .pushOnce)
         #expect(first.pushed == false)
         #expect(first.envelope == nil)
-        #expect(try snapshots.loadRuntimeState().simultaneousFailures == 1)
+        #expect(try snapshots.loadSnapshot().runtimeState.simultaneousFailures == 1)
 
         let second = try await service.collect(mode: .pushOnce)
         #expect(second.pushed)
         #expect(second.envelope?.data.codex.status == .stale)
         #expect(second.envelope?.data.opencodeGo.status == .stale)
-        #expect(try snapshots.loadRuntimeState().simultaneousFailures == 2)
+        #expect(try snapshots.loadSnapshot().runtimeState.simultaneousFailures == 2)
 
         let recovered = try await service.collect(mode: .pushOnce)
         #expect(recovered.pushed)
         #expect(recovered.envelope?.data.codex.status == .ok)
         #expect(recovered.envelope?.data.opencodeGo.status == .stale)
-        let runtime = try snapshots.loadRuntimeState()
+        let runtime = try snapshots.loadSnapshot().runtimeState
         #expect(runtime.simultaneousFailures == 0)
         #expect(runtime.codexFailures == 0)
         #expect(runtime.openCodeGoFailures == 3)
@@ -154,7 +154,7 @@ struct CollectorServiceTests {
         #expect(report.receipt != nil)
         #expect(report.readbackVerified == false)
         #expect(report.publicErrorCodes["slate"] == "slate_readback_mismatch")
-        #expect(try snapshots.loadRuntimeState().lastPushAt == earlier)
+        #expect(try snapshots.loadSnapshot().runtimeState.lastPushAt == earlier)
     }
 
     @Test("POST failure preserves last-good and never rereads providers")
@@ -175,13 +175,13 @@ struct CollectorServiceTests {
         #expect(report.publicErrorCodes["slate"] == "slate_http_401")
         #expect(await codex.readCount == 1)
         #expect(await openCode.readCount == 1)
-        #expect(try snapshots.loadLastGood().codex != nil)
-        #expect(try snapshots.loadLastGood().openCodeGo != nil)
+        #expect(try snapshots.loadSnapshot().lastGood.codex != nil)
+        #expect(try snapshots.loadSnapshot().lastGood.openCodeGo != nil)
     }
 
     @Test("cache failure prevents push and returns only a public cache code")
     func cacheFailurePreventsPush() async throws {
-        let snapshots = InMemorySnapshotStore(saveLastGoodError: SnapshotCacheError.ioFailure)
+        let snapshots = InMemorySnapshotStore(saveError: SnapshotCacheError.ioFailure)
         let slate = RecordingSlateIngest()
         let report = try await fixture(snapshots: snapshots, slate: slate).collect(mode: .pushOnce)
 
@@ -220,6 +220,116 @@ struct CollectorServiceTests {
         await waitUntil { codexCancellation.wasCancelled && openCodeCancellation.wasCancelled }
         #expect(codexCancellation.wasCancelled)
         #expect(openCodeCancellation.wasCancelled)
+    }
+
+    @Test("deadline while Slate URL read is suspended prevents push and later snapshot writes")
+    func deadlineDuringSlateURLReadPreventsPush() async throws {
+        let clock = ManualDeadlineClock()
+        let secrets = BlockingSlateURLSecretStore(apiKey: "go-secret")
+        let snapshots = InMemorySnapshotStore()
+        let slate = RecordingSlateIngest()
+        let service = fixture(
+            secrets: secrets,
+            snapshots: snapshots,
+            slate: slate,
+            deadlineSleep: { duration in try await clock.sleep(for: duration) },
+            overallTimeout: .milliseconds(50)
+        )
+
+        let collection = Task { try await service.collect(mode: .pushOnce) }
+        await waitUntil { secrets.isReadingSlateURL }
+        await waitUntil { await clock.isSleeping }
+        await clock.advance()
+        secrets.releaseSlateURL()
+        await expectOverallTimeout(collection)
+
+        #expect(await slate.pushCount == 0)
+        #expect(snapshots.saveCount == 1)
+        #expect(try snapshots.loadSnapshot().runtimeState.lastPushAt == nil)
+    }
+
+    @Test("deadline during the atomic cache stage permits no later Slate side effects")
+    func deadlineDuringCacheStagePreventsPush() async throws {
+        let clock = ManualDeadlineClock()
+        let snapshots = BlockingSnapshotStore()
+        let slate = RecordingSlateIngest()
+        let service = fixture(
+            snapshots: snapshots,
+            slate: slate,
+            deadlineSleep: { duration in try await clock.sleep(for: duration) },
+            overallTimeout: .milliseconds(50)
+        )
+
+        let collection = Task { try await service.collect(mode: .pushOnce) }
+        await waitUntil { snapshots.saveStarted }
+        await waitUntil { await clock.isSleeping }
+        await clock.advance()
+        snapshots.releaseSave()
+        await expectOverallTimeout(collection)
+
+        #expect(snapshots.saveCount == 1)
+        #expect(await slate.pushCount == 0)
+        #expect(await slate.readbackCount == 0)
+        #expect(try snapshots.loadSnapshot().runtimeState.lastPushAt == nil)
+    }
+
+    @Test("deadline while push is suspended owns cancellation and prevents readback")
+    func deadlineDuringPushPreventsReadback() async throws {
+        let clock = ManualDeadlineClock()
+        let slate = SuspendedSlateIngest(stage: .push)
+        let snapshots = InMemorySnapshotStore()
+        let service = fixture(
+            snapshots: snapshots,
+            slate: slate,
+            deadlineSleep: { duration in try await clock.sleep(for: duration) },
+            overallTimeout: .milliseconds(50)
+        )
+
+        let collection = Task { try await service.collect(mode: .pushOnce) }
+        await waitUntil { await slate.pushStarted }
+        await waitUntil { await clock.isSleeping }
+        await clock.advance()
+        await expectOverallTimeout(collection)
+
+        #expect(await slate.pushCancelled)
+        #expect(await slate.readbackCount == 0)
+        #expect(snapshots.saveCount == 1)
+        #expect(try snapshots.loadSnapshot().runtimeState.lastPushAt == nil)
+    }
+
+    @Test("deadline while readback is suspended prevents final runtime update")
+    func deadlineDuringReadbackPreventsLastPushUpdate() async throws {
+        let clock = ManualDeadlineClock()
+        let slate = SuspendedSlateIngest(stage: .readback)
+        let snapshots = InMemorySnapshotStore()
+        let service = fixture(
+            snapshots: snapshots,
+            slate: slate,
+            deadlineSleep: { duration in try await clock.sleep(for: duration) },
+            overallTimeout: .milliseconds(50)
+        )
+
+        let collection = Task { try await service.collect(mode: .pushOnce) }
+        await waitUntil { await slate.readbackStarted }
+        await waitUntil { await clock.isSleeping }
+        await clock.advance()
+        await expectOverallTimeout(collection)
+
+        #expect(await slate.readbackCancelled)
+        #expect(snapshots.saveCount == 1)
+        #expect(try snapshots.loadSnapshot().runtimeState.lastPushAt == nil)
+    }
+
+    @Test("work-first completion cancels and drains the deadline child")
+    func workFirstCancelsDeadlineWithoutResidualTask() async throws {
+        let deadline = CancellationObservedDeadline()
+        let report = try await fixture(
+            deadlineSleep: { duration in try await deadline.sleep(for: duration) }
+        ).collect(mode: .dryRun)
+
+        #expect(report.envelope != nil)
+        #expect(await deadline.cancelled)
+        #expect(await deadline.activeCount == 0)
     }
 
     @Test("report, envelope, and public codes contain no credential bytes")
@@ -295,6 +405,20 @@ struct CollectorServiceTests {
             await Task.yield()
         }
         Issue.record("condition did not become true", sourceLocation: sourceLocation)
+    }
+
+    private func expectOverallTimeout(
+        _ collection: Task<CollectionReport, any Error>,
+        sourceLocation: SourceLocation = #_sourceLocation
+    ) async {
+        do {
+            _ = try await collection.value
+            Issue.record("expected overall timeout", sourceLocation: sourceLocation)
+        } catch let error as CollectorError {
+            #expect(error == .overallTimeout, sourceLocation: sourceLocation)
+        } catch {
+            Issue.record("unexpected error type: \(type(of: error))", sourceLocation: sourceLocation)
+        }
     }
 }
 
@@ -412,35 +536,89 @@ private final class RecordingSecretStore: SecretStoring, @unchecked Sendable {
     func write(_: String, account _: String) throws {}
 }
 
+private final class BlockingSlateURLSecretStore: SecretStoring, @unchecked Sendable {
+    private let condition = NSCondition()
+    private let apiKey: String
+    private var readingSlateURL = false
+    private var released = false
+
+    init(apiKey: String) { self.apiKey = apiKey }
+    var isReadingSlateURL: Bool { condition.withLock { readingSlateURL } }
+
+    func read(account: String) throws -> String {
+        if account == "opencode-go-api-key" { return apiKey }
+        condition.lock()
+        readingSlateURL = true
+        condition.broadcast()
+        while !released { condition.wait() }
+        condition.unlock()
+        return "https://slate.example/api/v1/contents/content-fixture/data"
+    }
+
+    func releaseSlateURL() {
+        condition.withLock {
+            released = true
+            condition.broadcast()
+        }
+    }
+
+    func write(_: String, account _: String) throws {}
+}
+
 private final class InMemorySnapshotStore: SnapshotPersisting, @unchecked Sendable {
     private let lock = NSLock()
-    private var lastGood: SanitizedLastGood
-    private var runtime: CollectorRuntimeState
+    private var snapshot: CollectorSnapshot
     private let events: LockedEventRecorder?
-    private let saveLastGoodError: (any Error)?
+    private let saveError: (any Error)?
+    private var saves = 0
 
     init(
         lastGood: SanitizedLastGood = .init(schemaVersion: 1, codex: nil, openCodeGo: nil),
         runtime: CollectorRuntimeState = .fixture(),
         events: LockedEventRecorder? = nil,
-        saveLastGoodError: (any Error)? = nil
+        saveError: (any Error)? = nil
     ) {
-        self.lastGood = lastGood
-        self.runtime = runtime
+        snapshot = CollectorSnapshot(schemaVersion: 1, lastGood: lastGood, runtimeState: runtime)
         self.events = events
-        self.saveLastGoodError = saveLastGoodError
+        self.saveError = saveError
     }
 
-    func loadLastGood() throws -> SanitizedLastGood { lock.withLock { lastGood } }
-    func saveLastGood(_ value: SanitizedLastGood) throws {
-        if let saveLastGoodError { throw saveLastGoodError }
-        lock.withLock { lastGood = value }
-        events?.record("cache.lastGood")
+    func loadSnapshot() throws -> CollectorSnapshot { lock.withLock { snapshot } }
+    var saveCount: Int { lock.withLock { saves } }
+    func saveSnapshot(_ value: CollectorSnapshot) throws {
+        if let saveError { throw saveError }
+        lock.withLock {
+            snapshot = value
+            saves += 1
+        }
+        events?.record("cache.snapshot")
     }
-    func loadRuntimeState() throws -> CollectorRuntimeState { lock.withLock { runtime } }
-    func saveRuntimeState(_ value: CollectorRuntimeState) throws {
-        lock.withLock { runtime = value }
-        events?.record("cache.runtime")
+}
+
+private final class BlockingSnapshotStore: SnapshotPersisting, @unchecked Sendable {
+    private let condition = NSCondition()
+    private var snapshot = CollectorSnapshot.empty
+    private var started = false
+    private var released = false
+    private var saves = 0
+
+    var saveStarted: Bool { condition.withLock { started } }
+    var saveCount: Int { condition.withLock { saves } }
+    func loadSnapshot() throws -> CollectorSnapshot { condition.withLock { snapshot } }
+    func saveSnapshot(_ value: CollectorSnapshot) throws {
+        condition.lock()
+        started = true
+        condition.broadcast()
+        while !released { condition.wait() }
+        snapshot = value
+        saves += 1
+        condition.unlock()
+    }
+    func releaseSave() {
+        condition.withLock {
+            released = true
+            condition.broadcast()
+        }
     }
 }
 
@@ -478,6 +656,48 @@ private actor RecordingSlateIngest: SlateIngesting {
         events?.record("slate.readback")
         if let readbackOverride { return readbackOverride }
         guard let data = pushedEnvelope?.data else { throw FixtureError.failed }
+        return data
+    }
+}
+
+private actor SuspendedSlateIngest: SlateIngesting {
+    enum Stage { case push, readback }
+    let stage: Stage
+    private(set) var pushStarted = false
+    private(set) var pushCancelled = false
+    private(set) var readbackStarted = false
+    private(set) var readbackCancelled = false
+    private(set) var readbackCount = 0
+    private var envelope: SlateEnvelope?
+
+    init(stage: Stage) { self.stage = stage }
+
+    func push(_ envelope: SlateEnvelope, capabilityURL _: URL) async throws -> SlateIngestReceipt {
+        pushStarted = true
+        self.envelope = envelope
+        if stage == .push {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                pushCancelled = true
+                throw error
+            }
+        }
+        return .fixture
+    }
+
+    func readCurrentData(capabilityURL _: URL) async throws -> SlateDashboardData {
+        readbackCount += 1
+        readbackStarted = true
+        if stage == .readback {
+            do {
+                try await Task.sleep(for: .seconds(60))
+            } catch {
+                readbackCancelled = true
+                throw error
+            }
+        }
+        guard let data = envelope?.data else { throw FixtureError.failed }
         return data
     }
 }
@@ -531,6 +751,22 @@ private actor ManualDeadlineClock {
         continuation?.resume()
         continuation = nil
         isSleeping = false
+    }
+}
+
+private actor CancellationObservedDeadline {
+    private(set) var activeCount = 0
+    private(set) var cancelled = false
+
+    func sleep(for _: Duration) async throws {
+        activeCount += 1
+        defer { activeCount -= 1 }
+        do {
+            try await Task.sleep(for: .seconds(60))
+        } catch {
+            cancelled = true
+            throw error
+        }
     }
 }
 
