@@ -128,7 +128,7 @@ bun run dev:backend     # http://localhost:3001
 bun run dev:frontend    # http://localhost:5173
 ```
 
-首次访问 `http://localhost:5173/register` 注册账号。
+首次访问 `http://localhost:5173/register` 创建唯一的初始管理员账号。数据库中已有账号后，公开注册会自动关闭。
 
 ## 固件构建
 
@@ -154,7 +154,7 @@ docker compose up -d
 curl http://localhost:3001/healthz
 ```
 
-访问 `http://<host>:3001/register` 注册账号。
+首次访问 `http://<host>:3001/register` 创建初始管理员账号；已有账号的实例不再接受公开注册。
 
 ## Hermes Agent 集成
 

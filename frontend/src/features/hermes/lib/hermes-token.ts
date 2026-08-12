@@ -9,10 +9,7 @@ export function generateHermesAgentToken(): string {
 export function buildHermesConfigTemplate(slateBackend: string, token?: string): string {
   const sharedToken = token ?? '<至少 32 字符的共享 Token>';
   return [
-    '# Slate Docker / persistent Agent Token',
-    `HERMES_AGENT_TOKEN=${sharedToken}`,
-    '',
-    '# Hermes Gateway',
+    '# Hermes Gateway（Slate 已自动保存同一个 Token）',
     `SLATE_BACKEND=${slateBackend}`,
     `SLATE_AGENT_TOKEN=${sharedToken}`,
   ].join('\n');

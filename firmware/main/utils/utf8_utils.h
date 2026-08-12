@@ -221,4 +221,29 @@ inline std::string SanitizeForScreen(const std::string& text) {
     return out;
 }
 
+template <typename SupportsGlyph>
+inline std::string FilterUnsupportedGlyphs(const std::string& text, SupportsGlyph supports_glyph) {
+    std::string out;
+    out.reserve(text.size());
+    bool previous_replacement = false;
+
+    for (size_t pos = 0; pos < text.size();) {
+        uint32_t cp   = 0;
+        size_t   step = 1;
+        if (!DecodeUtf8Codepoint(text, pos, cp, step)) {
+            pos += step;
+            continue;
+        }
+        if (supports_glyph(cp)) {
+            out.append(text, pos, step);
+            previous_replacement = false;
+        } else if (!previous_replacement) {
+            out.push_back('?');
+            previous_replacement = true;
+        }
+        pos += step;
+    }
+    return out;
+}
+
 }  // namespace util

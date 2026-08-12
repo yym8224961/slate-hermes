@@ -18,7 +18,11 @@ describe('device secret auth cache', () => {
         findUnique: async ({ where }: { where: { secretHash: string } }) => {
           calls += 1;
           expect(where.secretHash).toBe(secretHash);
-          return { id: 'device-1', mac: 'AA:BB:CC:DD:EE:FF' };
+          return {
+            id: 'device-1',
+            mac: 'AA:BB:CC:DD:EE:FF',
+            ownerUserId: 'admin-1',
+          };
         },
       },
     } as unknown as PrismaService;
@@ -27,15 +31,18 @@ describe('device secret auth cache', () => {
     expect(await service.authenticate(secret, 1_000)).toEqual({
       deviceId: 'device-1',
       mac: 'AA:BB:CC:DD:EE:FF',
+      ownerUserId: 'admin-1',
     });
     expect(await service.authenticate(secret, 2_000)).toEqual({
       deviceId: 'device-1',
       mac: 'AA:BB:CC:DD:EE:FF',
+      ownerUserId: 'admin-1',
     });
     service.invalidateHash(secretHash);
     expect(await service.authenticate(secret, 3_000)).toEqual({
       deviceId: 'device-1',
       mac: 'AA:BB:CC:DD:EE:FF',
+      ownerUserId: 'admin-1',
     });
 
     expect(calls).toBe(2);
@@ -59,5 +66,25 @@ describe('device secret auth cache', () => {
     expect(await service.authenticate(secret, 7_000)).toBeNull();
 
     expect(calls).toBe(2);
+  });
+
+  it('invalidates cached ownership after a device is claimed or unbound', async () => {
+    const secret = 'c'.repeat(64);
+    let ownerUserId: string | null = null;
+    const prisma = {
+      device: {
+        findUnique: async () => ({
+          id: 'device-1',
+          mac: 'AA:BB:CC:DD:EE:FF',
+          ownerUserId,
+        }),
+      },
+    } as unknown as PrismaService;
+    service = new DeviceSecretAuthCacheService(prisma);
+
+    expect((await service.authenticate(secret, 1_000))?.ownerUserId).toBeNull();
+    ownerUserId = 'admin-1';
+    service.invalidateDevice('device-1');
+    expect((await service.authenticate(secret, 2_000))?.ownerUserId).toBe('admin-1');
   });
 });

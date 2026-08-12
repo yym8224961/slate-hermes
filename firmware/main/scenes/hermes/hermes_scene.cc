@@ -26,7 +26,12 @@ int StandbyCenterY() {
 }
 
 std::string DisplayText(const std::string& text) {
-    return util::TrimForScreen(util::SanitizeForScreen(text), 120);
+    const std::string sanitized = util::SanitizeForScreen(text);
+    const std::string font_safe = util::FilterUnsupportedGlyphs(sanitized, [](uint32_t cp) {
+        lv_font_glyph_dsc_t glyph = {};
+        return lv_font_get_glyph_dsc(&Zfull_16, &glyph, cp, 0);
+    });
+    return util::TrimForScreen(font_safe, 120);
 }
 
 std::string MsgKey(const hermes::HermesSnapshot& snap) {

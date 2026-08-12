@@ -58,6 +58,7 @@ export class TtsService {
     text: string;
     voice: TtsVoiceT;
     style?: string;
+    timeoutMs?: number;
   }): Promise<Buffer> {
     const text = input.text.trim();
     if (!text) throw new ValidationError('TTS 文案不能为空');
@@ -88,6 +89,7 @@ export class TtsService {
       style,
       apiKey,
       baseUrl,
+      timeoutMs: input.timeoutMs ?? REQUEST_TIMEOUT_MS,
     });
     return this.audio.resamplePcm16(rawPcm, SOURCE_SAMPLE_RATE);
   }
@@ -98,11 +100,12 @@ export class TtsService {
     style: string;
     apiKey: string;
     baseUrl: string;
+    timeoutMs: number;
   }): Promise<Buffer> {
     const url = `${input.baseUrl.replace(/\/+$/, '')}/chat/completions`;
     const resp = await fetchWithTimeout(url, {
       method: 'POST',
-      timeoutMs: REQUEST_TIMEOUT_MS,
+      timeoutMs: input.timeoutMs,
       headers: {
         Authorization: `Bearer ${input.apiKey}`,
         'Content-Type': 'application/json',

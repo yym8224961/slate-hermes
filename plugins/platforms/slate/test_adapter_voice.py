@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import types
+import unittest
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,8 +16,6 @@ def _load_adapter_module():
     gateway_config = types.ModuleType("gateway.config")
     gateway_platforms = types.ModuleType("gateway.platforms")
     gateway_base = types.ModuleType("gateway.platforms.base")
-    tools = types.ModuleType("tools")
-    transcription_tools = types.ModuleType("tools.transcription_tools")
 
     class Platform:
         def __init__(self, value):
@@ -52,35 +51,27 @@ def _load_adapter_module():
         def __init__(self, config, platform):
             self.config = config
             self.platform = platform
-            self._running = True
+            self._running = False
+            self.connected = False
 
         def _mark_connected(self):
-            pass
+            self.connected = True
 
         def _mark_disconnected(self):
-            pass
+            self.connected = False
+            self._running = False
 
         def build_source(self, **kwargs):
             return kwargs
 
         def _set_fatal_error(self, *args, **kwargs):
-            pass
+            self._running = False
 
     def cache_audio_from_bytes(data, ext=".wav"):
         fd, path = tempfile.mkstemp(suffix=ext)
         with open(fd, "wb", closefd=True) as handle:
             handle.write(data)
         return path
-
-    observed_language = {}
-
-    def transcribe_audio(path):
-        assert path.endswith(".wav")
-        observed_language["value"] = os.getenv("HERMES_LOCAL_STT_LANGUAGE")
-        return {"success": True, "transcript": "请告诉我今天的天气", "provider": "test"}
-
-    transcription_tools.transcribe_audio = transcribe_audio
-    tools.transcription_tools = transcription_tools
 
     gateway_config.Platform = Platform
     gateway_config.PlatformConfig = PlatformConfig
@@ -96,8 +87,6 @@ def _load_adapter_module():
             "gateway.config": gateway_config,
             "gateway.platforms": gateway_platforms,
             "gateway.platforms.base": gateway_base,
-            "tools": tools,
-            "tools.transcription_tools": transcription_tools,
         }
     )
 
@@ -106,81 +95,270 @@ def _load_adapter_module():
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
-    module._observed_language = observed_language
     return module, PlatformConfig, MessageType
 
 
-def test_dispatches_pcm_audio_as_a_voice_event():
-    adapter_module, platform_config, message_type = _load_adapter_module()
-    adapter = adapter_module.SlateAdapter(platform_config())
-    captured = []
+class Response:
+    def __init__(self, data=None):
+        self._data = {"ok": True} if data is None else data
 
-    async def capture(event):
-        captured.append(event)
+    def raise_for_status(self):
+        return None
 
-    adapter.handle_message = capture
-    pcm = b"\x01\x02\x03\x04"
+    def json(self):
+        return self._data
 
-    asyncio.run(
-        adapter._dispatch(
-            {
-                "requestId": "hermes-voice-1",
-                "text": "",
-                "audio": base64.b64encode(pcm).decode("ascii"),
-            }
+
+class Client:
+    def __init__(self, response=None):
+        self.payloads = []
+        self.response = response or Response()
+        self.closed = False
+
+    async def post(self, url, *, json, timeout):
+        del url, timeout
+        self.payloads.append(json)
+        return self.response
+
+    async def aclose(self):
+        self.closed = True
+
+
+class SlateAdapterVoiceTests(unittest.TestCase):
+    def setUp(self):
+        self.adapter_module, self.platform_config, self.message_type = _load_adapter_module()
+
+    def test_dispatch_lets_gateway_transcribe_once_and_uses_device_session(self):
+        adapter = self.adapter_module.SlateAdapter(self.platform_config())
+        captured = []
+
+        async def capture(event):
+            captured.append(event)
+
+        adapter.handle_message = capture
+        pcm = b"\x01\x02\x03\x04"
+        asyncio.run(
+            adapter._dispatch(
+                {
+                    "requestId": "hermes-voice-1",
+                    "sessionId": "slate:device-1",
+                    "userId": "admin-1",
+                    "text": "",
+                    "audio": base64.b64encode(pcm).decode("ascii"),
+                }
+            )
         )
-    )
 
-    assert len(captured) == 1
-    event = captured[0]
-    assert event.message_type == message_type.VOICE
-    assert event.text == "请告诉我今天的天气"
-    assert event.raw_message["userText"] == "请告诉我今天的天气"
-    assert adapter_module._observed_language["value"] == "zh"
-    assert os.getenv("HERMES_LOCAL_STT_LANGUAGE") is None
-    assert len(event.media_urls) == 1
-    with wave.open(event.media_urls[0], "rb") as wav:
-        assert wav.getframerate() == 16000
-        assert wav.getnchannels() == 1
-        assert wav.getsampwidth() == 2
-        assert wav.readframes(wav.getnframes()) == pcm
+        self.assertEqual(len(captured), 1)
+        event = captured[0]
+        self.assertEqual(event.message_type, self.message_type.VOICE)
+        self.assertEqual(event.text, "")
+        self.assertEqual(event.source["chat_id"], "slate:device-1")
+        self.assertEqual(event.source["user_id"], "admin-1")
+        self.assertFalse(hasattr(event, "_gateway_pending_stt_text"))
+        with wave.open(event.media_urls[0], "rb") as wav:
+            self.assertEqual(wav.getframerate(), 16000)
+            self.assertEqual(wav.getnchannels(), 1)
+            self.assertEqual(wav.getsampwidth(), 2)
+            self.assertEqual(wav.readframes(wav.getnframes()), pcm)
 
+    def test_connect_starts_the_first_poll_before_reporting_connected(self):
+        adapter = self.adapter_module.SlateAdapter(
+            self.platform_config(
+                extra={"backend": "https://slate.example.com", "token": "t" * 64}
+            )
+        )
+        polls = []
 
-def test_send_returns_transcript_with_agent_reply():
-    adapter_module, platform_config, _ = _load_adapter_module()
-    adapter = adapter_module.SlateAdapter(platform_config())
-
-    class Response:
-        def raise_for_status(self):
+        class HttpClient(Client):
             pass
 
-        def json(self):
-            return {"ok": True}
+        async def get_pending():
+            polls.append(True)
+            adapter._polling = False
+            return None
 
-    class Client:
-        def __init__(self):
-            self.payload = None
+        self.adapter_module.HTTPX_AVAILABLE = True
+        self.adapter_module.httpx = types.SimpleNamespace(
+            AsyncClient=lambda **_kwargs: HttpClient(),
+            Timeout=lambda **kwargs: kwargs,
+            HTTPStatusError=type("HTTPStatusError", (Exception,), {}),
+            HTTPError=type("HTTPError", (Exception,), {}),
+        )
+        adapter._get_pending = get_pending
 
-        async def post(self, url, *, json, timeout):
-            del url, timeout
-            self.payload = json
-            return Response()
+        async def exercise():
+            self.assertTrue(await adapter.connect())
+            self.assertFalse(adapter.connected)
+            await adapter._poll_task
 
-    client = Client()
-    adapter._client = client
-    adapter._transcripts["hermes-voice-2"] = "请打开今天的天气"
+        asyncio.run(exercise())
 
-    result = asyncio.run(adapter.send("slate", "今天晴天", reply_to="hermes-voice-2"))
+        self.assertEqual(polls, [True])
+        self.assertTrue(adapter.connected)
 
-    assert result.success is True
-    assert client.payload == {
-        "requestId": "hermes-voice-2",
-        "text": "今天晴天",
-        "userText": "请打开今天的天气",
-    }
-    assert "hermes-voice-2" not in adapter._transcripts
+    def test_final_send_returns_gateway_transcript_with_agent_reply(self):
+        adapter = self.adapter_module.SlateAdapter(self.platform_config())
+        captured = []
+
+        async def capture(event):
+            captured.append(event)
+
+        adapter.handle_message = capture
+        asyncio.run(
+            adapter._dispatch(
+                {
+                    "requestId": "hermes-voice-2",
+                    "sessionId": "slate:device-1",
+                    "userId": "admin-1",
+                    "text": "",
+                    "audio": base64.b64encode(b"\x01\x02").decode("ascii"),
+                }
+            )
+        )
+        setattr(captured[0], "_gateway_pending_stt_transcripts", ["请打开今天的天气"])
+        client = Client()
+        adapter._client = client
+
+        result = asyncio.run(
+            adapter.send(
+                "slate:device-1",
+                "今天晴天",
+                reply_to="hermes-voice-2",
+                metadata={"notify": True},
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            client.payloads,
+            [
+                {
+                    "requestId": "hermes-voice-2",
+                    "text": "今天晴天",
+                    "userText": "请打开今天的天气",
+                }
+            ],
+        )
+        self.assertNotIn("hermes-voice-2", adapter._events)
+
+    def test_streaming_preview_does_not_consume_the_pending_request(self):
+        adapter = self.adapter_module.SlateAdapter(self.platform_config())
+        client = Client()
+        adapter._client = client
+        adapter._events["request-1"] = object()
+
+        result = asyncio.run(
+            adapter.send(
+                "slate:device-1",
+                "partial preview",
+                reply_to="request-1",
+                metadata={"notify": True, "expect_edits": True},
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(client.payloads, [])
+        self.assertIn("request-1", adapter._events)
+
+    def test_terminal_not_pending_response_clears_voice_context(self):
+        adapter = self.adapter_module.SlateAdapter(self.platform_config())
+        adapter._client = Client(Response({"ok": False}))
+        adapter._events["request-1"] = object()
+
+        result = asyncio.run(
+            adapter.send("slate", "reply", reply_to="request-1", metadata={"notify": True})
+        )
+
+        self.assertFalse(result.success)
+        self.assertNotIn("request-1", adapter._events)
+
+    def test_env_enablement_preserves_configured_poll_timeout(self):
+        previous = {
+            name: os.environ.get(name)
+            for name in ("SLATE_BACKEND", "SLATE_AGENT_TOKEN", "SLATE_POLL_TIMEOUT_SECONDS")
+        }
+        os.environ["SLATE_BACKEND"] = "https://slate.example.com"
+        os.environ["SLATE_AGENT_TOKEN"] = "t" * 64
+        os.environ["SLATE_POLL_TIMEOUT_SECONDS"] = "47"
+        try:
+            self.assertEqual(self.adapter_module._env_enablement()["poll_timeout"], 47)
+        finally:
+            for name, value in previous.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+    def test_successful_empty_poll_does_not_add_an_extra_sleep(self):
+        adapter = self.adapter_module.SlateAdapter(self.platform_config())
+        adapter._running = True
+        adapter._polling = True
+        sleeps = []
+
+        async def get_pending():
+            adapter._polling = False
+            return None
+
+        async def sleep(delay):
+            sleeps.append(delay)
+
+        adapter._get_pending = get_pending
+        original_sleep = self.adapter_module.asyncio.sleep
+        self.adapter_module.asyncio.sleep = sleep
+        try:
+            asyncio.run(adapter._poll_loop())
+        finally:
+            self.adapter_module.asyncio.sleep = original_sleep
+
+        self.assertEqual(sleeps, [])
+
+    def test_repeated_dispatch_failures_use_increasing_backoff(self):
+        adapter = self.adapter_module.SlateAdapter(self.platform_config())
+        adapter._running = True
+        adapter._polling = True
+        sleeps = []
+        dispatch_attempts = 0
+        self.adapter_module.httpx = types.SimpleNamespace(
+            HTTPStatusError=type("HTTPStatusError", (Exception,), {}),
+            HTTPError=type("HTTPError", (Exception,), {}),
+        )
+
+        async def get_pending():
+            return {"requestId": "request-1", "text": "hello"}
+
+        async def dispatch(_request):
+            nonlocal dispatch_attempts
+            dispatch_attempts += 1
+            if dispatch_attempts < 3:
+                raise ValueError("dispatch failed")
+            adapter._polling = False
+
+        async def sleep(delay):
+            sleeps.append(delay)
+
+        adapter._get_pending = get_pending
+        adapter._dispatch = dispatch
+        original_sleep = self.adapter_module.asyncio.sleep
+        self.adapter_module.asyncio.sleep = sleep
+        try:
+            asyncio.run(adapter._poll_loop())
+        finally:
+            self.adapter_module.asyncio.sleep = original_sleep
+
+        self.assertEqual(sleeps, [1, 2])
+
+    def test_disconnect_drops_cached_voice_context(self):
+        adapter = self.adapter_module.SlateAdapter(self.platform_config())
+        client = Client()
+        adapter._client = client
+        adapter._events["request-1"] = object()
+
+        asyncio.run(adapter.disconnect())
+
+        self.assertEqual(adapter._events, {})
+        self.assertTrue(client.closed)
 
 
 if __name__ == "__main__":
-    test_dispatches_pcm_audio_as_a_voice_event()
-    test_send_returns_transcript_with_agent_reply()
+    unittest.main()

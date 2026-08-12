@@ -113,15 +113,15 @@ export function HermesConnectionSection() {
 
           <ConnectionPanel
             index="02"
-            label="两侧环境变量"
-            description="同一个共享 Token 分别填入 Slate Docker 与 Hermes Gateway，网页不会读取或显示它。"
+            label="Hermes Gateway 配置"
+            description="Slate 已自动从数据卷使用网页保存的 Token；这里只需复制一次给 Hermes Gateway。"
             copyLabel="配置模板"
             copyValue={configTemplate}
             onCopy={copy}
             className="border-t border-ink lg:border-l lg:border-t-0"
           >
             <div className="space-y-2 font-mono text-[11px] leading-relaxed">
-              <ConfigRow name="Slate Docker" value="HERMES_AGENT_TOKEN" />
+              <ConfigRow name="Slate Docker" value="已自动保存到数据卷" />
               <ConfigRow name="Hermes Gateway" value="SLATE_BACKEND · SLATE_AGENT_TOKEN" />
             </div>
           </ConnectionPanel>

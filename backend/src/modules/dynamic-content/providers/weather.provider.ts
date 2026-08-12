@@ -519,12 +519,13 @@ function pickWttrForecastHour(
   );
 }
 
-function mapWttrCode(value: string | undefined): number {
+export function mapWttrCode(value: string | undefined): number {
   const code = Number.parseInt(value ?? '', 10);
   if (!Number.isFinite(code)) return 999;
   if (code === 113) return 100;
   if (code === 116) return 101;
   if (code === 119 || code === 122) return 104;
+  if (code === 200) return 302;
   if ([143, 248, 260].includes(code)) return 500;
   if ([176, 263, 266, 293, 296, 353].includes(code)) return 300;
   if ([299, 302, 305, 308, 356, 359, 386, 389].includes(code)) return 302;
@@ -588,17 +589,27 @@ function normalizeWeatherDescription(value: string): string {
     .replace(/heavy\s+rain/i, '大雨');
 }
 
-function translateWindDirection(value: string): string {
+export function translateWindDirection(value: string): string {
   const compact = value.trim().toUpperCase();
   const directions: Record<string, string> = {
     N: '北风',
+    NNE: '北东北风',
     NE: '东北风',
+    ENE: '东北东风',
     E: '东风',
+    ESE: '东南东风',
     SE: '东南风',
+    SSE: '东南南风',
     S: '南风',
+    SSW: '西南南风',
     SW: '西南风',
+    WSW: '西南西风',
     W: '西风',
+    WNW: '西北西风',
     NW: '西北风',
+    NNW: '西北北风',
   };
-  return directions[compact] ?? value;
+  if (directions[compact]) return directions[compact];
+  if (/^[A-Z]+$/.test(compact)) return '风向不明';
+  return value.endsWith('风') ? value : `${value}风`;
 }

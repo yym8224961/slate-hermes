@@ -27,7 +27,7 @@ describe('HermesAgentAuthGuard', () => {
 });
 
 function store(value: string | undefined): HermesTokenStore {
-  return { get: () => value } as HermesTokenStore;
+  return { get: () => value, revision: () => (value ? 1 : 0) } as HermesTokenStore;
 }
 
 function config(hermesAgentToken: string | undefined, isProd: boolean): AppConfig {

@@ -27,6 +27,35 @@ describe('TtsService', () => {
     ).rejects.toThrow(NotImplementedError);
   });
 
+  it('honors a shorter caller timeout for latency-sensitive Hermes replies', async () => {
+    globalThis.fetch = (async (
+      _input: Parameters<typeof fetch>[0],
+      init?: Parameters<typeof fetch>[1]
+    ) =>
+      await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
+          once: true,
+        });
+      })) as typeof fetch;
+    const service = new TtsService(
+      {
+        apiKey: 'test-key',
+        baseUrl: 'https://example.invalid',
+        defaultVoice: DEFAULT_TTS_VOICE,
+        model: 'tts-model',
+      } as TtsConfig,
+      {} as AudioTranscoderService
+    );
+
+    await expect(
+      service.synthesizeToDevicePcm({
+        text: 'hello',
+        voice: DEFAULT_TTS_VOICE,
+        timeoutMs: 20,
+      })
+    ).rejects.toThrow('aborted');
+  }, 250);
+
   it('rejects overly long TTS style prompts before calling the provider', async () => {
     let calls = 0;
     globalThis.fetch = (async () => {

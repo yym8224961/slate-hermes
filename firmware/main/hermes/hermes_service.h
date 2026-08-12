@@ -1,7 +1,9 @@
 #pragma once
 
 #include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
+#include <esp_http_client.h>
 
 #include <atomic>
 #include <cstdint>
@@ -68,13 +70,17 @@ class HermesService {
 
     void StartRecording();
     void StopAndSend();
+    void FinalizeRecordingAndSend();
     void SendAudioToBackend(const std::vector<int16_t>& pcm);
+    bool WaitForRecordTask(TickType_t timeout);
+    bool WaitForSendTask(TickType_t timeout);
+    void CancelActiveHttpRequest();
 
     HermesState CurrentState() const;
 
     // Recording task
     static void RecordTaskEntry(void* arg);
-    void        RecordTask();
+    bool        RecordTask();
 
     struct SendTaskContext {
         HermesService*       service;
@@ -87,6 +93,7 @@ class HermesService {
     std::atomic<bool>        in_mode_{false};
     std::atomic<bool>        recording_{false};
     std::atomic<bool>        record_stop_{false};
+    std::atomic<bool>        record_task_active_{false};
     std::atomic<bool>        send_in_flight_{false};
     std::atomic<bool>        send_cancel_requested_{false};
 
@@ -96,6 +103,12 @@ class HermesService {
 
     TaskHandle_t              record_task_ = nullptr;
     TaskHandle_t              send_task_   = nullptr;
+    SemaphoreHandle_t         record_done_ = nullptr;
+    SemaphoreHandle_t         send_done_   = nullptr;
+
+    mutable std::mutex        http_mutex_;
+    mutable std::mutex        send_lifecycle_mutex_;
+    esp_http_client_handle_t  active_http_client_ = nullptr;
 
     mutable std::mutex        snapshot_mutex_;
     HermesSnapshot            snapshot_;
