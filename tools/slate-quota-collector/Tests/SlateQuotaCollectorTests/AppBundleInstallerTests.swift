@@ -1,9 +1,26 @@
 import Foundation
+import Security
 import Testing
 @testable import SlateQuotaCollector
 
 @Suite("App bundle installer", .serialized)
 struct AppBundleInstallerTests {
+    @Test("secure directory walking accepts the trusted macOS var alias")
+    func acceptsTrustedVarAliasWithoutFollowingIt() throws {
+        let privateRoot = try TemporaryDirectory()
+        let publicPath = privateRoot.url.path.replacingOccurrences(
+            of: "/private/var/", with: "/var/"
+        )
+        let publicRoot = URL(fileURLWithPath: publicPath, isDirectory: true)
+        let paths = InstallationPaths.fixture(root: publicRoot)
+        let executable = try executableFixture(root: privateRoot.url, contents: "binary")
+
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: executable)
+
+        #expect(FileManager.default.fileExists(atPath: paths.appExecutableURL.path))
+        #expect(FileManager.default.fileExists(atPath: paths.stableExecutableURL.path))
+    }
+
     @Test("CLI exposes the eight approved commands and keeps internal entries hidden")
     func parsesApprovedCommandsAndRejectsSecretArguments() throws {
         #expect(try CLIArguments(["setup"]) == .setup)
@@ -70,6 +87,115 @@ struct AppBundleInstallerTests {
         #expect(info["CFBundleExecutable"] as? String == "slate-quota-collector")
         #expect(info["LSUIElement"] as? Bool == true)
         #expect(info["LSMinimumSystemVersion"] as? String == "13.0")
+    }
+
+    @Test("installer never adopts an arbitrary owner stable binary")
+    func refusesUnrecognizedStableBinary() throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let source = try executableFixture(root: root.url, contents: "new-binary")
+        try FileManager.default.createDirectory(
+            at: paths.stableExecutableURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("keep-stable".utf8).write(to: paths.stableExecutableURL)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700], ofItemAtPath: paths.stableExecutableURL.path
+        )
+
+        #expect(throws: InstallerError.self) {
+            try AppBundleInstaller(paths: paths).install(executableURL: source)
+        }
+
+        #expect(try String(contentsOf: paths.stableExecutableURL, encoding: .utf8) == "keep-stable")
+        #expect(FileManager.default.fileExists(atPath: paths.appBundleURL.path) == false)
+    }
+
+    @Test(
+        "every failed private bundle construction step leaves no temporary generation",
+        arguments: Array(1...8)
+    )
+    func bundleConstructionFailureLeavesNoResidue(_ failingStep: Int) throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let oldSource = try executableFixture(
+            root: root.url, name: "old-binary", contents: "old-binary"
+        )
+        let source = try executableFixture(
+            root: root.url, name: "new-binary", contents: "new-binary"
+        )
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: oldSource)
+        let previous = try AppBundleInstaller(paths: paths).captureGeneration()
+        let installer = AppBundleInstaller(
+            paths: paths,
+            afterBundleConstructionStep: { step in
+                if step == failingStep { throw InjectedInstallFailure.mutation }
+            }
+        )
+
+        #expect(throws: InjectedInstallFailure.self) {
+            try installer.install(executableURL: source)
+        }
+
+        let applications = paths.appBundleURL.deletingLastPathComponent()
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: applications.path)) ?? []
+        #expect(names.filter { $0.hasPrefix(".slate-quota-bundle-") }.isEmpty)
+        #expect(try AppBundleInstaller(paths: paths).captureGeneration() == previous)
+    }
+
+    @Test("existing broad roots keep their modes while app-owned leaves are owner-only")
+    func preservesExistingBroadDirectoryModes() throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let applications = paths.appBundleURL.deletingLastPathComponent()
+        for directory in [paths.homeDirectory, applications, paths.applicationSupportURL] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: directory.path
+            )
+        }
+        let source = try executableFixture(root: root.url, contents: "new-binary")
+
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: source)
+
+        #expect(try fileMode(paths.homeDirectory) & 0o777 == 0o755)
+        #expect(try fileMode(applications) & 0o777 == 0o755)
+        #expect(try fileMode(paths.applicationSupportURL) & 0o777 == 0o755)
+        #expect(try fileMode(paths.collectorStateDirectoryURL) & 0o777 == 0o700)
+        #expect(try fileMode(paths.stableExecutableURL.deletingLastPathComponent()) & 0o777 == 0o700)
+    }
+
+    @Test("held stable parent rejects an ancestor swap and never writes through its replacement")
+    func stableAncestorSwapPreservesVictim() throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let source = try executableFixture(root: root.url, contents: "new-binary")
+        try FileManager.default.createDirectory(
+            at: paths.applicationSupportURL, withIntermediateDirectories: true
+        )
+        let displaced = root.url.appendingPathComponent("displaced-application-support")
+        let victim = root.url.appendingPathComponent("stable-victim", isDirectory: true)
+        let sentinel = victim.appendingPathComponent("sentinel")
+        try FileManager.default.createDirectory(at: victim, withIntermediateDirectories: true)
+        try Data("keep".utf8).write(to: sentinel)
+        let installer = AppBundleInstaller(
+            paths: paths,
+            afterStableDirectoryOpen: {
+                try FileManager.default.moveItem(at: paths.applicationSupportURL, to: displaced)
+                try FileManager.default.createSymbolicLink(
+                    at: paths.applicationSupportURL, withDestinationURL: victim
+                )
+            }
+        )
+
+        #expect(throws: InstallerError.self) {
+            try installer.install(executableURL: source)
+        }
+
+        #expect(try String(contentsOf: sentinel, encoding: .utf8) == "keep")
+        #expect(FileManager.default.fileExists(
+            atPath: victim.appendingPathComponent("SlateQuotaCollector/bin/slate-quota-collector").path
+        ) == false)
     }
 
     @Test("app installer rejects a substituted bundle without changing its target")
@@ -272,9 +398,9 @@ struct AppBundleInstallerTests {
     @Test("setup preflight completes before any persistent mutation")
     func setupPreflightFailureLeavesPriorGenerationUntouched() async throws {
         let prior = SetupGeneration(
-            openCodeKey: .value("old-open-code"),
-            slateURL: .value("https://old.example.test/push"),
-            configuration: Data("old-config".utf8)
+            openCodeKey: .item(secretSnapshot("old-open-code", label: "old-key")),
+            slateURL: .item(secretSnapshot("https://old.example.test/push", label: "old-url")),
+            configuration: .file(data: Data("old-config".utf8), mode: 0o640)
         )
         let backend = FailingSetupBackend(initial: prior, failAtMutation: nil)
         let runtime = setupRuntime(backend: backend) { _, _ in
@@ -290,11 +416,11 @@ struct AppBundleInstallerTests {
         "setup transaction restores present and absent prior generations at every mutation failure",
         arguments: [
             SetupGeneration(
-                openCodeKey: .value("old-open-code"),
-                slateURL: .value("https://old.example.test/push"),
-                configuration: Data("old-config".utf8)
+                openCodeKey: .item(secretSnapshot("old-open-code", label: "old-key")),
+                slateURL: .item(secretSnapshot("https://old.example.test/push", label: "old-url")),
+                configuration: .file(data: Data("old-config".utf8), mode: 0o640)
             ),
-            SetupGeneration(openCodeKey: .absent, slateURL: .absent, configuration: nil),
+            SetupGeneration(openCodeKey: .absent, slateURL: .absent, configuration: .absent),
         ],
         [1, 2, 3]
     )
@@ -309,6 +435,37 @@ struct AppBundleInstallerTests {
 
         #expect(backend.generation == prior)
         #expect(backend.failureCount == 1)
+    }
+
+    @Test(
+        "setup rollback attempts every component after a rollback failure",
+        arguments: [1, 2, 3]
+    )
+    func setupRollbackFailureStillAttemptsLaterComponents(_ failAtRollback: Int) async throws {
+        let prior = SetupGeneration(
+            openCodeKey: .item(secretSnapshot("old-key", label: "label-key")),
+            slateURL: .item(secretSnapshot("old-url", label: "label-url")),
+            configuration: .file(data: Data("old-config".utf8), mode: 0o640)
+        )
+        let backend = FailingSetupBackend(
+            initial: prior,
+            failAtMutation: 2,
+            failAtRollback: failAtRollback
+        )
+        let runtime = setupRuntime(backend: backend) { _, _ in }
+
+        do {
+            try await runtime.run(.setup)
+            Issue.record("expected setup rollback failure")
+        } catch let error as CLIError {
+            #expect(error == .setupRollback)
+        }
+
+        #expect(backend.rollbackAttempts == [1, 2, 3])
+        #expect(backend.rollbackSuccesses == Set([1, 2, 3]).subtracting([failAtRollback]))
+        for component in Set([1, 2, 3]).subtracting([failAtRollback]) {
+            #expect(backend.component(component) == priorComponent(prior, component))
+        }
     }
 
     @Test(
@@ -387,6 +544,71 @@ struct AppBundleInstallerTests {
         #expect(FileManager.default.fileExists(atPath: paths.stableExecutableURL.path))
     }
 
+    @Test("install replaces disabled unloaded jobs with the exact desired launchd generation")
+    func installReplacesDisabledUnloadedGeneration() async throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        try FileManager.default.createDirectory(
+            at: paths.applicationSupportURL, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try SettingsStore(applicationSupportURL: paths.applicationSupportURL).save(
+            .init(schemaVersion: 1, automaticCollectionEnabled: false)
+        )
+        let executable = try executableFixture(root: root.url, contents: "binary")
+        let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
+        let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
+        let prior = LaunchdJobGeneration(loaded: false, disabledOverride: true)
+        let launchctl = TransactionalLaunchctl(
+            initial: [menuService: prior, collectorService: prior]
+        )
+        let runtime = CommandRuntime(paths: paths, launchctl: launchctl, executableURL: executable)
+
+        try await runtime.run(.installLaunchAgent)
+
+        #expect(await launchctl.generation(service: menuService)
+            == LaunchdJobGeneration(loaded: true, disabledOverride: false))
+        #expect(await launchctl.generation(service: collectorService)
+            == LaunchdJobGeneration(loaded: false, disabledOverride: true))
+    }
+
+    @Test("successful upgrade deliberately stops both old loaded jobs before bootstrapping new jobs")
+    func successfulLoadedUpgradeReplacesLiveGeneration() async throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let oldExecutable = try executableFixture(root: root.url, name: "old", contents: "old")
+        let newExecutable = try executableFixture(root: root.url, name: "new", contents: "new")
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: oldExecutable)
+        _ = try LaunchAgentInstaller(paths: paths).installPlists()
+        try FileManager.default.createDirectory(
+            at: paths.applicationSupportURL, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try SettingsStore(applicationSupportURL: paths.applicationSupportURL).save(
+            .init(schemaVersion: 1, automaticCollectionEnabled: true)
+        )
+        let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
+        let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
+        let loaded = LaunchdJobGeneration(loaded: true, disabledOverride: false)
+        let launchctl = TransactionalLaunchctl(
+            initial: [menuService: loaded, collectorService: loaded]
+        )
+        let runtime = CommandRuntime(paths: paths, launchctl: launchctl, executableURL: newExecutable)
+
+        try await runtime.run(.installLaunchAgent)
+
+        let events = await launchctl.events
+        #expect(events.prefix(2) == ["bootout:\(collectorService)", "bootout:\(menuService)"])
+        #expect(events.firstIndex(of: "bootstrap:\(menuService)")
+            .map { $0 > 1 } == true)
+        #expect(events.firstIndex(of: "bootstrap:\(collectorService)")
+            .map { $0 > 1 } == true)
+        #expect(try AppBundleInstaller(paths: paths).captureGeneration()
+            == AppBundleGeneration(bundleExecutable: Data("new".utf8), stableExecutable: Data("new".utf8)))
+        #expect(await launchctl.generation(service: menuService) == loaded)
+        #expect(await launchctl.generation(service: collectorService) == loaded)
+    }
+
     @Test(
         "install rolls disk and loaded jobs back when any launchctl mutation fails",
         arguments: [1, 2, 3, 4]
@@ -416,8 +638,11 @@ struct AppBundleInstallerTests {
         #expect(await launchctl.loadedServices.isEmpty)
     }
 
-    @Test("failed upgrade restores the previous disk generation and both previously loaded jobs")
-    func failedUpgradeRestoresLoadedPreviousGeneration() async throws {
+    @Test(
+        "every loaded upgrade launchctl failure restores the previous disk and live generation",
+        arguments: [1, 2, 3, 4, 5, 6]
+    )
+    func failedUpgradeRestoresLoadedPreviousGeneration(_ failAtMutation: Int) async throws {
         let root = try TemporaryDirectory()
         let paths = InstallationPaths.fixture(root: root.url)
         let oldExecutable = try executableFixture(
@@ -440,7 +665,7 @@ struct AppBundleInstallerTests {
         let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
         let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
         let launchctl = TransactionalLaunchctl(
-            failAtMutation: 4,
+            failAtMutation: failAtMutation,
             initiallyLoaded: [menuService, collectorService]
         )
         let runtime = CommandRuntime(
@@ -454,6 +679,82 @@ struct AppBundleInstallerTests {
         #expect(try AppBundleInstaller(paths: paths).captureGeneration() == previousApp)
         #expect(try LaunchAgentInstaller(paths: paths).captureGeneration() == previousAgents)
         #expect(await launchctl.loadedServices == [menuService, collectorService])
+    }
+
+    @Test("failed upgrade restores disabled-but-loaded jobs exactly")
+    func failedUpgradeRestoresDisabledLoadedGeneration() async throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let oldExecutable = try executableFixture(root: root.url, name: "old", contents: "old")
+        let newExecutable = try executableFixture(root: root.url, name: "new", contents: "new")
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: oldExecutable)
+        _ = try LaunchAgentInstaller(paths: paths).installPlists()
+        try FileManager.default.createDirectory(
+            at: paths.applicationSupportURL, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try SettingsStore(applicationSupportURL: paths.applicationSupportURL).save(
+            .init(schemaVersion: 1, automaticCollectionEnabled: true)
+        )
+        let previousApp = try AppBundleInstaller(paths: paths).captureGeneration()
+        let previousAgents = try LaunchAgentInstaller(paths: paths).captureGeneration()
+        let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
+        let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
+        let disabledLoaded = LaunchdJobGeneration(loaded: true, disabledOverride: true)
+        let launchctl = TransactionalLaunchctl(
+            failAtMutation: 4,
+            initial: [menuService: disabledLoaded, collectorService: disabledLoaded]
+        )
+        let runtime = CommandRuntime(paths: paths, launchctl: launchctl, executableURL: newExecutable)
+
+        await #expect(throws: LaunchctlError.self) {
+            try await runtime.run(.installLaunchAgent)
+        }
+
+        #expect(try AppBundleInstaller(paths: paths).captureGeneration() == previousApp)
+        #expect(try LaunchAgentInstaller(paths: paths).captureGeneration() == previousAgents)
+        #expect(await launchctl.generation(service: menuService) == disabledLoaded)
+        #expect(await launchctl.generation(service: collectorService) == disabledLoaded)
+    }
+
+    @Test(
+        "install rollback attempts both jobs after a rollback launchctl failure",
+        arguments: [1, 2, 3, 4, 5, 6, 7]
+    )
+    func installRollbackFailureStillAttemptsEveryLaunchdRestore(_ failAtRollback: Int) async throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        try FileManager.default.createDirectory(
+            at: paths.applicationSupportURL, withIntermediateDirectories: true,
+            attributes: [.posixPermissions: 0o700]
+        )
+        try SettingsStore(applicationSupportURL: paths.applicationSupportURL).save(
+            .init(schemaVersion: 1, automaticCollectionEnabled: false)
+        )
+        let executable = try executableFixture(root: root.url, contents: "binary")
+        let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
+        let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
+        let prior: [String: LaunchdJobGeneration] = [
+            menuService: .init(loaded: true, disabledOverride: true),
+            collectorService: .init(loaded: false, disabledOverride: false),
+        ]
+        let launchctl = TransactionalLaunchctl(
+            failAtMutation: 3,
+            failAtRollback: failAtRollback,
+            initial: prior
+        )
+        let runtime = CommandRuntime(paths: paths, launchctl: launchctl, executableURL: executable)
+
+        do {
+            try await runtime.run(.installLaunchAgent)
+            Issue.record("expected launchd rollback failure")
+        } catch let error as LaunchctlError {
+            #expect(error == .rollback)
+        }
+
+        #expect(await launchctl.rollbackAttempts >= 7)
+        #expect(await launchctl.rollbackTouchedServices == [menuService, collectorService])
+        #expect(await launchctl.allGenerations == prior)
     }
 
     @Test(
@@ -478,6 +779,93 @@ struct AppBundleInstallerTests {
             try await runtime.run(.uninstallLaunchAgent)
         }
 
+        #expect(FileManager.default.fileExists(atPath: paths.appBundleURL.path))
+        #expect(FileManager.default.fileExists(atPath: paths.stableExecutableURL.path))
+        #expect(FileManager.default.fileExists(atPath: paths.menuBarPlistURL.path))
+        #expect(FileManager.default.fileExists(atPath: paths.collectorPlistURL.path))
+    }
+
+    @Test("second uninstall bootout failure restores both exact launchd generations")
+    func secondUninstallStopFailureRestoresBothJobs() async throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let executable = try executableFixture(root: root.url, contents: "binary")
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: executable)
+        _ = try LaunchAgentInstaller(paths: paths).installPlists()
+        let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
+        let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
+        let prior: [String: LaunchdJobGeneration] = [
+            menuService: .init(loaded: true, disabledOverride: false),
+            collectorService: .init(loaded: true, disabledOverride: true),
+        ]
+        let launchctl = TransactionalLaunchctl(failAtMutation: 2, initial: prior)
+        let runtime = CommandRuntime(paths: paths, launchctl: launchctl, executableURL: executable)
+
+        await #expect(throws: LaunchctlError.self) {
+            try await runtime.run(.uninstallLaunchAgent)
+        }
+
+        #expect(await launchctl.allGenerations == prior)
+        #expect(FileManager.default.fileExists(atPath: paths.appBundleURL.path))
+        #expect(FileManager.default.fileExists(atPath: paths.stableExecutableURL.path))
+        #expect(FileManager.default.fileExists(atPath: paths.menuBarPlistURL.path))
+        #expect(FileManager.default.fileExists(atPath: paths.collectorPlistURL.path))
+    }
+
+    @Test("uninstall state-verification transport failure restores both jobs and retains disk")
+    func uninstallVerificationFailureRestoresExactGeneration() async throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let executable = try executableFixture(root: root.url, contents: "binary")
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: executable)
+        _ = try LaunchAgentInstaller(paths: paths).installPlists()
+        let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
+        let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
+        let prior: [String: LaunchdJobGeneration] = [
+            menuService: .init(loaded: true, disabledOverride: false),
+            collectorService: .init(loaded: true, disabledOverride: true),
+        ]
+        let launchctl = TransactionalLaunchctl(
+            failAtStateQuery: 3,
+            initial: prior
+        )
+        let runtime = CommandRuntime(paths: paths, launchctl: launchctl, executableURL: executable)
+
+        await #expect(throws: LaunchctlError.self) {
+            try await runtime.run(.uninstallLaunchAgent)
+        }
+
+        #expect(await launchctl.allGenerations == prior)
+        #expect(FileManager.default.fileExists(atPath: paths.appBundleURL.path))
+        #expect(FileManager.default.fileExists(atPath: paths.stableExecutableURL.path))
+        #expect(FileManager.default.fileExists(atPath: paths.menuBarPlistURL.path))
+        #expect(FileManager.default.fileExists(atPath: paths.collectorPlistURL.path))
+    }
+
+    @Test("uninstall rejects disabled-override divergence before deleting artifacts")
+    func uninstallDisabledOverrideDivergenceRestoresExactGeneration() async throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let executable = try executableFixture(root: root.url, contents: "binary")
+        _ = try AppBundleInstaller(paths: paths).install(executableURL: executable)
+        _ = try LaunchAgentInstaller(paths: paths).installPlists()
+        let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
+        let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
+        let prior: [String: LaunchdJobGeneration] = [
+            menuService: .init(loaded: true, disabledOverride: false),
+            collectorService: .init(loaded: true, disabledOverride: true),
+        ]
+        let launchctl = TransactionalLaunchctl(
+            flipDisabledAtStateQuery: 3,
+            initial: prior
+        )
+        let runtime = CommandRuntime(paths: paths, launchctl: launchctl, executableURL: executable)
+
+        await #expect(throws: LaunchctlError.self) {
+            try await runtime.run(.uninstallLaunchAgent)
+        }
+
+        #expect(await launchctl.allGenerations == prior)
         #expect(FileManager.default.fileExists(atPath: paths.appBundleURL.path))
         #expect(FileManager.default.fileExists(atPath: paths.stableExecutableURL.path))
         #expect(FileManager.default.fileExists(atPath: paths.menuBarPlistURL.path))
@@ -521,6 +909,27 @@ struct AppBundleInstallerTests {
             setupPersistence: TransactionalSetupPersistence(backend: backend)
         )
     }
+
+    private func priorComponent(_ generation: SetupGeneration, _ component: Int) -> String {
+        switch component {
+        case 1: String(describing: generation.openCodeKey)
+        case 2: String(describing: generation.slateURL)
+        default: String(describing: generation.configuration)
+        }
+    }
+
+}
+
+private func secretSnapshot(_ value: String, label: String) -> SetupSecretAttributes {
+    SetupSecretAttributes(
+        data: Data(value.utf8),
+        accessible: kSecAttrAccessibleWhenUnlocked as String,
+        accessGroup: "fixture.group",
+        synchronizable: false,
+        generic: Data("generic".utf8),
+        label: label,
+        comment: "fixture-comment"
+    )
 }
 
 private enum InjectedSetupFailure: Error { case mutation }
@@ -530,76 +939,84 @@ private final class FailingSetupBackend: SetupMutationBacking, @unchecked Sendab
     private let lock = NSLock()
     private var storage: SetupGeneration
     private let failAtMutation: Int?
+    private let failAtRollback: Int?
     private var mutations = 0
     private var failures = 0
+    private var rollbackPhase = false
+    private var rollbackOrdinal = 0
+    private var rollbackAttemptStorage: [Int] = []
+    private var rollbackSuccessStorage: Set<Int> = []
 
-    init(initial: SetupGeneration, failAtMutation: Int?) {
+    init(initial: SetupGeneration, failAtMutation: Int?, failAtRollback: Int? = nil) {
         storage = initial
         self.failAtMutation = failAtMutation
+        self.failAtRollback = failAtRollback
     }
 
     var generation: SetupGeneration { withLock { storage } }
     var mutationCount: Int { withLock { mutations } }
     var failureCount: Int { withLock { failures } }
+    var rollbackAttempts: [Int] { withLock { rollbackAttemptStorage } }
+    var rollbackSuccesses: Set<Int> { withLock { rollbackSuccessStorage } }
 
     func readSecret(service _: String, account: String) throws -> SetupSecretState {
         withLock { account == "opencode-go-api-key" ? storage.openCodeKey : storage.slateURL }
     }
 
-    func writeSecret(_ value: String, service _: String, account: String) throws {
+    func writeSecretValue(_ value: String, service _: String, account: String) throws {
         try mutate {
             if account == "opencode-go-api-key" {
                 storage = SetupGeneration(
-                    openCodeKey: .value(value),
+                    openCodeKey: .item(Self.forwardSecret(value)),
                     slateURL: storage.slateURL,
                     configuration: storage.configuration
                 )
             } else {
                 storage = SetupGeneration(
                     openCodeKey: storage.openCodeKey,
-                    slateURL: .value(value),
+                    slateURL: .item(Self.forwardSecret(value)),
                     configuration: storage.configuration
                 )
             }
         }
     }
 
-    func deleteSecret(service _: String, account: String) throws {
-        try mutate {
+    func restoreSecret(_ state: SetupSecretState, service _: String, account: String) throws {
+        try rollback(component: account == "opencode-go-api-key" ? 1 : 2) {
             if account == "opencode-go-api-key" {
                 storage = SetupGeneration(
-                    openCodeKey: .absent,
+                    openCodeKey: state,
                     slateURL: storage.slateURL,
                     configuration: storage.configuration
                 )
             } else {
                 storage = SetupGeneration(
                     openCodeKey: storage.openCodeKey,
-                    slateURL: .absent,
+                    slateURL: state,
                     configuration: storage.configuration
                 )
             }
         }
     }
 
-    func readConfiguration() throws -> Data? { withLock { storage.configuration } }
+    func readConfiguration() throws -> SetupConfigurationState { withLock { storage.configuration } }
 
     func writeConfiguration(_ data: Data) throws {
         try mutate {
             storage = SetupGeneration(
                 openCodeKey: storage.openCodeKey,
                 slateURL: storage.slateURL,
-                configuration: data
+                configuration: .file(data: data, mode: 0o600)
             )
         }
     }
 
-    func deleteConfiguration() throws {
-        try mutate {
+    func restoreConfiguration(_ state: SetupConfigurationState) throws {
+        try rollback(component: 3) {
             storage = SetupGeneration(
                 openCodeKey: storage.openCodeKey,
                 slateURL: storage.slateURL,
-                configuration: nil
+                configuration: state
             )
         }
     }
@@ -609,10 +1026,39 @@ private final class FailingSetupBackend: SetupMutationBacking, @unchecked Sendab
             mutations += 1
             if failures == 0, mutations == failAtMutation {
                 failures += 1
+                rollbackPhase = true
                 throw InjectedSetupFailure.mutation
             }
             body()
         }
+    }
+
+    func component(_ ordinal: Int) -> String {
+        withLock {
+            switch ordinal {
+            case 1: String(describing: storage.openCodeKey)
+            case 2: String(describing: storage.slateURL)
+            default: String(describing: storage.configuration)
+            }
+        }
+    }
+
+    private func rollback(component: Int, _ body: () -> Void) throws {
+        try lock.withLock {
+            rollbackPhase = true
+            rollbackOrdinal += 1
+            rollbackAttemptStorage.append(component)
+            if rollbackOrdinal == failAtRollback { throw InjectedSetupFailure.mutation }
+            body()
+            rollbackSuccessStorage.insert(component)
+        }
+    }
+
+    private static func forwardSecret(_ value: String) -> SetupSecretAttributes {
+        SetupSecretAttributes(
+            data: Data(value.utf8), accessible: nil, accessGroup: nil,
+            synchronizable: nil, generic: nil, label: nil, comment: nil
+        )
     }
 
     private func withLock<T>(_ body: () -> T) -> T {
@@ -658,41 +1104,135 @@ private struct NoopSchedule: CollectionScheduleControlling {
     func resume() async throws {}
 }
 
-private actor RecordingInstallLaunchctl: LaunchctlControlling {
+private actor RecordingInstallLaunchctl: InstallationLaunchctlControlling {
     private(set) var events: [String] = []
-    func disable(service: String) { events.append("disable:\(service)") }
-    func enable(service: String) { events.append("enable:\(service)") }
-    func bootstrap(plistURL: URL) { events.append("bootstrap:\(plistURL.path)") }
-    func bootout(service: String) { events.append("bootout:\(service)") }
-    func isLoaded(service _: String) -> Bool { false }
+    private var generations: [String: LaunchdJobGeneration] = [:]
+
+    func disable(service: String) {
+        events.append("disable:\(service)")
+        let old = state(service)
+        generations[service] = .init(loaded: old.loaded, disabledOverride: true)
+    }
+    func enable(service: String) {
+        events.append("enable:\(service)")
+        let old = state(service)
+        generations[service] = .init(loaded: old.loaded, disabledOverride: false)
+    }
+    func bootstrap(plistURL: URL) {
+        events.append("bootstrap:\(plistURL.path)")
+        let service = "gui/\(getuid())/\(plistURL.deletingPathExtension().lastPathComponent)"
+        let old = state(service)
+        generations[service] = .init(loaded: true, disabledOverride: old.disabledOverride)
+    }
+    func bootout(service: String) {
+        events.append("bootout:\(service)")
+        let old = state(service)
+        generations[service] = .init(loaded: false, disabledOverride: old.disabledOverride)
+    }
+    func isLoaded(service: String) -> Bool { state(service).loaded }
+    func installationState(service: String) -> LaunchdJobGeneration { state(service) }
+
+    private func state(_ service: String) -> LaunchdJobGeneration {
+        generations[service] ?? .init(loaded: false, disabledOverride: false)
+    }
 }
 
-private actor TransactionalLaunchctl: LaunchctlControlling {
-    private let failAtMutation: Int
+private actor TransactionalLaunchctl: InstallationLaunchctlControlling {
+    private let failAtMutation: Int?
+    private let failAtRollback: Int?
+    private let failAtStateQuery: Int?
+    private let flipDisabledAtStateQuery: Int?
     private var mutationCount = 0
-    private var loaded: Set<String>
+    private var stateQueryCount = 0
+    private var generations: [String: LaunchdJobGeneration]
+    private(set) var events: [String] = []
+    private var rollbackPhase = false
+    private(set) var rollbackAttempts = 0
+    private var rollbackServices: Set<String> = []
 
-    init(failAtMutation: Int, initiallyLoaded: Set<String> = []) {
+    init(
+        failAtMutation: Int? = nil,
+        failAtRollback: Int? = nil,
+        failAtStateQuery: Int? = nil,
+        flipDisabledAtStateQuery: Int? = nil,
+        initiallyLoaded: Set<String> = [],
+        initial: [String: LaunchdJobGeneration] = [:]
+    ) {
         self.failAtMutation = failAtMutation
-        loaded = initiallyLoaded
-    }
-
-    var loadedServices: Set<String> { loaded }
-
-    func disable(service _: String) throws { try mutate {} }
-    func enable(service _: String) throws { try mutate {} }
-    func bootstrap(plistURL: URL) throws {
-        try mutate {
-            loaded.insert("gui/\(getuid())/\(plistURL.deletingPathExtension().lastPathComponent)")
+        self.failAtRollback = failAtRollback
+        self.failAtStateQuery = failAtStateQuery
+        self.flipDisabledAtStateQuery = flipDisabledAtStateQuery
+        generations = initial
+        for service in initiallyLoaded {
+            generations[service] = .init(loaded: true, disabledOverride: false)
         }
     }
-    func bootout(service: String) throws { try mutate { loaded.remove(service) } }
-    func isLoaded(service: String) -> Bool { loaded.contains(service) }
 
-    private func mutate(_ operation: () -> Void) throws {
+    var loadedServices: Set<String> {
+        Set(generations.compactMap { $0.value.loaded ? $0.key : nil })
+    }
+    var allGenerations: [String: LaunchdJobGeneration] { generations }
+    var rollbackTouchedServices: Set<String> { rollbackServices }
+
+    func disable(service: String) throws {
+        try mutate(service: service) {
+            events.append("disable:\(service)")
+            let old = current(service)
+            generations[service] = .init(loaded: old.loaded, disabledOverride: true)
+        }
+    }
+    func enable(service: String) throws {
+        try mutate(service: service) {
+            events.append("enable:\(service)")
+            let old = current(service)
+            generations[service] = .init(loaded: old.loaded, disabledOverride: false)
+        }
+    }
+    func bootstrap(plistURL: URL) throws {
+        let service = "gui/\(getuid())/\(plistURL.deletingPathExtension().lastPathComponent)"
+        try mutate(service: service) {
+            events.append("bootstrap:\(service)")
+            let old = current(service)
+            generations[service] = .init(loaded: true, disabledOverride: old.disabledOverride)
+        }
+    }
+    func bootout(service: String) throws {
+        try mutate(service: service) {
+            events.append("bootout:\(service)")
+            let old = current(service)
+            generations[service] = .init(loaded: false, disabledOverride: old.disabledOverride)
+        }
+    }
+    func isLoaded(service: String) -> Bool { current(service).loaded }
+    func installationState(service: String) throws -> LaunchdJobGeneration {
+        stateQueryCount += 1
+        if stateQueryCount == failAtStateQuery { throw LaunchctlError.transport }
+        if stateQueryCount == flipDisabledAtStateQuery {
+            let old = current(service)
+            generations[service] = .init(
+                loaded: old.loaded,
+                disabledOverride: !old.disabledOverride
+            )
+        }
+        return current(service)
+    }
+    func generation(service: String) -> LaunchdJobGeneration { current(service) }
+
+    private func mutate(service: String, _ operation: () -> Void) throws {
         mutationCount += 1
-        if mutationCount == failAtMutation { throw LaunchctlError.transport }
+        if rollbackPhase {
+            rollbackAttempts += 1
+            rollbackServices.insert(service)
+            if rollbackAttempts == failAtRollback { throw LaunchctlError.transport }
+        } else if mutationCount == failAtMutation {
+            rollbackPhase = true
+            throw LaunchctlError.transport
+        }
         operation()
+    }
+
+    private func current(_ service: String) -> LaunchdJobGeneration {
+        generations[service] ?? .init(loaded: false, disabledOverride: false)
     }
 }
 

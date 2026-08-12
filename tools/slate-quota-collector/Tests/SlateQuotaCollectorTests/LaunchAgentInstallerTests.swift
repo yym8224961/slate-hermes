@@ -51,6 +51,66 @@ struct LaunchAgentInstallerTests {
         }
     }
 
+    @Test("existing broad launch directories keep their modes")
+    func preservesBroadDirectoryModes() throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        let library = paths.launchAgentsURL.deletingLastPathComponent()
+        for directory in [library, paths.launchAgentsURL, paths.logsURL.deletingLastPathComponent()] {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755], ofItemAtPath: directory.path
+            )
+        }
+
+        _ = try LaunchAgentInstaller(paths: paths).installPlists()
+
+        #expect(try fileMode(library) & 0o777 == 0o755)
+        #expect(try fileMode(paths.launchAgentsURL) & 0o777 == 0o755)
+        #expect(try fileMode(paths.logsURL.deletingLastPathComponent()) & 0o777 == 0o755)
+        #expect(try fileMode(paths.logsURL) & 0o777 == 0o700)
+    }
+
+    @Test("held plist and log parents reject ancestor swaps without touching victims")
+    func ancestorSwapsPreserveVictims() throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        try FileManager.default.createDirectory(
+            at: paths.launchAgentsURL, withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: paths.logsURL, withIntermediateDirectories: true)
+        let launchDisplaced = root.url.appendingPathComponent("launch-displaced")
+        let logsDisplaced = root.url.appendingPathComponent("logs-displaced")
+        let launchVictim = root.url.appendingPathComponent("launch-victim", isDirectory: true)
+        let logsVictim = root.url.appendingPathComponent("logs-victim", isDirectory: true)
+        try FileManager.default.createDirectory(at: launchVictim, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: logsVictim, withIntermediateDirectories: true)
+        let launchSentinel = launchVictim.appendingPathComponent("sentinel")
+        let logsSentinel = logsVictim.appendingPathComponent("sentinel")
+        try Data("launch-keep".utf8).write(to: launchSentinel)
+        try Data("logs-keep".utf8).write(to: logsSentinel)
+        let installer = LaunchAgentInstaller(
+            paths: paths,
+            afterDirectoriesOpen: {
+                try FileManager.default.moveItem(at: paths.launchAgentsURL, to: launchDisplaced)
+                try FileManager.default.createSymbolicLink(
+                    at: paths.launchAgentsURL, withDestinationURL: launchVictim
+                )
+                try FileManager.default.moveItem(at: paths.logsURL, to: logsDisplaced)
+                try FileManager.default.createSymbolicLink(
+                    at: paths.logsURL, withDestinationURL: logsVictim
+                )
+            }
+        )
+
+        #expect(throws: InstallerError.self) { try installer.installPlists() }
+
+        #expect(try String(contentsOf: launchSentinel, encoding: .utf8) == "launch-keep")
+        #expect(try String(contentsOf: logsSentinel, encoding: .utf8) == "logs-keep")
+        #expect(try FileManager.default.contentsOfDirectory(atPath: launchVictim.path) == ["sentinel"])
+        #expect(try FileManager.default.contentsOfDirectory(atPath: logsVictim.path) == ["sentinel"])
+    }
+
     @Test("launch-agent installer rejects a substituted directory without changing its target")
     func launchAgentInstallerRejectsDirectorySymlink() throws {
         let root = try TemporaryDirectory()
@@ -93,6 +153,21 @@ struct LaunchAgentInstallerTests {
 
         await #expect(throws: LaunchctlError.self) {
             try await controller.enable(service: "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)")
+        }
+    }
+
+    @Test("launchd installation state fails closed when loaded-state transport cannot start")
+    func installationStateRejectsNilLoadedState() async throws {
+        let controller = SystemLaunchctlController(
+            executableURL: URL(fileURLWithPath: "/definitely/missing/launchctl")
+        )
+        let service = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
+
+        await #expect(throws: LaunchctlError.self) {
+            try await controller.installationState(service: service)
+        }
+        await #expect(throws: LaunchctlError.self) {
+            try await controller.bootout(service: service)
         }
     }
 

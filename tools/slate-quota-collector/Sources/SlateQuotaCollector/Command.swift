@@ -77,6 +77,7 @@ enum CLIError: Error, Equatable, Sendable, CustomStringConvertible {
     case workerTimeout
     case workerFailure
     case workerAuthorization
+    case setupRollback
 
     var publicCode: String {
         switch self {
@@ -88,6 +89,7 @@ enum CLIError: Error, Equatable, Sendable, CustomStringConvertible {
         case .workerTimeout: "worker_timeout"
         case .workerFailure: "worker_failure"
         case .workerAuthorization: "worker_authorization"
+        case .setupRollback: "setup_rollback"
         }
     }
 
@@ -130,9 +132,14 @@ enum Command {
 
 /// Runtime wiring is deliberately kept behind the parser: scheduled gating can
 /// finish before any Keychain store, provider client, or worker is constructed.
+private struct LaunchdInstallationGeneration: Equatable, Sendable {
+    let menu: LaunchdJobGeneration
+    let collector: LaunchdJobGeneration
+}
+
 struct CommandRuntime: Sendable {
     private let paths: InstallationPaths
-    private let launchctl: any LaunchctlControlling
+    private let launchctl: any InstallationLaunchctlControlling
     private let executableURL: URL
     private let supervisor: CollectorProcessSupervisor
     private let menuBarHarness: Bool
@@ -143,7 +150,7 @@ struct CommandRuntime: Sendable {
 
     init(
         paths: InstallationPaths = .init(),
-        launchctl: any LaunchctlControlling = SystemLaunchctlController(),
+        launchctl: any InstallationLaunchctlControlling = SystemLaunchctlController(),
         executableURL: URL? = nil,
         supervisor: CollectorProcessSupervisor = .init(),
         menuBarHarness: Bool = ProcessInfo.processInfo.environment["SLATE_QUOTA_MENUBAR_TEST_HARNESS"] == "1",
@@ -245,6 +252,8 @@ struct CommandRuntime: Sendable {
                 openCodeKey: openCodeKey,
                 slateURL: slateText
             )
+        } catch SetupTransactionError.rollback {
+            throw CLIError.setupRollback
         } catch {
             throw CLIError.configuration
         }
@@ -323,13 +332,21 @@ struct CommandRuntime: Sendable {
         let launchAgentInstaller = LaunchAgentInstaller(paths: paths)
         let previousApp = try appInstaller.captureGeneration()
         let previousAgents = try launchAgentInstaller.captureGeneration()
-        let previousMenuLoaded = await launchctl.isLoaded(service: menuService)
-        let previousCollectorLoaded = await launchctl.isLoaded(service: collectorService)
-        var launchMutationBegan = false
+        let previousLaunchd = try await captureLaunchdGeneration(
+            menuService: menuService, collectorService: collectorService
+        )
         do {
+            // A loaded old generation must be deliberately removed before its
+            // replacement plist is published. Otherwise bootstrap can report
+            // success merely because launchd still owns the old program.
+            if previousLaunchd.collector.loaded {
+                try await launchctl.bootout(service: collectorService)
+            }
+            if previousLaunchd.menu.loaded {
+                try await launchctl.bootout(service: menuService)
+            }
             _ = try appInstaller.install(executableURL: executableURL)
             let artifacts = try launchAgentInstaller.installPlists()
-            launchMutationBegan = true
             try await launchctl.enable(service: menuService)
             try await launchctl.bootstrap(plistURL: artifacts.menuBarPlistURL)
             let enabled = try SettingsStore(applicationSupportURL: paths.applicationSupportURL)
@@ -341,30 +358,28 @@ struct CommandRuntime: Sendable {
                 try await launchctl.disable(service: collectorService)
                 try await launchctl.bootout(service: collectorService)
             }
-        } catch {
-            do {
-                if launchMutationBegan {
-                    try await launchctl.bootout(service: collectorService)
-                    try await launchctl.bootout(service: menuService)
-                    guard await !launchctl.isLoaded(service: collectorService),
-                          await !launchctl.isLoaded(service: menuService) else {
-                        throw LaunchctlError.transport
-                    }
-                }
-                try launchAgentInstaller.restore(previousAgents)
-                try appInstaller.restore(previousApp)
-                if previousMenuLoaded {
-                    try await launchctl.enable(service: menuService)
-                    try await launchctl.bootstrap(plistURL: paths.menuBarPlistURL)
-                }
-                if previousCollectorLoaded {
-                    try await launchctl.enable(service: collectorService)
-                    try await launchctl.bootstrap(plistURL: paths.collectorPlistURL)
-                }
-            } catch {
-                throw LaunchctlError.transport
+            let installed = try await captureLaunchdGeneration(
+                menuService: menuService, collectorService: collectorService
+            )
+            let expected = LaunchdInstallationGeneration(
+                menu: .init(loaded: true, disabledOverride: false),
+                collector: .init(loaded: enabled, disabledOverride: !enabled)
+            )
+            guard installed == expected else { throw LaunchctlError.transport }
+        } catch let forwardError {
+            let rollbackSucceeded = await restoreInstallationGeneration(
+                previousLaunchd,
+                previousApp: previousApp,
+                previousAgents: previousAgents,
+                appInstaller: appInstaller,
+                launchAgentInstaller: launchAgentInstaller,
+                menuService: menuService,
+                collectorService: collectorService
+            )
+            guard rollbackSucceeded else {
+                throw LaunchctlError.rollback
             }
-            throw error
+            throw forwardError
         }
         print("菜单栏与自动采集已安装")
     }
@@ -372,14 +387,178 @@ struct CommandRuntime: Sendable {
     private func uninstall() async throws {
         let menuService = "gui/\(getuid())/\(LaunchAgentInstaller.menuBarLabel)"
         let collectorService = "gui/\(getuid())/\(LaunchAgentInstaller.collectorLabel)"
-        try await launchctl.bootout(service: collectorService)
-        try await launchctl.bootout(service: menuService)
-        guard await !launchctl.isLoaded(service: collectorService),
-              await !launchctl.isLoaded(service: menuService) else {
+        let appInstaller = AppBundleInstaller(paths: paths)
+        let launchAgentInstaller = LaunchAgentInstaller(paths: paths)
+        let previousApp = try appInstaller.captureGeneration()
+        let previousAgents = try launchAgentInstaller.captureGeneration()
+        let previousLaunchd = try await captureLaunchdGeneration(
+            menuService: menuService, collectorService: collectorService
+        )
+        var stopped = true
+        do { try await launchctl.bootout(service: collectorService) }
+        catch { stopped = false }
+        do { try await launchctl.bootout(service: menuService) }
+        catch { stopped = false }
+        do {
+            let current = try await captureLaunchdGeneration(
+                menuService: menuService, collectorService: collectorService
+            )
+            let expectedStopped = LaunchdInstallationGeneration(
+                menu: .init(
+                    loaded: false,
+                    disabledOverride: previousLaunchd.menu.disabledOverride
+                ),
+                collector: .init(
+                    loaded: false,
+                    disabledOverride: previousLaunchd.collector.disabledOverride
+                )
+            )
+            if current != expectedStopped { stopped = false }
+        } catch { stopped = false }
+        guard stopped else {
+            guard await restoreLaunchdGeneration(
+                previousLaunchd, menuService: menuService, collectorService: collectorService
+            ) else { throw LaunchctlError.rollback }
             throw LaunchctlError.transport
         }
-        try LaunchAgentInstaller(paths: paths).removeGeneratedArtifacts()
+        do {
+            try launchAgentInstaller.removeGeneratedArtifacts()
+        } catch let forwardError {
+            var restored = true
+            do { try launchAgentInstaller.restore(previousAgents) }
+            catch { restored = false }
+            do { try appInstaller.restore(previousApp) }
+            catch { restored = false }
+            if await !restoreLaunchdGeneration(
+                previousLaunchd, menuService: menuService, collectorService: collectorService
+            ) { restored = false }
+            guard restored else { throw LaunchctlError.rollback }
+            throw forwardError
+        }
         print("程序已卸载；钥匙串、配置、开关与历史状态已保留")
+    }
+
+    private func captureLaunchdGeneration(
+        menuService: String,
+        collectorService: String
+    ) async throws -> LaunchdInstallationGeneration {
+        let menu = try await launchctl.installationState(service: menuService)
+        let collector = try await launchctl.installationState(service: collectorService)
+        return LaunchdInstallationGeneration(menu: menu, collector: collector)
+    }
+
+    /// Every rollback component is attempted even when an earlier operation
+    /// fails. Callers receive only a closed rollback code, never launchctl text.
+    private func restoreInstallationGeneration(
+        _ generation: LaunchdInstallationGeneration,
+        previousApp: AppBundleGeneration,
+        previousAgents: LaunchAgentGeneration,
+        appInstaller: AppBundleInstaller,
+        launchAgentInstaller: LaunchAgentInstaller,
+        menuService: String,
+        collectorService: String
+    ) async -> Bool {
+        var restored = true
+        do { try await launchctl.bootout(service: collectorService) }
+        catch { restored = false }
+        do { try await launchctl.bootout(service: menuService) }
+        catch { restored = false }
+        do { try launchAgentInstaller.restore(previousAgents) }
+        catch { restored = false }
+        do { try appInstaller.restore(previousApp) }
+        catch { restored = false }
+        if await !restoreLaunchdGeneration(
+            generation, menuService: menuService, collectorService: collectorService
+        ) { restored = false }
+        return restored
+    }
+
+    private func restoreLaunchdGeneration(
+        _ generation: LaunchdInstallationGeneration,
+        menuService: String,
+        collectorService: String
+    ) async -> Bool {
+        var restored = true
+        await applyLaunchdGeneration(
+            generation,
+            menuService: menuService,
+            collectorService: collectorService,
+            succeeded: &restored
+        )
+        let firstPassExact: Bool
+        do {
+            firstPassExact = try await captureLaunchdGeneration(
+                menuService: menuService, collectorService: collectorService
+            ) == generation
+        } catch {
+            restored = false
+            firstPassExact = false
+        }
+        if !firstPassExact {
+            // An individual launchctl transport can fail after changing state
+            // or before doing so. Repeat the complete idempotent restoration,
+            // while preserving the fact that rollback encountered a failure.
+            await applyLaunchdGeneration(
+                generation,
+                menuService: menuService,
+                collectorService: collectorService,
+                succeeded: &restored
+            )
+        }
+        do {
+            let current = try await captureLaunchdGeneration(
+                menuService: menuService, collectorService: collectorService
+            )
+            if current != generation { restored = false }
+        } catch { restored = false }
+        return restored
+    }
+
+    private func applyLaunchdGeneration(
+        _ generation: LaunchdInstallationGeneration,
+        menuService: String,
+        collectorService: String,
+        succeeded: inout Bool
+    ) async {
+        if await !restoreLaunchdJob(
+            generation.menu, service: menuService, plistURL: paths.menuBarPlistURL
+        ) { succeeded = false }
+        if await !restoreLaunchdJob(
+            generation.collector,
+            service: collectorService,
+            plistURL: paths.collectorPlistURL
+        ) { succeeded = false }
+    }
+
+    private func restoreLaunchdJob(
+        _ generation: LaunchdJobGeneration,
+        service: String,
+        plistURL: URL
+    ) async -> Bool {
+        var restored = true
+        if generation.loaded {
+            // launchd may refuse to bootstrap a disabled label. Temporarily
+            // enable it, load the exact plist, then restore the disabled bit.
+            do { try await launchctl.enable(service: service) }
+            catch { restored = false }
+            do { try await launchctl.bootstrap(plistURL: plistURL) }
+            catch { restored = false }
+            if generation.disabledOverride {
+                do { try await launchctl.disable(service: service) }
+                catch { restored = false }
+            }
+        } else {
+            do { try await launchctl.bootout(service: service) }
+            catch { restored = false }
+            do {
+                if generation.disabledOverride {
+                    try await launchctl.disable(service: service)
+                } else {
+                    try await launchctl.enable(service: service)
+                }
+            } catch { restored = false }
+        }
+        return restored
     }
 
     private func printStatus() async throws {
@@ -546,16 +725,33 @@ struct SetupValues: Equatable, Sendable {
     let confirmedSlateURL: String
 }
 
+struct SetupSecretAttributes: Equatable, Sendable {
+    let data: Data
+    let accessible: String?
+    let accessGroup: String?
+    let synchronizable: Bool?
+    let generic: Data?
+    let label: String?
+    let comment: String?
+}
+
 enum SetupSecretState: Equatable, Sendable {
     case absent
-    case value(String)
+    case item(SetupSecretAttributes)
+}
+
+enum SetupConfigurationState: Equatable, Sendable {
+    case absent
+    case file(data: Data, mode: mode_t)
 }
 
 struct SetupGeneration: Equatable, Sendable {
     let openCodeKey: SetupSecretState
     let slateURL: SetupSecretState
-    let configuration: Data?
+    let configuration: SetupConfigurationState
 }
+
+enum SetupTransactionError: Error, Equatable, Sendable { case rollback }
 
 protocol SetupPersisting: Sendable {
     func commit(
@@ -567,11 +763,11 @@ protocol SetupPersisting: Sendable {
 
 protocol SetupMutationBacking: Sendable {
     func readSecret(service: String, account: String) throws -> SetupSecretState
-    func writeSecret(_ value: String, service: String, account: String) throws
-    func deleteSecret(service: String, account: String) throws
-    func readConfiguration() throws -> Data?
+    func writeSecretValue(_ value: String, service: String, account: String) throws
+    func restoreSecret(_ state: SetupSecretState, service: String, account: String) throws
+    func readConfiguration() throws -> SetupConfigurationState
     func writeConfiguration(_ data: Data) throws
-    func deleteConfiguration() throws
+    func restoreConfiguration(_ state: SetupConfigurationState) throws
 }
 
 struct TransactionalSetupPersistence: SetupPersisting, Sendable {
@@ -594,51 +790,37 @@ struct TransactionalSetupPersistence: SetupPersisting, Sendable {
             configuration: backend.readConfiguration()
         )
         do {
-            try backend.writeSecret(
+            try backend.writeSecretValue(
                 openCodeKey,
                 service: configuration.keychainService,
                 account: configuration.openCodeKeyAccount
             )
-            try backend.writeSecret(
+            try backend.writeSecretValue(
                 slateURL,
                 service: configuration.keychainService,
                 account: configuration.slateURLAccount
             )
             try backend.writeConfiguration(JSONEncoder().encode(configuration))
         } catch {
-            do { try restore(previous, configuration: configuration) }
-            catch { throw CLIError.configuration }
+            var rollbackFailed = false
+            do {
+                try backend.restoreSecret(
+                    previous.openCodeKey,
+                    service: configuration.keychainService,
+                    account: configuration.openCodeKeyAccount
+                )
+            } catch { rollbackFailed = true }
+            do {
+                try backend.restoreSecret(
+                    previous.slateURL,
+                    service: configuration.keychainService,
+                    account: configuration.slateURLAccount
+                )
+            } catch { rollbackFailed = true }
+            do { try backend.restoreConfiguration(previous.configuration) }
+            catch { rollbackFailed = true }
+            if rollbackFailed { throw SetupTransactionError.rollback }
             throw error
-        }
-    }
-
-    private func restore(
-        _ generation: SetupGeneration,
-        configuration: CollectorConfiguration
-    ) throws {
-        try restore(
-            generation.openCodeKey,
-            service: configuration.keychainService,
-            account: configuration.openCodeKeyAccount
-        )
-        try restore(
-            generation.slateURL,
-            service: configuration.keychainService,
-            account: configuration.slateURLAccount
-        )
-        if let data = generation.configuration {
-            try backend.writeConfiguration(data)
-        } else {
-            try backend.deleteConfiguration()
-        }
-    }
-
-    private func restore(_ state: SetupSecretState, service: String, account: String) throws {
-        switch state {
-        case .absent:
-            try backend.deleteSecret(service: service, account: account)
-        case let .value(value):
-            try backend.writeSecret(value, service: service, account: account)
         }
     }
 }
@@ -656,39 +838,73 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
+            kSecAttrSynchronizable: kSecAttrSynchronizableAny,
             kSecReturnData: true,
+            kSecReturnAttributes: true,
             kSecMatchLimit: kSecMatchLimitOne,
         ]
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return .absent }
         guard status == errSecSuccess,
-              let data = result as? Data,
-              let value = String(data: data, encoding: .utf8) else {
+              let attributes = result as? [CFString: Any],
+              let data = attributes[kSecValueData] as? Data,
+              String(data: data, encoding: .utf8) != nil else {
             throw KeychainError(status: status == errSecSuccess ? errSecDecode : status)
         }
-        return .value(value)
+        return .item(SetupSecretAttributes(
+            data: data,
+            accessible: attributes[kSecAttrAccessible] as? String,
+            accessGroup: attributes[kSecAttrAccessGroup] as? String,
+            synchronizable: (attributes[kSecAttrSynchronizable] as? NSNumber)?.boolValue,
+            generic: attributes[kSecAttrGeneric] as? Data,
+            label: attributes[kSecAttrLabel] as? String,
+            comment: attributes[kSecAttrComment] as? String
+        ))
     }
 
-    func writeSecret(_ value: String, service: String, account: String) throws {
+    func writeSecretValue(_ value: String, service: String, account: String) throws {
         try KeychainStore(service: service).write(value, account: account)
     }
 
-    func deleteSecret(service: String, account: String) throws {
-        let query: [CFString: Any] = [
+    func restoreSecret(_ state: SetupSecretState, service: String, account: String) throws {
+        let deleteQuery: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
+            kSecAttrSynchronizable: kSecAttrSynchronizableAny,
         ]
-        let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw KeychainError(status: status)
+        let delete = SecItemDelete(deleteQuery as CFDictionary)
+        guard delete == errSecSuccess || delete == errSecItemNotFound else {
+            throw KeychainError(status: delete)
+        }
+        switch state {
+        case .absent:
+            return
+        case let .item(snapshot):
+            // Keychain access groups and synchronizable identity are not
+            // generally mutable. Delete every forward-generation variant,
+            // then recreate the captured item with its original attributes.
+            var item: [CFString: Any] = [
+                kSecClass: kSecClassGenericPassword,
+                kSecAttrService: service,
+                kSecAttrAccount: account,
+                kSecValueData: snapshot.data,
+            ]
+            if let value = snapshot.accessible { item[kSecAttrAccessible] = value }
+            if let value = snapshot.synchronizable { item[kSecAttrSynchronizable] = value }
+            if let value = snapshot.generic { item[kSecAttrGeneric] = value }
+            if let value = snapshot.label { item[kSecAttrLabel] = value }
+            if let value = snapshot.comment { item[kSecAttrComment] = value }
+            if let value = snapshot.accessGroup { item[kSecAttrAccessGroup] = value }
+            let add = SecItemAdd(item as CFDictionary, nil)
+            guard add == errSecSuccess else { throw KeychainError(status: add) }
         }
     }
 
-    func readConfiguration() throws -> Data? {
+    func readConfiguration() throws -> SetupConfigurationState {
         let url = configurationStore.configurationURL
         let descriptor = open(url.path, O_RDONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC)
-        if descriptor < 0, errno == ENOENT { return nil }
+        if descriptor < 0, errno == ENOENT { return .absent }
         guard descriptor >= 0 else { throw CLIError.configuration }
         defer { _ = close(descriptor) }
         var status = stat()
@@ -705,10 +921,23 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
             return Darwin.read(descriptor, base, bytes.count)
         }
         guard count == data.count else { throw CLIError.configuration }
-        return data
+        return .file(data: data, mode: status.st_mode & 0o777)
     }
 
     func writeConfiguration(_ data: Data) throws {
+        try writeConfigurationBytes(data, mode: 0o600)
+    }
+
+    func restoreConfiguration(_ state: SetupConfigurationState) throws {
+        switch state {
+        case .absent:
+            try deleteConfiguration()
+        case let .file(data, mode):
+            try writeConfigurationBytes(data, mode: mode)
+        }
+    }
+
+    private func writeConfigurationBytes(_ data: Data, mode: mode_t) throws {
         let url = configurationStore.configurationURL
         let directory = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(
@@ -729,7 +958,7 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
         do {
             try data.write(to: temporary, options: .withoutOverwriting)
             try FileManager.default.setAttributes(
-                [.posixPermissions: 0o600], ofItemAtPath: temporary.path
+                [.posixPermissions: Int(mode)], ofItemAtPath: temporary.path
             )
             if lstat(url.path, &existing) == 0 {
                 _ = try FileManager.default.replaceItemAt(url, withItemAt: temporary)
@@ -758,13 +987,29 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
 
 private nonisolated(unsafe) var setupTerminalDescriptor: Int32 = -1
 private nonisolated(unsafe) var setupTerminalOriginalState = termios()
+private nonisolated(unsafe) var setupPreviousInterruptAction = sigaction()
+private nonisolated(unsafe) var setupPreviousTerminateAction = sigaction()
+private nonisolated(unsafe) var setupPreviousHangupAction = sigaction()
+
+// Swift imports Darwin's `struct sigaction` and `sigaction(2)` under the
+// same spelling. Give the C symbol an unambiguous Swift name so the complete
+// action (handler, mask, and flags) can be snapshotted and restored verbatim.
+@_silgen_name("sigaction")
+private func setupSigaction(
+    _ signalNumber: Int32,
+    _ action: UnsafePointer<sigaction>?,
+    _ previousAction: UnsafeMutablePointer<sigaction>?
+) -> Int32
 
 @_cdecl("slateQuotaRestoreTerminalAndReraise")
 private func restoreSetupTerminalAndReraise(_ signalNumber: Int32) {
     if setupTerminalDescriptor >= 0 {
         _ = tcsetattr(setupTerminalDescriptor, TCSANOW, &setupTerminalOriginalState)
     }
-    _ = Darwin.signal(signalNumber, SIG_DFL)
+    _ = setupSigaction(SIGINT, &setupPreviousInterruptAction, nil)
+    _ = setupSigaction(SIGTERM, &setupPreviousTerminateAction, nil)
+    _ = setupSigaction(SIGHUP, &setupPreviousHangupAction, nil)
+    setupTerminalDescriptor = -1
     _ = Darwin.kill(getpid(), signalNumber)
 }
 
@@ -775,32 +1020,45 @@ private struct SecretTerminalReader {
         guard tcgetattr(STDIN_FILENO, &original) == 0 else { throw CLIError.setupInput }
         setupTerminalDescriptor = STDIN_FILENO
         setupTerminalOriginalState = original
-        let previousInterrupt = Darwin.signal(SIGINT, restoreSetupTerminalAndReraise)
-        let previousTerminate = Darwin.signal(SIGTERM, restoreSetupTerminalAndReraise)
-        let previousHangup = Darwin.signal(SIGHUP, restoreSetupTerminalAndReraise)
-        guard unsafeBitCast(previousInterrupt, to: Int.self) != -1,
-              unsafeBitCast(previousTerminate, to: Int.self) != -1,
-              unsafeBitCast(previousHangup, to: Int.self) != -1 else {
-            _ = Darwin.signal(SIGINT, previousInterrupt)
-            _ = Darwin.signal(SIGTERM, previousTerminate)
-            _ = Darwin.signal(SIGHUP, previousHangup)
+        var hiddenAction = sigaction()
+        sigemptyset(&hiddenAction.sa_mask)
+        hiddenAction.sa_flags = 0
+        hiddenAction.__sigaction_u.__sa_handler = restoreSetupTerminalAndReraise
+        guard setupSigaction(SIGINT, nil, &setupPreviousInterruptAction) == 0,
+              setupSigaction(SIGTERM, nil, &setupPreviousTerminateAction) == 0,
+              setupSigaction(SIGHUP, nil, &setupPreviousHangupAction) == 0 else {
+            setupTerminalDescriptor = -1
+            throw CLIError.setupInput
+        }
+        guard setupSigaction(SIGINT, &hiddenAction, nil) == 0 else {
+            setupTerminalDescriptor = -1
+            throw CLIError.setupInput
+        }
+        guard setupSigaction(SIGTERM, &hiddenAction, nil) == 0 else {
+            _ = setupSigaction(SIGINT, &setupPreviousInterruptAction, nil)
+            setupTerminalDescriptor = -1
+            throw CLIError.setupInput
+        }
+        guard setupSigaction(SIGHUP, &hiddenAction, nil) == 0 else {
+            _ = setupSigaction(SIGTERM, &setupPreviousTerminateAction, nil)
+            _ = setupSigaction(SIGINT, &setupPreviousInterruptAction, nil)
             setupTerminalDescriptor = -1
             throw CLIError.setupInput
         }
         var hidden = original
         hidden.c_lflag &= ~tcflag_t(ECHO)
         guard tcsetattr(STDIN_FILENO, TCSAFLUSH, &hidden) == 0 else {
-            _ = Darwin.signal(SIGINT, previousInterrupt)
-            _ = Darwin.signal(SIGTERM, previousTerminate)
-            _ = Darwin.signal(SIGHUP, previousHangup)
+            _ = setupSigaction(SIGINT, &setupPreviousInterruptAction, nil)
+            _ = setupSigaction(SIGTERM, &setupPreviousTerminateAction, nil)
+            _ = setupSigaction(SIGHUP, &setupPreviousHangupAction, nil)
             setupTerminalDescriptor = -1
             throw CLIError.setupInput
         }
         defer {
             _ = tcsetattr(STDIN_FILENO, TCSAFLUSH, &original)
-            _ = Darwin.signal(SIGINT, previousInterrupt)
-            _ = Darwin.signal(SIGTERM, previousTerminate)
-            _ = Darwin.signal(SIGHUP, previousHangup)
+            _ = setupSigaction(SIGINT, &setupPreviousInterruptAction, nil)
+            _ = setupSigaction(SIGTERM, &setupPreviousTerminateAction, nil)
+            _ = setupSigaction(SIGHUP, &setupPreviousHangupAction, nil)
             setupTerminalDescriptor = -1
             print("")
         }
