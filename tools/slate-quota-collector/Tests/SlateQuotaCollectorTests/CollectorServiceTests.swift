@@ -191,8 +191,8 @@ struct CollectorServiceTests {
         #expect(await slate.pushCount == 0)
     }
 
-    @Test("overall deadline returns immediately and signals cancellation to both providers")
-    func overallDeadlineCancelsOutstandingWork() async throws {
+    @Test("cooperative collection deadline owns and cancels both providers")
+    func collectionDeadlineCancelsOutstandingWork() async throws {
         let events = LockedEventRecorder()
         let codexCancellation = LockedCancellationProbe()
         let openCodeCancellation = LockedCancellationProbe()
@@ -201,7 +201,7 @@ struct CollectorServiceTests {
             codex: HangingCodexReader(events: events, cancellation: codexCancellation),
             openCode: HangingOpenCodeReader(events: events, cancellation: openCodeCancellation),
             deadlineSleep: { duration in try await clock.sleep(for: duration) },
-            overallTimeout: .milliseconds(50)
+            collectionDeadline: .milliseconds(50)
         )
 
         let collection = Task { try await service.collect(mode: .pushOnce) }
@@ -211,9 +211,9 @@ struct CollectorServiceTests {
 
         do {
             _ = try await collection.value
-            Issue.record("expected overall timeout")
+            Issue.record("expected cooperative collection deadline")
         } catch let error as CollectorError {
-            #expect(error == .overallTimeout)
+            #expect(error == .collectionDeadlineExceeded)
         } catch {
             Issue.record("unexpected error type: \(type(of: error))")
         }
@@ -225,6 +225,7 @@ struct CollectorServiceTests {
     @Test("deadline while Slate URL read is suspended prevents push and later snapshot writes")
     func deadlineDuringSlateURLReadPreventsPush() async throws {
         let clock = ManualDeadlineClock()
+        let published = LockedFlag()
         let secrets = BlockingSlateURLSecretStore(apiKey: "go-secret")
         let snapshots = InMemorySnapshotStore()
         let slate = RecordingSlateIngest()
@@ -233,15 +234,17 @@ struct CollectorServiceTests {
             snapshots: snapshots,
             slate: slate,
             deadlineSleep: { duration in try await clock.sleep(for: duration) },
-            overallTimeout: .milliseconds(50)
+            collectionDeadline: .milliseconds(50),
+            onDeadlinePublished: { published.set() }
         )
 
         let collection = Task { try await service.collect(mode: .pushOnce) }
         await waitUntil { secrets.isReadingSlateURL }
         await waitUntil { await clock.isSleeping }
         await clock.advance()
+        await waitUntil { published.value }
         secrets.releaseSlateURL()
-        await expectOverallTimeout(collection)
+        await expectCollectionDeadline(collection)
 
         #expect(await slate.pushCount == 0)
         #expect(snapshots.saveCount == 1)
@@ -251,21 +254,24 @@ struct CollectorServiceTests {
     @Test("deadline during the atomic cache stage permits no later Slate side effects")
     func deadlineDuringCacheStagePreventsPush() async throws {
         let clock = ManualDeadlineClock()
+        let published = LockedFlag()
         let snapshots = BlockingSnapshotStore()
         let slate = RecordingSlateIngest()
         let service = fixture(
             snapshots: snapshots,
             slate: slate,
             deadlineSleep: { duration in try await clock.sleep(for: duration) },
-            overallTimeout: .milliseconds(50)
+            collectionDeadline: .milliseconds(50),
+            onDeadlinePublished: { published.set() }
         )
 
         let collection = Task { try await service.collect(mode: .pushOnce) }
         await waitUntil { snapshots.saveStarted }
         await waitUntil { await clock.isSleeping }
         await clock.advance()
+        await waitUntil { published.value }
         snapshots.releaseSave()
-        await expectOverallTimeout(collection)
+        await expectCollectionDeadline(collection)
 
         #expect(snapshots.saveCount == 1)
         #expect(await slate.pushCount == 0)
@@ -282,14 +288,14 @@ struct CollectorServiceTests {
             snapshots: snapshots,
             slate: slate,
             deadlineSleep: { duration in try await clock.sleep(for: duration) },
-            overallTimeout: .milliseconds(50)
+            collectionDeadline: .milliseconds(50)
         )
 
         let collection = Task { try await service.collect(mode: .pushOnce) }
         await waitUntil { await slate.pushStarted }
         await waitUntil { await clock.isSleeping }
         await clock.advance()
-        await expectOverallTimeout(collection)
+        await expectCollectionDeadline(collection)
 
         #expect(await slate.pushCancelled)
         #expect(await slate.readbackCount == 0)
@@ -306,14 +312,14 @@ struct CollectorServiceTests {
             snapshots: snapshots,
             slate: slate,
             deadlineSleep: { duration in try await clock.sleep(for: duration) },
-            overallTimeout: .milliseconds(50)
+            collectionDeadline: .milliseconds(50)
         )
 
         let collection = Task { try await service.collect(mode: .pushOnce) }
         await waitUntil { await slate.readbackStarted }
         await waitUntil { await clock.isSleeping }
         await clock.advance()
-        await expectOverallTimeout(collection)
+        await expectCollectionDeadline(collection)
 
         #expect(await slate.readbackCancelled)
         #expect(snapshots.saveCount == 1)
@@ -342,8 +348,8 @@ struct CollectorServiceTests {
         ])
         let slate = RecordingSlateIngest(receipt: .init(
             id: "SECRET-CONTENT-ID",
-            imageEtag: "image-etag",
-            manifestEtag: "manifest-etag",
+            imageEtag: apiKey,
+            manifestEtag: url,
             renderedAt: now
         ))
         let report = try await fixture(secrets: secrets, slate: slate).collect(mode: .pushOnce)
@@ -355,6 +361,37 @@ struct CollectorServiceTests {
             #expect(envelopeBytes.range(of: Data(secret.utf8)) == nil)
             #expect(codeBytes.range(of: Data(secret.utf8)) == nil)
             #expect(reportText.contains(secret) == false)
+        }
+        #expect(report.receipt?.id == "redacted")
+        #expect(report.receipt?.imageEtag == "redacted")
+        #expect(report.receipt?.manifestEtag == "redacted")
+    }
+
+    @Test("a published deadline always wins before Slate POST receives a start permit")
+    func deadlinePublicationLinearizesBeforePushStart() async throws {
+        for _ in 0..<32 {
+            let clock = ManualDeadlineClock()
+            let hook = BlockingSideEffectHook(target: .slatePush)
+            let published = LockedFlag()
+            let slate = RecordingSlateIngest()
+            let service = fixture(
+                slate: slate,
+                deadlineSleep: { duration in try await clock.sleep(for: duration) },
+                collectionDeadline: .milliseconds(50),
+                beforeSideEffect: { sideEffect in await hook.before(sideEffect) },
+                onDeadlinePublished: { published.set() }
+            )
+
+            let collection = Task { try await service.collect(mode: .pushOnce) }
+            await waitUntil { await hook.reached }
+            await waitUntil { await clock.isSleeping }
+            await clock.advance()
+            await waitUntil { published.value }
+            await hook.release()
+            await expectCollectionDeadline(collection)
+
+            #expect(await slate.pushCount == 0)
+            #expect(await slate.readbackCount == 0)
         }
     }
 
@@ -369,7 +406,9 @@ struct CollectorServiceTests {
         snapshots: any SnapshotPersisting = InMemorySnapshotStore(),
         slate: any SlateIngesting = RecordingSlateIngest(),
         deadlineSleep: @escaping CollectorService.DeadlineSleep = { try await Task.sleep(for: $0) },
-        overallTimeout: Duration = .seconds(45)
+        collectionDeadline: Duration = .seconds(45),
+        beforeSideEffect: @escaping CollectorService.BeforeSideEffect = { _ in },
+        onDeadlinePublished: @escaping CollectorService.OnDeadlinePublished = {}
     ) -> CollectorService {
         let codexReader: any CodexRateLimitReading
         let openCodeReader: any OpenCodeGoUsageReading
@@ -392,7 +431,9 @@ struct CollectorServiceTests {
             slateURLAccount: "slate-push-url",
             now: { now },
             deadlineSleep: deadlineSleep,
-            overallTimeout: overallTimeout
+            collectionDeadline: collectionDeadline,
+            beforeSideEffect: beforeSideEffect,
+            onDeadlinePublished: onDeadlinePublished
         )
     }
 
@@ -407,15 +448,15 @@ struct CollectorServiceTests {
         Issue.record("condition did not become true", sourceLocation: sourceLocation)
     }
 
-    private func expectOverallTimeout(
+    private func expectCollectionDeadline(
         _ collection: Task<CollectionReport, any Error>,
         sourceLocation: SourceLocation = #_sourceLocation
     ) async {
         do {
             _ = try await collection.value
-            Issue.record("expected overall timeout", sourceLocation: sourceLocation)
+            Issue.record("expected cooperative collection deadline", sourceLocation: sourceLocation)
         } catch let error as CollectorError {
-            #expect(error == .overallTimeout, sourceLocation: sourceLocation)
+            #expect(error == .collectionDeadlineExceeded, sourceLocation: sourceLocation)
         } catch {
             Issue.record("unexpected error type: \(type(of: error))", sourceLocation: sourceLocation)
         }
@@ -768,6 +809,32 @@ private actor CancellationObservedDeadline {
             throw error
         }
     }
+}
+
+private actor BlockingSideEffectHook {
+    let target: CollectorSideEffect
+    private(set) var reached = false
+    private var continuation: CheckedContinuation<Void, Never>?
+
+    init(target: CollectorSideEffect) { self.target = target }
+
+    func before(_ sideEffect: CollectorSideEffect) async {
+        guard sideEffect == target else { return }
+        reached = true
+        await withCheckedContinuation { continuation = $0 }
+    }
+
+    func release() {
+        continuation?.resume()
+        continuation = nil
+    }
+}
+
+private final class LockedFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored = false
+    var value: Bool { lock.withLock { stored } }
+    func set() { lock.withLock { stored = true } }
 }
 
 private extension CodexRateLimitsReadResult {

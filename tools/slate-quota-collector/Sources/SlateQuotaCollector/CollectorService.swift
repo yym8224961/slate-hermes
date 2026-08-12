@@ -5,6 +5,18 @@ enum CollectionMode: Sendable {
     case pushOnce
 }
 
+enum CollectorSideEffect: Equatable, Sendable {
+    case snapshotLoad
+    case openCodeCredentialRead
+    case codexRead
+    case openCodeRead
+    case snapshotPublish
+    case slateCredentialRead
+    case slatePush
+    case slateReadback
+    case verifiedSnapshotPublish
+}
+
 struct CollectionReport: Sendable {
     let envelope: SlateEnvelope?
     let pushed: Bool
@@ -14,14 +26,14 @@ struct CollectionReport: Sendable {
 }
 
 enum CollectorError: Error, Equatable, Sendable, CustomStringConvertible {
-    case overallTimeout
+    case collectionDeadlineExceeded
     case cacheLoad(publicCode: String)
     case internalFailure
 
     var description: String {
         switch self {
-        case .overallTimeout:
-            "CollectorError(code: overall_timeout)"
+        case .collectionDeadlineExceeded:
+            "CollectorError(code: collection_deadline_exceeded)"
         case let .cacheLoad(publicCode):
             "CollectorError(code: \(publicCode))"
         case .internalFailure:
@@ -33,6 +45,8 @@ enum CollectorError: Error, Equatable, Sendable, CustomStringConvertible {
 struct CollectorService: Sendable {
     typealias Now = @Sendable () -> Date
     typealias DeadlineSleep = @Sendable (Duration) async throws -> Void
+    typealias BeforeSideEffect = @Sendable (CollectorSideEffect) async -> Void
+    typealias OnDeadlinePublished = @Sendable () -> Void
 
     private let codex: any CodexRateLimitReading
     private let openCodeGo: any OpenCodeGoUsageReading
@@ -45,7 +59,9 @@ struct CollectorService: Sendable {
     private let slateURLAccount: String
     private let now: Now
     private let deadlineSleep: DeadlineSleep
-    private let overallTimeout: Duration
+    private let collectionDeadline: Duration
+    private let beforeSideEffect: BeforeSideEffect
+    private let onDeadlinePublished: OnDeadlinePublished
 
     init(
         codex: any CodexRateLimitReading,
@@ -59,7 +75,9 @@ struct CollectorService: Sendable {
         slateURLAccount: String,
         now: @escaping Now = Date.init,
         deadlineSleep: @escaping DeadlineSleep = { try await Task.sleep(for: $0) },
-        overallTimeout: Duration = .seconds(45)
+        collectionDeadline: Duration = .seconds(45),
+        beforeSideEffect: @escaping BeforeSideEffect = { _ in },
+        onDeadlinePublished: @escaping OnDeadlinePublished = {}
     ) {
         self.codex = codex
         self.openCodeGo = openCodeGo
@@ -72,7 +90,9 @@ struct CollectorService: Sendable {
         self.slateURLAccount = slateURLAccount
         self.now = now
         self.deadlineSleep = deadlineSleep
-        self.overallTimeout = overallTimeout
+        self.collectionDeadline = collectionDeadline
+        self.beforeSideEffect = beforeSideEffect
+        self.onDeadlinePublished = onDeadlinePublished
     }
 
     /// Owns both the collection and deadline tasks until they have terminated.
@@ -80,35 +100,38 @@ struct CollectorService: Sendable {
     /// bounded to 20/10/15 seconds, so cancellation cannot leave side effects
     /// running after this method returns.
     func collect(mode: CollectionMode) async throws -> CollectionReport {
-        let deadlineToken = CollectorDeadlineToken()
+        let deadlineGate = CollectorDeadlineGate()
         let result = await withTaskGroup(
-            of: CollectorRaceResult.self,
-            returning: CollectorRaceResult.self
+            of: CollectorTaskResult.self,
+            returning: CollectorTaskResult.self
         ) { group in
             group.addTask {
                 do {
                     return .workSucceeded(try await collectWithoutDeadline(
                         mode: mode,
-                        deadlineToken: deadlineToken
+                        deadlineGate: deadlineGate
                     ))
                 } catch let error as CollectorError {
                     return .workFailed(error)
                 } catch is CancellationError {
-                    return .cancelled
+                    if deadlineGate.isExpired { return .cancelled }
+                    return Task.isCancelled ? .cancelled : .workFailed(.internalFailure)
                 } catch {
                     return .workFailed(.internalFailure)
                 }
             }
             group.addTask {
                 do {
-                    try await deadlineSleep(overallTimeout)
+                    try await deadlineSleep(collectionDeadline)
                     try Task.checkCancellation()
-                    deadlineToken.expire()
+                    deadlineGate.expire()
+                    onDeadlinePublished()
                     return .deadline
                 } catch is CancellationError {
                     return .cancelled
                 } catch {
-                    deadlineToken.expire()
+                    deadlineGate.expire()
+                    onDeadlinePublished()
                     return .deadline
                 }
             }
@@ -127,32 +150,40 @@ struct CollectorService: Sendable {
 
     private func collectWithoutDeadline(
         mode: CollectionMode,
-        deadlineToken: CollectorDeadlineToken
+        deadlineGate: CollectorDeadlineGate
     ) async throws -> CollectionReport {
-        try deadlineToken.checkActive()
+        try deadlineGate.checkActive()
         let persistedSnapshot: CollectorSnapshot
         do {
-            persistedSnapshot = try snapshots.loadSnapshot()
+            await beforeSideEffect(.snapshotLoad)
+            persistedSnapshot = try deadlineGate.performSynchronousIfActive {
+                try snapshots.loadSnapshot()
+            }
         } catch {
+            if error is CancellationError { throw error }
             throw CollectorError.cacheLoad(publicCode: Self.cachePublicCode(error))
         }
-        try deadlineToken.checkActive()
+        try deadlineGate.checkActive()
 
         let credential: Result<String, ProviderFailure>
         do {
-            let value = try secrets.read(account: openCodeKeyAccount)
+            await beforeSideEffect(.openCodeCredentialRead)
+            let value = try deadlineGate.performSynchronousIfActive {
+                try secrets.read(account: openCodeKeyAccount)
+            }
             credential = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 ? .failure(.unconfigured)
                 : .success(value)
         } catch {
+            if error is CancellationError { throw error }
             credential = .failure(.unconfigured)
         }
-        try deadlineToken.checkActive()
+        try deadlineGate.checkActive()
 
-        async let codexRaw = readCodex()
-        async let openCodeRaw = readOpenCodeGo(credential: credential)
+        async let codexRaw = readCodex(deadlineGate: deadlineGate)
+        async let openCodeRaw = readOpenCodeGo(credential: credential, deadlineGate: deadlineGate)
         let (rawCodex, rawOpenCode) = try await (codexRaw, openCodeRaw)
-        try deadlineToken.checkActive()
+        try deadlineGate.checkActive()
 
         let collectedAt = now()
         let decision = failurePolicy.decide(
@@ -164,7 +195,8 @@ struct CollectorService: Sendable {
         )
 
         do {
-            try deadlineToken.performIfActive {
+            await beforeSideEffect(.snapshotPublish)
+            try deadlineGate.performSynchronousIfActive {
                 try snapshots.saveSnapshot(CollectorSnapshot(
                     schemaVersion: 1,
                     lastGood: decision.lastGood,
@@ -181,7 +213,7 @@ struct CollectorService: Sendable {
                 publicErrorCodes: ["cache": Self.cachePublicCode(error)]
             )
         }
-        try deadlineToken.checkActive()
+        try deadlineGate.checkActive()
 
         let providerCodes = decision.runtimeState.lastErrorCodes
         guard mode == .pushOnce, decision.shouldPush, let envelope = decision.envelope else {
@@ -196,7 +228,10 @@ struct CollectorService: Sendable {
 
         let capabilityURL: URL
         do {
-            let value = try secrets.read(account: slateURLAccount)
+            await beforeSideEffect(.slateCredentialRead)
+            let value = try deadlineGate.performSynchronousIfActive {
+                try secrets.read(account: slateURLAccount)
+            }
             guard let parsed = URL(string: value), parsed.absoluteString == value else {
                 throw SlateEndpointError.invalidEndpoint
             }
@@ -212,12 +247,14 @@ struct CollectorService: Sendable {
                 slateCode: Self.slatePublicCode(error, missingIsUnconfigured: true)
             )
         }
-        try deadlineToken.checkActive()
+        try deadlineGate.checkActive()
 
         let rawReceipt: SlateIngestReceipt
         do {
-            try deadlineToken.checkActive()
-            rawReceipt = try await slate.push(envelope, capabilityURL: capabilityURL)
+            await beforeSideEffect(.slatePush)
+            rawReceipt = try await deadlineGate.performAsyncIfActive {
+                try await slate.push(envelope, capabilityURL: capabilityURL)
+            }
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -230,13 +267,15 @@ struct CollectorService: Sendable {
                 slateCode: Self.slatePublicCode(error)
             )
         }
-        try deadlineToken.checkActive()
+        try deadlineGate.checkActive()
         let receipt = Self.sanitizedReceipt(rawReceipt)
 
         let readback: SlateDashboardData
         do {
-            try deadlineToken.checkActive()
-            readback = try await slate.readCurrentData(capabilityURL: capabilityURL)
+            await beforeSideEffect(.slateReadback)
+            readback = try await deadlineGate.performAsyncIfActive {
+                try await slate.readCurrentData(capabilityURL: capabilityURL)
+            }
         } catch is CancellationError {
             throw CancellationError()
         } catch {
@@ -249,7 +288,7 @@ struct CollectorService: Sendable {
                 slateCode: Self.slatePublicCode(error)
             )
         }
-        try deadlineToken.checkActive()
+        try deadlineGate.checkActive()
 
         guard readback == envelope.data else {
             return report(
@@ -265,7 +304,8 @@ struct CollectorService: Sendable {
         var verifiedState = decision.runtimeState
         verifiedState.lastPushAt = now()
         do {
-            try deadlineToken.performIfActive {
+            await beforeSideEffect(.verifiedSnapshotPublish)
+            try deadlineGate.performSynchronousIfActive {
                 try snapshots.saveSnapshot(CollectorSnapshot(
                     schemaVersion: 1,
                     lastGood: decision.lastGood,
@@ -284,7 +324,7 @@ struct CollectorService: Sendable {
                 publicErrorCodes: codes
             )
         }
-        try deadlineToken.checkActive()
+        try deadlineGate.checkActive()
 
         return CollectionReport(
             envelope: envelope,
@@ -295,9 +335,14 @@ struct CollectorService: Sendable {
         )
     }
 
-    private func readCodex() async throws -> ProviderOutcome<CodexRateLimitsReadResult> {
+    private func readCodex(
+        deadlineGate: CollectorDeadlineGate
+    ) async throws -> ProviderOutcome<CodexRateLimitsReadResult> {
         do {
-            return .success(try await codex.read())
+            await beforeSideEffect(.codexRead)
+            return .success(try await deadlineGate.performAsyncIfActive {
+                try await codex.read()
+            })
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as CodexClientError {
@@ -317,7 +362,8 @@ struct CollectorService: Sendable {
     }
 
     private func readOpenCodeGo(
-        credential: Result<String, ProviderFailure>
+        credential: Result<String, ProviderFailure>,
+        deadlineGate: CollectorDeadlineGate
     ) async throws -> ProviderOutcome<OpenCodeGoUsageResponse> {
         let apiKey: String
         switch credential {
@@ -326,7 +372,10 @@ struct CollectorService: Sendable {
         }
 
         do {
-            return .success(try await openCodeGo.read(apiKey: apiKey))
+            await beforeSideEffect(.openCodeRead)
+            return .success(try await deadlineGate.performAsyncIfActive {
+                try await openCodeGo.read(apiKey: apiKey)
+            })
         } catch is CancellationError {
             throw CancellationError()
         } catch let error as OpenCodeGoClientError {
@@ -402,14 +451,14 @@ struct CollectorService: Sendable {
     private static func sanitizedReceipt(_ receipt: SlateIngestReceipt) -> SlateIngestReceipt {
         SlateIngestReceipt(
             id: "redacted",
-            imageEtag: receipt.imageEtag,
-            manifestEtag: receipt.manifestEtag,
+            imageEtag: "redacted",
+            manifestEtag: "redacted",
             renderedAt: receipt.renderedAt
         )
     }
 }
 
-private enum CollectorRaceResult: Sendable {
+private enum CollectorTaskResult: Sendable {
     case workSucceeded(CollectionReport)
     case workFailed(CollectorError)
     case deadline
@@ -419,33 +468,80 @@ private enum CollectorRaceResult: Sendable {
         switch self {
         case let .workSucceeded(report): return report
         case let .workFailed(error): throw error
-        case .deadline: throw CollectorError.overallTimeout
+        case .deadline: throw CollectorError.collectionDeadlineExceeded
         case .cancelled: throw CancellationError()
         }
     }
 }
 
-private final class CollectorDeadlineToken: @unchecked Sendable {
-    private let stateLock = NSLock()
-    private let sideEffectLock = NSLock()
+private struct CollectorStagePermit: Hashable, Sendable {
+    let id: UInt64
+}
+
+private final class CollectorDeadlineGate: @unchecked Sendable {
+    private let lock = NSLock()
     private var expired = false
+    private var nextPermitID: UInt64 = 0
+    private var activePermits: Set<CollectorStagePermit> = []
 
     func expire() {
-        stateLock.withLock { expired = true }
+        lock.withLock { expired = true }
     }
 
     func checkActive() throws {
         try Task.checkCancellation()
-        guard stateLock.withLock({ !expired }) else { throw CancellationError() }
+        guard lock.withLock({ !expired }) else { throw CancellationError() }
     }
 
-    func performIfActive<T>(_ operation: () throws -> T) throws -> T {
+    var isExpired: Bool { lock.withLock { expired } }
+
+    func performSynchronousIfActive<T>(_ operation: () throws -> T) throws -> T {
+        let permit = try beginStage()
+        do {
+            let value = try operation()
+            try finishStage(permit, requireActive: true)
+            return value
+        } catch {
+            try? finishStage(permit, requireActive: false)
+            throw error
+        }
+    }
+
+    func performAsyncIfActive<T: Sendable>(
+        _ operation: @Sendable () async throws -> T
+    ) async throws -> T {
+        let permit = try beginStage()
+        do {
+            let value = try await operation()
+            try finishStage(permit, requireActive: true)
+            return value
+        } catch {
+            try? finishStage(permit, requireActive: false)
+            throw error
+        }
+    }
+
+    private func beginStage() throws -> CollectorStagePermit {
         try Task.checkCancellation()
-        return try sideEffectLock.withLock {
-            guard stateLock.withLock({ !expired }), !Task.isCancelled else {
-                throw CancellationError()
-            }
-            return try operation()
+        return try lock.withLock {
+            guard !expired, !Task.isCancelled else { throw CancellationError() }
+            nextPermitID &+= 1
+            let permit = CollectorStagePermit(id: nextPermitID)
+            activePermits.insert(permit)
+            return permit
+        }
+    }
+
+    private func finishStage(
+        _ permit: CollectorStagePermit,
+        requireActive: Bool
+    ) throws {
+        let remainsActive = lock.withLock {
+            guard activePermits.remove(permit) != nil else { return false }
+            return !expired
+        }
+        guard !requireActive || (remainsActive && !Task.isCancelled) else {
+            throw CancellationError()
         }
     }
 }

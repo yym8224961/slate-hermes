@@ -51,7 +51,8 @@ tools/slate-quota-collector/
 │   ├── FailurePolicy.swift                            # 单源/双源失败、stale、恢复决策
 │   ├── RunLock.swift                                  # O_EXCL 锁、PID 存活与陈旧锁恢复
 │   ├── SlateIngestClient.swift                        # endpoint 校验、POST、一次短重试
-│   ├── CollectorService.swift                         # 并发采集、45 秒总限时、缓存与推送编排
+│   ├── CollectorService.swift                         # 并发采集、45 秒协作式 deadline、缓存与推送编排
+│   ├── CollectorProcessSupervisor.swift               # Task 12 独立 worker 的 45 秒 wall-clock 硬上限
 │   ├── SettingsStore.swift                            # settings.json 严格 schema 与 0600 原子写
 │   ├── CollectionScheduleController.swift             # pause/resume、双 job 状态和 scheduled gate
 │   ├── MenuBarViewModel.swift                         # 脱敏状态到菜单文案/图标的纯映射
@@ -112,10 +113,8 @@ protocol SlateIngesting: Sendable {
 }
 
 protocol SnapshotPersisting: Sendable {
-    func loadLastGood() throws -> SanitizedLastGood
-    func saveLastGood(_ value: SanitizedLastGood) throws
-    func loadRuntimeState() throws -> CollectorRuntimeState
-    func saveRuntimeState(_ value: CollectorRuntimeState) throws
+    func loadSnapshot() throws -> CollectorSnapshot
+    func saveSnapshot(_ value: CollectorSnapshot) throws
 }
 
 ```
@@ -291,7 +290,7 @@ struct CollectorConfiguration: Codable, Equatable, Sendable {
 }
 ```
 
-`SlateDashboardData.CodingKeys` 必须显式把 `opencodeGo` 写成 `opencode_go`；其他字段由 `.convertToSnakeCase` 处理。`JSONEncoder.slate` 使用 ISO-8601 日期；`decodeStrict` 先用 `JSONSerialization` 拒绝允许集合外的顶层 key，再检查 schema=1、时区存在、四个超时严格等于 20/10/15/45。`CodexCredits.balance` 用自定义解码同时接受 JSON number 和十进制字符串，但拒绝非有限数。`ConfigurationStore` 固定使用 `~/Library/Application Support/SlateQuotaCollector/config.json`，临时文件写完、`chmod 0600` 后原子替换。
+`SlateDashboardData.CodingKeys` 必须显式把 `opencodeGo` 写成 `opencode_go`；其他字段由 `.convertToSnakeCase` 处理。`JSONEncoder.slate` 使用 ISO-8601 日期；`decodeStrict` 先用 `JSONSerialization` 拒绝允许集合外的顶层 key，再检查 schema=1、时区存在、四个超时严格等于 20/10/15/45。为保持已批准配置 schema，`overallTimeoutSeconds` 键名保留，但其语义是 Task 9 的协作式 collection deadline；Task 12 的 worker 监督器另行强制相同 45 秒 wall-clock 硬上限。`CodexCredits.balance` 用自定义解码同时接受 JSON number 和十进制字符串，但拒绝非有限数。`ConfigurationStore` 固定使用 `~/Library/Application Support/SlateQuotaCollector/config.json`，临时文件写完、`chmod 0600` 后原子替换。
 
 - [ ] **Step 5: 加入仅能显示帮助的命令入口并跑绿**
 
@@ -902,7 +901,7 @@ rtk git add tools/slate-quota-collector/Sources/SlateQuotaCollector/RunLock.swif
 rtk git commit -m "feat(quota): 阻止并发采集覆盖新快照"
 ```
 
-### Task 9: 采集编排与 45 秒整轮硬上限
+### Task 9: 采集编排与 45 秒协作式 deadline
 
 **Files:**
 - Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/CollectorService.swift`
@@ -921,7 +920,7 @@ rtk git commit -m "feat(quota): 阻止并发采集覆盖新快照"
     let report = try await service.collect(mode: .pushOnce)
     #expect(report.pushed)
     #expect(await events.overlapped("codex.read", "opencode.read"))
-    #expect(await events.order == ["codex.start", "opencode.start", "codex.end", "opencode.end", "cache.lastGood", "cache.runtime", "slate.push", "slate.readback"])
+    #expect(await events.order == ["codex.start", "opencode.start", "codex.end", "opencode.end", "cache.snapshot", "slate.push", "slate.readback", "cache.snapshot"])
 }
 
 @Test func dryRunNeverReadsSlateURLOrPushes() async throws {
@@ -936,19 +935,30 @@ rtk git commit -m "feat(quota): 阻止并发采集覆盖新快照"
     let store = InMemorySnapshotStore()
     let report = try await CollectorService.failingFixture(store: store).collect(mode: .pushOnce)
     #expect(report.pushed == false)
-    #expect(try store.loadRuntimeState().simultaneousFailures == 1)
+    #expect(try store.loadSnapshot().runtimeState.simultaneousFailures == 1)
 }
 
-@Test func overallDeadlineCancelsOutstandingWork() async {
+@Test func cooperativeDeadlineCancelsOutstandingWork() async {
     let clock = ManualSuspendingClock()
-    let service = CollectorService.hangingFixture(clock: clock, overallTimeout: .milliseconds(50))
+    let service = CollectorService.hangingFixture(clock: clock, collectionDeadline: .milliseconds(50))
     do {
         _ = try await service.collect(mode: .pushOnce)
-        Issue.record("expected overall timeout")
+        Issue.record("expected cooperative collection deadline")
     } catch let error as CollectorError {
-        #expect(error == .overallTimeout)
+        #expect(error == .collectionDeadlineExceeded)
     } catch {
         Issue.record("unexpected error type")
+    }
+}
+
+@Test func publishedDeadlinePreventsLatePostStart() async throws {
+    for _ in 0..<32 {
+        let fixture = DeadlinePublicationFixture(blockBefore: .slatePush)
+        let task = Task { try await fixture.service.collect(mode: .pushOnce) }
+        await fixture.publishDeadline()
+        await fixture.releaseBlockedStage()
+        await #expect(throws: CollectorError.collectionDeadlineExceeded) { try await task.value }
+        #expect(await fixture.slate.pushCount == 0)
     }
 }
 ```
@@ -979,15 +989,17 @@ let (rawCodex, rawGo) = await (codexResult, goResult)
 
 两个结果分别归一化后交给 `FailurePolicy`。先把更新后的 last-good 和 runtime state 作为一个原子状态包保存，再按 decision 决定是否推送；POST 成功后立即 GET 当前 inner data 并与本轮 `envelope.data` 强相等，成功才设置 `readbackVerified=true` 并更新 `lastPushAt`。POST 或回读失败都不删除 last-good，也不重新请求 provider。`.dryRun` 返回/打印脱敏 envelope，但不读 Slate URL、不推送、不改变 `lastPushAt`。
 
-- [ ] **Step 4: 在最外层加入可取消的 45 秒 deadline**
+- [ ] **Step 4: 在服务内加入可取消的 45 秒协作式 deadline**
 
-使用 `withThrowingTaskGroup` 让 work task 与 deadline task 竞争；先完成者取消另一个，deadline 抛 `CollectorError.overallTimeout`。客户端自己的 20/10/15 秒仍保留。测试 clock 可注入，生产使用 `ContinuousClock`。
+使用有所有权的结构化 task group 让 work task 与 deadline task 竞争；先完成者取消另一个，并在 `collect` 返回前 drain 所有 child。`CollectorDeadlineGate` 使用同一线性化锁发布 deadline 和发放一次性 side-effect permit；deadline 发布后不得新开始 push、readback 或最终状态写入。deadline 抛 `CollectorError.collectionDeadlineExceeded`。客户端自己的 20/10/15 秒仍保留。
+
+这一层只是协作式 deadline：它能确保可取消/有界依赖不在返回后继续副作用，但无法强制一个永久忽略取消且卡住的同步 I/O 在墙钟 45 秒返回。真正的 45 秒 wall-clock 硬上限由 Task 12 的独立 worker 进程监督器实施。
 
 - [ ] **Step 5: 跑编排、失败和 secret 扫描测试**
 
 Run: `rtk swift test --package-path tools/slate-quota-collector --filter CollectorServiceTests`
 
-Expected: PASS；并发读、单源失败、双源第一次/第二次、push retry、dry-run、总超时和恢复均通过，report 不含 secret。
+Expected: PASS；并发读、单源失败、双源第一次/第二次、push retry、dry-run、协作式 deadline、deadline 发布后无新副作用、无残留 child 和恢复均通过，report 中 receipt 的 id/image ETag/manifest ETag 都脱敏且不含 secret。Task 12 完成前不得声称端到端 45 秒硬上限已实现。
 
 - [ ] **Step 6: 提交采集编排**
 
@@ -1206,15 +1218,17 @@ rtk git commit -m "feat(quota): 增加原生菜单栏控制界面"
 - Modify: `tools/slate-quota-collector/Sources/SlateQuotaCollector/Command.swift`
 - Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/AppBundleInstaller.swift`
 - Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/LaunchAgentInstaller.swift`
+- Create: `tools/slate-quota-collector/Sources/SlateQuotaCollector/CollectorProcessSupervisor.swift`
 - Create: `tools/slate-quota-collector/Resources/Info.plist.template`
 - Create: `tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-collector.plist.template`
 - Create: `tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-menubar.plist.template`
 - Create: `tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/AppBundleInstallerTests.swift`
 - Create: `tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/LaunchAgentInstallerTests.swift`
+- Create: `tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/CollectorProcessSupervisorTests.swift`
 
 **Interfaces:**
 - Consumes: Tasks 1–11 全部组件和当前用户目录。
-- Produces: 八个用户命令、两个内部入口、稳定 collector binary、`Slate 额度监控.app`、双 plist 和脱敏 `status`。
+- Produces: 八个用户命令、菜单栏/调度/worker 内部入口、稳定 collector binary、`Slate 额度监控.app`、双 plist、脱敏 `status` 和独立 worker 进程的 45 秒硬监督器。
 
 - [ ] **Step 1: 写命令解析、App bundle 和双 plist 的失败测试**
 
@@ -1246,6 +1260,19 @@ rtk git commit -m "feat(quota): 增加原生菜单栏控制界面"
     #expect(plists.collector["StartInterval"] as? Int == 300)
     #expect((plists.collector["ProgramArguments"] as? [String])?.suffix(2) == ["collect", "--scheduled"])
 }
+
+@Test func hardSupervisorTerminatesAnUncooperativeWorker() async throws {
+    let worker = RealFixtureWorker(ignoreTERM: true, writeLateMarker: true)
+    let supervisor = CollectorProcessSupervisor(
+        wallClockLimit: .milliseconds(100),
+        terminationGrace: .milliseconds(50)
+    )
+    let result = try await supervisor.run(worker)
+    #expect(result == .timedOut)
+    #expect(worker.processIsAlive == false)
+    try await Task.sleep(for: .milliseconds(200))
+    #expect(worker.lateMarkerExists == false)
+}
 ```
 
 - [ ] **Step 2: 运行测试并确认安装类型不存在**
@@ -1271,9 +1298,13 @@ Info.plist 固定包含 `CFBundlePackageType=APPL`、`CFBundleIdentifier=com.yym
 
 collector plist 使用 `collect --scheduled`、RunAtLoad 和 StartInterval 300；menu bar plist 使用 app binary `--menu-bar`、RunAtLoad，无 StartInterval/KeepAlive。所有路径绝对化，日志文件 0600，不出现 Key、Slate URL 或 contentId。
 
-- [ ] **Step 5: 接线用户命令、内部入口、安装与卸载**
+- [ ] **Step 5: 接线 worker 进程硬监督、用户命令、内部入口、安装与卸载**
 
-可见帮助只列出 `setup`、`collect --dry-run`、`collect --once`、`pause`、`resume`、`install-launch-agent`、`status`、`uninstall-launch-agent`。`collect --scheduled` 在构造 Keychain/clients 前调用 Task 10 gate；`--menu-bar` 运行 `NSApplication` 与 Task 11 controller。安装先生成 app/binary/plists，再 bootstrap menu bar，按 settings 决定是否 bootstrap collector。卸载 bootout/删除两个 plist、`.app` 和稳定 binary，但保留 Keychain、config、settings 和 `snapshot-state.json` 脱敏状态包。
+可见帮助只列出 `setup`、`collect --dry-run`、`collect --once`、`pause`、`resume`、`install-launch-agent`、`status`、`uninstall-launch-agent`。`collect --scheduled`、`collect --once` 和 `collect --dry-run` 的父进程只负责 gate/监督，通过无 secret 参数的内部 `collect --worker <mode>` 启动同一稳定 binary 的独立 worker。worker 在内部获取 `RunLock`并执行 Task 9 采集。
+
+`CollectorProcessSupervisor` 从 worker 成功 spawn 起计时 45 秒；到期先发 TERM，等待 2 秒 grace，未退出则发 KILL，然后必须 `waitpid`/等价 API 确认 worker 死亡才返回脱敏 `worker_timeout`。进程死亡后旧轮不可能再发生网络或文件副作用；下一轮按 Task 8 安全恢复已死 PID 的 lock 记录。真实子进程测试必须覆盖正常退出、TERM 退出、忽略 TERM 后 KILL、超时后无 late marker/无存活 PID，以及 worker 持有 RunLock 时被终止后下轮可恢复。
+
+`collect --scheduled` 在 spawn worker 前调用 Task 10 gate；`--menu-bar` 运行 `NSApplication` 与 Task 11 controller。安装先生成 app/binary/plists，再 bootstrap menu bar，按 settings 决定是否 bootstrap collector。卸载 bootout/删除两个 plist、`.app` 和稳定 binary，但保留 Keychain、config、settings 和 `snapshot-state.json` 脱敏状态包。
 
 `status` 只显示自动采集开关、menu bar/collector loaded 状态、最近成功/推送、provider 状态和脱敏错误码。
 
@@ -1281,14 +1312,16 @@ collector plist 使用 `collect --scheduled`、RunAtLoad 和 StartInterval 300�
 
 Run: `rtk swift test --package-path tools/slate-quota-collector --filter 'AppBundleInstallerTests|LaunchAgentInstallerTests'`
 
+Run: `rtk swift test --package-path tools/slate-quota-collector --filter CollectorProcessSupervisorTests`
+
 Run: `rtk swift build --package-path tools/slate-quota-collector -c release`
 
-Expected: PASS；App bundle 通过 property-list 解码，两个 agent 可独立 loaded/disabled，帮助无内部入口和 secret 参数，release binary 可启动 `--menu-bar` 测试 harness。
+Expected: PASS；App bundle 通过 property-list 解码，两个 agent 可独立 loaded/disabled，帮助无内部入口和 secret 参数，release binary 可启动 `--menu-bar` 测试 harness；真实 worker 超时测试证明 45 秒生产上限、TERM→grace→KILL、子进程已回收且不会产生超时后副作用。只有完成本步后才可称为端到端 45 秒硬上限。
 
 - [ ] **Step 7: 提交 CLI、App bundle 与双 LaunchAgent**
 
 ```bash
-rtk git add tools/slate-quota-collector/Sources/SlateQuotaCollector/Command.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/AppBundleInstaller.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/LaunchAgentInstaller.swift tools/slate-quota-collector/Resources/Info.plist.template tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-collector.plist.template tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-menubar.plist.template tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/AppBundleInstallerTests.swift tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/LaunchAgentInstallerTests.swift
+rtk git add tools/slate-quota-collector/Sources/SlateQuotaCollector/Command.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/AppBundleInstaller.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/LaunchAgentInstaller.swift tools/slate-quota-collector/Sources/SlateQuotaCollector/CollectorProcessSupervisor.swift tools/slate-quota-collector/Resources/Info.plist.template tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-collector.plist.template tools/slate-quota-collector/Resources/com.yym8224961.slate-quota-menubar.plist.template tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/AppBundleInstallerTests.swift tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/LaunchAgentInstallerTests.swift tools/slate-quota-collector/Tests/SlateQuotaCollectorTests/CollectorProcessSupervisorTests.swift
 rtk git commit -m "feat(quota): 安装菜单栏 App 与双 LaunchAgent"
 ```
 
@@ -1399,8 +1432,9 @@ rtk git commit -m "feat(quota): 交付双服务 A5 额度模板"
         slateHTTP: .successReceipt
     )
     let report = try await fixture.service.collect(mode: .pushOnce)
-    #expect(report.receipt?.imageEtag == "image-etag-2")
-    #expect(report.receipt?.manifestEtag == "manifest-etag-2")
+    #expect(report.receipt?.id == "redacted")
+    #expect(report.receipt?.imageEtag == "redacted")
+    #expect(report.receipt?.manifestEtag == "redacted")
     #expect(report.readbackVerified)
     let pushed = try #require(await fixture.slate.lastEnvelope)
     #expect(pushed.data.codex.rolling.valueText == "未提供")

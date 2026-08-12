@@ -81,19 +81,21 @@ com.yym8224961.slate-quota-menubar
                          ▼
 com.yym8224961.slate-quota-collector（每 300 秒）
         └── SlateQuotaCollector collect --scheduled
-              ├── CodexAdapter
-              │     └── codex app-server --stdio
-              │           └── account/rateLimits/read
-              ├── OpenCodeGoAdapter
-              │     └── GET https://opencode.ai/zen/go/v1/usage
-              ├── Normalizer
-              │     ├── 统一为“剩余百分比”
-              │     ├── 转换绝对重置时间
-              │     └── 合并 last-known-good
-              ├── SanitizedCache
-              │     └── 只保存可显示的脱敏快照
-              └── SlateIngestClient
-                    └── POST /api/v1/contents/:contentId/data
+              └── CollectorProcessSupervisor（45 秒 wall-clock）
+                    └── collect --worker scheduled（独立进程，持 RunLock）
+                          ├── CodexAdapter
+                          │     └── codex app-server --stdio
+                          │           └── account/rateLimits/read
+                          ├── OpenCodeGoAdapter
+                          │     └── GET https://opencode.ai/zen/go/v1/usage
+                          ├── Normalizer
+                          │     ├── 统一为“剩余百分比”
+                          │     ├── 转换绝对重置时间
+                          │     └── 合并 last-known-good
+                          ├── SanitizedCache
+                          │     └── 只保存可显示的脱敏快照
+                          └── SlateIngestClient
+                                └── POST /api/v1/contents/:contentId/data
                                 │
                                 ├── Slate 立即渲染 400×300 1bpp
                                 ├── 更新 image/content/manifest ETag
@@ -113,6 +115,7 @@ tools/slate-quota-collector/
 │   ├── KeychainStore.swift
 │   ├── SanitizedSnapshotCache.swift
 │   ├── SlateIngestClient.swift
+│   ├── CollectorProcessSupervisor.swift
 │   ├── CollectionScheduleController.swift
 │   ├── MenuBarViewModel.swift
 │   ├── MenuBarController.swift
@@ -136,6 +139,8 @@ tools/slate-quota-collector/
 - `KeychainStore` 是唯一读取敏感配置的模块；
 - `SanitizedSnapshotCache` 拒绝保存任何未归一化的上游响应；
 - `SlateIngestClient` 只接受已经通过 schema 校验的展示 payload；
+- `CollectorService` 在单进程内提供协作式 deadline 和线性化的副作用许可；它不对永久卡住、忽略取消的同步 I/O 虚假承诺 wall-clock 硬上限；
+- `CollectorProcessSupervisor` 是真正 45 秒 wall-clock 上限的唯一实现边界；它监督独立 worker，到期执行 TERM→短 grace→KILL 并等待子进程回收；
 - `CollectionScheduleController` 是读写自动采集开关和控制 collector LaunchAgent 的唯一入口；
 - `MenuBarViewModel` 只把脱敏缓存/运行状态变成菜单文案和图标状态；
 - `MenuBarController` 只负责 AppKit 菜单事件，不直接解析 provider 响应或读取 secret；
@@ -428,7 +433,7 @@ com.yym8224961.slate-quota-collector
 自动采集开关语义：
 
 - 关闭时先原子写入 `automatic_collection_enabled=false`，使之后启动的 `collect --scheduled` 在任何网络请求前成功退出；
-- 随后持久化 disable collector LaunchAgent，并等待当前 `run.lock` 最多 45 秒；当前轮允许正常完成，不在 Slate POST 中途强杀；
+- 随后持久化 disable collector LaunchAgent，并等待当前 `run.lock` 最多 45 秒；关闭操作本身不在 Slate POST 中途额外强杀，但当前 worker 仍受独立进程监督器的整轮 45 秒硬上限约束；
 - 锁释放或等待达到上限后 bootout collector job；菜单栏 job 不受影响；
 - 开启时先写入 `true`，再 enable/bootstrap collector job；`RunAtLoad` 立即采集一次，之后每 300 秒执行；
 - 手动“立即采集一次”走 `collect --once` 语义并争用同一把运行锁，关闭自动采集时仍可使用；
@@ -439,7 +444,10 @@ com.yym8224961.slate-quota-collector
 - Codex App Server：20 秒；
 - OpenCode Go HTTPS：10 秒；
 - Slate POST：15 秒；
-- 整轮硬上限：45 秒。
+- `CollectorService` 协作式 collection deadline：45 秒，deadline 发布后不得新开始 push、readback 或状态写入，且返回前 drain 已开始的可取消任务；
+- `CollectorProcessSupervisor` 整轮 wall-clock 硬上限：worker spawn 后 45 秒，到期 TERM，2 秒 grace 后仍存活则 KILL，必须确认进程死亡后才返回。
+
+`collect --scheduled`、`collect --once` 和 `collect --dry-run` 的用户/调度入口是 supervisor 父进程；真正采集在无 secret 命令行参数的 `collect --worker <mode>` 独立进程内执行。worker 持有 `RunLock`；超时杀死后旧轮不能留下任何继续运行的线程/任务，下一轮按已死 PID 恢复锁。Task 12 的真实子进程测试必须证明忽略 TERM 的 worker 会被 KILL、已回收且不会在超时后写入 late marker。在 Task 12 验收前，只能声称服务层协作式 deadline 已实现，不能声称端到端硬上限已完成。
 
 launchd 不应启动同一个 job 的第二个并发实例；collector 仍以原子创建的本地锁做第二层保护。发现正在运行的有效实例时本轮退出成功；发现无对应进程的陈旧锁时清理后继续。只有一个 collector 实例可以写同一个 Slate frame，避免较旧快照覆盖较新快照。
 
