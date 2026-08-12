@@ -49,9 +49,13 @@ jobs:
       - name: Slate Gateway plugin regression tests
         run: python3 plugins/platforms/slate/test_adapter_voice.py
       - name: Firmware Hermes contract tests
-        run: >-
-          c++ -std=c++17 -Ifirmware/main firmware/tests/hermes_limits_test.cc
-          -o /tmp/hermes_limits_test && /tmp/hermes_limits_test
+        run: |
+          c++ -std=c++17 -Ifirmware/main firmware/tests/hermes_limits_test.cc \
+            -o /tmp/hermes_limits_test
+          /tmp/hermes_limits_test
+          c++ -std=c++17 -Ifirmware/main firmware/tests/hermes_layout_test.cc \
+            -o /tmp/hermes_layout_test
+          /tmp/hermes_layout_test
 
   frontend-build:
     name: frontend build

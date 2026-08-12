@@ -41,10 +41,10 @@ class HermesScene : public Scene {
     lv_obj_t*                chat_area_           = nullptr;
     lv_obj_t*                chat_content_        = nullptr;
     lv_obj_t*                chat_empty_label_    = nullptr;
+    lv_obj_t*                action_bar_          = nullptr;
     lv_obj_t*                hint_label_          = nullptr;
     hermes::HermesService*   service_             = nullptr;
     bool                     service_entered_     = false;
-    int                      rendered_state_      = -1;
     size_t                   rendered_msg_count_  = 0;
     std::string              rendered_msg_key_;
     std::unique_ptr<StatusBar> status_bar_;

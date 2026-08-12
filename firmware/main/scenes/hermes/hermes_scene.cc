@@ -11,6 +11,7 @@
 #include "events/ui_event_log.h"
 #include "hermes/hermes_service.h"
 #include "scenes/core/scene_stack.h"
+#include "scenes/hermes/hermes_layout.h"
 #include "scenes/settings/settings_scene.h"
 #include "ui/theme.h"
 #include "utils/utf8_utils.h"
@@ -113,6 +114,7 @@ void HermesScene::OnExit(SceneContext& ctx) {
         chat_area_          = nullptr;
         chat_content_       = nullptr;
         chat_empty_label_   = nullptr;
+        action_bar_         = nullptr;
         hint_label_         = nullptr;
         rendered_msg_count_ = 0;
         rendered_msg_key_.clear();
@@ -155,14 +157,18 @@ void HermesScene::CreateLayout() {
     lv_label_set_long_mode(system_label_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(system_label_, LV_HOR_RES - 40);
 
+    const auto chat_view_rect  = hermes::layout::ChatViewport(LV_VER_RES, theme::kStatusBarHeight);
+    const auto action_bar_rect = hermes::layout::ActionBar(LV_VER_RES);
+
     // Chat area
     chat_area_ = lv_obj_create(root_);
-    lv_obj_set_size(chat_area_, LV_HOR_RES, LV_VER_RES - theme::kStatusBarHeight);
-    lv_obj_set_pos(chat_area_, 0, theme::kStatusBarHeight);
+    lv_obj_set_size(chat_area_, LV_HOR_RES, chat_view_rect.height);
+    lv_obj_set_pos(chat_area_, 0, chat_view_rect.y);
     StyleTransparent(chat_area_);
+    lv_obj_clear_flag(chat_area_, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
 
     chat_content_ = lv_obj_create(chat_area_);
-    lv_obj_set_size(chat_content_, LV_HOR_RES, LV_VER_RES - theme::kStatusBarHeight);
+    lv_obj_set_size(chat_content_, LV_HOR_RES, chat_view_rect.height);
     lv_obj_set_pos(chat_content_, 0, 0);
     lv_obj_set_style_bg_opa(chat_content_, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(chat_content_, 0, 0);
@@ -171,6 +177,7 @@ void HermesScene::CreateLayout() {
     lv_obj_set_style_pad_top(chat_content_, 14, 0);
     lv_obj_set_style_pad_bottom(chat_content_, 14, 0);
     lv_obj_set_style_pad_row(chat_content_, 8, 0);
+    lv_obj_add_flag(chat_content_, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_scroll_dir(chat_content_, LV_DIR_VER);
     lv_obj_set_scrollbar_mode(chat_content_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_flex_flow(chat_content_, LV_FLEX_FLOW_COLUMN);
@@ -185,14 +192,28 @@ void HermesScene::CreateLayout() {
     lv_obj_align(chat_empty_label_, LV_ALIGN_CENTER, 0, 0);
     lv_obj_add_flag(chat_empty_label_, LV_OBJ_FLAG_HIDDEN);
 
+    // Opaque bottom action bar. It is a separate safe area above the chat content.
+    action_bar_ = lv_obj_create(root_);
+    lv_obj_set_size(action_bar_, LV_HOR_RES, action_bar_rect.height);
+    lv_obj_set_pos(action_bar_, 0, action_bar_rect.y);
+    lv_obj_set_style_bg_color(action_bar_, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(action_bar_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(action_bar_, 0, 0);
+    lv_obj_set_style_outline_width(action_bar_, 0, 0);
+    lv_obj_set_style_shadow_width(action_bar_, 0, 0);
+    lv_obj_set_style_radius(action_bar_, 0, 0);
+    lv_obj_set_style_pad_all(action_bar_, 0, 0);
+    lv_obj_clear_flag(action_bar_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(action_bar_, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+
     // Hint
-    hint_label_ = lv_label_create(root_);
+    hint_label_ = lv_label_create(action_bar_);
     lv_obj_set_style_text_font(hint_label_, &Zfull_16, 0);
     lv_obj_set_style_text_color(hint_label_, lv_color_black(), 0);
     lv_obj_set_style_text_align(hint_label_, LV_TEXT_ALIGN_CENTER, 0);
     lv_label_set_long_mode(hint_label_, LV_LABEL_LONG_WRAP);
     lv_obj_set_width(hint_label_, LV_HOR_RES - 16);
-    lv_obj_align(hint_label_, LV_ALIGN_BOTTOM_MID, 0, -10);
+    lv_obj_align(hint_label_, LV_ALIGN_CENTER, 0, 0);
 }
 
 void HermesScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
@@ -337,9 +358,8 @@ void HermesScene::RenderMessages(const hermes::HermesSnapshot& snap) {
     lv_obj_clear_flag(chat_area_, LV_OBJ_FLAG_HIDDEN);
 
     const std::string mk = MsgKey(snap);
-    const bool changed = rendered_state_ != static_cast<int>(snap.state) ||
-                         rendered_msg_count_ != snap.messages.size() ||
-                         rendered_msg_key_ != mk;
+    const bool        changed =
+        hermes::layout::MessagesChanged(rendered_msg_count_, rendered_msg_key_, snap.messages.size(), mk);
 
     if (changed) {
         ClearMessages();
@@ -347,6 +367,11 @@ void HermesScene::RenderMessages(const hermes::HermesSnapshot& snap) {
             AppendBubble(msg.role, msg.text);
         rendered_msg_count_ = snap.messages.size();
         rendered_msg_key_   = mk;
+
+        lv_obj_update_layout(chat_content_);
+        const int scroll_y   = lv_obj_get_scroll_y(chat_content_);
+        const int max_scroll = scroll_y + lv_obj_get_scroll_bottom(chat_content_);
+        lv_obj_scroll_to_y(chat_content_, max_scroll, LV_ANIM_OFF);
     }
 
     if (chat_content_ && lv_obj_get_child_cnt(chat_content_) == 0) {
@@ -355,8 +380,6 @@ void HermesScene::RenderMessages(const hermes::HermesSnapshot& snap) {
     } else {
         lv_obj_add_flag(chat_empty_label_, LV_OBJ_FLAG_HIDDEN);
     }
-
-    rendered_state_ = static_cast<int>(snap.state);
 }
 
 void HermesScene::ClearMessages() {
@@ -393,8 +416,6 @@ void HermesScene::AppendBubble(const std::string& role, const std::string& text)
         lv_obj_align(bubble, LV_ALIGN_RIGHT_MID, -18, 0);
     else
         lv_obj_align(bubble, LV_ALIGN_LEFT_MID, 18, 0);
-
-    lv_obj_scroll_to_view_recursive(row, LV_ANIM_OFF);
 }
 
 void HermesScene::LayoutBubble(lv_obj_t* bubble, lv_obj_t* label, const std::string& text) {
