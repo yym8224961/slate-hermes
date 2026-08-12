@@ -244,13 +244,17 @@ struct SlateIngestClientTests {
         }
     }
 
-    @Test(arguments: [307, 308])
+    @Test(arguments: [301, 302, 303, 307, 308])
     func productionTransportNeverFollowsPOSTRedirectToWrongPath(_ status: Int) async throws {
         let secondHop = try LoopbackHTTPServer(response: .init(status: 200, body: Self.receipt))
         let redirectTarget = "http://127.0.0.1:\(secondHop.port)/wrong-path/content-123"
         let firstHop = try LoopbackHTTPServer(
             response: .init(status: status, headers: ["Location": redirectTarget], body: Data("private redirect body".utf8))
         )
+        defer {
+            firstHop.stop()
+            secondHop.stop()
+        }
         let capabilityURL = URL(
             string: "http://127.0.0.1:\(firstHop.port)/api/v1/contents/content-123/data"
         )!
@@ -293,6 +297,33 @@ struct SlateIngestClientTests {
     func redirectPolicyRejectsEveryProposedSecondHop(_ urls: (URL, URL)) {
         #expect(!SlateRedirectPolicy.permits(originalURL: urls.0, proposedURL: urls.1))
     }
+
+    @Test func productionTransportReleasesItsSessionAndDelegateWhenOwnerReleasesIt() async throws {
+        let invalidation = SessionInvalidationProbe()
+        var delegate: SlateNoRedirectSessionDelegate? = SlateNoRedirectSessionDelegate { _ in
+            invalidation.record()
+        }
+        weak var weakDelegate = delegate
+        var transport: SlateURLSessionHTTPTransport? = SlateURLSessionHTTPTransport(
+            redirectDelegate: try #require(delegate)
+        )
+        weak var weakTransport = transport
+        weak var weakSession = transport?.session
+
+        delegate = nil
+        transport = nil
+
+        for _ in 0..<100 {
+            if weakTransport == nil, weakSession == nil, weakDelegate == nil, invalidation.called {
+                break
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(weakTransport == nil)
+        #expect(weakSession == nil)
+        #expect(weakDelegate == nil)
+        #expect(invalidation.called)
+    }
 }
 
 private actor RetrySleepRecorder {
@@ -300,6 +331,17 @@ private actor RetrySleepRecorder {
 
     func record(_ duration: Duration) {
         durations.append(duration)
+    }
+}
+
+private final class SessionInvalidationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var wasCalled = false
+
+    var called: Bool { lock.withLock { wasCalled } }
+
+    func record() {
+        lock.withLock { wasCalled = true }
     }
 }
 
@@ -311,13 +353,10 @@ private final class LoopbackHTTPServer: @unchecked Sendable {
     }
 
     let port: UInt16
-    private let listener: Int32
-    private let response: Response
-    private let lock = NSLock()
-    private var requests = 0
+    private let state: LoopbackServerState
 
     var requestCount: Int {
-        lock.withLock { requests }
+        state.requestCount
     }
 
     init(response: Response) throws {
@@ -326,8 +365,9 @@ private final class LoopbackHTTPServer: @unchecked Sendable {
 
         var reuse: Int32 = 1
         guard setsockopt(listener, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout.size(ofValue: reuse))) == 0 else {
+            let error = Self.currentPOSIXError()
             Darwin.close(listener)
-            throw Self.currentPOSIXError()
+            throw error
         }
 
         var address = sockaddr_in()
@@ -341,8 +381,9 @@ private final class LoopbackHTTPServer: @unchecked Sendable {
             }
         }
         guard bound == 0, listen(listener, 4) == 0 else {
+            let error = Self.currentPOSIXError()
             Darwin.close(listener)
-            throw Self.currentPOSIXError()
+            throw error
         }
 
         var actualAddress = sockaddr_in()
@@ -353,34 +394,42 @@ private final class LoopbackHTTPServer: @unchecked Sendable {
             }
         }
         guard named == 0 else {
+            let error = Self.currentPOSIXError()
             Darwin.close(listener)
-            throw Self.currentPOSIXError()
+            throw error
         }
         self.port = UInt16(bigEndian: actualAddress.sin_port)
-        self.listener = listener
-        self.response = response
+        state = LoopbackServerState(listener: listener)
 
-        DispatchQueue.global(qos: .userInitiated).async { [self] in
-            serveOneRequest()
+        let state = self.state
+        DispatchQueue.global(qos: .userInitiated).async {
+            Self.serveOneRequest(listener: listener, response: response, state: state)
         }
     }
 
     deinit {
-        shutdown(listener, SHUT_RDWR)
-        Darwin.close(listener)
+        stop()
     }
 
-    private func serveOneRequest() {
+    func stop() {
+        state.stop()
+    }
+
+    private static func serveOneRequest(listener: Int32, response: Response, state: LoopbackServerState) {
         let client = accept(listener, nil, nil)
+        state.stop()
         guard client >= 0 else { return }
         defer { Darwin.close(client) }
 
         var bytes = [UInt8](repeating: 0, count: 4096)
         _ = recv(client, &bytes, bytes.count, 0)
-        lock.withLock { requests += 1 }
+        state.recordRequest()
 
         let reason = switch response.status {
         case 200: "OK"
+        case 301: "Moved Permanently"
+        case 302: "Found"
+        case 303: "See Other"
         case 307: "Temporary Redirect"
         case 308: "Permanent Redirect"
         default: "Response"
@@ -400,5 +449,33 @@ private final class LoopbackHTTPServer: @unchecked Sendable {
 
     private static func currentPOSIXError() -> POSIXError {
         POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+}
+
+private final class LoopbackServerState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var listener: Int32?
+    private var requests = 0
+
+    init(listener: Int32) {
+        self.listener = listener
+    }
+
+    var requestCount: Int {
+        lock.withLock { requests }
+    }
+
+    func recordRequest() {
+        lock.withLock { requests += 1 }
+    }
+
+    func stop() {
+        let descriptor: Int32? = lock.withLock {
+            defer { listener = nil }
+            return listener
+        }
+        guard let descriptor else { return }
+        shutdown(descriptor, SHUT_RDWR)
+        Darwin.close(descriptor)
     }
 }

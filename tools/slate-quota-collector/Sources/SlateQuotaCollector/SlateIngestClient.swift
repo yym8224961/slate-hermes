@@ -7,7 +7,13 @@ enum SlateRedirectPolicy {
     }
 }
 
-private final class SlateNoRedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+final class SlateNoRedirectSessionDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let onInvalidation: @Sendable (Error?) -> Void
+
+    init(onInvalidation: @escaping @Sendable (Error?) -> Void = { _ in }) {
+        self.onInvalidation = onInvalidation
+    }
+
     func urlSession(
         _: URLSession,
         task: URLSessionTask,
@@ -22,17 +28,30 @@ private final class SlateNoRedirectSessionDelegate: NSObject, URLSessionTaskDele
                 : nil
         )
     }
+
+    func urlSession(_: URLSession, didBecomeInvalidWithError error: Error?) {
+        onInvalidation(error)
+    }
 }
 
-private struct SlateURLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
-    private let session: URLSession
+final class SlateURLSessionHTTPTransport: HTTPTransport, @unchecked Sendable {
+    let session: URLSession
+    private let redirectDelegate: SlateNoRedirectSessionDelegate
 
-    init() {
+    init(
+        configuration: URLSessionConfiguration = .ephemeral,
+        redirectDelegate: SlateNoRedirectSessionDelegate = SlateNoRedirectSessionDelegate()
+    ) {
+        self.redirectDelegate = redirectDelegate
         session = URLSession(
-            configuration: .ephemeral,
-            delegate: SlateNoRedirectSessionDelegate(),
+            configuration: configuration,
+            delegate: redirectDelegate,
             delegateQueue: nil
         )
+    }
+
+    deinit {
+        session.invalidateAndCancel()
     }
 
     func data(for request: URLRequest) async throws -> (Data, HTTPURLResponse) {
