@@ -4,7 +4,29 @@ import Testing
 @testable import SlateQuotaCollector
 
 @Suite(.serialized) struct CodexAppServerTransportTests {
+    @Test func launchFailureDoesNotLeakPipeDescriptors() async {
+        let descriptors = DescriptorRecorder()
+        let missingExecutable = URL(fileURLWithPath: "/private/tmp/slate-codex-does-not-exist")
+        let transport = CodexAppServerProcessTransport(
+            onSpawnAttempt: { descriptors.record($0) }
+        )
+
+        for _ in 0..<16 {
+            await #expect(throws: CodexClientError.launchFailed) {
+                try await transport.request(
+                    executableURL: missingExecutable,
+                    lines: Self.requestLines,
+                    responseID: 2,
+                    timeout: .seconds(1)
+                )
+            }
+        }
+
+        #expect(descriptors.allRecordedPipeIdentitiesWereReleased())
+    }
+
     @Test func transportKeepsInputOpenUntilTargetResponseArrives() async throws {
+        let closes = CloseRecorder()
         let root = try TemporaryDirectory()
         let pidFile = root.url.appendingPathComponent("pid.txt")
         let inputState = root.url.appendingPathComponent("input-state.txt")
@@ -41,7 +63,7 @@ import Testing
                 time.sleep(1)
             """
         )
-        let transport = CodexAppServerProcessTransport()
+        let transport = CodexAppServerProcessTransport { closes.record() }
 
         let response = try await transport.request(
             executableURL: executable,
@@ -56,6 +78,7 @@ import Testing
         let pid = try #require(pid_t(pidText))
         #expect(kill(pid, 0) == -1)
         #expect(errno == ESRCH)
+        #expect(closes.count == 1)
     }
 
     @Test func transportDrainsWarningsAndSelectsOnlyTargetResponse() async throws {
@@ -110,7 +133,41 @@ import Testing
         #expect(elapsed < .seconds(4))
     }
 
+    @Test func exitedLeaderCannotLeaveAStderrHoldingDescendant() async throws {
+        let root = try TemporaryDirectory()
+        let descendantPIDFile = root.url.appendingPathComponent("descendant-pid.txt")
+        let executable = try makeExecutable(
+            in: root.url,
+            named: "forking-codex",
+            script: """
+            #!/bin/sh
+            count=0
+            while [ "$count" -lt 3 ]; do
+                IFS= read -r line || exit 20
+                count=$((count + 1))
+            done
+            (trap '' TERM; sleep 5) &
+            descendant=$!
+            printf '%s\n' "$descendant" > '\(descendantPIDFile.path)'
+            printf '%s\n' '{"id":2,"result":{"rateLimits":null,"rateLimitsByLimitId":{},"credits":null,"planType":null}}'
+            exit 0
+            """
+        )
+        let startedAt = ContinuousClock.now
+
+        _ = try await CodexAppServerProcessTransport().request(
+            executableURL: executable,
+            lines: Self.requestLines,
+            responseID: 2,
+            timeout: .seconds(3)
+        )
+
+        #expect(ContinuousClock.now - startedAt < .seconds(3))
+        try await expectProcessWasReapedEventually(descendantPIDFile)
+    }
+
     @Test func timeoutEndsChildProcess() async throws {
+        let closes = CloseRecorder()
         let root = try TemporaryDirectory()
         let pidFile = root.url.appendingPathComponent("pid.txt")
         let executable = try makeExecutable(
@@ -123,7 +180,8 @@ import Testing
             while :; do sleep 1; done
             """
         )
-        let transport = CodexAppServerProcessTransport()
+        let transport = CodexAppServerProcessTransport { closes.record() }
+        let startedAt = ContinuousClock.now
 
         await #expect(throws: CodexClientError.timeout) {
             try await transport.request(
@@ -138,9 +196,12 @@ import Testing
         let pid = try #require(pid_t(pidText))
         #expect(kill(pid, 0) == -1)
         #expect(errno == ESRCH)
+        #expect(closes.count == 1)
+        #expect(ContinuousClock.now - startedAt < .seconds(8))
     }
 
     @Test func inputFailureClosesAndReapsChild() async throws {
+        let closes = CloseRecorder()
         let fixtures = try (0..<4).map { index in
             let root = try TemporaryDirectory()
             let pidFile = root.url.appendingPathComponent("pid.txt")
@@ -162,7 +223,7 @@ import Testing
             for (executable, pidFile) in fixtures {
                 group.addTask {
                     do {
-                        _ = try await CodexAppServerProcessTransport().request(
+                        _ = try await CodexAppServerProcessTransport { closes.record() }.request(
                             executableURL: executable,
                             lines: [Data("first\n".utf8), Data(repeating: 0x61, count: 1_048_576)],
                             responseID: 2,
@@ -183,9 +244,11 @@ import Testing
             #expect(error == .inputFailed)
             try expectProcessWasReaped(pidFile)
         }
+        #expect(closes.count == fixtures.count)
     }
 
     @Test func invalidResponseClosesAndReapsChild() async throws {
+        let closes = CloseRecorder()
         let root = try TemporaryDirectory()
         let pidFile = root.url.appendingPathComponent("pid.txt")
         let executable = try makeExecutable(
@@ -203,7 +266,7 @@ import Testing
             exit 0
             """
         )
-        let transport = CodexAppServerProcessTransport()
+        let transport = CodexAppServerProcessTransport { closes.record() }
 
         await #expect(throws: CodexClientError.invalidResponse) {
             try await transport.request(
@@ -215,9 +278,11 @@ import Testing
         }
 
         try expectProcessWasReaped(pidFile)
+        #expect(closes.count == 1)
     }
 
     @Test func cancellationClosesAndReapsChild() async throws {
+        let closes = CloseRecorder()
         let root = try TemporaryDirectory()
         let pidFile = root.url.appendingPathComponent("pid.txt")
         let readyFile = root.url.appendingPathComponent("ready.txt")
@@ -236,7 +301,7 @@ import Testing
             while :; do sleep 1; done
             """
         )
-        let transport = CodexAppServerProcessTransport()
+        let transport = CodexAppServerProcessTransport { closes.record() }
         let request = Task {
             try await transport.request(
                 executableURL: executable,
@@ -245,9 +310,12 @@ import Testing
                 timeout: .seconds(20)
             )
         }
-        while !FileManager.default.fileExists(atPath: readyFile.path) {
-            await Task.yield()
+        let becameReady = await waitForFile(readyFile, timeout: .seconds(2))
+        if !becameReady {
+            request.cancel()
+            _ = try? await request.value
         }
+        #expect(becameReady)
 
         request.cancel()
         await #expect(throws: CancellationError.self) {
@@ -255,6 +323,7 @@ import Testing
         }
 
         try expectProcessWasReaped(pidFile)
+        #expect(closes.count == 1)
     }
 
     private static let requestLines = [
@@ -275,5 +344,67 @@ import Testing
         let pid = try #require(pid_t(pidText))
         #expect(kill(pid, 0) == -1)
         #expect(errno == ESRCH)
+    }
+
+    private func expectProcessWasReapedEventually(_ pidFile: URL) async throws {
+        let pidText = try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let pid = try #require(pid_t(pidText))
+        let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+        while kill(pid, 0) == 0, ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        #expect(kill(pid, 0) == -1)
+        #expect(errno == ESRCH)
+    }
+
+    private func waitForFile(_ url: URL, timeout: Duration) async -> Bool {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
+        while !FileManager.default.fileExists(atPath: url.path), ContinuousClock.now < deadline {
+            await Task.yield()
+        }
+        return FileManager.default.fileExists(atPath: url.path)
+    }
+
+}
+
+private final class CloseRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func record() { lock.withLock { value += 1 } }
+}
+
+private final class DescriptorRecorder: @unchecked Sendable {
+    private struct Identity: Equatable {
+        let descriptor: Int32
+        let device: dev_t
+        let inode: ino_t
+    }
+
+    private let lock = NSLock()
+    private var identities: [Identity] = []
+
+    func record(_ descriptors: [Int32]) {
+        lock.withLock {
+            for descriptor in descriptors {
+                var status = stat()
+                guard fstat(descriptor, &status) == 0 else { continue }
+                identities.append(.init(
+                    descriptor: descriptor,
+                    device: status.st_dev,
+                    inode: status.st_ino
+                ))
+            }
+        }
+    }
+
+    func allRecordedPipeIdentitiesWereReleased() -> Bool {
+        lock.withLock {
+            identities.allSatisfy { identity in
+                var status = stat()
+                guard fstat(identity.descriptor, &status) == 0 else { return errno == EBADF }
+                return status.st_dev != identity.device || status.st_ino != identity.inode
+            }
+        }
     }
 }

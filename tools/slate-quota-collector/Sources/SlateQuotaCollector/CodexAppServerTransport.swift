@@ -11,31 +11,50 @@ protocol CodexAppServerTransport: Sendable {
 }
 
 struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
+    private let onInputClose: @Sendable () -> Void
+    private let onSpawnAttempt: @Sendable ([Int32]) -> Void
+
+    init(
+        onInputClose: @escaping @Sendable () -> Void = {},
+        onSpawnAttempt: @escaping @Sendable ([Int32]) -> Void = { _ in }
+    ) {
+        self.onInputClose = onInputClose
+        self.onSpawnAttempt = onSpawnAttempt
+    }
+
     func request(
         executableURL: URL,
         lines: [Data],
         responseID: Int,
         timeout: Duration
     ) async throws -> Data {
-        let process = Process()
         let standardInput = Pipe()
         let standardOutput = Pipe()
         let standardError = Pipe()
-        process.executableURL = executableURL
-        process.arguments = ["app-server", "--stdio"]
-        process.standardInput = standardInput
-        process.standardOutput = standardOutput
-        process.standardError = standardError
-        let exit = ProcessExitObservation()
-        process.terminationHandler = { _ in exit.markExited() }
-
-        do {
-            try process.run()
-        } catch {
-            throw CodexClientError.launchFailed
+        let parentDescriptors = [
+            standardInput.fileHandleForWriting.fileDescriptor,
+            standardOutput.fileHandleForReading.fileDescriptor,
+            standardError.fileHandleForReading.fileDescriptor,
+        ]
+        for descriptor in parentDescriptors {
+            _ = Darwin.fcntl(descriptor, F_SETFD, FD_CLOEXEC)
         }
+        onSpawnAttempt(parentDescriptors + [
+            standardInput.fileHandleForReading.fileDescriptor,
+            standardOutput.fileHandleForWriting.fileDescriptor,
+            standardError.fileHandleForWriting.fileDescriptor,
+        ])
+        let process = try Self.spawn(
+            executableURL: executableURL,
+            standardInput: standardInput,
+            standardOutput: standardOutput,
+            standardError: standardError
+        )
+        try? standardInput.fileHandleForReading.close()
+        try? standardOutput.fileHandleForWriting.close()
+        try? standardError.fileHandleForWriting.close()
 
-        let input = ProcessInput(standardInput.fileHandleForWriting)
+        let input = ProcessInput(standardInput.fileHandleForWriting, onClose: onInputClose)
 
         let errorDrain = Task {
             try? await Self.drain(standardError.fileHandleForReading)
@@ -47,13 +66,11 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
             }
         } catch {
             input.close()
-            guard await Self.stop(process, exit: exit) else {
-                try? standardOutput.fileHandleForReading.close()
-                try? standardError.fileHandleForReading.close()
-                errorDrain.cancel()
+            guard await process.stop() else {
+                Self.closeReaders(standardOutput, standardError, drain: errorDrain)
                 throw CodexClientError.invalidResponse
             }
-            _ = await errorDrain.result
+            Self.closeReaders(standardOutput, standardError, drain: errorDrain)
             throw CodexClientError.inputFailed
         }
 
@@ -71,7 +88,7 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
                     try await ContinuousClock().sleep(for: timeout)
                     timeoutState.markTimedOut()
                     input.close()
-                    guard await Self.stop(process, exit: exit) else {
+                    guard await process.stop() else {
                         throw CodexClientError.invalidResponse
                     }
                     throw CodexClientError.timeout
@@ -83,21 +100,18 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
                 return first
             }
             input.close()
-            guard await Self.stop(process, exit: exit) else {
+            guard await process.stop() else {
                 throw CodexClientError.invalidResponse
             }
-            _ = await errorDrain.result
+            Self.closeReaders(standardOutput, standardError, drain: errorDrain)
             return response
         } catch {
             input.close()
-            let stopped = await Self.stop(process, exit: exit)
+            let stopped = await process.stop()
+            Self.closeReaders(standardOutput, standardError, drain: errorDrain)
             guard stopped else {
-                try? standardOutput.fileHandleForReading.close()
-                try? standardError.fileHandleForReading.close()
-                errorDrain.cancel()
                 throw CodexClientError.invalidResponse
             }
-            _ = await errorDrain.result
             if let clientError = error as? CodexClientError {
                 throw clientError
             }
@@ -112,33 +126,145 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
         try await EventDrivenPipeReader(from: handle).drain()
     }
 
-    private static func stop(_ process: Process, exit: ProcessExitObservation) async -> Bool {
-        if exit.didExit { return true }
-        if process.isRunning { process.terminate() }
-        let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(1))
-        while !exit.didExit, clock.now < deadline {
-            try? await clock.sleep(for: .milliseconds(20))
+    private static func closeReaders(
+        _ standardOutput: Pipe,
+        _ standardError: Pipe,
+        drain: Task<Void?, Never>
+    ) {
+        drain.cancel()
+        try? standardOutput.fileHandleForReading.close()
+        try? standardError.fileHandleForReading.close()
+    }
+
+    private static func spawn(
+        executableURL: URL,
+        standardInput: Pipe,
+        standardOutput: Pipe,
+        standardError: Pipe
+    ) throws -> CodexSpawnedProcess {
+        var attributes: posix_spawnattr_t?
+        guard posix_spawnattr_init(&attributes) == 0 else { throw CodexClientError.launchFailed }
+        defer { posix_spawnattr_destroy(&attributes) }
+        var actions: posix_spawn_file_actions_t?
+        guard posix_spawn_file_actions_init(&actions) == 0 else { throw CodexClientError.launchFailed }
+        defer { posix_spawn_file_actions_destroy(&actions) }
+
+        let mappings: [(Int32, Int32)] = [
+            (standardInput.fileHandleForReading.fileDescriptor, STDIN_FILENO),
+            (standardOutput.fileHandleForWriting.fileDescriptor, STDOUT_FILENO),
+            (standardError.fileHandleForWriting.fileDescriptor, STDERR_FILENO),
+        ]
+        for (source, destination) in mappings {
+            guard source == destination || (
+                posix_spawn_file_actions_adddup2(&actions, source, destination) == 0 &&
+                posix_spawn_file_actions_addclose(&actions, source) == 0
+            ) else {
+                throw CodexClientError.launchFailed
+            }
         }
-        if !exit.didExit {
-            _ = Darwin.kill(process.processIdentifier, SIGKILL)
+        let parentDescriptors = [
+            standardInput.fileHandleForWriting.fileDescriptor,
+            standardOutput.fileHandleForReading.fileDescriptor,
+            standardError.fileHandleForReading.fileDescriptor,
+        ]
+        for descriptor in parentDescriptors {
+            guard posix_spawn_file_actions_addclose(&actions, descriptor) == 0 else {
+                throw CodexClientError.launchFailed
+            }
         }
-        let killDeadline = clock.now.advanced(by: .seconds(1))
-        while !exit.didExit, clock.now < killDeadline {
-            try? await clock.sleep(for: .milliseconds(20))
+
+        var defaultSignals = sigset_t()
+        sigemptyset(&defaultSignals)
+        sigaddset(&defaultSignals, SIGTERM)
+        sigaddset(&defaultSignals, SIGINT)
+        sigaddset(&defaultSignals, SIGHUP)
+        var signalMask = sigset_t()
+        sigemptyset(&signalMask)
+        let flags = Int16(POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK)
+        guard posix_spawnattr_setflags(&attributes, flags) == 0,
+              posix_spawnattr_setpgroup(&attributes, 0) == 0,
+              posix_spawnattr_setsigdefault(&attributes, &defaultSignals) == 0,
+              posix_spawnattr_setsigmask(&attributes, &signalMask) == 0 else {
+            throw CodexClientError.launchFailed
         }
-        return exit.didExit
+
+        let executable = executableURL.path
+        let argv = [executable, "app-server", "--stdio"]
+        var child: pid_t = 0
+        let status = withCStringArray(argv) { pointers in
+            posix_spawn(&child, executable, &actions, &attributes, pointers, environ)
+        }
+        guard status == 0, child > 0 else { throw CodexClientError.launchFailed }
+        return CodexSpawnedProcess(pid: child)
+    }
+
+    private static func withCStringArray<Result>(
+        _ strings: [String],
+        _ body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Result
+    ) -> Result {
+        let storage = strings.map { strdup($0) }
+        defer { storage.forEach { free($0) } }
+        var pointers: [UnsafeMutablePointer<CChar>?] = storage
+        pointers.append(nil)
+        return pointers.withUnsafeMutableBufferPointer { body($0.baseAddress!) }
     }
 }
 
-private final class ProcessExitObservation: @unchecked Sendable {
+private final class CodexSpawnedProcess: @unchecked Sendable {
+    private let pid: pid_t
     private let lock = NSLock()
-    private var exited = false
+    private var reaped = false
 
-    var didExit: Bool { lock.withLock { exited } }
+    init(pid: pid_t) { self.pid = pid }
 
-    func markExited() {
-        lock.withLock { exited = true }
+    func stop() async -> Bool {
+        if lock.withLock({ reaped }) { return true }
+        guard signalGroup(SIGTERM) else { return false }
+        let clock = ContinuousClock()
+        let termDeadline = clock.now.advanced(by: .seconds(1))
+        while !didExitWithoutReaping(), clock.now < termDeadline {
+            try? await clock.sleep(for: .milliseconds(20))
+        }
+        guard signalGroup(SIGKILL) else { return false }
+        let killDeadline = clock.now.advanced(by: .seconds(1))
+        while !didExitWithoutReaping(), clock.now < killDeadline {
+            try? await clock.sleep(for: .milliseconds(20))
+        }
+        guard didExitWithoutReaping() else { return false }
+        guard signalGroup(SIGKILL) else { return false }
+        var status: Int32 = 0
+        while true {
+            let value = Darwin.waitpid(pid, &status, 0)
+            if value == pid {
+                lock.withLock { reaped = true }
+                return true
+            }
+            if value < 0, errno == EINTR { continue }
+            return lock.withLock { reaped }
+        }
+    }
+
+    private func didExitWithoutReaping() -> Bool {
+        if lock.withLock({ reaped }) { return true }
+        var information = siginfo_t()
+        while true {
+            let value = waitid(P_PID, id_t(pid), &information, WEXITED | WNOHANG | WNOWAIT)
+            if value == 0 { return information.si_pid == pid }
+            if errno == EINTR { continue }
+            return false
+        }
+    }
+
+    private func signalGroup(_ signal: Int32) -> Bool {
+        let groupStatus = Darwin.kill(-pid, signal)
+        let groupError = errno
+        // EPERM can mean the only remaining member is the already-dead,
+        // unreaped leader. Any live same-user helper would make the group
+        // signal succeed; the owned leader is addressed separately below.
+        guard groupStatus == 0 || groupError == ESRCH || groupError == EPERM else { return false }
+        let childStatus = Darwin.kill(pid, signal)
+        let childError = errno
+        return childStatus == 0 || childError == ESRCH
     }
 }
 
@@ -146,9 +272,11 @@ private final class ProcessInput: @unchecked Sendable {
     private let handle: FileHandle
     private let lock = NSLock()
     private var isClosed = false
+    private let onClose: @Sendable () -> Void
 
-    init(_ handle: FileHandle) {
+    init(_ handle: FileHandle, onClose: @escaping @Sendable () -> Void) {
         self.handle = handle
+        self.onClose = onClose
         _ = Darwin.fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
     }
 
@@ -160,11 +288,13 @@ private final class ProcessInput: @unchecked Sendable {
     }
 
     func close() {
-        lock.withLock {
-            guard !isClosed else { return }
+        let didClose = lock.withLock {
+            guard !isClosed else { return false }
             isClosed = true
             try? handle.close()
+            return true
         }
+        if didClose { onClose() }
     }
 }
 

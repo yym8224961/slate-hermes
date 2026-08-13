@@ -16,6 +16,8 @@
 
 Codex 采集同时兼容旧版顶层 `credits` / `planType` 和 Codex CLI 0.144.1 的当前限额结构；当前结构中选中的 `codex` 限额内嵌值优先。采集会话在收到 `account/rateLimits/read` 回应前保持标准输入开启，但仍只发送初始化和限额读取三条方法，不创建 thread 也不发送 prompt。
 
+Codex App Server 以独立进程组运行；采集完成、超时或取消时会清理该组中仍继承管道的辅助进程。主动脱离会话、双重 fork 并转移到其他进程组的后代不在采集器可安全归属的范围内；官方 App Server 不应以此方式后台化。
+
 ## 1. 构建 release 版本
 
 在仓库根目录执行：
