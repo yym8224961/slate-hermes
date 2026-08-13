@@ -4,6 +4,56 @@ import Testing
 @testable import SlateQuotaCollector
 
 @Suite(.serialized) struct CodexAppServerTransportTests {
+    @Test func closedParentStandardDescriptorsDoNotClobberChildMappings() async throws {
+        let root = try TemporaryDirectory()
+        let harness = root.url.appendingPathComponent("transport-harness")
+        try compileTransportHarness(output: harness)
+
+        let closedDescriptorSets: [[Int32]] = [
+            [STDIN_FILENO], [STDOUT_FILENO], [STDERR_FILENO],
+            [STDIN_FILENO, STDOUT_FILENO],
+            [STDIN_FILENO, STDERR_FILENO],
+            [STDOUT_FILENO, STDERR_FILENO],
+            [STDIN_FILENO, STDOUT_FILENO, STDERR_FILENO],
+        ]
+        for closedDescriptors in closedDescriptorSets {
+            let descriptorList = closedDescriptors.map(String.init).joined(separator: "-")
+            let fixture = root.url.appendingPathComponent("fd-\(descriptorList)")
+            try FileManager.default.createDirectory(at: fixture, withIntermediateDirectories: false)
+            let marker = fixture.appendingPathComponent("result.txt")
+            let capturedInput = fixture.appendingPathComponent("input.txt")
+            let childPID = fixture.appendingPathComponent("pid.txt")
+            let executable = try makeExecutable(
+                in: fixture,
+                named: "fake-codex",
+                script: """
+                #!/bin/sh
+                printf '%s\n' "$$" > '\(childPID.path)'
+                : > '\(capturedInput.path)'
+                count=0
+                while [ "$count" -lt 3 ]; do
+                    IFS= read -r line || exit 20
+                    printf '%s\n' "$line" >> '\(capturedInput.path)'
+                    count=$((count + 1))
+                done
+                printf '%s\n' 'warning' >&2 || exit 21
+                printf '%s\n' '{"id":2,"result":{}}'
+                while :; do sleep 1; done
+                """
+            )
+
+            let outcome = try runHarness(
+                harness,
+                arguments: [descriptorList, executable.path, marker.path]
+            )
+
+            try #require(outcome == 0)
+            #expect(try String(contentsOf: marker, encoding: .utf8) == "ok\n")
+            #expect(try String(contentsOf: capturedInput, encoding: .utf8).split(separator: "\n").count == 3)
+            try expectProcessWasReaped(childPID)
+        }
+    }
+
     @Test func launchFailureDoesNotLeakPipeDescriptors() async {
         let descriptors = DescriptorRecorder()
         let missingExecutable = URL(fileURLWithPath: "/private/tmp/slate-codex-does-not-exist")
@@ -339,6 +389,99 @@ import Testing
         return url
     }
 
+    private func compileTransportHarness(output: URL) throws {
+        let productionSource = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Sources/SlateQuotaCollector/CodexAppServerTransport.swift")
+        let harnessSource = output.appendingPathExtension("swift")
+        let source = """
+        import Darwin
+        import Foundation
+
+        enum CodexClientError: Error, Equatable, Sendable {
+            case rpc(code: Int)
+            case timeout
+            case invalidResponse
+            case launchFailed
+            case inputFailed
+        }
+
+        @main struct TransportHarness {
+            static func main() async {
+                let arguments = CommandLine.arguments
+                guard arguments.count == 4 else { exit(64) }
+                let descriptors = arguments[1].split(separator: "-").compactMap { Int32($0) }
+                guard !descriptors.isEmpty else { exit(64) }
+                for descriptor in descriptors {
+                    guard Darwin.close(descriptor) == 0 else { exit(67) }
+                }
+                do {
+                    let response = try await CodexAppServerProcessTransport().request(
+                        executableURL: URL(fileURLWithPath: arguments[2]),
+                        lines: [
+                            Data("{\\"method\\":\\"initialize\\",\\"id\\":1}\\n".utf8),
+                            Data("{\\"method\\":\\"initialized\\"}\\n".utf8),
+                            Data("{\\"method\\":\\"account/rateLimits/read\\",\\"id\\":2}\\n".utf8),
+                        ],
+                        responseID: 2,
+                        timeout: .seconds(2)
+                    )
+                    guard String(decoding: response, as: UTF8.self).contains("\\"id\\":2") else {
+                        exit(65)
+                    }
+                    try Data("ok\\n".utf8).write(to: URL(fileURLWithPath: arguments[3]))
+                } catch {
+                    try? Data("error\\n".utf8).write(to: URL(fileURLWithPath: arguments[3]))
+                    exit(66)
+                }
+            }
+        }
+        """
+        try source.write(to: harnessSource, atomically: true, encoding: .utf8)
+        let process = Process()
+        let errors = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+        process.arguments = [
+            "swiftc", "-parse-as-library", productionSource.path, harnessSource.path,
+            "-o", output.path,
+        ]
+        process.standardError = errors
+        try process.run()
+        process.waitUntilExit()
+        let errorText = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "CodexAppServerTransportTests.compileTransportHarness",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: errorText]
+            )
+        }
+    }
+
+    private func runHarness(
+        _ executable: URL,
+        arguments: [String]
+    ) throws -> Int32 {
+        var actions: posix_spawn_file_actions_t?
+        guard posix_spawn_file_actions_init(&actions) == 0 else { throw HarnessError.failed }
+        defer { posix_spawn_file_actions_destroy(&actions) }
+        var pid: pid_t = 0
+        let strings = [executable.path] + arguments
+        let storage = strings.map { strdup($0) }
+        defer { storage.forEach { free($0) } }
+        var pointers: [UnsafeMutablePointer<CChar>?] = storage
+        pointers.append(nil)
+        let spawnStatus = pointers.withUnsafeMutableBufferPointer { buffer in
+            posix_spawn(&pid, executable.path, &actions, nil, buffer.baseAddress!, environ)
+        }
+        guard spawnStatus == 0, pid > 0 else { throw HarnessError.failed }
+        var status: Int32 = 0
+        var waited: pid_t
+        repeat { waited = waitpid(pid, &status, 0) } while waited < 0 && errno == EINTR
+        guard waited == pid else { throw HarnessError.failed }
+        return (status >> 8) & 0xff
+    }
+
     private func expectProcessWasReaped(_ pidFile: URL) throws {
         let pidText = try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
         let pid = try #require(pid_t(pidText))
@@ -366,6 +509,8 @@ import Testing
     }
 
 }
+
+private enum HarnessError: Error { case failed }
 
 private final class CloseRecorder: @unchecked Sendable {
     private let lock = NSLock()

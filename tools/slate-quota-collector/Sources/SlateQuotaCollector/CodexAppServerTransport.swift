@@ -28,21 +28,18 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
         responseID: Int,
         timeout: Duration
     ) async throws -> Data {
-        let standardInput = Pipe()
-        let standardOutput = Pipe()
-        let standardError = Pipe()
+        let standardInput = try Self.makePipe()
+        let standardOutput = try Self.makePipe()
+        let standardError = try Self.makePipe()
         let parentDescriptors = [
-            standardInput.fileHandleForWriting.fileDescriptor,
-            standardOutput.fileHandleForReading.fileDescriptor,
-            standardError.fileHandleForReading.fileDescriptor,
+            standardInput.write.fileDescriptor,
+            standardOutput.read.fileDescriptor,
+            standardError.read.fileDescriptor,
         ]
-        for descriptor in parentDescriptors {
-            _ = Darwin.fcntl(descriptor, F_SETFD, FD_CLOEXEC)
-        }
         onSpawnAttempt(parentDescriptors + [
-            standardInput.fileHandleForReading.fileDescriptor,
-            standardOutput.fileHandleForWriting.fileDescriptor,
-            standardError.fileHandleForWriting.fileDescriptor,
+            standardInput.read.fileDescriptor,
+            standardOutput.write.fileDescriptor,
+            standardError.write.fileDescriptor,
         ])
         let process = try Self.spawn(
             executableURL: executableURL,
@@ -50,14 +47,14 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
             standardOutput: standardOutput,
             standardError: standardError
         )
-        try? standardInput.fileHandleForReading.close()
-        try? standardOutput.fileHandleForWriting.close()
-        try? standardError.fileHandleForWriting.close()
+        try? standardInput.read.close()
+        try? standardOutput.write.close()
+        try? standardError.write.close()
 
-        let input = ProcessInput(standardInput.fileHandleForWriting, onClose: onInputClose)
+        let input = ProcessInput(standardInput.write, onClose: onInputClose)
 
         let errorDrain = Task {
-            try? await Self.drain(standardError.fileHandleForReading)
+            try? await Self.drain(standardError.read)
         }
 
         do {
@@ -79,7 +76,7 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
             let response = try await withThrowingTaskGroup(of: Data.self) { group in
                 group.addTask {
                     try await EventDrivenPipeReader(
-                        from: standardOutput.fileHandleForReading,
+                        from: standardOutput.read,
                         responseID: responseID,
                         timeoutState: timeoutState
                     ).read()
@@ -127,20 +124,50 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
     }
 
     private static func closeReaders(
-        _ standardOutput: Pipe,
-        _ standardError: Pipe,
+        _ standardOutput: CodexPipe,
+        _ standardError: CodexPipe,
         drain: Task<Void?, Never>
     ) {
         drain.cancel()
-        try? standardOutput.fileHandleForReading.close()
-        try? standardError.fileHandleForReading.close()
+        try? standardOutput.read.close()
+        try? standardError.read.close()
+    }
+
+    private static func makePipe() throws -> CodexPipe {
+        var descriptors: [Int32] = [-1, -1]
+        guard Darwin.pipe(&descriptors) == 0 else { throw CodexClientError.launchFailed }
+        var ownsDescriptors = true
+        defer {
+            if ownsDescriptors {
+                descriptors.filter { $0 >= 0 }.forEach { _ = Darwin.close($0) }
+            }
+        }
+        for index in descriptors.indices where descriptors[index] < STDERR_FILENO + 1 {
+            let original = descriptors[index]
+            let relocated = Darwin.fcntl(original, F_DUPFD_CLOEXEC, STDERR_FILENO + 1)
+            guard relocated >= STDERR_FILENO + 1 else { throw CodexClientError.launchFailed }
+            _ = Darwin.close(original)
+            descriptors[index] = relocated
+        }
+        for descriptor in descriptors {
+            let flags = Darwin.fcntl(descriptor, F_GETFD)
+            guard flags >= 0,
+                  Darwin.fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0 else {
+                throw CodexClientError.launchFailed
+            }
+        }
+        ownsDescriptors = false
+        return CodexPipe(
+            read: FileHandle(fileDescriptor: descriptors[0], closeOnDealloc: true),
+            write: FileHandle(fileDescriptor: descriptors[1], closeOnDealloc: true)
+        )
     }
 
     private static func spawn(
         executableURL: URL,
-        standardInput: Pipe,
-        standardOutput: Pipe,
-        standardError: Pipe
+        standardInput: CodexPipe,
+        standardOutput: CodexPipe,
+        standardError: CodexPipe
     ) throws -> CodexSpawnedProcess {
         var attributes: posix_spawnattr_t?
         guard posix_spawnattr_init(&attributes) == 0 else { throw CodexClientError.launchFailed }
@@ -150,9 +177,9 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
         defer { posix_spawn_file_actions_destroy(&actions) }
 
         let mappings: [(Int32, Int32)] = [
-            (standardInput.fileHandleForReading.fileDescriptor, STDIN_FILENO),
-            (standardOutput.fileHandleForWriting.fileDescriptor, STDOUT_FILENO),
-            (standardError.fileHandleForWriting.fileDescriptor, STDERR_FILENO),
+            (standardInput.read.fileDescriptor, STDIN_FILENO),
+            (standardOutput.write.fileDescriptor, STDOUT_FILENO),
+            (standardError.write.fileDescriptor, STDERR_FILENO),
         ]
         for (source, destination) in mappings {
             guard source == destination || (
@@ -163,9 +190,9 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
             }
         }
         let parentDescriptors = [
-            standardInput.fileHandleForWriting.fileDescriptor,
-            standardOutput.fileHandleForReading.fileDescriptor,
-            standardError.fileHandleForReading.fileDescriptor,
+            standardInput.write.fileDescriptor,
+            standardOutput.read.fileDescriptor,
+            standardError.read.fileDescriptor,
         ]
         for descriptor in parentDescriptors {
             guard posix_spawn_file_actions_addclose(&actions, descriptor) == 0 else {
@@ -208,6 +235,11 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
         pointers.append(nil)
         return pointers.withUnsafeMutableBufferPointer { body($0.baseAddress!) }
     }
+}
+
+private struct CodexPipe {
+    let read: FileHandle
+    let write: FileHandle
 }
 
 private final class CodexSpawnedProcess: @unchecked Sendable {
