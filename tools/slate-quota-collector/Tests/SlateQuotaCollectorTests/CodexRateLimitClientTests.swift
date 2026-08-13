@@ -41,6 +41,15 @@ import Testing
         #expect(result.selectedCodexLimit == nil)
     }
 
+    @Test func decoderSupportsCurrentNestedCreditsAndPlanSchema() throws {
+        let result = try CodexRateLimitClient.decode(Self.currentAppServerFixture)
+
+        #expect(result.selectedCodexLimit?.primary?.usedPercent == 19)
+        #expect(result.selectedCodexCredits?.unlimited == false)
+        #expect(result.selectedCodexCredits?.balance == 88.5)
+        #expect(result.selectedCodexPlanType == "business")
+    }
+
     @Test func decoderExposesOnlyTargetRPCErrorCode() throws {
         let sensitive = Data(#"{"id":2,"error":{"code":-32000,"message":"private model path","data":{"token":"secret"}}}"#.utf8)
 
@@ -54,6 +63,8 @@ import Testing
     private static let namedAndFallbackFixture = Data(#"{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":10,"windowDurationMins":300,"resetsAt":1900000000}},"rateLimitsByLimitId":{"codex":{"limitId":"codex","primary":{"usedPercent":30,"windowDurationMins":10080,"resetsAt":1900000000}}},"credits":null,"planType":"pro"}}"#.utf8)
 
     private static let sparkOnlyFixture = Data(#"{"id":2,"result":{"rateLimits":{"limitId":"spark","primary":{"usedPercent":10,"windowDurationMins":300,"resetsAt":1900000000}},"rateLimitsByLimitId":{"spark":{"limitId":"spark","primary":{"usedPercent":20,"windowDurationMins":10080,"resetsAt":1900000000}}},"credits":null,"planType":"free"}}"#.utf8)
+
+    private static let currentAppServerFixture = Data(#"{"id":2,"result":{"rateLimits":{"limitId":"codex","primary":{"usedPercent":20,"windowDurationMins":300,"resetsAt":1900000000},"secondary":{"usedPercent":30,"windowDurationMins":10080,"resetsAt":1900003600},"credits":{"hasCredits":true,"unlimited":false,"balance":"77.25"},"planType":"pro"},"rateLimitsByLimitId":{"codex":{"limitId":"codex","primary":{"usedPercent":19,"windowDurationMins":300,"resetsAt":1900000000},"secondary":{"usedPercent":29,"windowDurationMins":10080,"resetsAt":1900003600},"credits":{"hasCredits":true,"unlimited":false,"balance":88.5},"planType":"business"}},"credits":{"unlimited":false,"balance":1},"planType":"legacy"}}"#.utf8)
 }
 
 private actor RecordingCodexTransport: CodexAppServerTransport {

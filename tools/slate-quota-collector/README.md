@@ -14,6 +14,8 @@
 
 不要把 API Key 或 capability URL 发到聊天、写进 shell history，也不要放入本 README。`setup` 会在本机终端内无回显读取它们。
 
+Codex 采集同时兼容旧版顶层 `credits` / `planType` 和 Codex CLI 0.144.1 的当前限额结构；当前结构中选中的 `codex` 限额内嵌值优先。采集会话在收到 `account/rateLimits/read` 回应前保持标准输入开启，但仍只发送初始化和限额读取三条方法，不创建 thread 也不发送 prompt。
+
 ## 1. 构建 release 版本
 
 在仓库根目录执行：

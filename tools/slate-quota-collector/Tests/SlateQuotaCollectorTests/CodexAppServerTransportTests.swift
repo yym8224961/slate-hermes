@@ -4,6 +4,60 @@ import Testing
 @testable import SlateQuotaCollector
 
 @Suite(.serialized) struct CodexAppServerTransportTests {
+    @Test func transportKeepsInputOpenUntilTargetResponseArrives() async throws {
+        let root = try TemporaryDirectory()
+        let pidFile = root.url.appendingPathComponent("pid.txt")
+        let inputState = root.url.appendingPathComponent("input-state.txt")
+        let executable = try makeExecutable(
+            in: root.url,
+            named: "stdin-sensitive-codex",
+            script: """
+            #!/usr/bin/python3
+            import fcntl
+            import os
+            import sys
+            import time
+
+            with open(r"\(pidFile.path)", "w", encoding="utf-8") as output:
+                output.write(f"{os.getpid()}\\n")
+            received = b""
+            while received.count(b"\\n") < 3:
+                chunk = os.read(0, 4096)
+                if not chunk:
+                    sys.exit(20)
+                received += chunk
+            flags = fcntl.fcntl(0, fcntl.F_GETFL)
+            fcntl.fcntl(0, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+            try:
+                state = "closed" if os.read(0, 1) == b"" else "unexpected-data"
+            except BlockingIOError:
+                state = "open"
+            with open(r"\(inputState.path)", "w", encoding="utf-8") as output:
+                output.write(state + "\\n")
+            if state != "open":
+                sys.exit(21)
+            print('{"id":2,"result":{"rateLimits":null,"rateLimitsByLimitId":{},"credits":null,"planType":null}}', flush=True)
+            while True:
+                time.sleep(1)
+            """
+        )
+        let transport = CodexAppServerProcessTransport()
+
+        let response = try await transport.request(
+            executableURL: executable,
+            lines: Self.requestLines,
+            responseID: 2,
+            timeout: .seconds(2)
+        )
+
+        #expect(try CodexRateLimitClient.decode(response).selectedCodexLimit == nil)
+        #expect(try String(contentsOf: inputState, encoding: .utf8) == "open\n")
+        let pidText = try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let pid = try #require(pid_t(pidText))
+        #expect(kill(pid, 0) == -1)
+        #expect(errno == ESRCH)
+    }
+
     @Test func transportDrainsWarningsAndSelectsOnlyTargetResponse() async throws {
         let root = try TemporaryDirectory()
         let capturedInput = root.url.appendingPathComponent("stdin.jsonl")
@@ -76,7 +130,7 @@ import Testing
                 executableURL: executable,
                 lines: Self.requestLines,
                 responseID: 2,
-                timeout: .seconds(1)
+                timeout: .seconds(3)
             )
         }
 
@@ -84,6 +138,123 @@ import Testing
         let pid = try #require(pid_t(pidText))
         #expect(kill(pid, 0) == -1)
         #expect(errno == ESRCH)
+    }
+
+    @Test func inputFailureClosesAndReapsChild() async throws {
+        let fixtures = try (0..<4).map { index in
+            let root = try TemporaryDirectory()
+            let pidFile = root.url.appendingPathComponent("pid.txt")
+            let executable = try makeExecutable(
+                in: root.url,
+                named: "closed-input-codex-\(index)",
+                script: """
+                #!/bin/sh
+                printf '%s\n' "$$" > '\(pidFile.path)'
+                IFS= read -r first || exit 20
+                exec 0<&-
+                exit 0
+                """
+            )
+            return (executable, pidFile)
+        }
+
+        let results = await withTaskGroup(of: (URL, CodexClientError?).self) { group in
+            for (executable, pidFile) in fixtures {
+                group.addTask {
+                    do {
+                        _ = try await CodexAppServerProcessTransport().request(
+                            executableURL: executable,
+                            lines: [Data("first\n".utf8), Data(repeating: 0x61, count: 1_048_576)],
+                            responseID: 2,
+                            timeout: .seconds(2)
+                        )
+                        return (pidFile, nil)
+                    } catch let error as CodexClientError {
+                        return (pidFile, error)
+                    } catch {
+                        return (pidFile, nil)
+                    }
+                }
+            }
+            return await group.reduce(into: []) { $0.append($1) }
+        }
+
+        for (pidFile, error) in results {
+            #expect(error == .inputFailed)
+            try expectProcessWasReaped(pidFile)
+        }
+    }
+
+    @Test func invalidResponseClosesAndReapsChild() async throws {
+        let root = try TemporaryDirectory()
+        let pidFile = root.url.appendingPathComponent("pid.txt")
+        let executable = try makeExecutable(
+            in: root.url,
+            named: "invalid-response-codex",
+            script: """
+            #!/bin/sh
+            printf '%s\n' "$$" > '\(pidFile.path)'
+            count=0
+            while [ "$count" -lt 3 ]; do
+                IFS= read -r line || exit 20
+                count=$((count + 1))
+            done
+            printf '%s\n' '{"id":1,"result":{}}'
+            exit 0
+            """
+        )
+        let transport = CodexAppServerProcessTransport()
+
+        await #expect(throws: CodexClientError.invalidResponse) {
+            try await transport.request(
+                executableURL: executable,
+                lines: Self.requestLines,
+                responseID: 2,
+                timeout: .seconds(2)
+            )
+        }
+
+        try expectProcessWasReaped(pidFile)
+    }
+
+    @Test func cancellationClosesAndReapsChild() async throws {
+        let root = try TemporaryDirectory()
+        let pidFile = root.url.appendingPathComponent("pid.txt")
+        let readyFile = root.url.appendingPathComponent("ready.txt")
+        let executable = try makeExecutable(
+            in: root.url,
+            named: "cancelled-codex",
+            script: """
+            #!/bin/sh
+            printf '%s\n' "$$" > '\(pidFile.path)'
+            count=0
+            while [ "$count" -lt 3 ]; do
+                IFS= read -r line || exit 20
+                count=$((count + 1))
+            done
+            : > '\(readyFile.path)'
+            while :; do sleep 1; done
+            """
+        )
+        let transport = CodexAppServerProcessTransport()
+        let request = Task {
+            try await transport.request(
+                executableURL: executable,
+                lines: Self.requestLines,
+                responseID: 2,
+                timeout: .seconds(20)
+            )
+        }
+        while !FileManager.default.fileExists(atPath: readyFile.path) {
+            await Task.yield()
+        }
+
+        request.cancel()
+        await #expect(throws: CancellationError.self) {
+            try await request.value
+        }
+
+        try expectProcessWasReaped(pidFile)
     }
 
     private static let requestLines = [
@@ -97,5 +268,12 @@ import Testing
         try Data(script.utf8).write(to: url, options: .withoutOverwriting)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
         return url
+    }
+
+    private func expectProcessWasReaped(_ pidFile: URL) throws {
+        let pidText = try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        let pid = try #require(pid_t(pidText))
+        #expect(kill(pid, 0) == -1)
+        #expect(errno == ESRCH)
     }
 }

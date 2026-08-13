@@ -73,6 +73,22 @@ struct CodexRateLimit: Codable, Equatable, Sendable {
     let limitId: String?
     let primary: CodexRateLimitWindow?
     let secondary: CodexRateLimitWindow?
+    let credits: CodexCredits?
+    let planType: String?
+
+    init(
+        limitId: String?,
+        primary: CodexRateLimitWindow?,
+        secondary: CodexRateLimitWindow?,
+        credits: CodexCredits? = nil,
+        planType: String? = nil
+    ) {
+        self.limitId = limitId
+        self.primary = primary
+        self.secondary = secondary
+        self.credits = credits
+        self.planType = planType
+    }
 }
 
 struct CodexCredits: Codable, Equatable, Sendable {
@@ -114,6 +130,14 @@ struct CodexRateLimitsReadResult: Codable, Equatable, Sendable {
 
     var selectedCodexLimit: CodexRateLimit? {
         rateLimitsByLimitId["codex"] ?? (rateLimits?.limitId == "codex" ? rateLimits : nil)
+    }
+
+    var selectedCodexCredits: CodexCredits? {
+        selectedCodexLimit?.credits ?? credits
+    }
+
+    var selectedCodexPlanType: String? {
+        selectedCodexLimit?.planType ?? planType
     }
 }
 

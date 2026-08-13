@@ -67,6 +67,30 @@ import Testing
         #expect(normalizeUseBalance(false) == "余额接续 关闭")
     }
 
+    @Test func codexUsesCreditsAndPlanFromSelectedCurrentLimit() {
+        let raw = CodexRateLimitsReadResult(
+            rateLimits: nil,
+            rateLimitsByLimitId: [
+                "codex": CodexRateLimit(
+                    limitId: "codex",
+                    primary: .init(usedPercent: 19, windowDurationMins: 300, resetsAt: nil),
+                    secondary: .init(usedPercent: 29, windowDurationMins: 10_080, resetsAt: nil),
+                    credits: .init(unlimited: false, balance: 88.5),
+                    planType: "business"
+                ),
+            ],
+            credits: .init(unlimited: false, balance: 1),
+            planType: "legacy"
+        )
+
+        let value = QuotaNormalizer.shanghai.codex(raw, collectedAt: .fixtureNow)
+
+        #expect(value.headerLeft == "CODEX · BUSINESS")
+        #expect(value.footerRight == "Credits 88.50")
+        #expect(value.rolling.remainingPercent == 81)
+        #expect(value.weekly.remainingPercent == 71)
+    }
+
     @Test func missingCodexWindowsAreUnavailableRatherThanExhausted() {
         let value = QuotaNormalizer.shanghai.codex(.fixture(planType: nil, codexWindows: []), collectedAt: .fixtureNow)
 

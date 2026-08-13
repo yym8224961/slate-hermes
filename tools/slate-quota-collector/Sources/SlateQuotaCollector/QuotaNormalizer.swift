@@ -23,12 +23,12 @@ struct QuotaNormalizer: Sendable {
         return CodexDisplaySnapshot(
             status: minimum.map { Self.status(remaining: $0, serverLimited: false) } ?? .unavailable,
             sourceCollectedAt: collectedAt,
-            headerLeft: "CODEX · \((raw.planType ?? "未提供").uppercased())",
+            headerLeft: "CODEX · \((raw.selectedCodexPlanType ?? "未提供").uppercased())",
             summaryLabel: minimum.map { Self.summary(remaining: $0, serverLimited: false) } ?? "无可信数据",
             rolling: rolling,
             weekly: weekly,
             footerLeft: weekly.resetAt.map { "周重置 \(dateText($0))" } ?? "周重置 --",
-            footerRight: normalizeCredits(raw.credits)
+            footerRight: normalizeCredits(raw.selectedCodexCredits)
         )
     }
 

@@ -26,6 +26,8 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
         process.standardInput = standardInput
         process.standardOutput = standardOutput
         process.standardError = standardError
+        let exit = ProcessExitObservation()
+        process.terminationHandler = { _ in exit.markExited() }
 
         do {
             try process.run()
@@ -33,18 +35,24 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
             throw CodexClientError.launchFailed
         }
 
+        let input = ProcessInput(standardInput.fileHandleForWriting)
+
         let errorDrain = Task {
             try? await Self.drain(standardError.fileHandleForReading)
         }
 
         do {
             for line in lines {
-                try standardInput.fileHandleForWriting.write(contentsOf: line)
+                try input.write(line)
             }
-            try standardInput.fileHandleForWriting.close()
         } catch {
-            try? standardInput.fileHandleForWriting.close()
-            await Self.stop(process)
+            input.close()
+            guard await Self.stop(process, exit: exit) else {
+                try? standardOutput.fileHandleForReading.close()
+                try? standardError.fileHandleForReading.close()
+                errorDrain.cancel()
+                throw CodexClientError.invalidResponse
+            }
             _ = await errorDrain.result
             throw CodexClientError.inputFailed
         }
@@ -62,7 +70,10 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
                 group.addTask {
                     try await ContinuousClock().sleep(for: timeout)
                     timeoutState.markTimedOut()
-                    await Self.stop(process)
+                    input.close()
+                    guard await Self.stop(process, exit: exit) else {
+                        throw CodexClientError.invalidResponse
+                    }
                     throw CodexClientError.timeout
                 }
                 guard let first = try await group.next() else {
@@ -71,14 +82,27 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
                 group.cancelAll()
                 return first
             }
-            await Self.stop(process)
+            input.close()
+            guard await Self.stop(process, exit: exit) else {
+                throw CodexClientError.invalidResponse
+            }
             _ = await errorDrain.result
             return response
         } catch {
-            await Self.stop(process)
+            input.close()
+            let stopped = await Self.stop(process, exit: exit)
+            guard stopped else {
+                try? standardOutput.fileHandleForReading.close()
+                try? standardError.fileHandleForReading.close()
+                errorDrain.cancel()
+                throw CodexClientError.invalidResponse
+            }
             _ = await errorDrain.result
             if let clientError = error as? CodexClientError {
                 throw clientError
+            }
+            if error is CancellationError {
+                throw CancellationError()
             }
             throw CodexClientError.invalidResponse
         }
@@ -88,18 +112,59 @@ struct CodexAppServerProcessTransport: CodexAppServerTransport, Sendable {
         try await EventDrivenPipeReader(from: handle).drain()
     }
 
-    private static func stop(_ process: Process) async {
-        guard process.isRunning else { return }
-        process.terminate()
+    private static func stop(_ process: Process, exit: ProcessExitObservation) async -> Bool {
+        if exit.didExit { return true }
+        if process.isRunning { process.terminate() }
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(1))
-        while process.isRunning, clock.now < deadline {
+        while !exit.didExit, clock.now < deadline {
             try? await clock.sleep(for: .milliseconds(20))
         }
-        if process.isRunning {
+        if !exit.didExit {
             _ = Darwin.kill(process.processIdentifier, SIGKILL)
         }
-        process.waitUntilExit()
+        let killDeadline = clock.now.advanced(by: .seconds(1))
+        while !exit.didExit, clock.now < killDeadline {
+            try? await clock.sleep(for: .milliseconds(20))
+        }
+        return exit.didExit
+    }
+}
+
+private final class ProcessExitObservation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var exited = false
+
+    var didExit: Bool { lock.withLock { exited } }
+
+    func markExited() {
+        lock.withLock { exited = true }
+    }
+}
+
+private final class ProcessInput: @unchecked Sendable {
+    private let handle: FileHandle
+    private let lock = NSLock()
+    private var isClosed = false
+
+    init(_ handle: FileHandle) {
+        self.handle = handle
+        _ = Darwin.fcntl(handle.fileDescriptor, F_SETNOSIGPIPE, 1)
+    }
+
+    func write(_ data: Data) throws {
+        try lock.withLock {
+            guard !isClosed else { throw CodexClientError.inputFailed }
+            try handle.write(contentsOf: data)
+        }
+    }
+
+    func close() {
+        lock.withLock {
+            guard !isClosed else { return }
+            isClosed = true
+            try? handle.close()
+        }
     }
 }
 
