@@ -206,6 +206,33 @@ struct LaunchAgentInstallerTests {
         }
     }
 
+    @Test("launchd missing-service diagnostic permits only trailing whitespace variation")
+    func loadedStateAcceptsTrailingWhitespaceOnExactMissingServiceDiagnostic() async throws {
+        let root = try TemporaryDirectory()
+        let label = "com.yym8224961.slate-quota-macos26-fixture"
+        let service = "gui/\(getuid())/\(label)"
+        let diagnosticWithTrailingWhitespace = """
+        Bad request.
+        Could not find service "\(label)" in domain for user gui: \(getuid())
+
+
+        \t  
+        """
+        let controller = SystemLaunchctlController(executableURL: try launchctlFixture(
+            root: root.url,
+            name: "macos26-trailing-whitespace",
+            label: label,
+            printStatus: 113,
+            standardOutput: "",
+            standardError: diagnosticWithTrailingWhitespace
+        ))
+
+        #expect(try await controller.installationState(service: service) == .init(
+            loaded: false,
+            disabledOverride: false
+        ))
+    }
+
     @Test("launchd loaded state recognizes only the exact local missing-service signature")
     func loadedStateRecognizesOnlyExactMissingServiceSignature() async throws {
         let root = try TemporaryDirectory()
@@ -236,6 +263,17 @@ struct LaunchAgentInstallerTests {
             (
                 "domain-error", 113, "",
                 "Bad request.\nCould not find domain for user gui: \(getuid())\n"
+            ),
+            (
+                "wrong-label-with-trailing-space", 113, "",
+                "Bad request.\nCould not find service \"\(label).other\" in domain for user gui: \(getuid())\n\n \t\n"
+            ),
+            (
+                "wrong-uid-with-trailing-space", 113, "",
+                "Bad request.\nCould not find service \"\(label)\" in domain for user gui: \(getuid() + 1)\n\n \t\n"
+            ),
+            (
+                "nonempty-stdout", 113, "unexpected output\n", exactMissingService + " \n"
             ),
         ]
         for response in indeterminateResponses {

@@ -81,10 +81,20 @@ struct SystemLaunchctlController: InstallationLaunchctlControlling, Sendable {
         guard result.status == 113,
               result.standardOutput.isEmpty,
               let expectedError = missingServiceDiagnostic(for: service),
-              result.standardError == Data(expectedError.utf8) else {
+              trimmingTrailingASCIIWhitespace(result.standardError)
+                == trimmingTrailingASCIIWhitespace(Data(expectedError.utf8)) else {
             return nil
         }
         return false
+    }
+
+    private func trimmingTrailingASCIIWhitespace(_ data: Data) -> Data {
+        var trimmed = data
+        while let byte = trimmed.last,
+              byte == 0x20 || (0x09 ... 0x0D).contains(byte) {
+            trimmed.removeLast()
+        }
+        return trimmed
     }
 
     private func missingServiceDiagnostic(for service: String) -> String? {
