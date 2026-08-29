@@ -3,16 +3,16 @@ import type { DynamicRenderContext } from './dynamic-render-context';
 import { FRAME_HEIGHT, FRAME_WIDTH } from 'shared';
 import { clamp, isRecord, pickText, readInt, readNumberArray } from './helpers/frame-value-utils';
 
-export const STATUS_BAR_H = 24;
+export const DASHBOARD_CANVAS_TOP = 0;
 
 export function blockRect(
   block: Record<string, unknown>
 ): { x: number; y: number; w: number; h: number } | null {
   const x = readInt(block.x, -1, 0, FRAME_WIDTH - 1);
-  const y = readInt(block.y, -1, STATUS_BAR_H, FRAME_HEIGHT - 1);
+  const y = readInt(block.y, -1, DASHBOARD_CANVAS_TOP, FRAME_HEIGHT - 1);
   const w = readInt(block.w, -1, 1, FRAME_WIDTH);
-  const h = readInt(block.h, -1, 1, FRAME_HEIGHT - STATUS_BAR_H);
-  if (x < 0 || y < STATUS_BAR_H || w < 1 || h < 1) return null;
+  const h = readInt(block.h, -1, 1, FRAME_HEIGHT);
+  if (x < 0 || y < DASHBOARD_CANVAS_TOP || w < 1 || h < 1) return null;
   return {
     x,
     y,

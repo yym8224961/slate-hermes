@@ -14,7 +14,7 @@ class FrameView {
 
     explicit FrameView(lv_obj_t* parent);
 
-    void SetFrame(EpdSsd2683* epd, const std::vector<uint8_t>& raw);
+    void SetFrame(EpdSsd2683* epd, const std::vector<uint8_t>& raw, bool full_canvas = false);
     void Show();
     void Hide();
 

@@ -24,14 +24,18 @@ FrameView::FrameView(lv_obj_t* parent) {
     lv_obj_clear_flag(container_, LV_OBJ_FLAG_SCROLLABLE);
 }
 
-void FrameView::SetFrame(EpdSsd2683* epd, const std::vector<uint8_t>& raw) {
+void FrameView::SetFrame(EpdSsd2683* epd, const std::vector<uint8_t>& raw, bool full_canvas) {
     if (!epd)
         return;
     if (raw.size() != kRawBytes) {
         ESP_LOGW(kTag, "raw size mismatch bytes=%u expected=%d", static_cast<unsigned>(raw.size()), kRawBytes);
         return;
     }
-    epd->WriteRaw1bpp(0, kStatusBarH, kWidth, kImgH, raw.data() + kStatusBarH * kBpr, kImgBytes);
+    if (full_canvas) {
+        epd->WriteRaw1bpp(0, 0, kWidth, kHeight, raw.data(), kRawBytes);
+    } else {
+        epd->WriteRaw1bpp(0, kStatusBarH, kWidth, kImgH, raw.data() + kStatusBarH * kBpr, kImgBytes);
+    }
 }
 
 void FrameView::Show() {

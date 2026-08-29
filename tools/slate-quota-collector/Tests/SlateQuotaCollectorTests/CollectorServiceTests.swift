@@ -19,8 +19,9 @@ struct CollectorServiceTests {
         #expect(report.receipt?.manifestEtag == "redacted")
         #expect(report.readbackVerified)
         let pushed = try #require(await fixture.slate.lastEnvelope)
-        #expect(pushed.data.codex.rolling.valueText == "未提供")
-        #expect(pushed.data.codex.weekly.remainingPercent == 91)
+        #expect(pushed.data.codex.rolling.label == "7 天")
+        #expect(pushed.data.codex.rolling.remainingPercent == 91)
+        #expect(pushed.data.codex.weekly.valueText == "未提供")
         #expect(pushed.data.opencodeGo.rolling.remainingPercent == 81)
         for (surface, bytes) in try await fixture.publicAndPersistentSurfaces(reports: [report]) {
             expectNoEndToEndSensitiveValues(in: bytes, surface: surface)
@@ -552,6 +553,57 @@ struct CollectorServiceTests {
         #expect(report.receipt?.manifestEtag == "redacted")
     }
 
+    @Test("pure Codex mode skips OpenCode credential and network while collecting radar and tasks")
+    func pureCodexModeSkipsOpenCodeCompletely() async throws {
+        let openCode = CountingOpenCodeReader(result: .success(.fixture))
+        let taskActivity = CountingTaskActivityReader(result: .success(.init(
+            availability: .available,
+            stale: false,
+            rows: [.init(title: "严格移植 Slate UI", state: .running, activityAt: now)],
+            hiddenCount: 0
+        )))
+        let radar = CountingResetRadarReader(result: .modified(.init(
+            semantic: .init(
+                latestReset: nil,
+                activeWatch: .init(
+                    resetChancePercent: 70,
+                    forecastWindow: "today 12:00-15:00 UTC",
+                    observedAt: now.addingTimeInterval(-60),
+                    expiresAt: now.addingTimeInterval(3_600)
+                )
+            ),
+            explicitNoWatch: false,
+            hasInvalidCapability: false
+        )))
+        let secrets = RecordingSecretStore(values: [
+            "slate-push-url": "https://slate.example/api/v1/contents/content-fixture/data",
+        ])
+        let snapshots = InMemorySnapshotStore()
+
+        let report = try await fixture(
+            openCode: openCode,
+            secrets: secrets,
+            snapshots: snapshots,
+            codexTaskActivity: taskActivity,
+            resetRadar: radar,
+            includeOpenCodeGo: false
+        ).collect(mode: .dryRun)
+
+        let envelope = try #require(report.envelope)
+        let encoded = try JSONEncoder.slate.encode(envelope)
+        let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let data = try #require(json["data"] as? [String: Any])
+        #expect(data["opencode_go"] == nil)
+        #expect(await openCode.readCount == 0)
+        #expect(secrets.readAccounts.isEmpty)
+        #expect(await taskActivity.readCount == 1)
+        #expect(await radar.readCount == 1)
+        #expect(envelope.data.taskActivity.row1.title == "严格移植 Slate UI")
+        #expect(envelope.data.resetRadar.resetChancePercent == 70)
+        #expect(try snapshots.loadSnapshot().taskActivity?.row1.title == "严格移植 Slate UI")
+        #expect(try snapshots.loadSnapshot().resetRadar?.semantic.activeWatch?.resetChancePercent == 70)
+    }
+
     @Test("a published deadline always wins before Slate POST receives a start permit")
     func deadlinePublicationLinearizesBeforePushStart() async throws {
         for _ in 0..<32 {
@@ -593,7 +645,10 @@ struct CollectorServiceTests {
         deadlineSleep: @escaping CollectorService.DeadlineSleep = { try await Task.sleep(for: $0) },
         collectionDeadline: Duration = .seconds(45),
         beforeSideEffect: @escaping CollectorService.BeforeSideEffect = { _ in },
-        onDeadlinePublished: @escaping CollectorService.OnDeadlinePublished = {}
+        onDeadlinePublished: @escaping CollectorService.OnDeadlinePublished = {},
+        codexTaskActivity: (any CodexTaskActivityReading)? = nil,
+        resetRadar: (any ResetRadarReading)? = nil,
+        includeOpenCodeGo: Bool = true
     ) -> CollectorService {
         let codexReader: any CodexRateLimitReading
         let openCodeReader: any OpenCodeGoUsageReading
@@ -618,7 +673,10 @@ struct CollectorServiceTests {
             deadlineSleep: deadlineSleep,
             collectionDeadline: collectionDeadline,
             beforeSideEffect: beforeSideEffect,
-            onDeadlinePublished: onDeadlinePublished
+            onDeadlinePublished: onDeadlinePublished,
+            codexTaskActivity: codexTaskActivity,
+            resetRadar: resetRadar,
+            includeOpenCodeGo: includeOpenCodeGo
         )
     }
 
@@ -1136,6 +1194,26 @@ private actor CountingOpenCodeReader: OpenCodeGoUsageReading {
     func read(apiKey _: String) async throws -> OpenCodeGoUsageResponse { readCount += 1; return try result.get() }
 }
 
+private actor CountingTaskActivityReader: CodexTaskActivityReading {
+    private let result: Result<CodexTaskActivityDisplaySnapshot, any Error & Sendable>
+    private(set) var readCount = 0
+    init(result: Result<CodexTaskActivityDisplaySnapshot, any Error & Sendable>) { self.result = result }
+    func read(now _: Date) async throws -> CodexTaskActivityDisplaySnapshot {
+        readCount += 1
+        return try result.get()
+    }
+}
+
+private actor CountingResetRadarReader: ResetRadarReading {
+    private let result: ResetRadarFetchResult
+    private(set) var readCount = 0
+    init(result: ResetRadarFetchResult) { self.result = result }
+    func read() async -> ResetRadarFetchResult {
+        readCount += 1
+        return result
+    }
+}
+
 private final class RecordingSecretStore: SecretStoring, @unchecked Sendable {
     private let lock = NSLock()
     private let values: [String: String]
@@ -1418,8 +1496,8 @@ private extension CodexRateLimitsReadResult {
         rateLimitsByLimitId: [
             "codex": .init(
                 limitId: "codex",
-                primary: .init(usedPercent: 19, windowDurationMins: 300, resetsAt: nil),
-                secondary: .init(usedPercent: 29, windowDurationMins: 10_080, resetsAt: nil)
+                primary: .init(usedPercent: 19, windowDurationMins: 300, resetsAt: 1_900_000_000),
+                secondary: .init(usedPercent: 29, windowDurationMins: 10_080, resetsAt: 1_900_003_600)
             ),
         ],
         credits: .init(unlimited: false, balance: 128.5),

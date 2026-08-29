@@ -3,7 +3,7 @@ import Testing
 @testable import SlateQuotaCollector
 
 @Suite struct QuotaNormalizerTests {
-    @Test func codexIdentifiesWindowsByDurationAndIgnoresSpark() {
+    @Test func codexPreservesPrimaryWindowAndIgnoresOtherLimits() {
         let raw = CodexRateLimitsReadResult.fixture(
             planType: "prolite",
             codexWindows: [.init(usedPercent: 9, windowDurationMins: 10_080, resetsAt: 1_787_090_794)],
@@ -12,12 +12,29 @@ import Testing
 
         let value = QuotaNormalizer.shanghai.codex(raw, collectedAt: .fixtureNow)
 
-        #expect(value.rolling.valueText == "未提供")
-        #expect(value.rolling.remainingPercent == 0)
-        #expect(value.weekly.remainingPercent == 91)
+        #expect(value.rolling.label == "7 天")
+        #expect(value.rolling.remainingPercent == 91)
+        #expect(value.weekly.valueText == "未提供")
         #expect(value.headerLeft == "CODEX · PROLITE")
         #expect(value.status == .ok)
         #expect(value.summaryLabel == "最低剩余 91%")
+    }
+
+    @Test func codexNamesAnyPositivePrimaryAndSecondaryWindowLikeUpstream() {
+        let raw = CodexRateLimitsReadResult.fixture(
+            planType: "pro",
+            codexWindows: [
+                .init(usedPercent: 25, windowDurationMins: 90, resetsAt: 1_900_000_000),
+                .init(usedPercent: 40, windowDurationMins: 2_880, resetsAt: 1_900_003_600),
+            ]
+        )
+
+        let value = QuotaNormalizer.shanghai.codex(raw, collectedAt: .fixtureNow)
+
+        #expect(value.rolling.label == "90 分钟")
+        #expect(value.rolling.remainingPercent == 75)
+        #expect(value.weekly.label == "2 天")
+        #expect(value.weekly.remainingPercent == 60)
     }
 
     @Test(arguments: [(79.0, "最低剩余 21%"), (80.0, "注意 · 剩余 20%"), (90.0, "注意 · 剩余 10%"), (91.0, "紧急 · 剩余 9%"), (99.0, "紧急 · 剩余 1%"), (100.0, "已耗尽")])
@@ -73,8 +90,8 @@ import Testing
             rateLimitsByLimitId: [
                 "codex": CodexRateLimit(
                     limitId: "codex",
-                    primary: .init(usedPercent: 19, windowDurationMins: 300, resetsAt: nil),
-                    secondary: .init(usedPercent: 29, windowDurationMins: 10_080, resetsAt: nil),
+                    primary: .init(usedPercent: 19, windowDurationMins: 300, resetsAt: 1_900_000_000),
+                    secondary: .init(usedPercent: 29, windowDurationMins: 10_080, resetsAt: 1_900_003_600),
                     credits: .init(unlimited: false, balance: 88.5),
                     planType: "business"
                 ),
@@ -98,6 +115,31 @@ import Testing
         #expect(value.summaryLabel == "无可信数据")
         #expect(value.rolling.valueText == "未提供")
         #expect(value.weekly.valueText == "未提供")
+    }
+
+    @Test func invalidCodexPayloadNeverBecomesATrustedClampedSnapshot() {
+        let value = QuotaNormalizer.shanghai.codex(
+            CodexRateLimitsReadResult(
+                rateLimits: CodexRateLimit(
+                    limitId: "codex",
+                    primary: .init(
+                        usedPercent: 101,
+                        windowDurationMins: 300,
+                        resetsAt: 1_900_000_000
+                    ),
+                    secondary: nil
+                ),
+                rateLimitsByLimitId: [:],
+                credits: nil,
+                planType: "pro",
+                rateLimitResetCredits: .init(availableCount: 2)
+            ),
+            collectedAt: .fixtureNow
+        )
+
+        #expect(value.status == .unavailable)
+        #expect(value.rolling.valueText == "未提供")
+        #expect(value.resetCredits == 0)
     }
 
     @Test func staleSnapshotsPreserveValuesAndOriginalCollectionTime() {

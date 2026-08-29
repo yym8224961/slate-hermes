@@ -20,13 +20,18 @@ struct FailurePolicy: Sendable {
         openCodeGo: ProviderOutcome<OpenCodeGoDisplaySnapshot>,
         lastGood: SanitizedLastGood,
         state: CollectorRuntimeState,
-        now: Date
+        now: Date,
+        resetRadar: ResetRadarDisplaySnapshot = .unavailable,
+        taskActivity: CodexTaskActivityDisplaySnapshot = .unavailable,
+        resetRadarErrorCode: String? = nil,
+        taskActivityErrorCode: String? = nil,
+        includeOpenCodeGo: Bool = true
     ) -> CollectionDecision {
         var updatedLastGood = lastGood
         var updatedState = state
 
         let codexSucceeded = codex.isSuccess
-        let openCodeGoSucceeded = openCodeGo.isSuccess
+        let openCodeGoSucceeded = includeOpenCodeGo && openCodeGo.isSuccess
 
         let codexDisplay = displayCodex(
             outcome: codex,
@@ -35,11 +40,36 @@ struct FailurePolicy: Sendable {
             update: &updatedLastGood,
             state: &updatedState
         )
-        let openCodeGoDisplay = displayOpenCodeGo(
-            outcome: openCodeGo,
-            cached: lastGood.openCodeGo,
-            now: now,
-            update: &updatedLastGood,
+        let openCodeGoDisplay: OpenCodeGoDisplaySnapshot
+        if includeOpenCodeGo {
+            openCodeGoDisplay = displayOpenCodeGo(
+                outcome: openCodeGo,
+                cached: lastGood.openCodeGo,
+                now: now,
+                update: &updatedLastGood,
+                state: &updatedState
+            )
+        } else {
+            openCodeGoDisplay = .unavailable(at: now)
+            updatedState.openCodeGoFailures = 0
+            updatedState.providerStatuses.removeValue(forKey: "opencode_go")
+            updatedState.lastErrorCodes.removeValue(forKey: "opencode_go")
+        }
+
+        updatedState.providerStatuses["reset_radar"] = resetRadar.stale
+            ? .stale
+            : (resetRadar.status == .unavailable ? .unavailable : .ok)
+        updatedState.providerStatuses["task_activity"] = taskActivity.stale
+            ? .stale
+            : (taskActivity.availability == .unavailable ? .unavailable : .ok)
+        Self.updateErrorCode(
+            resetRadarErrorCode,
+            key: "reset_radar",
+            state: &updatedState
+        )
+        Self.updateErrorCode(
+            taskActivityErrorCode,
+            key: "task_activity",
             state: &updatedState
         )
 
@@ -55,7 +85,10 @@ struct FailurePolicy: Sendable {
             schemaVersion: 1,
             generatedAt: now,
             codex: codexDisplay,
-            opencodeGo: openCodeGoDisplay
+            opencodeGo: openCodeGoDisplay,
+            resetRadar: resetRadar,
+            taskActivity: taskActivity,
+            includesOpenCodeGo: includeOpenCodeGo
         )) : nil
 
         return CollectionDecision(
@@ -64,6 +97,18 @@ struct FailurePolicy: Sendable {
             lastGood: updatedLastGood,
             runtimeState: updatedState
         )
+    }
+
+    private static func updateErrorCode(
+        _ code: String?,
+        key: String,
+        state: inout CollectorRuntimeState
+    ) {
+        if let code, PublicErrorCode.isValid(code) {
+            state.lastErrorCodes[key] = code
+        } else {
+            state.lastErrorCodes.removeValue(forKey: key)
+        }
     }
 
     private func displayCodex(

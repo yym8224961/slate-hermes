@@ -6,16 +6,18 @@ export function DynamicFramePreview({
   pending,
   hasConfig,
   caption,
+  showStatusBar = true,
 }: {
   data: ArrayBuffer | null;
   pending: boolean;
   hasConfig: boolean;
   caption?: string | null;
+  showStatusBar?: boolean;
 }) {
   const showPlaceholder = !data;
   return (
     <div className="frame-preview-surface">
-      <FrameBitmapPreview data={data} caption={caption} />
+      <FrameBitmapPreview data={data} caption={caption} showStatusBar={showStatusBar} />
       {showPlaceholder && !pending && (
         <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
           <span className="font-serif italic text-[13px] text-stone-light">
@@ -39,6 +41,7 @@ export function SavedOrLiveDynamicFramePreview({
   livePending,
   hasConfig,
   caption,
+  showStatusBar = true,
 }: {
   savedData?: ArrayBuffer;
   savedPending?: boolean;
@@ -46,6 +49,7 @@ export function SavedOrLiveDynamicFramePreview({
   livePending: boolean;
   hasConfig: boolean;
   caption?: string | null;
+  showStatusBar?: boolean;
 }) {
   const displayData = liveData ?? savedData ?? null;
   const pending = livePending || (!liveData && Boolean(savedPending));
@@ -56,6 +60,7 @@ export function SavedOrLiveDynamicFramePreview({
       pending={pending}
       hasConfig={hasConfig}
       caption={caption}
+      showStatusBar={showStatusBar}
     />
   );
 }

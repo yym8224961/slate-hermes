@@ -9,12 +9,7 @@ import {
 } from './dashboard-template';
 import type { DynamicRenderContext } from './dynamic-render-context';
 import { type FrameDrawKit } from './frame-draw-kit';
-import {
-  CONTENT_SAFE_BOTTOM,
-  CONTENT_SAFE_TOP,
-  CONTENT_WIDTH,
-  STATUS_BAR_H,
-} from './frame-renderer-layout';
+import { CONTENT_SAFE_BOTTOM, CONTENT_SAFE_TOP, CONTENT_WIDTH } from './frame-renderer-layout';
 import { type FontSet } from './fonts/dynamic-frame-font.service';
 import { readAlign, readInt, pickText } from './helpers/frame-value-utils';
 import { textWidthFallback } from './frame-text-layout';
@@ -57,11 +52,19 @@ function renderDashboardTemplate(
   draw: FrameDrawKit
 ): void {
   for (const rawBlock of template.blocks) {
+    if (!isBlockVisible(rawBlock.visible, dataRoot)) continue;
     const type = rawBlock.type;
     if (type === 'text') {
       const rect = blockRect(rawBlock);
       if (!rect) continue;
-      const font = rawBlock.font_size === 12 ? fonts.sans12 : fonts.sans16;
+      const font =
+        rawBlock.font_size === 12
+          ? fonts.sans12
+          : rawBlock.font_size === 32
+            ? fonts.metric32
+            : rawBlock.font_size === 48
+              ? fonts.metric48
+              : fonts.sans16;
       const color = rawBlock.color === 'white' ? PIXEL_WHITE : PIXEL_BLACK;
       const align = readAlign(rawBlock.align);
       const text = resolveTemplate(pickText(rawBlock.value, ''), dataRoot);
@@ -75,7 +78,7 @@ function renderDashboardTemplate(
         align,
         maxWidth: rect.w,
         maxLines: readInt(rawBlock.max_lines, 1, 1, 4),
-        ellipsis: true,
+        ellipsis: rawBlock.ellipsis,
         color,
       });
     } else if (type === 'metric') {
@@ -116,12 +119,37 @@ function renderDashboardTemplate(
       if (!rect) continue;
       const series = resolveSeries(rawBlock.values, dataRoot);
       if (series.length >= 2) draw.drawSparkline(c, rect.x, rect.y, rect.w, rect.h, series);
+    } else if (type === 'segments') {
+      const rect = blockRect(rawBlock);
+      if (!rect) continue;
+      drawSegmentedGauge(
+        c,
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        resolvePercentage(rawBlock.percentage, undefined, undefined, dataRoot),
+        readInt(rawBlock.count, 10, 2, 20),
+        readInt(rawBlock.gap, 3, 1, 12)
+      );
+    } else if (type === 'bar') {
+      const rect = blockRect(rawBlock);
+      if (!rect) continue;
+      drawPercentageBar(
+        c,
+        rect.x,
+        rect.y,
+        rect.w,
+        rect.h,
+        resolvePercentage(rawBlock.percentage, undefined, undefined, dataRoot),
+        rawBlock.color === 'white' ? PIXEL_WHITE : PIXEL_BLACK
+      );
     } else if (type === 'line') {
       const x1 = readInt(rawBlock.x1, -1, 0, FRAME_WIDTH - 1);
-      const y1 = readInt(rawBlock.y1, -1, STATUS_BAR_H, FRAME_HEIGHT - 1);
+      const y1 = readInt(rawBlock.y1, -1, 0, FRAME_HEIGHT - 1);
       const x2 = readInt(rawBlock.x2, -1, 0, FRAME_WIDTH - 1);
-      const y2 = readInt(rawBlock.y2, -1, STATUS_BAR_H, FRAME_HEIGHT - 1);
-      if (x1 >= 0 && y1 >= STATUS_BAR_H && x2 >= 0 && y2 >= STATUS_BAR_H) {
+      const y2 = readInt(rawBlock.y2, -1, 0, FRAME_HEIGHT - 1);
+      if (x1 >= 0 && y1 >= 0 && x2 >= 0 && y2 >= 0) {
         if (rawBlock.style === 'dashed' && y1 === y2) {
           draw.drawRule(c, Math.min(x1, x2), y1, Math.abs(x2 - x1), 'dashed');
         } else {
@@ -136,6 +164,56 @@ function renderDashboardTemplate(
       if (rawBlock.stroke !== false) c.strokeRect(rect.x, rect.y, rect.w, rect.h, PIXEL_BLACK);
     }
   }
+}
+
+function isBlockVisible(
+  value: boolean | string | undefined,
+  dataRoot: Record<string, unknown>
+): boolean {
+  if (value === undefined) return true;
+  if (typeof value === 'boolean') return value;
+  const resolved = resolveTemplate(value, dataRoot).trim().toLowerCase();
+  return resolved === 'true' || resolved === '1' || resolved === 'yes' || resolved === 'on';
+}
+
+function drawSegmentedGauge(
+  c: BitmapCanvas,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  percentage: number,
+  count: number,
+  gap: number
+): void {
+  const totalGap = gap * (count - 1);
+  const cellW = Math.max(1, Math.floor((w - totalGap) / count));
+  const usedW = cellW * count + totalGap;
+  const offsetX = x + Math.max(0, Math.floor((w - usedW) / 2));
+  const filled = percentage <= 0 ? 0 : Math.min(count, Math.ceil((percentage * count) / 100));
+  for (let index = 0; index < count; index++) {
+    const cellX = offsetX + index * (cellW + gap);
+    c.strokeRect(cellX, y, cellW, h, PIXEL_BLACK);
+    if (index < filled && cellW > 4 && h > 4) {
+      c.fillRect(cellX + 2, y + 2, cellW - 4, h - 4, PIXEL_BLACK);
+    }
+  }
+}
+
+function drawPercentageBar(
+  c: BitmapCanvas,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  percentage: number,
+  color: number
+): void {
+  c.strokeRect(x, y, w, h, color);
+  const innerW = Math.max(0, w - 4);
+  const innerH = Math.max(0, h - 4);
+  const fillW = Math.floor((innerW * percentage) / 100);
+  if (fillW > 0 && innerH > 0) c.fillRect(x + 2, y + 2, fillW, innerH, color);
 }
 
 function drawMetricBlock(

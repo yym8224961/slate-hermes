@@ -10,13 +10,9 @@ struct QuotaNormalizer: Sendable {
     }
 
     func codex(_ raw: CodexRateLimitsReadResult, collectedAt: Date) -> CodexDisplaySnapshot {
-        let windows = [raw.selectedCodexLimit?.primary, raw.selectedCodexLimit?.secondary]
-            .compactMap { $0 }
-            .reduce(into: [Int: CodexRateLimitWindow]()) { result, window in
-                result[window.windowDurationMins] = window
-            }
-        let rolling = codexWindow(windows[300], label: "5 小时")
-        let weekly = codexWindow(windows[10_080], label: "本周")
+        let limit = raw.strictlyValidatedCodexLimit
+        let rolling = codexWindow(limit?.primary)
+        let weekly = codexWindow(limit?.secondary)
         let credible = [rolling, weekly].filter { $0.valueText != "未提供" }
         let minimum = credible.map(\.remainingPercent).min()
 
@@ -28,7 +24,8 @@ struct QuotaNormalizer: Sendable {
             rolling: rolling,
             weekly: weekly,
             footerLeft: weekly.resetAt.map { "周重置 \(dateText($0))" } ?? "周重置 --",
-            footerRight: normalizeCredits(raw.selectedCodexCredits)
+            footerRight: normalizeCredits(raw.selectedCodexCredits),
+            resetCredits: limit == nil ? 0 : (raw.rateLimitResetCredits?.availableCount ?? 0)
         )
     }
 
@@ -64,7 +61,8 @@ struct QuotaNormalizer: Sendable {
             rolling: snapshot.rolling,
             weekly: snapshot.weekly,
             footerLeft: snapshot.footerLeft,
-            footerRight: snapshot.footerRight
+            footerRight: snapshot.footerRight,
+            resetCredits: snapshot.resetCredits
         )
     }
 
@@ -103,11 +101,28 @@ struct QuotaNormalizer: Sendable {
         summary(remaining: Int(floor(max(0, min(100, 100 - used)))), serverLimited: serverLimited)
     }
 
-    private func codexWindow(_ raw: CodexRateLimitWindow?, label: String) -> QuotaWindow {
-        guard let raw else { return QuotaWindow(label: label, remainingPercent: 0, valueText: "未提供", resetAt: nil) }
+    private func codexWindow(_ raw: CodexRateLimitWindow?) -> QuotaWindow {
+        guard let raw, raw.windowDurationMins > 0 else {
+            return QuotaWindow(label: "", remainingPercent: 0, valueText: "未提供", resetAt: nil)
+        }
         let remaining = remaining(raw.usedPercent)
         let resetAt = raw.resetsAt.map(Date.init(timeIntervalSince1970:))
-        return QuotaWindow(label: label, remainingPercent: remaining, valueText: "剩余 \(remaining)%", resetAt: resetAt)
+        return QuotaWindow(
+            label: codexWindowLabel(raw.windowDurationMins),
+            remainingPercent: remaining,
+            valueText: "剩余 \(remaining)%",
+            resetAt: resetAt
+        )
+    }
+
+    private func codexWindowLabel(_ durationMinutes: Int) -> String {
+        if durationMinutes.isMultiple(of: 24 * 60) {
+            return "\(durationMinutes / (24 * 60)) 天"
+        }
+        if durationMinutes.isMultiple(of: 60) {
+            return "\(durationMinutes / 60) 小时"
+        }
+        return "\(durationMinutes) 分钟"
     }
 
     private func openCodeWindow(_ raw: OpenCodeGoUsageWindow, label: String, collectedAt: Date) -> QuotaWindow {

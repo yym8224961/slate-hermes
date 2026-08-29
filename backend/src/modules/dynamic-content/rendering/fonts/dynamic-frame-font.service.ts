@@ -10,6 +10,8 @@ export interface FontSet {
   sans12: BitmapFont;
   calendarSub10: BitmapFont;
   metric12: BitmapFont;
+  metric32: BitmapFont;
+  metric48: BitmapFont;
   fallback16: BitmapFont;
   displayLarge: BitmapFont;
   catalog: Partial<Record<string, BitmapFont>>;
@@ -48,6 +50,8 @@ export class DynamicFrameFontService implements OnModuleInit {
       sans12: fusionPixel10,
       calendarSub10: fusionPixel10,
       metric12: await loadBitmapFont(resolveFontPath('spleen-6x12.json')),
+      metric32: await loadBitmapFont(resolveFontPath('spleen-16x32.json')),
+      metric48: await loadBitmapFont(resolveFontPath('montserrat-48.json')),
       fallback16: await loadBitmapFont(resolveFontPath('unifont-16.json')),
       displayLarge: await loadBitmapFont(resolveFontPath('spleen-32x64.json')),
       catalog: await loadDeviceFontCatalog(),

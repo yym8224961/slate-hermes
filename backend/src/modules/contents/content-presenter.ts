@@ -2,6 +2,7 @@ import type { ContentAudioSource, ContentAudioStatus, ContentKind, Prisma } from
 import {
   DynamicConfig,
   TtsVoice,
+  dashboardTemplateUsesFullCanvas,
   type ContentDetailT,
   type ContentSummaryT,
   type DynamicTypeT,
@@ -42,6 +43,7 @@ export function contentToSummary(row: ContentRow): ContentSummaryT {
     content_etag: row.contentEtag,
     frame_name: row.frameName,
     device_status_bar_text: deviceStatusBarText({ ...row, renderedAt: row.dynamicLastRunAt }),
+    device_full_canvas: contentUsesFullCanvas(row),
     image_etag: row.imageEtag,
     audio_etag: row.audioEtag,
     image_size: row.imageSize,
@@ -53,6 +55,17 @@ export function contentToSummary(row: ContentRow): ContentSummaryT {
     dynamic_type: (row.dynamicType as DynamicTypeT | null) ?? null,
     next_wake_sec: nextWakeSec(row.dynamicNextRunAt ?? null),
   };
+}
+
+export function contentUsesFullCanvas(row: Pick<ContentRow, 'dynamicConfig'>): boolean {
+  if (!row.dynamicConfig) return false;
+  const config = DynamicConfig.safeParse(row.dynamicConfig);
+  return (
+    config.success &&
+    config.data.type === 'dashboard' &&
+    config.data.template.kind === 'custom' &&
+    dashboardTemplateUsesFullCanvas(config.data.template.template)
+  );
 }
 
 function contentKind(kind: ContentKind): ContentSummaryT['kind'] {

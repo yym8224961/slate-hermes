@@ -27,6 +27,7 @@ export const ContentSummary = z.object({
   content_etag: z.string(),
   frame_name: z.string().nullable(),
   device_status_bar_text: z.string(),
+  device_full_canvas: z.boolean().optional(),
   image_etag: z.string(),
   audio_etag: z.string().nullable(),
   image_size: z.number().int().nonnegative(),

@@ -88,6 +88,7 @@ BgRefreshScene::~BgRefreshScene() = default;
 
 void BgRefreshScene::OnEnter(SceneContext& ctx) {
     done_posted_->store(false, std::memory_order_release);
+    previous_full_canvas_   = false;
     previous_screen_seeded_ = SeedPreviousFrame(ctx);
     state_                  = State::kWaiting;
     StartDeadlineWatchdog();
@@ -139,13 +140,6 @@ bool BgRefreshScene::SeedPreviousFrame(SceneContext& ctx) {
     if (!ctx.epd)
         return false;
 
-    std::array<uint8_t, epd::kStatusBarSnapshotBytes> status_bar{};
-    const bool status_ok = power_state::LoadStatusBarSnapshot(status_bar.data(), status_bar.size());
-    if (!status_ok) {
-        ESP_LOGW(kTag, "seed skipped reason=status_snapshot_missing");
-        return false;
-    }
-
     std::string gid;
     std::string etag;
     if (!cache::ReadStateMeta(gid, etag) || gid.empty()) {
@@ -168,6 +162,21 @@ bool BgRefreshScene::SeedPreviousFrame(SceneContext& ctx) {
     std::vector<uint8_t> raw;
     if (!cache::ReadFrameImage(gid, seq, raw) || raw.size() != static_cast<size_t>(FrameView::kRawBytes)) {
         ESP_LOGW(kTag, "seed skipped reason=image_miss seq=%d bytes=%u", seq, static_cast<unsigned>(raw.size()));
+        return false;
+    }
+
+    cache::FrameMeta meta;
+    cache::ReadFrameMeta(gid, seq, meta);
+    previous_full_canvas_ = meta.full_canvas;
+    if (meta.full_canvas) {
+        ctx.epd->SeedPreviousRaw1bpp(0, 0, FrameView::kWidth, FrameView::kHeight, raw.data(), raw.size());
+        return true;
+    }
+
+    std::array<uint8_t, epd::kStatusBarSnapshotBytes> status_bar{};
+    const bool status_ok = power_state::LoadStatusBarSnapshot(status_bar.data(), status_bar.size());
+    if (!status_ok) {
+        ESP_LOGW(kTag, "seed skipped reason=status_snapshot_missing");
         return false;
     }
 
@@ -222,20 +231,27 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
         return false;
     }
 
-    root_ = CreateFullscreenRoot();
-    lv_obj_set_height(root_, theme::kStatusBarHeight);
+    if (meta.full_canvas) {
+        ctx.epd->WriteRaw1bpp(0, 0, FrameView::kWidth, FrameView::kHeight, raw.data(), raw.size());
+    } else {
+        root_ = CreateFullscreenRoot();
+        lv_obj_set_height(root_, theme::kStatusBarHeight);
 
-    status_bar_ = std::make_unique<StatusBar>(root_);
-    status_bar_->SetCaption(meta.status_bar_text);
-    RefreshStatusBarFromSensors(ctx, *status_bar_);
-    lv_refr_now(NULL);
+        status_bar_ = std::make_unique<StatusBar>(root_);
+        status_bar_->SetCaption(meta.status_bar_text);
+        RefreshStatusBarFromSensors(ctx, *status_bar_);
+        lv_refr_now(NULL);
 
-    // Background refresh uses LVGL only for the status bar. The frame body is
-    // written as raw 1bpp data so it exactly matches the cached screen format.
-    const int y = theme::kStatusBarHeight;
-    const int h = FrameView::kHeight - y;
-    ctx.epd->WriteRaw1bpp(0, y, FrameView::kWidth, h, raw.data() + y * kBpr, h * kBpr);
-    ctx.epd->RequestUrgentPartialRefresh();
+        // Standard frames keep LVGL's status bar and write only the body from
+        // the cached raw frame.
+        const int y = theme::kStatusBarHeight;
+        const int h = FrameView::kHeight - y;
+        ctx.epd->WriteRaw1bpp(0, y, FrameView::kWidth, h, raw.data() + y * kBpr, h * kBpr);
+    }
+    if (previous_full_canvas_ != meta.full_canvas)
+        ctx.epd->RequestUrgentFullRefresh();
+    else
+        ctx.epd->RequestUrgentPartialRefresh();
     ctx.epd->Unlock();
 
     StartWatcher(ctx.epd);

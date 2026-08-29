@@ -4,6 +4,7 @@ import { useCallback, useMemo, type FormEvent } from 'react';
 import { Sparkles } from 'lucide-react';
 import {
   isAudioDynamicConfig,
+  dashboardTemplateUsesFullCanvas,
   type ContentDetailT,
   type DynamicConfigT,
   type DynamicTypeT,
@@ -84,6 +85,11 @@ export function DynamicContentEditor({
   const showAudio = Boolean(
     dynamicMeta?.supportsAudio && form.config && isAudioDynamicConfig(form.config)
   );
+  const showStatusBar = !(
+    form.config?.type === 'dashboard' &&
+    form.config.template.kind === 'custom' &&
+    dashboardTemplateUsesFullCanvas(form.config.template.template)
+  );
 
   const onSubmit = useCallback(async () => {
     const parsed = form.submitConfig();
@@ -124,7 +130,7 @@ export function DynamicContentEditor({
         onBack={onDone}
         icon={<Sparkles size={24} />}
         title="编辑动态内容"
-        subtitle="动态内容由服务端生成 400×300 1bpp 帧，设备端直接显示并叠加状态栏。"
+        subtitle="动态内容由服务端生成 400×300 1bpp 帧；普通模板叠加状态栏，全屏模板直接使用完整画布。"
       />
 
       <div className="mt-6 fade-up fade-up-1">
@@ -139,6 +145,7 @@ export function DynamicContentEditor({
               livePending={form.previewPending}
               hasConfig={!!form.config}
               caption={form.caption}
+              showStatusBar={showStatusBar}
             />
           }
           header={

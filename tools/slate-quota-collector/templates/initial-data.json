@@ -2,52 +2,134 @@
   "version": 1,
   "data": {
     "schema_version": 1,
-    "generated_at": "2026-08-12T08:30:00Z",
+    "generated_at": "2026-08-29T08:30:00Z",
     "codex": {
       "status": "ok",
-      "source_collected_at": "2026-08-12T08:30:00Z",
-      "header_left": "CODEX · PROLITE",
-      "summary_label": "最低剩余 90%",
+      "source_collected_at": "2026-08-29T08:30:00Z",
+      "header_left": "CODEX",
+      "summary_label": "最低剩余 68%",
       "rolling": {
-        "label": "5 小时",
+        "label": "7 天",
+        "remaining_percent": 68,
+        "value_text": "剩余 68%",
+        "reset_at": "2026-09-03T08:30:00Z"
+      },
+      "weekly": {
+        "label": "",
         "remaining_percent": 0,
         "value_text": "未提供",
         "reset_at": null
       },
-      "weekly": {
-        "label": "本周",
-        "remaining_percent": 90,
-        "value_text": "剩余 90%",
-        "reset_at": "2026-08-19T06:06:00+08:00"
-      },
-      "footer_left": "周重置 08-19 06:06",
-      "footer_right": "Credits 128.50"
+      "footer_left": "",
+      "footer_right": "",
+      "reset_credits": 2
     },
-    "opencode_go": {
-      "status": "ok",
-      "source_collected_at": "2026-08-12T08:30:00Z",
-      "header_left": "OPENCODE GO",
-      "summary_label": "最低剩余 71%",
-      "rolling": {
-        "label": "5 小时",
-        "remaining_percent": 81,
-        "value_text": "剩余 81%",
-        "reset_at": "2026-08-12T18:30:00+08:00"
+    "quota": {
+      "single_window": true,
+      "dual_window": false,
+      "date_label": "8月29日 周六",
+      "heading": "7 天额度",
+      "primary": {
+        "name": "7 天",
+        "remaining_percent": 68,
+        "remaining_text": "68",
+        "used_text": "已用 32%",
+        "reset_text": "重置 5天 0小时 0分",
+        "single_one_digit": false,
+        "single_two_digits": true,
+        "single_three_digits": false,
+        "dual_one_digit": false,
+        "dual_two_digits": false,
+        "dual_three_digits": false
       },
-      "weekly": {
-        "label": "本周",
-        "remaining_percent": 71,
-        "value_text": "剩余 71%",
-        "reset_at": "2026-08-16T10:00:00+08:00"
+      "secondary": {
+        "name": "",
+        "remaining_percent": 0,
+        "remaining_text": "0",
+        "used_text": "已用 0%",
+        "reset_text": "重置 --",
+        "single_one_digit": false,
+        "single_two_digits": false,
+        "single_three_digits": false,
+        "dual_one_digit": false,
+        "dual_two_digits": false,
+        "dual_three_digits": false
       },
-      "monthly": {
-        "label": "本月",
-        "remaining_percent": 75,
-        "value_text": "剩余 75%",
-        "reset_at": "2026-09-01T00:00:00+08:00"
+      "message": "还能蹬，别急着坐下。",
+      "credits_visible": true,
+      "credits_text": "重置额度 2"
+    },
+    "reset_radar": {
+      "status": "active_watch",
+      "title": "非官方重置雷达",
+      "headline": "活跃预测",
+      "short_label": "雷达 70%",
+      "detail": "预计今日 18:00–20:00",
+      "signal_percent": 70,
+      "reset_chance_percent": 70,
+      "stale": false,
+      "source_observed_at": "2026-08-29T08:25:00Z",
+      "status_text": "预计今日 18:00–20:00",
+      "show_probability": true,
+      "probability_text": "70%",
+      "show_narrow_gauge": true,
+      "show_wide_gauge": false
+    },
+    "task_activity": {
+      "availability": "available",
+      "stale": false,
+      "row1": {
+        "visible": true,
+        "normal_visible": true,
+        "stale_visible": false,
+        "state_label": "执行中",
+        "title": "移植 Slate 额度面板"
       },
-      "footer_left": "下次重置 08-12 18:30",
-      "footer_right": "余额接续 关闭"
+      "row2": {
+        "visible": true,
+        "normal_visible": true,
+        "stale_visible": false,
+        "state_label": "已中断",
+        "title": "整理 Slate 自定义模板"
+      },
+      "row3": {
+        "visible": true,
+        "normal_visible": true,
+        "stale_visible": false,
+        "state_label": "本轮完成",
+        "title": "检查 Codex 额度"
+      },
+      "hidden_count": 1,
+      "hidden_text": "另有 1 项",
+      "stale_label": "",
+      "unavailable_title": "",
+      "unavailable_detail": "",
+      "show_unavailable": false,
+      "show_stale": false,
+      "stored_rows": [
+        {
+          "title": "移植 Slate 额度面板",
+          "state": "running",
+          "activity_at": "2026-08-29T08:29:00Z"
+        },
+        {
+          "title": "整理 Slate 自定义模板",
+          "state": "interrupted",
+          "activity_at": "2026-08-29T08:10:00Z"
+        },
+        {
+          "title": "检查 Codex 额度",
+          "state": "turn_completed",
+          "activity_at": "2026-08-29T08:20:00Z"
+        }
+      ]
+    },
+    "footer": {
+      "show_divider": true,
+      "show_hidden": true,
+      "show_updated": true,
+      "hidden_text": "另有 1 项",
+      "update_text": "画面更新 16:30"
     }
   }
 }

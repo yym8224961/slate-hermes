@@ -2,55 +2,72 @@ import { z } from 'zod';
 
 const DeviceRect = z.object({
   x: z.number().int().min(0).max(399),
-  y: z.number().int().min(24).max(299),
+  y: z.number().int().min(0).max(299),
   w: z.number().int().min(1).max(400),
-  h: z.number().int().min(1).max(276),
+  h: z.number().int().min(1).max(300),
 });
 
 const BindingText = z.string().min(1).max(160);
 const TemplateColor = z.enum(['black', 'white']);
-const DashboardTextFontSize = z.union([z.literal(12), z.literal(16)]);
+const DashboardTextFontSize = z.union([z.literal(12), z.literal(16), z.literal(32), z.literal(48)]);
+const DashboardProgressTextFontSize = z.union([z.literal(12), z.literal(16)]);
 const DashboardProgressBarHeight = z.number().int().min(4).max(24);
+const DashboardBlockVisibility = z.union([z.boolean(), BindingText]).optional();
+const VisibleDeviceRect = DeviceRect.extend({ visible: DashboardBlockVisibility });
+const MAX_DASHBOARD_TEMPLATE_BLOCKS = 64;
 
 export const DashboardTemplateBlock = z.discriminatedUnion('type', [
-  DeviceRect.extend({
+  VisibleDeviceRect.extend({
     type: z.literal('text'),
     value: BindingText,
     font_size: DashboardTextFontSize.default(16),
     align: z.enum(['left', 'center', 'right']).default('left'),
     color: TemplateColor.default('black'),
     max_lines: z.number().int().min(1).max(4).default(1),
+    ellipsis: z.boolean().default(true),
   }),
-  DeviceRect.extend({
+  VisibleDeviceRect.extend({
     type: z.literal('metric'),
     label: BindingText,
     value: BindingText,
     sparkline: z.union([BindingText, z.array(z.number()).min(2).max(60)]).optional(),
   }),
-  DeviceRect.extend({
+  VisibleDeviceRect.extend({
     type: z.literal('progress'),
     label: BindingText,
     value: BindingText.optional(),
     max: BindingText.optional(),
     value_text: BindingText.optional(),
     percentage: z.union([BindingText, z.number().min(0).max(100)]).optional(),
-    label_font_size: DashboardTextFontSize.default(12),
-    value_font_size: DashboardTextFontSize.default(12),
+    label_font_size: DashboardProgressTextFontSize.default(12),
+    value_font_size: DashboardProgressTextFontSize.default(12),
     bar_height: DashboardProgressBarHeight.default(9),
   }),
-  DeviceRect.extend({
+  VisibleDeviceRect.extend({
     type: z.literal('sparkline'),
     values: z.union([BindingText, z.array(z.number()).min(2).max(60)]),
+  }),
+  VisibleDeviceRect.extend({
+    type: z.literal('segments'),
+    percentage: z.union([BindingText, z.number().min(0).max(100)]),
+    count: z.number().int().min(2).max(20).default(10),
+    gap: z.number().int().min(1).max(12).default(3),
+  }),
+  VisibleDeviceRect.extend({
+    type: z.literal('bar'),
+    percentage: z.union([BindingText, z.number().min(0).max(100)]),
+    color: TemplateColor.default('black'),
   }),
   z.object({
     type: z.literal('line'),
     x1: z.number().int().min(0).max(399),
-    y1: z.number().int().min(24).max(299),
+    y1: z.number().int().min(0).max(299),
     x2: z.number().int().min(0).max(399),
-    y2: z.number().int().min(24).max(299),
+    y2: z.number().int().min(0).max(299),
     style: z.enum(['solid', 'dashed']).default('solid'),
+    visible: DashboardBlockVisibility,
   }),
-  DeviceRect.extend({
+  VisibleDeviceRect.extend({
     type: z.literal('rect'),
     stroke: z.boolean().default(true),
     fill: z.enum(['none', 'black', 'white']).default('none'),
@@ -62,20 +79,49 @@ export const DashboardTemplate = z
   .object({
     version: z.literal(1).default(1),
     name: z.string().max(48).optional(),
-    blocks: z.array(DashboardTemplateBlock).min(1).max(32),
+    canvas: z.enum(['content', 'full']).default('content'),
+    blocks: z.array(DashboardTemplateBlock).min(1).max(MAX_DASHBOARD_TEMPLATE_BLOCKS),
   })
   .superRefine((template, ctx) => {
     template.blocks.forEach((block, i) => {
-      if (!('x' in block)) return;
-      if (block.x + block.w > 400) {
-        ctx.addIssue({ code: 'custom', path: ['blocks', i], message: 'x + w 超出屏幕宽度 400' });
+      if ('x' in block) {
+        if (block.x + block.w > 400) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['blocks', i],
+            message: 'x + w 超出屏幕宽度 400',
+          });
+        }
+        if (block.y + block.h > 300) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['blocks', i],
+            message: 'y + h 超出屏幕高度 300',
+          });
+        }
+        if (template.canvas === 'content' && block.y < 24) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['blocks', i, 'y'],
+            message: 'content 画布必须保留顶部 24px 状态栏',
+          });
+        }
+        return;
       }
-      if (block.y + block.h > 300) {
-        ctx.addIssue({ code: 'custom', path: ['blocks', i], message: 'y + h 超出屏幕高度 300' });
+      if (template.canvas === 'content' && (block.y1 < 24 || block.y2 < 24)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['blocks', i],
+          message: 'content 画布必须保留顶部 24px 状态栏',
+        });
       }
     });
   });
 export type DashboardTemplateT = z.infer<typeof DashboardTemplate>;
+
+export function dashboardTemplateUsesFullCanvas(template: DashboardTemplateT): boolean {
+  return template.canvas === 'full';
+}
 
 export const DashboardSystemTemplateIdValues = ['ai_usage_stats', 'ai_quota_monitor'] as const;
 export const DashboardSystemTemplateId = z.enum(DashboardSystemTemplateIdValues);

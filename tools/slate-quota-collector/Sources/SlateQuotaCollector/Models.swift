@@ -11,6 +11,14 @@ enum ProviderFailure: Error, Equatable, Sendable {
     case transport(publicCode: String)
 }
 
+enum PublicErrorCode {
+    static func isValid(_ value: String) -> Bool {
+        guard !value.isEmpty, value.count <= 64 else { return false }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_")
+        return value.unicodeScalars.allSatisfy(allowed.contains)
+    }
+}
+
 struct QuotaWindow: Codable, Equatable, Sendable {
     let label: String
     let remainingPercent: Int
@@ -27,6 +35,7 @@ struct CodexDisplaySnapshot: Codable, Equatable, Sendable {
     let weekly: QuotaWindow
     let footerLeft: String
     let footerRight: String
+    var resetCredits: Int = 0
 }
 
 struct OpenCodeGoDisplaySnapshot: Codable, Equatable, Sendable {
@@ -41,15 +50,109 @@ struct OpenCodeGoDisplaySnapshot: Codable, Equatable, Sendable {
     let footerRight: String
 }
 
+struct CodexQuotaPanelWindow: Codable, Equatable, Sendable {
+    let name: String
+    let remainingPercent: Int
+    let remainingText: String
+    let usedText: String
+    let resetText: String
+    let singleOneDigit: Bool
+    let singleTwoDigits: Bool
+    let singleThreeDigits: Bool
+    let dualOneDigit: Bool
+    let dualTwoDigits: Bool
+    let dualThreeDigits: Bool
+}
+
+struct CodexQuotaPanel: Codable, Equatable, Sendable {
+    let singleWindow: Bool
+    let dualWindow: Bool
+    let dateLabel: String
+    let heading: String
+    let primary: CodexQuotaPanelWindow
+    let secondary: CodexQuotaPanelWindow
+    let message: String
+    let creditsVisible: Bool
+    let creditsText: String
+}
+
+struct DashboardFooter: Codable, Equatable, Sendable {
+    let showDivider: Bool
+    let showHidden: Bool
+    let showUpdated: Bool
+    let hiddenText: String
+    let updateText: String
+}
+
 struct SlateDashboardData: Codable, Equatable, Sendable {
     let schemaVersion: Int
     let generatedAt: Date
     let codex: CodexDisplaySnapshot
     let opencodeGo: OpenCodeGoDisplaySnapshot
+    let quota: CodexQuotaPanel
+    let resetRadar: ResetRadarDisplaySnapshot
+    let taskActivity: CodexTaskActivityDisplaySnapshot
+    let footer: DashboardFooter
+    let includesOpenCodeGo: Bool
 
     enum CodingKeys: String, CodingKey {
-        case schemaVersion, generatedAt, codex
+        case schemaVersion, generatedAt, codex, quota, resetRadar, taskActivity, footer
         case opencodeGo = "opencode_go"
+    }
+
+    init(
+        schemaVersion: Int,
+        generatedAt: Date,
+        codex: CodexDisplaySnapshot,
+        opencodeGo: OpenCodeGoDisplaySnapshot,
+        resetRadar: ResetRadarDisplaySnapshot = .unavailable,
+        taskActivity: CodexTaskActivityDisplaySnapshot = .unavailable,
+        includesOpenCodeGo: Bool = true
+    ) {
+        self.schemaVersion = schemaVersion
+        self.generatedAt = generatedAt
+        self.codex = codex
+        self.opencodeGo = opencodeGo
+        quota = CodexDashboardProjection.quota(from: codex, now: generatedAt)
+        self.resetRadar = resetRadar
+        self.taskActivity = taskActivity
+        footer = CodexDashboardProjection.footer(
+            now: generatedAt,
+            hiddenTaskCount: taskActivity.hiddenCount
+        )
+        self.includesOpenCodeGo = includesOpenCodeGo
+    }
+
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        generatedAt = try container.decode(Date.self, forKey: .generatedAt)
+        codex = try container.decode(CodexDisplaySnapshot.self, forKey: .codex)
+        opencodeGo = try container.decodeIfPresent(OpenCodeGoDisplaySnapshot.self, forKey: .opencodeGo)
+            ?? .unavailable(at: generatedAt)
+        quota = try container.decodeIfPresent(CodexQuotaPanel.self, forKey: .quota)
+            ?? CodexDashboardProjection.quota(from: codex, now: generatedAt)
+        resetRadar = try container.decodeIfPresent(ResetRadarDisplaySnapshot.self, forKey: .resetRadar)
+            ?? .unavailable
+        taskActivity = try container.decodeIfPresent(CodexTaskActivityDisplaySnapshot.self, forKey: .taskActivity)
+            ?? .unavailable
+        footer = try container.decodeIfPresent(DashboardFooter.self, forKey: .footer)
+            ?? CodexDashboardProjection.footer(now: generatedAt, hiddenTaskCount: taskActivity.hiddenCount)
+        includesOpenCodeGo = container.contains(.opencodeGo)
+    }
+
+    func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(generatedAt, forKey: .generatedAt)
+        try container.encode(codex, forKey: .codex)
+        if includesOpenCodeGo {
+            try container.encode(opencodeGo, forKey: .opencodeGo)
+        }
+        try container.encode(quota, forKey: .quota)
+        try container.encode(resetRadar, forKey: .resetRadar)
+        try container.encode(taskActivity, forKey: .taskActivity)
+        try container.encode(footer, forKey: .footer)
     }
 }
 
@@ -127,6 +230,7 @@ struct CodexRateLimitsReadResult: Codable, Equatable, Sendable {
     let rateLimitsByLimitId: [String: CodexRateLimit]
     let credits: CodexCredits?
     let planType: String?
+    var rateLimitResetCredits: CodexResetCredits? = nil
 
     var selectedCodexLimit: CodexRateLimit? {
         rateLimitsByLimitId["codex"] ?? (rateLimits?.limitId == "codex" ? rateLimits : nil)
@@ -138,6 +242,33 @@ struct CodexRateLimitsReadResult: Codable, Equatable, Sendable {
 
     var selectedCodexPlanType: String? {
         selectedCodexLimit?.planType ?? planType
+    }
+
+    var strictlyValidatedCodexLimit: CodexRateLimit? {
+        guard let limit = selectedCodexLimit,
+              let primary = limit.primary,
+              primary.isStrictlyValid,
+              limit.secondary.map(\.isStrictlyValid) ?? true,
+              (rateLimitResetCredits?.availableCount ?? 0) >= 0 else {
+            return nil
+        }
+        return limit
+    }
+}
+
+struct CodexResetCredits: Codable, Equatable, Sendable {
+    let availableCount: Int
+}
+
+private extension CodexRateLimitWindow {
+    var isStrictlyValid: Bool {
+        usedPercent.isFinite
+            && usedPercent.rounded(.towardZero) == usedPercent
+            && (0 ... 100).contains(usedPercent)
+            && windowDurationMins > 0
+            && resetsAt.map {
+                $0.isFinite && $0.rounded(.towardZero) == $0
+            } == true
     }
 }
 
@@ -183,6 +314,8 @@ struct CollectorSnapshot: Codable, Equatable, Sendable {
     let schemaVersion: Int
     var lastGood: SanitizedLastGood
     var runtimeState: CollectorRuntimeState
+    var resetRadar: ResetRadarCache? = nil
+    var taskActivity: CodexTaskActivityDisplaySnapshot? = nil
 
     static var empty: Self {
         Self(
@@ -197,7 +330,9 @@ struct CollectorSnapshot: Codable, Equatable, Sendable {
                 lastPushAt: nil,
                 providerStatuses: [:],
                 lastErrorCodes: [:]
-            )
+            ),
+            resetRadar: nil,
+            taskActivity: nil
         )
     }
 }
@@ -231,5 +366,14 @@ extension JSONEncoder {
         encoder.keyEncodingStrategy = .convertToSnakeCase
         encoder.dateEncodingStrategy = .iso8601
         return encoder
+    }
+}
+
+extension JSONDecoder {
+    static var slate: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }

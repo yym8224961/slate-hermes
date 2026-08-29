@@ -122,7 +122,10 @@ import Testing
             timeout: .seconds(2)
         )
 
-        #expect(try CodexRateLimitClient.decode(response).selectedCodexLimit == nil)
+        let responseObject = try #require(
+            JSONSerialization.jsonObject(with: response) as? [String: Any]
+        )
+        #expect((responseObject["id"] as? NSNumber)?.intValue == 2)
         #expect(try String(contentsOf: inputState, encoding: .utf8) == "open\n")
         let pidText = try String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
         let pid = try #require(pid_t(pidText))

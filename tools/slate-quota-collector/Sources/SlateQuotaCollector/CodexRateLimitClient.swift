@@ -64,6 +64,9 @@ struct CodexRateLimitClient: CodexRateLimitReading, Sendable {
         guard let result = response.result else {
             throw CodexClientError.invalidResponse
         }
+        guard result.strictlyValidatedCodexLimit != nil else {
+            throw CodexClientError.invalidResponse
+        }
         return result
     }
 

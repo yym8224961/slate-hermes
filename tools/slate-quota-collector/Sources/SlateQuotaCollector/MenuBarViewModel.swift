@@ -6,6 +6,7 @@ struct MenuBarPresentation: Equatable, Sendable {
     let automaticCollectionTitle: String
     let codexLine: String
     let openCodeGoLine: String
+    let resetRadarLine: String
     let lastPushLine: String
     let busyLine: String?
 }
@@ -29,6 +30,7 @@ enum MenuBarBusyState: Equatable, Sendable {
 struct MenuBarStatusSnapshot: Equatable, Sendable {
     let codexSummary: String
     let openCodeGoSummary: String
+    var resetRadarSummary: String = "信号不可用"
     let lastSuccessAt: Date?
     let lastPushAt: Date?
     let publicErrorCodes: [String: String]
@@ -36,6 +38,7 @@ struct MenuBarStatusSnapshot: Equatable, Sendable {
     static let unavailable = Self(
         codexSummary: "无可信数据",
         openCodeGoSummary: "无可信数据",
+        resetRadarSummary: "信号不可用",
         lastSuccessAt: nil,
         lastPushAt: nil,
         publicErrorCodes: ["cache": "cache_unavailable"]
@@ -64,10 +67,24 @@ struct SnapshotMenuBarStatusReader: MenuBarStatusReading, Sendable {
                 snapshot: snapshot.lastGood.openCodeGo,
                 status: snapshot.runtimeState.providerStatuses["opencode_go"]
             ),
+            resetRadarSummary: Self.resetRadarSummary(snapshot.resetRadar),
             lastSuccessAt: snapshot.runtimeState.lastSuccessAt,
             lastPushAt: snapshot.runtimeState.lastPushAt,
             publicErrorCodes: snapshot.runtimeState.lastErrorCodes
         )
+    }
+
+    private static func resetRadarSummary(_ cache: ResetRadarCache?) -> String {
+        guard let cache else { return "信号不可用" }
+        let display = ResetRadarStateMachine.resolve(cache: cache, fetch: nil, now: Date()).display
+        switch display.status {
+        case .unavailable: return "信号不可用"
+        case .noActiveWatch: return "暂无活跃预测"
+        case .confirmedRegular: return "普通重置已确认"
+        case .confirmedCredit: return "重置额度已确认"
+        case .activeWatch:
+            return display.resetChancePercent.map { "活跃预测 · \($0)%" } ?? "活跃预测"
+        }
     }
 
     private static func codexSummary(
@@ -137,6 +154,7 @@ struct MenuBarViewModel: Sendable {
             automaticCollectionTitle: "每 5 分钟自动采集",
             codexLine: Self.safeProviderSummary(snapshot.codexSummary),
             openCodeGoLine: Self.safeProviderSummary(snapshot.openCodeGoSummary),
+            resetRadarLine: Self.safeRadarSummary(snapshot.resetRadarSummary),
             lastPushLine: Self.dateText(snapshot.lastPushAt, now: now),
             busyLine: busy?.displayText
         )
@@ -175,6 +193,18 @@ struct MenuBarViewModel: Sendable {
             return "internal_failure"
         }
         return value
+    }
+
+    static func safeRadarSummary(_ value: String) -> String {
+        let fixed = ["信号不可用", "暂无活跃预测", "普通重置已确认", "重置额度已确认", "活跃预测"]
+        if fixed.contains(value) { return value }
+        let prefix = "活跃预测 · "
+        guard value.hasPrefix(prefix), value.hasSuffix("%"),
+              let percent = Int(value.dropFirst(prefix.count).dropLast()),
+              (0 ... 100).contains(percent) else {
+            return "信号不可用"
+        }
+        return "\(prefix)\(percent)%"
     }
 
     static func dateText(_ value: Date?, now: Date = Date()) -> String {

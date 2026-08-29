@@ -208,7 +208,7 @@ extension CollectorRuntimeState {
         }
         try StrictSnapshotSchema.validateProviderKeys(value.providerStatuses.keys)
         try StrictSnapshotSchema.validateProviderKeys(value.lastErrorCodes.keys)
-        guard value.lastErrorCodes.values.allSatisfy(StrictSnapshotSchema.isPublicErrorCode) else {
+        guard value.lastErrorCodes.values.allSatisfy(PublicErrorCode.isValid) else {
             throw SnapshotCacheError.cacheCorrupt
         }
         return value
@@ -220,7 +220,7 @@ extension CollectorSnapshot {
         let object = try StrictSnapshotSchema.object(from: data)
         try StrictSnapshotSchema.requireKeys(
             object,
-            allowed: ["schemaVersion", "lastGood", "runtimeState"],
+            allowed: ["schemaVersion", "lastGood", "runtimeState", "resetRadar", "taskActivity"],
             required: ["schemaVersion", "lastGood", "runtimeState"]
         )
         guard let lastGoodObject = object["lastGood"],
@@ -240,6 +240,10 @@ extension CollectorSnapshot {
 
         let value: Self = try StrictSnapshotSchema.decode(Self.self, from: data)
         guard value.schemaVersion == 1 else { throw SnapshotCacheError.cacheCorrupt }
+        try value.resetRadar?.validate()
+        if let taskActivity = value.taskActivity {
+            try StrictSnapshotSchema.validateTaskActivity(taskActivity)
+        }
         return value
     }
 }
@@ -249,7 +253,7 @@ private enum StrictSnapshotSchema {
         "authorization", "apikey", "token", "pushurl", "contentid",
         "ratelimits", "rollingusage",
     ])
-    private static let providerKeys = Set(["codex", "opencode_go"])
+    private static let providerKeys = Set(["codex", "opencode_go", "reset_radar", "task_activity"])
 
     static func object(from data: Data) throws -> [String: Any] {
         let raw: Any
@@ -292,10 +296,15 @@ private enum StrictSnapshotSchema {
         }
         var keys = Set([
             "status", "sourceCollectedAt", "headerLeft", "summaryLabel",
-            "rolling", "weekly", "footerLeft", "footerRight",
+            "rolling", "weekly", "footerLeft", "footerRight", "resetCredits",
         ])
+        let required = keys.subtracting(["resetCredits"])
         if includesMonthly { keys.insert("monthly") }
-        try requireKeys(snapshot, allowed: keys, required: keys)
+        try requireKeys(
+            snapshot,
+            allowed: keys,
+            required: includesMonthly ? required.union(["monthly"]) : required
+        )
         try validateWindow(snapshot["rolling"])
         try validateWindow(snapshot["weekly"])
         if includesMonthly { try validateWindow(snapshot["monthly"]) }
@@ -307,10 +316,16 @@ private enum StrictSnapshotSchema {
         }
     }
 
-    static func isPublicErrorCode(_ value: String) -> Bool {
-        guard !value.isEmpty, value.count <= 64 else { return false }
-        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyz0123456789_")
-        return value.unicodeScalars.allSatisfy(allowed.contains)
+    static func validateTaskActivity(_ value: CodexTaskActivityDisplaySnapshot) throws {
+        guard value.hiddenCount >= 0,
+              value.rows.count <= 3,
+              value.rows.allSatisfy({
+                  !$0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                      && $0.title.count <= 1_024
+                      && $0.activityAt.timeIntervalSince1970.isFinite
+              }) else {
+            throw SnapshotCacheError.cacheCorrupt
+        }
     }
 
     private static func validateWindow(_ raw: Any?) throws {

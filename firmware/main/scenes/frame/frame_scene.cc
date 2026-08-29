@@ -10,8 +10,8 @@
 #include "events/ui_event_log.h"
 #include "scenes/core/scene_stack.h"
 #include "scenes/settings/settings_scene.h"
-#include "scenes/todo/todo_scene.h"
 #include "scenes/splash/splash_scene.h"
+#include "scenes/todo/todo_scene.h"
 #include "storage/cache/cache.h"
 #include "ui/frame_view.h"
 #include "ui/status_bar.h"
@@ -171,8 +171,7 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
                     // 待办页(idx=4)按确认键进入交互模式
                     if (idx_ == 4) {
                         ESP_LOGD(kTag, "button short btn=enter action=todo_interact");
-                        ctx.stack->RequestPush(
-                            std::make_unique<TodoScene>(ctx, "fqfo730iqrgqfyu3c1kxan2q"));
+                        ctx.stack->RequestPush(std::make_unique<TodoScene>(ctx, "fqfo730iqrgqfyu3c1kxan2q"));
                     } else {
                         ESP_LOGD(kTag, "button short btn=enter action=next_frame");
                         NextFrame(ctx);
@@ -252,7 +251,8 @@ void FrameScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
             break;
         }
         case UiEventKind::kMinuteTick:
-            RefreshStatusBarAndRender(ctx, status_bar_.get());
+            if (!current_full_canvas_)
+                RefreshStatusBarAndRender(ctx, status_bar_.get());
             break;
         case UiEventKind::kUnbound: {
             ESP_LOGW(kTag, "device unbound action=splash");
@@ -288,14 +288,18 @@ void FrameScene::PrevFrame(SceneContext& ctx) {
 
 void FrameScene::CycleGroup(SceneContext& ctx, bool next) {
     ESP_LOGI(kTag, "cycle group direction=%s gid=%s idx=%d", next ? "next" : "prev", gid_.c_str(), idx_);
-    SyncRenderIfChanged(
-        ctx, [this]() { return status_bar_ && status_bar_->SetCaption("切换内容组…"); },
-        /*force_full*/ false);
+    if (!current_full_canvas_) {
+        SyncRenderIfChanged(
+            ctx, [this]() { return status_bar_ && status_bar_->SetCaption("切换内容组…"); },
+            /*force_full*/ false);
+    }
     if (ctx.cycle_group)
         ctx.cycle_group(next);
 }
 
 void FrameScene::HandleGroupSyncStatus(SceneContext& ctx, const UiEvent& e) {
+    if (current_full_canvas_)
+        return;
     ESP_LOGD(kTag, "group sync status mode=%s gid=%s name=%s current=%u total=%u",
              evt::log::GroupSyncStatusModeName(e.u.group_sync.mode), e.u.group_sync.gid, e.u.group_sync.name,
              static_cast<unsigned>(e.u.group_sync.current), static_cast<unsigned>(e.u.group_sync.total));
@@ -308,6 +312,8 @@ void FrameScene::HandleGroupSyncStatus(SceneContext& ctx, const UiEvent& e) {
 }
 
 void FrameScene::RefreshStatusBarForCharge(SceneContext& ctx, const UiEvent& e) {
+    if (current_full_canvas_)
+        return;
     const auto& c   = e.u.charge;
     int         pct = -1;
     if (!c.no_battery && ctx.read_battery) {
@@ -320,6 +326,8 @@ void FrameScene::RefreshStatusBarForCharge(SceneContext& ctx, const UiEvent& e) 
 }
 
 void FrameScene::RefreshStatusBarForBattery(SceneContext& ctx, const UiEvent& e) {
+    if (current_full_canvas_)
+        return;
     bool charging = false;
     bool full     = false;
     if (ctx.read_charge) {
@@ -336,13 +344,15 @@ void FrameScene::RefreshStatusBarForBattery(SceneContext& ctx, const UiEvent& e)
 }
 
 void FrameScene::RefreshStatusBarForWifi(SceneContext& ctx, const UiEvent& e) {
+    if (current_full_canvas_)
+        return;
     SyncRenderIfChanged(
         ctx, [this, &e]() { return status_bar_ && status_bar_->SetWifi(e.u.wifi.connected, e.u.wifi.rssi); },
         /*force_full*/ false);
 }
 
 void FrameScene::RestoreStatusBarCaption(SceneContext& ctx) {
-    if (cached_status_bar_text_.empty())
+    if (current_full_canvas_ || cached_status_bar_text_.empty())
         return;
     SyncRenderIfChanged(
         ctx, [this]() { return status_bar_ && status_bar_->SetCaption(cached_status_bar_text_); },
@@ -380,23 +390,32 @@ void FrameScene::LoadFrame(SceneContext& ctx, int idx, bool force_full, AudioBeh
     }
     cache::FrameMeta meta;
     cache::ReadFrameMeta(gid_, idx, meta);
+    const bool layout_changed = current_full_canvas_ != meta.full_canvas;
 
     if (!ctx.epd->Lock(2000)) {
         ESP_LOGW(kTag, "load frame failed idx=%d reason=epd_lock_timeout", idx);
         return;
     }
     ESP_LOGD(kTag, "lvgl refresh begin scene=frame idx=%d", idx);
-    if (status_bar_)
-        status_bar_->SetCaption(meta.status_bar_text);
+    if (status_bar_) {
+        if (meta.full_canvas) {
+            status_bar_->Hide();
+        } else {
+            status_bar_->Show();
+            status_bar_->SetCaption(meta.status_bar_text);
+            RefreshStatusBarFromSensors(ctx, *status_bar_);
+        }
+    }
     cached_status_bar_text_ = meta.status_bar_text;
+    current_full_canvas_    = meta.full_canvas;
     lv_refr_now(NULL);
     ESP_LOGD(kTag, "lvgl refresh done scene=frame idx=%d", idx);
     ctx.epd->Unlock();
 
     if (frame_view_)
-        frame_view_->SetFrame(ctx.epd, raw);
+        frame_view_->SetFrame(ctx.epd, raw, meta.full_canvas);
 
-    const bool full = force_full || (!first_loaded_ && first_load_full_refresh_);
+    const bool full = force_full || layout_changed || (!first_loaded_ && first_load_full_refresh_);
     first_loaded_   = true;
     if (full)
         ctx.epd->RequestUrgentFullRefresh();
@@ -437,6 +456,8 @@ void FrameScene::ApplyEmptyState() {
             lv_obj_add_flag(empty_label_, LV_OBJ_FLAG_HIDDEN);
     }
     if (empty && status_bar_) {
+        current_full_canvas_ = false;
+        status_bar_->Show();
         status_bar_->SetCaption("");
         cached_status_bar_text_.clear();
     }

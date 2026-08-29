@@ -10,6 +10,8 @@ enum CollectorSideEffect: Equatable, Sendable {
     case openCodeCredentialRead
     case codexRead
     case openCodeRead
+    case taskActivityRead
+    case resetRadarRead
     case snapshotPublish
     case slateCredentialRead
     case slatePush
@@ -62,6 +64,9 @@ struct CollectorService: Sendable {
     private let collectionDeadline: Duration
     private let beforeSideEffect: BeforeSideEffect
     private let onDeadlinePublished: OnDeadlinePublished
+    private let codexTaskActivity: (any CodexTaskActivityReading)?
+    private let resetRadar: (any ResetRadarReading)?
+    private let includeOpenCodeGo: Bool
 
     init(
         codex: any CodexRateLimitReading,
@@ -77,7 +82,10 @@ struct CollectorService: Sendable {
         deadlineSleep: @escaping DeadlineSleep = { try await Task.sleep(for: $0) },
         collectionDeadline: Duration = .seconds(45),
         beforeSideEffect: @escaping BeforeSideEffect = { _ in },
-        onDeadlinePublished: @escaping OnDeadlinePublished = {}
+        onDeadlinePublished: @escaping OnDeadlinePublished = {},
+        codexTaskActivity: (any CodexTaskActivityReading)? = nil,
+        resetRadar: (any ResetRadarReading)? = nil,
+        includeOpenCodeGo: Bool = true
     ) {
         self.codex = codex
         self.openCodeGo = openCodeGo
@@ -93,6 +101,9 @@ struct CollectorService: Sendable {
         self.collectionDeadline = collectionDeadline
         self.beforeSideEffect = beforeSideEffect
         self.onDeadlinePublished = onDeadlinePublished
+        self.codexTaskActivity = codexTaskActivity
+        self.resetRadar = resetRadar
+        self.includeOpenCodeGo = includeOpenCodeGo
     }
 
     /// Owns both the collection and deadline tasks until they have terminated.
@@ -166,23 +177,42 @@ struct CollectorService: Sendable {
         try deadlineGate.checkActive()
 
         let credential: Result<String, ProviderFailure>
-        do {
-            await beforeSideEffect(.openCodeCredentialRead)
-            let value = try deadlineGate.performSynchronousIfActive {
-                try secrets.read(account: openCodeKeyAccount)
+        if includeOpenCodeGo {
+            do {
+                await beforeSideEffect(.openCodeCredentialRead)
+                let value = try deadlineGate.performSynchronousIfActive {
+                    try secrets.read(account: openCodeKeyAccount)
+                }
+                credential = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    ? .failure(.unconfigured)
+                    : .success(value)
+            } catch {
+                if error is CancellationError { throw error }
+                credential = .failure(.unconfigured)
             }
-            credential = value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? .failure(.unconfigured)
-                : .success(value)
-        } catch {
-            if error is CancellationError { throw error }
+        } else {
             credential = .failure(.unconfigured)
         }
         try deadlineGate.checkActive()
 
+        let observationNow = now()
         async let codexRaw = readCodex(deadlineGate: deadlineGate)
-        async let openCodeRaw = readOpenCodeGo(credential: credential, deadlineGate: deadlineGate)
-        let (rawCodex, rawOpenCode) = try await (codexRaw, openCodeRaw)
+        async let openCodeRaw = includeOpenCodeGo
+            ? readOpenCodeGo(credential: credential, deadlineGate: deadlineGate)
+            : ProviderOutcome<OpenCodeGoUsageResponse>.failure(.unconfigured)
+        async let taskActivityResult = readTaskActivity(
+            cached: persistedSnapshot.taskActivity,
+            now: observationNow,
+            deadlineGate: deadlineGate
+        )
+        async let radarResult = readResetRadar(
+            cache: persistedSnapshot.resetRadar ?? .empty,
+            now: observationNow,
+            deadlineGate: deadlineGate
+        )
+        let (rawCodex, rawOpenCode, taskActivity, radar) = try await (
+            codexRaw, openCodeRaw, taskActivityResult, radarResult
+        )
         try deadlineGate.checkActive()
 
         let collectedAt = now()
@@ -191,7 +221,12 @@ struct CollectorService: Sendable {
             openCodeGo: normalizeOpenCodeGo(rawOpenCode, collectedAt: collectedAt),
             lastGood: persistedSnapshot.lastGood,
             state: persistedSnapshot.runtimeState,
-            now: collectedAt
+            now: collectedAt,
+            resetRadar: radar.display,
+            taskActivity: taskActivity.snapshot,
+            resetRadarErrorCode: radar.publicErrorCode,
+            taskActivityErrorCode: taskActivity.publicErrorCode,
+            includeOpenCodeGo: includeOpenCodeGo
         )
 
         do {
@@ -200,7 +235,9 @@ struct CollectorService: Sendable {
                 try snapshots.saveSnapshot(CollectorSnapshot(
                     schemaVersion: 1,
                     lastGood: decision.lastGood,
-                    runtimeState: decision.runtimeState
+                    runtimeState: decision.runtimeState,
+                    resetRadar: resetRadar == nil ? persistedSnapshot.resetRadar : radar.cache,
+                    taskActivity: codexTaskActivity == nil ? persistedSnapshot.taskActivity : taskActivity.snapshot
                 ))
             }
         } catch {
@@ -309,7 +346,9 @@ struct CollectorService: Sendable {
                 try snapshots.saveSnapshot(CollectorSnapshot(
                     schemaVersion: 1,
                     lastGood: decision.lastGood,
-                    runtimeState: verifiedState
+                    runtimeState: verifiedState,
+                    resetRadar: resetRadar == nil ? persistedSnapshot.resetRadar : radar.cache,
+                    taskActivity: codexTaskActivity == nil ? persistedSnapshot.taskActivity : taskActivity.snapshot
                 ))
             }
         } catch {
@@ -333,6 +372,58 @@ struct CollectorService: Sendable {
             readbackVerified: true,
             publicErrorCodes: providerCodes
         )
+    }
+
+    private func readTaskActivity(
+        cached: CodexTaskActivityDisplaySnapshot?,
+        now: Date,
+        deadlineGate: CollectorDeadlineGate
+    ) async throws -> TaskActivityCollectionResult {
+        guard let codexTaskActivity else {
+            return TaskActivityCollectionResult(
+                snapshot: cached ?? .unavailable,
+                publicErrorCode: nil
+            )
+        }
+        do {
+            await beforeSideEffect(.taskActivityRead)
+            let value = try await deadlineGate.performAsyncIfActive {
+                try await codexTaskActivity.read(now: now)
+            }
+            return TaskActivityCollectionResult(snapshot: value, publicErrorCode: nil)
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as CodexClientError {
+            return TaskActivityCollectionResult(
+                snapshot: cached?.markedStale() ?? .unavailable,
+                publicErrorCode: Self.codexTaskPublicCode(error)
+            )
+        } catch {
+            return TaskActivityCollectionResult(
+                snapshot: cached?.markedStale() ?? .unavailable,
+                publicErrorCode: "task_activity_unavailable"
+            )
+        }
+    }
+
+    private func readResetRadar(
+        cache: ResetRadarCache,
+        now: Date,
+        deadlineGate: CollectorDeadlineGate
+    ) async throws -> ResetRadarResolution {
+        guard let resetRadar else {
+            return ResetRadarStateMachine.resolve(cache: cache, fetch: nil, now: now)
+        }
+        let fetch: ResetRadarFetchResult?
+        if ResetRadarStateMachine.shouldFetch(cache: cache, now: now) {
+            await beforeSideEffect(.resetRadarRead)
+            fetch = try await deadlineGate.performAsyncIfActive {
+                await resetRadar.read()
+            }
+        } else {
+            fetch = nil
+        }
+        return ResetRadarStateMachine.resolve(cache: cache, fetch: fetch, now: now)
     }
 
     private func readCodex(
@@ -439,6 +530,16 @@ struct CollectorService: Sendable {
         (error as? SnapshotCacheError)?.publicCode ?? "cache_io"
     }
 
+    private static func codexTaskPublicCode(_ error: CodexClientError) -> String {
+        switch error {
+        case .timeout: "timeout"
+        case .rpc: "unauthenticated"
+        case .invalidResponse: "invalid_data"
+        case .launchFailed: "launch_failed"
+        case .inputFailed: "input_failed"
+        }
+    }
+
     private static func slatePublicCode(
         _ error: any Error,
         missingIsUnconfigured: Bool = false
@@ -456,6 +557,11 @@ struct CollectorService: Sendable {
             renderedAt: receipt.renderedAt
         )
     }
+}
+
+private struct TaskActivityCollectionResult: Sendable {
+    let snapshot: CodexTaskActivityDisplaySnapshot
+    let publicErrorCode: String?
 }
 
 private enum CollectorTaskResult: Sendable {

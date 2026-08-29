@@ -1,5 +1,5 @@
 import type { FormEvent, ReactNode } from 'react';
-import { isAudioDynamicConfig, type DynamicTypeT } from 'shared';
+import { dashboardTemplateUsesFullCanvas, isAudioDynamicConfig, type DynamicTypeT } from 'shared';
 import { useToast } from '@/components/feedback/toast-context';
 import { FormActions } from '@/components/ui/FormActions';
 import { useCreateDynamicContent } from '@/features/dynamic/query/dynamic-content-queries';
@@ -25,6 +25,11 @@ export function DynamicCreateForm({ gid, type, form, header, onDone }: DynamicCr
   const showDynamicParams = Boolean(dynamicMeta?.hasConfigurableParams);
   const showDynamicAudio = Boolean(
     dynamicMeta?.supportsAudio && form.config && isAudioDynamicConfig(form.config)
+  );
+  const showStatusBar = !(
+    form.config?.type === 'dashboard' &&
+    form.config.template.kind === 'custom' &&
+    dashboardTemplateUsesFullCanvas(form.config.template.template)
   );
 
   async function submitContent() {
@@ -62,6 +67,7 @@ export function DynamicCreateForm({ gid, type, form, header, onDone }: DynamicCr
           pending={form.previewPending}
           hasConfig={!!form.config}
           caption={form.caption}
+          showStatusBar={showStatusBar}
         />
       }
       header={header}

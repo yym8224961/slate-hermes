@@ -38,6 +38,7 @@ inline constexpr char kCurrentContentSeq[]   = "current_content_seq";
 inline constexpr char kCurrentContentEtag[]  = "current_content_etag";
 inline constexpr char kCurrentGroup[]        = "current_group";
 inline constexpr char kDeviceStatusBarText[] = "device_status_bar_text";
+inline constexpr char kDeviceFullCanvas[]    = "device_full_canvas";
 inline constexpr char kDetail[]              = "detail";
 inline constexpr char kDevice[]              = "device";
 inline constexpr char kDeviceSecret[]        = "device_secret";
@@ -177,6 +178,7 @@ void ParseContentMeta(cJSON* item, ContentMeta& out) {
     out.id                     = JsonString(item, proto::kId);
     out.content_etag           = JsonString(item, proto::kContentEtag);
     out.device_status_bar_text = JsonString(item, proto::kDeviceStatusBarText);
+    out.device_full_canvas     = JsonBool(item, proto::kDeviceFullCanvas, false);
     out.image_etag             = JsonString(item, proto::kImageEtag);
     out.audio_etag             = JsonString(item, proto::kAudioEtag);
     out.image_size             = JsonInt(item, proto::kImageSize, 0);

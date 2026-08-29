@@ -22,7 +22,7 @@ struct MenuBarControllerTests {
             "每 5 分钟自动采集",
             "立即采集一次",
             "Codex          正常 · 剩余 91%",
-            "OpenCode Go    注意 · 剩余 18%",
+            "重置雷达       活跃预测 · 70%",
             "最后推送       今天 17:16",
             "查看详细状态",
             "退出菜单栏",
@@ -186,9 +186,10 @@ struct MenuBarControllerTests {
         let snapshot = MenuBarStatusSnapshot(
             codexSummary: "正常 · 剩余 91%",
             openCodeGoSummary: "无可信数据",
+            resetRadarSummary: "暂无活跃预测",
             lastSuccessAt: Date(timeIntervalSince1970: 1_754_990_140),
             lastPushAt: Date(timeIntervalSince1970: 1_754_990_200),
-            publicErrorCodes: ["codex": forbidden, "opencode_go": "rate_limited"]
+            publicErrorCodes: ["codex": forbidden, "reset_radar": "rate_limited"]
         )
         let statusWindow = StatusWindowController(createPanel: false)
         let controller = makeController(
@@ -203,8 +204,8 @@ struct MenuBarControllerTests {
 
         #expect(statusWindow.renderedText.contains("自动采集：已关闭"))
         #expect(statusWindow.renderedText.contains("Codex：正常 · 剩余 91%"))
-        #expect(statusWindow.renderedText.contains("OpenCode Go：无可信数据"))
-        #expect(statusWindow.renderedText.contains("opencode_go：rate_limited"))
+        #expect(statusWindow.renderedText.contains("重置雷达：暂无活跃预测"))
+        #expect(statusWindow.renderedText.contains("reset_radar：rate_limited"))
         #expect(statusWindow.renderedText.contains("internal_failure"))
         for forbiddenText in ["https://", "private-id", "contentId", "ETag", "Authorization", "/Users/"] {
             #expect(statusWindow.renderedText.contains(forbiddenText) == false)
@@ -259,6 +260,7 @@ private extension MenuBarStatusSnapshot {
     static let fixture = Self(
         codexSummary: "正常 · 剩余 91%",
         openCodeGoSummary: "注意 · 剩余 18%",
+        resetRadarSummary: "活跃预测 · 70%",
         lastSuccessAt: Date(timeIntervalSince1970: 1_754_990_140),
         lastPushAt: Date(timeIntervalSince1970: 1_754_990_200),
         publicErrorCodes: [:]

@@ -42,7 +42,7 @@ final class StatusWindowController {
             "",
             "自动采集：\(automaticText)",
             "Codex：\(MenuBarViewModel.safeProviderSummary(snapshot.codexSummary))",
-            "OpenCode Go：\(MenuBarViewModel.safeProviderSummary(snapshot.openCodeGoSummary))",
+            "重置雷达：\(MenuBarViewModel.safeRadarSummary(snapshot.resetRadarSummary))",
             "最近成功：\(successText)",
             "最近推送：\(pushText)",
             "",
@@ -62,6 +62,8 @@ final class StatusWindowController {
         switch value {
         case "codex": "codex"
         case "opencode_go": "opencode_go"
+        case "reset_radar": "reset_radar"
+        case "task_activity": "task_activity"
         case "slate": "slate"
         case "cache": "cache"
         case "schedule": "schedule"

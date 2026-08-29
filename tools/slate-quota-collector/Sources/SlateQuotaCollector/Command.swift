@@ -114,11 +114,14 @@ enum PushOnceProofFormatter {
         }
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
-        return "推送成功：id=redacted image_etag=redacted manifest_etag=redacted "
+        var proof = "推送成功：id=redacted image_etag=redacted manifest_etag=redacted "
             + "rendered_at=\(formatter.string(from: receipt.renderedAt)) "
             + "readback_verified=true schema_version=\(envelope.data.schemaVersion) "
-            + "codex_status=\(envelope.data.codex.status.rawValue) "
-            + "opencode_go_status=\(envelope.data.opencodeGo.status.rawValue)"
+            + "codex_status=\(envelope.data.codex.status.rawValue)"
+        if envelope.data.includesOpenCodeGo {
+            proof += " opencode_go_status=\(envelope.data.opencodeGo.status.rawValue)"
+        }
+        return proof
     }
 }
 
@@ -197,11 +200,9 @@ struct CommandRuntime: Sendable {
         },
         codexLocator: @escaping @Sendable () throws -> URL = CommandRuntime.locateCodexExecutable,
         setupPreflight: @escaping @Sendable (CollectorConfiguration, String) async throws -> Void = {
-            configuration, openCodeKey in
+            configuration, _ in
             do { _ = try await CodexRateLimitClient(configuration: configuration).read() }
             catch { throw CLIError.setupPreflight(CommandRuntime.codexPreflightCode(error)) }
-            do { _ = try await OpenCodeGoUsageClient().read(apiKey: openCodeKey) }
-            catch { throw CLIError.setupPreflight(CommandRuntime.openCodePreflightCode(error)) }
         },
         setupPersistence: (any SetupPersisting)? = nil
     ) {
@@ -256,14 +257,11 @@ struct CommandRuntime: Sendable {
 
     private func setup() async throws {
         let input = try setupInput()
-        guard input.openCodeKey == input.confirmedOpenCodeKey,
-              input.slateURL == input.confirmedSlateURL else {
+        guard input.slateURL == input.confirmedSlateURL else {
             throw CLIError.setupMismatch
         }
-        let openCodeKey = input.openCodeKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let slateText = input.slateURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !openCodeKey.isEmpty,
-              let slateURL = URL(string: slateText), slateURL.absoluteString == slateText else {
+        guard let slateURL = URL(string: slateText), slateURL.absoluteString == slateText else {
             throw CLIError.setupInput
         }
         do { _ = try SlateEndpointPolicy.validate(slateURL) }
@@ -283,11 +281,10 @@ struct CommandRuntime: Sendable {
             openCodeKeyAccount: "opencode-go-api-key",
             slateURLAccount: "slate-push-url"
         )
-        try await setupPreflight(configuration, openCodeKey)
+        try await setupPreflight(configuration, "")
         do {
-            try setupPersistence.commit(
+            try setupPersistence.commitCodexOnly(
                 configuration: configuration,
-                openCodeKey: openCodeKey,
                 slateURL: slateText
             )
         } catch SetupTransactionError.rollback {
@@ -324,17 +321,15 @@ struct CommandRuntime: Sendable {
 
         let configuration = try loadConfiguration()
         let secrets = KeychainStore(service: configuration.keychainService)
-        let openCodeKey: String
         let slateURL: String
         do {
-            openCodeKey = try secrets.read(account: configuration.openCodeKeyAccount)
             slateURL = try secrets.read(account: configuration.slateURLAccount)
         } catch {
             throw CLIError.configuration
         }
         let snapshots = SanitizedSnapshotCache(
             applicationSupportURL: paths.applicationSupportURL,
-            sensitiveValues: [openCodeKey, slateURL]
+            sensitiveValues: [slateURL]
         )
         let service = CollectorService(
             codex: CodexRateLimitClient(configuration: configuration),
@@ -345,7 +340,12 @@ struct CommandRuntime: Sendable {
             failurePolicy: FailurePolicy(),
             slate: SlateIngestClient(),
             openCodeKeyAccount: configuration.openCodeKeyAccount,
-            slateURLAccount: configuration.slateURLAccount
+            slateURLAccount: configuration.slateURLAccount,
+            codexTaskActivity: CodexTaskActivityClient(
+                executableURL: URL(fileURLWithPath: configuration.codexExecutablePath)
+            ),
+            resetRadar: ResetRadarClient(),
+            includeOpenCodeGo: false
         )
         let report = try await service.collect(mode: mode.serviceMode)
         if mode == .dryRun, let envelope = report.envelope {
@@ -615,7 +615,7 @@ struct CommandRuntime: Sendable {
         print("菜单栏：\(menuLoaded ? "已加载" : "未加载")")
         print("定时采集：\(collectorLoaded ? "已加载" : "未加载")")
         print("Codex：\(MenuBarViewModel.safeProviderSummary(display.codexSummary))")
-        print("OpenCode Go：\(MenuBarViewModel.safeProviderSummary(display.openCodeGoSummary))")
+        print("重置雷达：\(MenuBarViewModel.safeRadarSummary(display.resetRadarSummary))")
         print("最近成功：\(display.lastSuccessAt.map { MenuBarViewModel.dateText($0) } ?? "尚无记录")")
         print("最近推送：\(display.lastPushAt.map { MenuBarViewModel.dateText($0) } ?? "尚无记录")")
         let codes = display.publicErrorCodes
@@ -797,6 +797,10 @@ protocol SetupPersisting: Sendable {
         openCodeKey: String,
         slateURL: String
     ) throws
+    func commitCodexOnly(
+        configuration: CollectorConfiguration,
+        slateURL: String
+    ) throws
 }
 
 protocol SetupMutationBacking: Sendable {
@@ -886,6 +890,38 @@ struct TransactionalSetupPersistence: SetupPersisting, Sendable {
                 )
             } catch { rollbackFailed = true }
             do { try backend.restoreConfiguration(previous.configuration) }
+            catch { rollbackFailed = true }
+            if rollbackFailed { throw SetupTransactionError.rollback }
+            throw error
+        }
+    }
+
+    func commitCodexOnly(
+        configuration: CollectorConfiguration,
+        slateURL: String
+    ) throws {
+        let previousSlate = try backend.readSecret(
+            service: configuration.keychainService,
+            account: configuration.slateURLAccount
+        )
+        let previousConfiguration = try backend.readConfiguration()
+        do {
+            try backend.writeSecretValue(
+                slateURL,
+                service: configuration.keychainService,
+                account: configuration.slateURLAccount
+            )
+            try backend.writeConfiguration(JSONEncoder().encode(configuration))
+        } catch {
+            var rollbackFailed = false
+            do {
+                try backend.restoreSecret(
+                    previousSlate,
+                    service: configuration.keychainService,
+                    account: configuration.slateURLAccount
+                )
+            } catch { rollbackFailed = true }
+            do { try backend.restoreConfiguration(previousConfiguration) }
             catch { rollbackFailed = true }
             if rollbackFailed { throw SetupTransactionError.rollback }
             throw error
@@ -1217,8 +1253,8 @@ private struct SecretTerminalReader {
             print("")
         }
         return SetupValues(
-            openCodeKey: try read("OpenCode Go API Key（输入不会显示）："),
-            confirmedOpenCodeKey: try read("再次输入 OpenCode Go API Key："),
+            openCodeKey: "",
+            confirmedOpenCodeKey: "",
             slateURL: try read("Slate 推送 URL（输入不会显示）："),
             confirmedSlateURL: try read("再次输入 Slate 推送 URL：")
         )

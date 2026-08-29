@@ -58,6 +58,7 @@ void DeleteFrameFiles(const std::string& gid, int idx);
 
 struct FrameMeta {
     std::string status_bar_text;
+    bool        full_canvas = false;
     std::string content_etag;
     std::string image_etag;
     std::string audio_etag;

@@ -1,36 +1,72 @@
 import { describe, expect, it } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { DashboardTemplate, FRAME_BYTES, FRAME_WIDTH } from 'shared';
+import { DashboardTemplate, FRAME_BYTES, FRAME_WIDTH, type DashboardTemplateT } from 'shared';
 import { BITMAP_1BPP_FONT_DIR } from '../../../infra/assets/asset-paths';
 import { DynamicFrameRendererService } from './dynamic-frame-renderer.service';
 import { DynamicFrameFontService } from './fonts/dynamic-frame-font.service';
 import { loadBitmapFont, textWidth, type BitmapFont } from './fonts/bitmap-font';
 
 interface QuotaWindowFixture {
-  label: string;
+  name: string;
   remaining_percent: number;
-  value_text: string;
-  reset_at: string | null;
+  remaining_text: string;
+  used_text: string;
+  reset_text: string;
+  single_one_digit: boolean;
+  single_two_digits: boolean;
+  single_three_digits: boolean;
+  dual_one_digit: boolean;
+  dual_two_digits: boolean;
+  dual_three_digits: boolean;
 }
 
-interface ProviderFixture {
-  status: string;
-  source_collected_at: string;
-  header_left: string;
-  summary_label: string;
-  rolling: QuotaWindowFixture;
-  weekly: QuotaWindowFixture;
-  monthly?: QuotaWindowFixture;
-  footer_left: string;
-  footer_right: string;
+interface TaskRowFixture {
+  visible: boolean;
+  normal_visible: boolean;
+  stale_visible: boolean;
+  state_label: string;
+  title: string;
 }
 
 interface DashboardFixture {
   schema_version: number;
   generated_at: string;
-  codex: ProviderFixture;
-  opencode_go: ProviderFixture & { monthly: QuotaWindowFixture };
+  codex: unknown;
+  quota: {
+    single_window: boolean;
+    dual_window: boolean;
+    date_label: string;
+    heading: string;
+    primary: QuotaWindowFixture;
+    secondary: QuotaWindowFixture;
+    message: string;
+    credits_visible: boolean;
+    credits_text: string;
+  };
+  reset_radar: {
+    signal_percent: number;
+    show_probability: boolean;
+    probability_text: string;
+    show_narrow_gauge: boolean;
+    show_wide_gauge: boolean;
+    [key: string]: unknown;
+  };
+  task_activity: {
+    row1: TaskRowFixture;
+    row2: TaskRowFixture;
+    row3: TaskRowFixture;
+    show_stale: boolean;
+    show_unavailable: boolean;
+    [key: string]: unknown;
+  };
+  footer: {
+    show_divider: boolean;
+    show_hidden: boolean;
+    show_updated: boolean;
+    hidden_text: string;
+    update_text: string;
+  };
 }
 
 const template = DashboardTemplate.parse(
@@ -54,8 +90,104 @@ const initial = JSON.parse(
   )
 ) as { version: number; data: DashboardFixture };
 
-const renderer = new DynamicFrameRendererService(new DynamicFrameFontService());
-const renderedAt = new Date('2026-08-12T08:30:00Z');
+const fontService = new DynamicFrameFontService();
+const renderer = new DynamicFrameRendererService(fontService);
+const renderedAt = new Date('2026-08-29T08:30:00Z');
+
+describe('Slate Codex reset-radar rendering', () => {
+  it('renders the upstream black quota header from y=0 with no reserved top band', async () => {
+    const frame = await render(initial.data);
+
+    expect(frame.byteLength).toBe(FRAME_BYTES);
+    expect(frame.byteLength).toBe(15_000);
+    expect(countBlack(frame, 0, 0, 1, 124)).toBe(124);
+    expect(countBlack(frame, 399, 0, 1, 124)).toBe(124);
+    expect(isBlack(frame, 0, 124)).toBe(false);
+    expect(isBlack(frame, 399, 124)).toBe(false);
+    expect(countBlack(frame, 14, 124, 372, 1)).toBe(372);
+    expect(isBlack(frame, 386, 124)).toBe(false);
+  });
+
+  it('switches cleanly between the dual-window and single-window quota branches', async () => {
+    const single = await render(initial.data);
+    const dualData = fixture((data) => {
+      data.quota.single_window = false;
+      data.quota.dual_window = true;
+      data.quota.primary.single_two_digits = false;
+      data.quota.primary.dual_two_digits = true;
+      data.quota.secondary.name = '30 天';
+      data.quota.secondary.remaining_percent = 50;
+      data.quota.secondary.remaining_text = '50';
+      data.quota.secondary.used_text = '已用 50%';
+      data.quota.secondary.reset_text = '重置 20天 0小时 0分';
+      data.quota.secondary.dual_two_digits = true;
+    });
+    const dual = await render(dualData);
+
+    expect(isBlack(dual, 200, 30)).toBe(false);
+    expect(isBlack(single, 200, 30)).toBe(true);
+    expect(isBlack(dual, 14, 74)).toBe(false);
+    expect(isBlack(single, 14, 74)).toBe(true);
+    expect(isBlack(single, 14, 82)).toBe(false);
+    expect(isBlack(single, 385, 82)).toBe(false);
+  });
+
+  it('draws white quota bars with the upstream 2px inset and floor fill width', async () => {
+    const frame = await render(initial.data);
+
+    expect(isBlack(frame, 14, 82)).toBe(false);
+    expect(isBlack(frame, 385, 82)).toBe(false);
+    expect(isBlack(frame, 16, 84)).toBe(false);
+    expect(isBlack(frame, 265, 89)).toBe(false);
+    expect(isBlack(frame, 266, 84)).toBe(true);
+    expect(isBlack(frame, 15, 83)).toBe(true);
+  });
+
+  it('renders a 70 percent reset signal as exactly 7 of 10 cells', async () => {
+    const frame = await render(initial.data);
+
+    for (let index = 0; index < 10; index++) {
+      const cellX = 14 + index * 33;
+      expect(countBlack(frame, cellX + 2, 150, 26, 10)).toBe(index < 7 ? 260 : 0);
+    }
+    expect(countBlack(frame, 14, 168, 372, 1)).toBe(372);
+    expect(isBlack(frame, 386, 168)).toBe(false);
+  });
+
+  it('renders task rows at the upstream positions and the footer divider at y=270', async () => {
+    const frame = await render(initial.data);
+    const font = await loadBitmapFont(join(BITMAP_1BPP_FONT_DIR, 'source-han-sans-16-slim.json'));
+
+    expect(hasTextPixels(frame, font, '执行中', 14, 176, 72, 18)).toBe(true);
+    expect(hasTextPixels(frame, font, '已中断', 14, 206, 72, 18)).toBe(true);
+    expect(hasTextPixels(frame, font, '本轮完成', 14, 236, 72, 18)).toBe(true);
+    expect(countBlack(frame, 14, 270, 372, 1)).toBe(372);
+    expect(isBlack(frame, 386, 270)).toBe(false);
+    expect(countBlack(frame, 0, 296, 400, 4)).toBe(0);
+  });
+
+  it('hard-truncates long task titles without drawing an ellipsis', async () => {
+    const data = fixture((draft) => {
+      draft.task_activity.row1.title = '超长任务标题'.repeat(12);
+    });
+    const hardFrame = await render(data);
+    const ellipsisTemplate = structuredClone(template);
+    const row1Title = ellipsisTemplate.blocks.find(
+      (block) =>
+        block.type === 'text' &&
+        block.value === '{task_activity.row1.title}' &&
+        block.visible === '{task_activity.row1.normal_visible}'
+    );
+    if (!row1Title || row1Title.type !== 'text') throw new Error('row1 title block missing');
+    row1Title.ellipsis = true;
+    const ellipsisFrame = await render(data, ellipsisTemplate);
+    const font = await loadBitmapFont(join(BITMAP_1BPP_FONT_DIR, 'source-han-sans-16-slim.json'));
+
+    expect(hasExactTextPixels(hardFrame, font, '…', 92, 176, 294, 16)).toBe(false);
+    expect(hasExactTextPixels(ellipsisFrame, font, '…', 92, 176, 294, 16)).toBe(true);
+    expect(hardFrame).not.toEqual(ellipsisFrame);
+  });
+});
 
 function fixture(mutator: (data: DashboardFixture) => void): DashboardFixture {
   const data = structuredClone(initial.data);
@@ -63,118 +195,17 @@ function fixture(mutator: (data: DashboardFixture) => void): DashboardFixture {
   return data;
 }
 
-const fixtures: Record<string, DashboardFixture> = {
-  normal: fixture((data) => {
-    data.codex.status = 'ok';
-    data.codex.summary_label = '最低剩余 90%';
-    data.opencode_go.status = 'ok';
-    data.opencode_go.summary_label = '最低剩余 71%';
-  }),
-  attention: fixture((data) => {
-    data.codex.status = 'attention';
-    data.codex.summary_label = '注意 · 剩余 18%';
-    data.codex.weekly.remaining_percent = 18;
-    data.codex.weekly.value_text = '剩余 18%';
-  }),
-  exhausted: fixture((data) => {
-    data.opencode_go.status = 'exhausted';
-    data.opencode_go.summary_label = '额度用尽';
-    data.opencode_go.rolling.remaining_percent = 0;
-    data.opencode_go.rolling.value_text = '剩余 0%';
-  }),
-  'missing-codex-window': fixture((data) => {
-    data.codex.status = 'ok';
-    data.codex.summary_label = '最低剩余 90%';
-    data.codex.rolling.remaining_percent = 0;
-    data.codex.rolling.value_text = '未提供';
-    data.codex.rolling.reset_at = null;
-  }),
-  'long-plan': fixture((data) => {
-    data.codex.status = 'ok';
-    data.codex.header_left = 'CODEX · ENTERPRISE ULTRA LONG PLAN NAME';
-    data.codex.summary_label = '这是一条需要安全省略的超长状态文案 90%';
-  }),
-  'single-stale': fixture((data) => {
-    data.codex.status = 'stale';
-    data.codex.header_left = 'CODEX · 数据过期';
-    data.codex.summary_label = '展示上次数据';
-  }),
-  'both-empty': fixture((data) => {
-    data.codex.status = 'unavailable';
-    data.codex.summary_label = '无可信数据';
-    data.codex.rolling.remaining_percent = 0;
-    data.codex.rolling.value_text = '未提供';
-    data.codex.weekly.remaining_percent = 0;
-    data.codex.weekly.value_text = '未提供';
-    data.opencode_go.status = 'unavailable';
-    data.opencode_go.summary_label = '无可信数据';
-    for (const window of [
-      data.opencode_go.rolling,
-      data.opencode_go.weekly,
-      data.opencode_go.monthly,
-    ]) {
-      window.remaining_percent = 0;
-      window.value_text = '未提供';
-    }
-  }),
-};
-
-describe('Slate quota A5 dashboard rendering', () => {
-  it.each(Object.keys(fixtures))('renders %s as 400x300 1bpp', async (fixtureName) => {
-    const frame = await render(fixtures[fixtureName]!);
-
-    expect(frame.byteLength).toBe(FRAME_BYTES);
-    expect(frame.byteLength).toBe(15_000);
-    expect(countBlack(frame, 0, 24, 400, 276)).toBeGreaterThan(500);
-    expect(countBlack(frame, 0, 0, 400, 24)).toBe(0);
-  });
-
-  it('draws more remaining bar pixels for 81 percent than 21 percent', async () => {
-    const high = await renderWithOpenCodeRollingRemaining(81);
-    const low = await renderWithOpenCodeRollingRemaining(21);
-
-    expect(countBlack(high, 100, 189, 210, 31)).toBeGreaterThan(countBlack(low, 100, 189, 210, 31));
-  });
-
-  it('renders a missing Codex window as an empty bar labeled 未提供, never as 100%', async () => {
-    const data = fixtures['missing-codex-window']!;
-    expect(data.codex.rolling.remaining_percent).toBe(0);
-    expect(data.codex.rolling.value_text).toBe('未提供');
-    expect(JSON.stringify(data.codex.rolling)).not.toContain('100');
-
-    const frame = await render(data);
-    const font = await loadBitmapFont(join(BITMAP_1BPP_FONT_DIR, 'source-han-sans-16-slim.json'));
-    expect(countBlack(frame, 100, 68, 160, 12)).toBe(0);
-    expect(hasTextPixels(frame, font, '未提供', 300, 55, 88, 38)).toBe(true);
-    expect(hasTextPixels(frame, font, '100%', 300, 55, 88, 38)).toBe(false);
-  });
-
-  it('keeps long copy inside the content area and renders the bottom row without cropping', async () => {
-    const frame = await render(fixtures['long-plan']!);
-
-    expect(countBlack(frame, 0, 0, 400, 24)).toBe(0);
-    expect(countWhite(frame, 222, 30, 2, 16)).toBe(0);
-    expect(countBlack(frame, 0, 283, 400, 17)).toBeGreaterThan(20);
-  });
-});
-
-async function render(data: DashboardFixture): Promise<Buffer> {
+async function render(
+  data: DashboardFixture,
+  dashboardTemplate: DashboardTemplateT = template
+): Promise<Buffer> {
   return renderer.render({
     type: 'dashboard',
-    frameName: '额度监控',
-    config: { type: 'dashboard', template: { kind: 'custom', template } },
+    frameName: 'Codex 额度与重置雷达',
+    config: { type: 'dashboard', template: { kind: 'custom', template: dashboardTemplate } },
     data: data as unknown as Record<string, unknown>,
     renderedAt,
   });
-}
-
-function renderWithOpenCodeRollingRemaining(remaining: number): Promise<Buffer> {
-  return render(
-    fixture((data) => {
-      data.opencode_go.rolling.remaining_percent = remaining;
-      data.opencode_go.rolling.value_text = `剩余 ${remaining}%`;
-    })
-  );
 }
 
 function countBlack(frame: Buffer, x: number, y: number, w: number, h: number): number {
@@ -185,10 +216,6 @@ function countBlack(frame: Buffer, x: number, y: number, w: number, h: number): 
     }
   }
   return black;
-}
-
-function countWhite(frame: Buffer, x: number, y: number, w: number, h: number): number {
-  return w * h - countBlack(frame, x, y, w, h);
 }
 
 function isBlack(frame: Buffer, x: number, y: number): boolean {
@@ -210,6 +237,24 @@ function hasTextPixels(
   for (let yy = y; yy <= y + h - font.lineHeight; yy++) {
     for (let xx = x; xx <= x + w - target.width; xx++) {
       if (matchesTextMask(frame, target, xx, yy)) return true;
+    }
+  }
+  return false;
+}
+
+function hasExactTextPixels(
+  frame: Buffer,
+  font: BitmapFont,
+  text: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number
+): boolean {
+  const target = renderTextMask(font, text);
+  for (let yy = y; yy <= y + h - font.lineHeight; yy++) {
+    for (let xx = x; xx <= x + w - target.width; xx++) {
+      if (matchesExactTextMask(frame, target, xx, yy)) return true;
     }
   }
   return false;
@@ -256,6 +301,22 @@ function matchesTextMask(
     for (let xx = 0; xx < target.width; xx++) {
       if (!target.pixels[yy * target.width + xx]) continue;
       if (!isBlack(frame, x + xx, y + yy)) return false;
+    }
+  }
+  return true;
+}
+
+function matchesExactTextMask(
+  frame: Buffer,
+  target: { width: number; height: number; pixels: Uint8Array },
+  x: number,
+  y: number
+): boolean {
+  for (let yy = 0; yy < target.height; yy++) {
+    for (let xx = 0; xx < target.width; xx++) {
+      if (isBlack(frame, x + xx, y + yy) !== Boolean(target.pixels[yy * target.width + xx])) {
+        return false;
+      }
     }
   }
   return true;

@@ -25,6 +25,7 @@ struct ContentMeta {
     std::string id;
     std::string content_etag;
     std::string device_status_bar_text;
+    bool        device_full_canvas = false;
     std::string image_etag;
     std::string audio_etag;
     int         image_size = 0;

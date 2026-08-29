@@ -1,6 +1,7 @@
 #pragma once
 
-// 主场景：显示服务端渲染好的 400x300 1bpp frame，顶部 24px 状态栏叠加。
+// 主场景：显示服务端渲染好的 400x300 1bpp frame；普通帧叠加顶部状态栏，
+// full-canvas 帧占用整屏。
 
 #include <memory>
 #include <string>
@@ -48,6 +49,7 @@ class FrameScene : public Scene {
     int         idx_                     = 0;
     bool        first_loaded_            = false;
     bool        first_load_full_refresh_ = true;
+    bool        current_full_canvas_     = false;
     std::string cached_status_bar_text_;
 
     lv_obj_t*                  root_        = nullptr;

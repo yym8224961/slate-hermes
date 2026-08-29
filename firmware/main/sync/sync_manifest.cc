@@ -144,6 +144,7 @@ bool SyncService::DownloadFramesToStage(cache::CacheWriter& writer, const std::s
             (f.audio_etag.empty() || writer.FrameAudioExists(f.seq, f.audio_etag))) {
             cache::FrameMeta fm;
             fm.status_bar_text = f.device_status_bar_text;
+            fm.full_canvas     = f.device_full_canvas;
             fm.content_etag    = f.content_etag;
             fm.image_etag      = f.image_etag;
             fm.audio_etag      = f.audio_etag;
@@ -293,6 +294,7 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
     const bool       old_meta_ok = cache::ReadFrameMeta(gid, f.seq, old_meta);
     cache::FrameMeta next_meta;
     next_meta.status_bar_text = f.device_status_bar_text;
+    next_meta.full_canvas     = f.device_full_canvas;
     next_meta.content_etag    = f.content_etag;
     next_meta.image_etag      = f.image_etag;
     next_meta.audio_etag      = f.audio_etag;
@@ -303,9 +305,9 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
     if (old_meta_ok && !f.content_etag.empty() && old_meta.content_etag == f.content_etag &&
         cache::FrameImageExists(gid, f.seq, f.image_etag) &&
         (f.audio_etag.empty() || cache::FrameAudioExists(gid, f.seq, f.audio_etag))) {
-        if (old_meta.status_bar_text != next_meta.status_bar_text || old_meta.has_ttl != next_meta.has_ttl ||
-            old_meta.ttl_sec != next_meta.ttl_sec || old_meta.image_etag != next_meta.image_etag ||
-            old_meta.audio_etag != next_meta.audio_etag) {
+        if (old_meta.status_bar_text != next_meta.status_bar_text || old_meta.full_canvas != next_meta.full_canvas ||
+            old_meta.has_ttl != next_meta.has_ttl || old_meta.ttl_sec != next_meta.ttl_sec ||
+            old_meta.image_etag != next_meta.image_etag || old_meta.audio_etag != next_meta.audio_etag) {
             if (!cache::WriteFrameMeta(gid, f.seq, next_meta)) {
                 ESP_LOGW(kTag, "frame meta write failed seq=%d", f.seq);
                 return false;
@@ -313,14 +315,16 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
         }
         power_state::SetCurrentFrameFromMeta(f.seq, next_meta);
         changed = old_meta.status_bar_text != next_meta.status_bar_text ||
+                  old_meta.full_canvas != next_meta.full_canvas ||
                   (!old_meta.image_etag.empty() && old_meta.image_etag != next_meta.image_etag);
         return true;
     }
 
     const bool image_etag_changed =
         !old_meta_ok || (!old_meta.image_etag.empty() && old_meta.image_etag != f.image_etag);
-    const bool status_bar_changed = !old_meta_ok || old_meta.status_bar_text != next_meta.status_bar_text;
-    bool       image_downloaded   = false;
+    const bool presentation_changed = !old_meta_ok || old_meta.status_bar_text != next_meta.status_bar_text ||
+                                      old_meta.full_canvas != next_meta.full_canvas;
+    bool image_downloaded = false;
     if (ShouldStop())
         return false;
     if (!cache::FrameImageExists(gid, f.seq, f.image_etag)) {
@@ -372,6 +376,6 @@ bool SyncService::SyncCurrentContent(const std::string& gid, const api::ContentM
         return false;
     }
     power_state::SetCurrentFrameFromMeta(f.seq, next_meta);
-    changed = image_downloaded || image_etag_changed || status_bar_changed;
+    changed = image_downloaded || image_etag_changed || presentation_changed;
     return true;
 }

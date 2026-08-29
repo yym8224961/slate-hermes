@@ -529,6 +529,25 @@ struct AppBundleInstallerTests {
         #expect(backend.mutationCount == 0)
     }
 
+    @Test("Codex-only setup leaves the existing OpenCode Keychain generation untouched")
+    func codexOnlySetupDoesNotReadWriteOrDeleteOpenCodeGeneration() async throws {
+        let oldOpenCode = SetupSecretState.item(secretSnapshot("old-open-code", label: "old-key"))
+        let prior = SetupGeneration(
+            openCodeKey: oldOpenCode,
+            slateURL: .item(secretSnapshot("https://old.example.test/push", label: "old-url")),
+            configuration: .file(data: Data("old-config".utf8), mode: 0o640)
+        )
+        let backend = FailingSetupBackend(initial: prior, failAtMutation: nil)
+        let runtime = setupRuntime(backend: backend) { _, openCodeKey in
+            #expect(openCodeKey.isEmpty)
+        }
+
+        try await runtime.run(.setup)
+
+        #expect(backend.generation.openCodeKey == oldOpenCode)
+        #expect(backend.mutationCount == 2)
+    }
+
     @Test("system setup backend accepts only one canonical tool-owned Keychain item")
     func systemSetupBackendCanonicalSecurityGeneration() throws {
         let root = try TemporaryDirectory()
@@ -698,7 +717,7 @@ struct AppBundleInstallerTests {
             ),
             SetupGeneration(openCodeKey: .absent, slateURL: .absent, configuration: .absent),
         ],
-        [1, 2, 3]
+        [1, 2]
     )
     func setupMutationFailureRestoresExactPriorGeneration(
         prior: SetupGeneration,
@@ -715,7 +734,7 @@ struct AppBundleInstallerTests {
 
     @Test(
         "setup rollback attempts every component after a rollback failure",
-        arguments: [1, 2, 3]
+        arguments: [1, 2]
     )
     func setupRollbackFailureStillAttemptsLaterComponents(_ failAtRollback: Int) async throws {
         let prior = SetupGeneration(
@@ -737,9 +756,10 @@ struct AppBundleInstallerTests {
             #expect(error == .setupRollback)
         }
 
-        #expect(backend.rollbackAttempts == [1, 2, 3])
-        #expect(backend.rollbackSuccesses == Set([1, 2, 3]).subtracting([failAtRollback]))
-        for component in Set([1, 2, 3]).subtracting([failAtRollback]) {
+        let failedComponent = failAtRollback == 1 ? 2 : 3
+        #expect(backend.rollbackAttempts == [2, 3])
+        #expect(backend.rollbackSuccesses == Set([2, 3]).subtracting([failedComponent]))
+        for component in Set([2, 3]).subtracting([failedComponent]) {
             #expect(backend.component(component) == priorComponent(prior, component))
         }
     }
@@ -758,11 +778,11 @@ struct AppBundleInstallerTests {
         child = subprocess.Popen([binary, "setup"], stdin=slave, stdout=slave, stderr=slave, close_fds=True)
         output = b""
         deadline = time.monotonic() + 3
-        while b"API Key" not in output and time.monotonic() < deadline:
+        while b"Slate" not in output and time.monotonic() < deadline:
             ready, _, _ = select.select([master], [], [], 0.05)
             if ready:
                 output += os.read(master, 4096)
-        if b"API Key" not in output:
+        if b"Slate" not in output:
             child.kill(); child.wait()
             raise SystemExit("prompt_missing")
         if mode == "EOF":

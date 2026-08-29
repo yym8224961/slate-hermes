@@ -163,9 +163,10 @@ export type PollRequestT = z.infer<typeof PollRequest>;
 模板坐标系：
 
 - 画布 400 x 300。
-- `DeviceRect.y` 最小为 24，保留固件状态栏区域。
+- `canvas: "content"`（默认）保留顶部 24px 固件状态栏，此模式下 block 的 y 不能小于 24。
+- `canvas: "full"` 显式使用完整的 400×300 画布并在真机隐藏状态栏；只有确实需要全屏的自定义模板应启用。
 - rect 必须在屏幕范围内。
-- 最多 32 个 block。
+- 最多 64 个 block。
 
 支持 block：
 
@@ -175,6 +176,11 @@ export type PollRequestT = z.infer<typeof PollRequest>;
 - `sparkline`
 - `line`
 - `rect`
+- `segments`：离散分段刻度条，支持自定义间距。
+- `bar`：带轮廓和内缩的黑白额度条。
+
+所有 block 都支持 `visible` 条件显隐；`text` 额外支持 `32` / `48` 大字号
+和 `ellipsis` 省略策略。这些扩展用于 400 x 300 Slate 配额面板的像素级复刻。
 
 内置系统模板：
 
