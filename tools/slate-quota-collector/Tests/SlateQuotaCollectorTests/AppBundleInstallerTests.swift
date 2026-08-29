@@ -576,6 +576,10 @@ struct AppBundleInstallerTests {
         let query = try #require(security.copyQueries.first)
         #expect(query[kSecMatchLimit] as? String == kSecMatchLimitAll as String)
         #expect((query[kSecAttrSynchronizable] as? String) == kSecAttrSynchronizableAny as String)
+        #expect(query[kSecReturnData] == nil)
+        let valueQuery = try #require(security.copyQueries.last)
+        #expect(valueQuery[kSecMatchLimit] as? String == kSecMatchLimitOne as String)
+        #expect(valueQuery[kSecReturnData] as? Bool == true)
         let restored = try #require(security.addedItems.last)
         #expect(restored[kSecClass] as? String == kSecClassGenericPassword as String)
         #expect(restored[kSecAttrService] as? String == service)
@@ -617,6 +621,7 @@ struct AppBundleInstallerTests {
             canonical.merging([kSecAttrDescription: "custom-description"]) { _, new in new },
             canonical.merging([kSecAttrAccessGroup: "custom.group"]) { _, new in new },
             canonical.merging([kSecAttrSynchronizable: true]) { _, new in new },
+            canonical.merging([kSecAttrLabel: "custom-label"]) { _, new in new },
         ]
         let generations = [[canonical, canonical]] + customItems.map { [$0] }
 
@@ -637,6 +642,36 @@ struct AppBundleInstallerTests {
             #expect(security.addedItems.isEmpty)
             #expect(security.deleteQueries.isEmpty)
         }
+    }
+
+    @Test("system setup backend accepts macOS legacy metadata generated for its own item")
+    func systemSetupBackendAcceptsLegacyMacOSMetadata() throws {
+        let root = try TemporaryDirectory()
+        let service = KeychainStore.requiredService
+        let account = "slate-push-url"
+        let legacy: [CFString: Any] = [
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecAttrAccount: account,
+            kSecValueData: Data("old-value".utf8),
+            kSecAttrLabel: service,
+            kSecAttrCreationDate: Date(timeIntervalSince1970: 1),
+            kSecAttrModificationDate: Date(timeIntervalSince1970: 2),
+        ]
+        let security = RecordingSetupSecurityBackend(copyResult: [legacy])
+        let backend = SystemSetupMutationBackend(
+            applicationSupportURL: root.url,
+            security: security,
+            expectedAccessGroup: nil
+        )
+
+        let state = try backend.readSecret(service: service, account: account)
+        try backend.restoreSecret(state, service: service, account: account)
+
+        let restored = try #require(security.addedItems.last)
+        #expect(restored[kSecAttrLabel] as? String == service)
+        #expect(restored[kSecAttrAccessible] == nil)
+        #expect((restored[kSecAttrSynchronizable] as? NSNumber)?.boolValue == false)
     }
 
     @Test("production setup backend restores exact Keychain dictionary and configuration bytes and mode")
@@ -1257,7 +1292,18 @@ private final class RecordingSetupSecurityBackend: SetupSecurityItemBacking, @un
             copyQueries.append(query)
             let account = query[kSecAttrAccount] as? String ?? ""
             let result = resultsByAccount[account] ?? fallbackResult
-            return result.isEmpty ? (errSecItemNotFound, nil) : (errSecSuccess, result)
+            guard !result.isEmpty else { return (errSecItemNotFound, nil) }
+            let includeData = query[kSecReturnData] as? Bool == true
+            let projected = result.map { item in
+                guard !includeData else { return item }
+                var metadata = item
+                metadata.removeValue(forKey: kSecValueData)
+                return metadata
+            }
+            if query[kSecMatchLimit] as? String == kSecMatchLimitOne as String {
+                return (errSecSuccess, projected[0])
+            }
+            return (errSecSuccess, projected)
         }
     }
 

@@ -945,27 +945,69 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
     }
 
     func readSecret(service: String, account: String) throws -> SetupSecretState {
-        let query: [CFString: Any] = [
+        let metadataQuery: [CFString: Any] = [
             kSecClass: kSecClassGenericPassword,
             kSecAttrService: service,
             kSecAttrAccount: account,
             kSecAttrSynchronizable: kSecAttrSynchronizableAny,
-            kSecReturnData: true,
             kSecReturnAttributes: true,
             kSecMatchLimit: kSecMatchLimitAll,
         ]
-        let (status, result) = security.copyMatching(query)
+        let (status, result) = security.copyMatching(metadataQuery)
         if status == errSecItemNotFound { return .absent }
         guard status == errSecSuccess else {
             throw KeychainError(status: status == errSecSuccess ? errSecDecode : status)
         }
         guard let items = result as? [[CFString: Any]], items.count == 1,
-              let attributes = items.first else {
+              let metadata = items.first else {
             throw CLIError.setupExistingItem
+        }
+        try validateCanonicalSecretMetadata(
+            metadata, expectedService: service, expectedAccount: account
+        )
+
+        // Apple explicitly rejects kSecReturnData together with
+        // kSecMatchLimitAll for password items. First prove that exactly one
+        // canonical generation exists using attributes only, then read that
+        // one item's value with kSecMatchLimitOne.
+        var valueQuery = metadataQuery
+        valueQuery[kSecReturnData] = true
+        valueQuery[kSecMatchLimit] = kSecMatchLimitOne
+        let (valueStatus, valueResult) = security.copyMatching(valueQuery)
+        guard valueStatus == errSecSuccess,
+              let attributes = valueResult as? [CFString: Any] else {
+            throw KeychainError(
+                status: valueStatus == errSecSuccess ? errSecDecode : valueStatus
+            )
         }
         return try canonicalSecret(
             attributes, expectedService: service, expectedAccount: account
         )
+    }
+
+    private func validateCanonicalSecretMetadata(
+        _ attributes: [CFString: Any],
+        expectedService: String,
+        expectedAccount: String
+    ) throws {
+        let allowedKeys: Set<String> = [
+            kSecClass, kSecAttrService, kSecAttrAccount,
+            kSecAttrAccessible, kSecAttrSynchronizable, kSecAttrAccessGroup,
+            kSecAttrCreationDate, kSecAttrModificationDate, kSecAttrLabel,
+        ].map { $0 as String }.reduce(into: Set<String>()) { $0.insert($1) }
+        let accessible = attributes[kSecAttrAccessible] as? String
+        let label = attributes[kSecAttrLabel] as? String
+        guard attributes.keys.allSatisfy({ allowedKeys.contains($0 as String) }),
+              attributes[kSecClass] as? String == kSecClassGenericPassword as String,
+              attributes[kSecAttrService] as? String == expectedService,
+              attributes[kSecAttrAccount] as? String == expectedAccount,
+              accessible == nil
+                || accessible == kSecAttrAccessibleAfterFirstUnlock as String,
+              ((attributes[kSecAttrSynchronizable] as? NSNumber)?.boolValue ?? false) == false,
+              attributes[kSecAttrAccessGroup] as? String == expectedAccessGroup,
+              label == nil || label == expectedService else {
+            throw CLIError.setupExistingItem
+        }
     }
 
     private func canonicalSecret(
@@ -980,16 +1022,19 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
         let allowedKeys: Set<String> = [
             kSecClass, kSecAttrService, kSecAttrAccount, kSecValueData,
             kSecAttrAccessible, kSecAttrSynchronizable, kSecAttrAccessGroup,
-            kSecAttrCreationDate, kSecAttrModificationDate,
+            kSecAttrCreationDate, kSecAttrModificationDate, kSecAttrLabel,
         ].map { $0 as String }.reduce(into: Set<String>()) { $0.insert($1) }
+        let accessible = attributes[kSecAttrAccessible] as? String
+        let label = attributes[kSecAttrLabel] as? String
         guard attributes.keys.allSatisfy({ allowedKeys.contains($0 as String) }),
               attributes[kSecClass] as? String == kSecClassGenericPassword as String,
               attributes[kSecAttrService] as? String == expectedService,
               attributes[kSecAttrAccount] as? String == expectedAccount,
               let data = attributes[kSecValueData] as? Data,
               String(data: data, encoding: .utf8) != nil,
-              attributes[kSecAttrAccessible] as? String
-                == kSecAttrAccessibleAfterFirstUnlock as String else {
+              accessible == nil
+                || accessible == kSecAttrAccessibleAfterFirstUnlock as String,
+              label == nil || label == expectedService else {
             throw CLIError.setupExistingItem
         }
         let synchronizable = (attributes[kSecAttrSynchronizable] as? NSNumber)?.boolValue ?? false
@@ -1000,11 +1045,11 @@ struct SystemSetupMutationBackend: SetupMutationBacking, Sendable {
         }
         return .item(SetupSecretAttributes(
             data: data,
-            accessible: kSecAttrAccessibleAfterFirstUnlock as String,
+            accessible: accessible,
             accessGroup: accessGroup,
             synchronizable: false,
             generic: nil,
-            label: nil,
+            label: label,
             comment: nil
         ))
     }
