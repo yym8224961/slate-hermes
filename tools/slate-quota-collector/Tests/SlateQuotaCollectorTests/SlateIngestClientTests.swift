@@ -106,6 +106,24 @@ struct SlateIngestClientTests {
         #expect(data == Self.dashboard)
     }
 
+    @Test func getsCodexOnlyDashboardDataWithoutOpenCodeGo() async throws {
+        let expected = SlateDashboardData(
+            schemaVersion: Self.dashboard.schemaVersion,
+            generatedAt: Self.dashboard.generatedAt,
+            codex: Self.dashboard.codex,
+            opencodeGo: .unavailable(at: Self.dashboard.generatedAt),
+            resetRadar: Self.dashboard.resetRadar,
+            taskActivity: Self.dashboard.taskActivity,
+            includesOpenCodeGo: false
+        )
+        let transport = RecordingHTTPTransport(status: 200, body: try JSONEncoder.slate.encode(expected))
+
+        let data = try await SlateIngestClient(transport: transport).readCurrentData(capabilityURL: Self.privateURL)
+
+        #expect(data == expected)
+        #expect(!data.includesOpenCodeGo)
+    }
+
     @Test func retriesOneRetryableHTTPFailureAfterOneSecond() async throws {
         let sleeper = RetrySleepRecorder()
         let transport = RecordingHTTPTransport(responses: [

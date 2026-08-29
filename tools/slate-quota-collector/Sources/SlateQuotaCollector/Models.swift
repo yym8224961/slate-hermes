@@ -96,8 +96,7 @@ struct SlateDashboardData: Codable, Equatable, Sendable {
     let includesOpenCodeGo: Bool
 
     enum CodingKeys: String, CodingKey {
-        case schemaVersion, generatedAt, codex, quota, resetRadar, taskActivity, footer
-        case opencodeGo = "opencode_go"
+        case schemaVersion, generatedAt, codex, opencodeGo, quota, resetRadar, taskActivity, footer
     }
 
     init(

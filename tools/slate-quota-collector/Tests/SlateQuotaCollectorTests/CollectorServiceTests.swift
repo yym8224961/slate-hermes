@@ -343,6 +343,22 @@ struct CollectorServiceTests {
         #expect(try snapshots.loadSnapshot().runtimeState.lastPushAt == earlier)
     }
 
+    @Test("readback verifies the exact Slate wire value when dates contain subseconds")
+    func readbackNormalizesSubsecondDatesToSlateWireFormat() async throws {
+        let subsecondNow = Date(timeIntervalSince1970: 1_786_500_000.987_654)
+        let slate = OnWireRoundTripSlateIngest()
+
+        let report = try await fixture(
+            slate: slate,
+            currentDate: subsecondNow
+        ).collect(mode: .pushOnce)
+
+        #expect(report.envelope?.data.generatedAt == subsecondNow)
+        #expect(report.pushed)
+        #expect(report.readbackVerified)
+        #expect(report.publicErrorCodes["slate"] == nil)
+    }
+
     @Test("POST failure preserves last-good and never rereads providers")
     func pushFailurePreservesLastGoodWithoutProviderReread() async throws {
         let codex = CountingCodexReader(result: .success(.fixture))
@@ -648,8 +664,10 @@ struct CollectorServiceTests {
         onDeadlinePublished: @escaping CollectorService.OnDeadlinePublished = {},
         codexTaskActivity: (any CodexTaskActivityReading)? = nil,
         resetRadar: (any ResetRadarReading)? = nil,
-        includeOpenCodeGo: Bool = true
+        includeOpenCodeGo: Bool = true,
+        currentDate: Date? = nil
     ) -> CollectorService {
+        let collectedAt = currentDate ?? now
         let codexReader: any CodexRateLimitReading
         let openCodeReader: any OpenCodeGoUsageReading
         if let events {
@@ -669,7 +687,7 @@ struct CollectorServiceTests {
             slate: slate,
             openCodeKeyAccount: "opencode-go-api-key",
             slateURLAccount: "slate-push-url",
-            now: { now },
+            now: { collectedAt },
             deadlineSleep: deadlineSleep,
             collectionDeadline: collectionDeadline,
             beforeSideEffect: beforeSideEffect,
@@ -1351,6 +1369,20 @@ private actor RecordingSlateIngest: SlateIngesting {
         if let readbackOverride { return readbackOverride }
         guard let data = pushedEnvelope?.data else { throw FixtureError.failed }
         return data
+    }
+}
+
+private actor OnWireRoundTripSlateIngest: SlateIngesting {
+    private var encodedDashboard: Data?
+
+    func push(_ envelope: SlateEnvelope, capabilityURL _: URL) async throws -> SlateIngestReceipt {
+        encodedDashboard = try JSONEncoder.slate.encode(envelope.data)
+        return .fixture
+    }
+
+    func readCurrentData(capabilityURL _: URL) async throws -> SlateDashboardData {
+        guard let encodedDashboard else { throw FixtureError.failed }
+        return try JSONDecoder.slate.decode(SlateDashboardData.self, from: encodedDashboard)
     }
 }
 

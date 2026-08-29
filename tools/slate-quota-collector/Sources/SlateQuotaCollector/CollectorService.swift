@@ -327,7 +327,8 @@ struct CollectorService: Sendable {
         }
         try deadlineGate.checkActive()
 
-        guard readback == envelope.data else {
+        guard let expectedReadback = Self.slateWireValue(of: envelope.data),
+              readback == expectedReadback else {
             return report(
                 envelope: envelope,
                 pushed: true,
@@ -547,6 +548,11 @@ struct CollectorService: Sendable {
         if let error = error as? SlateIngestError { return error.publicCode }
         if let error = error as? SlateEndpointError { return error.publicCode }
         return missingIsUnconfigured ? "slate_unconfigured" : "slate_transport_unknown"
+    }
+
+    private static func slateWireValue(of dashboard: SlateDashboardData) -> SlateDashboardData? {
+        guard let encoded = try? JSONEncoder.slate.encode(dashboard) else { return nil }
+        return try? JSONDecoder.slate.decode(SlateDashboardData.self, from: encoded)
     }
 
     private static func sanitizedReceipt(_ receipt: SlateIngestReceipt) -> SlateIngestReceipt {

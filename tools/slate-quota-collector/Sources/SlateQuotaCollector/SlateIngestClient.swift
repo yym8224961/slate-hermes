@@ -295,20 +295,7 @@ struct SlateIngestClient: SlateIngesting, Sendable {
     }
 
     private func decodeDashboard(from data: Data) throws -> SlateDashboardData {
-        struct DashboardWire: Decodable {
-            let schemaVersion: Int
-            let generatedAt: Date
-            let codex: CodexDisplaySnapshot
-            let opencodeGo: OpenCodeGoDisplaySnapshot
-        }
-
-        let wire: DashboardWire = try decode(DashboardWire.self, from: data)
-        return SlateDashboardData(
-            schemaVersion: wire.schemaVersion,
-            generatedAt: wire.generatedAt,
-            codex: wire.codex,
-            opencodeGo: wire.opencodeGo
-        )
+        try decode(SlateDashboardData.self, from: data)
     }
 
     private static func isRetryableHTTP(_ status: Int) -> Bool {
