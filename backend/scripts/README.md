@@ -9,7 +9,8 @@ scripts/
 ├── job-runner.ts                  Docker sidecar / cron-like job 入口
 ├── jobs/                          可选临时 dashboard 推送任务
 │   ├── sub2api-usage-stats.ts     Sub2API 用量统计 -> ai_usage_stats
-│   └── claude-code-quota-monitor.ts Claude Code 限额 -> ai_quota_monitor
+│   ├── claude-code-quota-monitor.ts Claude Code 限额 -> ai_quota_monitor
+│   └── renewlet-finance-dashboard.ts Renewlet 实际流水 -> 两张财务 dashboard
 ├── lib/                           job 共享 env / HTTP / Slate ingest helper
 ├── helpers/                       维护脚本共享 Nest bootstrap 和日志 helper
 ├── maintenance/                   一次性创建或修正内容组
@@ -96,6 +97,12 @@ image: ghcr.io/yym8224961/slate:master
 ```
 
 这些具体 job 的 compose 片段属于部署现场配置，不放进 release 文档或根 `compose.yml`。
+
+## Renewlet Finance Dashboard
+
+`renewlet-finance-dashboard` 通过 Renewlet Hermes 只读流水接口更新两张 Slate 自定义模板：本月现金流和最近消费。模板、示例数据、安全边界与部署现场 Compose 片段见 `tools/renewlet-finance-dashboard/README.md`。
+
+该任务只把同 `RENEWLET_REPORTING_CURRENCY` 的流水计入月度金额；外币只计入覆盖提示，不能在没有汇率事实时直接相加。`RENEWLET_BASE` 使用公网地址时必须是 HTTPS；同机部署优先使用 Renewlet Docker 网络内的 `http://web:3000`。
 
 ## Maintenance / Debug / Fonts
 

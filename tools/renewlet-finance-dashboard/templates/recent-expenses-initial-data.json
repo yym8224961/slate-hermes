@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "data": {
+    "schema_version": 1,
+    "recent": {
+      "updated_text": "更新 08-30 01:15",
+      "summary_text": "最近 5 笔 · 按发生时间倒序",
+      "row1": {
+        "visible": true,
+        "date": "08/29",
+        "merchant": "瑞幸咖啡",
+        "category": "餐饮",
+        "amount": "-¥13.08"
+      },
+      "row2": {
+        "visible": true,
+        "date": "08/29",
+        "merchant": "京东",
+        "category": "餐饮",
+        "amount": "-¥457.00"
+      },
+      "row3": {
+        "visible": true,
+        "date": "08/28",
+        "merchant": "阿里云盘",
+        "category": "软件订阅",
+        "amount": "-¥20.00"
+      },
+      "row4": {
+        "visible": true,
+        "date": "08/27",
+        "merchant": "易捷加油",
+        "category": "交通",
+        "amount": "-¥370.00"
+      },
+      "row5": {
+        "visible": true,
+        "date": "08/27",
+        "merchant": "7-ELEVEN 东营店",
+        "category": "餐饮",
+        "amount": "-¥39.50"
+      },
+      "show_empty": false,
+      "source_text": "来源 Renewlet"
+    }
+  }
+}

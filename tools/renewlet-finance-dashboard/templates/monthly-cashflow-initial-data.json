@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "data": {
+    "schema_version": 1,
+    "monthly": {
+      "month_label": "2026年8月",
+      "currency": "CNY",
+      "net_amount_text": "CNY +1,485.14",
+      "transaction_count_text": "43 笔实际流水",
+      "expense_amount": "3,943.16",
+      "income_amount": "5,428.30",
+      "refund_amount": "0.00",
+      "category1": {
+        "visible": true,
+        "name": "餐饮",
+        "amount": "1,476.08",
+        "share_text": "37.4%"
+      },
+      "category2": {
+        "visible": true,
+        "name": "交通",
+        "amount": "920.00",
+        "share_text": "23.3%"
+      },
+      "category3": {
+        "visible": true,
+        "name": "软件订阅",
+        "amount": "637.08",
+        "share_text": "16.2%"
+      },
+      "show_empty_expenses": false,
+      "coverage_text": "CNY · 覆盖全部 43 笔",
+      "updated_text": "更新 08-30 01:15"
+    }
+  }
+}

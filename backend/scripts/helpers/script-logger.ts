@@ -22,11 +22,25 @@ function writeLog(
 }
 
 export async function readScriptErrorBody(res: Response, maxChars = 1000): Promise<string> {
-  return truncateScriptLogText(await res.text().catch(() => ''), maxChars);
+  return truncateScriptLogText(redactScriptLogText(await res.text().catch(() => '')), maxChars);
 }
 
 export function formatScriptError(err: unknown, maxChars = 512): string {
-  return truncateScriptLogText(err instanceof Error ? err.message : String(err), maxChars);
+  return truncateScriptLogText(
+    redactScriptLogText(err instanceof Error ? err.message : String(err)),
+    maxChars
+  );
+}
+
+export function redactScriptLogText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[^\s"'\\]+/gi, 'Bearer [REDACTED]')
+    .replace(/\brlh_[A-Za-z0-9_-]+\b/g, 'rlh_[REDACTED]')
+    .replace(/\/api\/v1\/contents\/[^/\s"'?]+\/data/g, '/api/v1/contents/[REDACTED]/data')
+    .replace(
+      /(["']?(?:authorization|token|contentId)["']?\s*[:=]\s*["']?)[^\s,"'}]+/gi,
+      '$1[REDACTED]'
+    );
 }
 
 export function truncateScriptLogText(value: string, maxChars: number): string {

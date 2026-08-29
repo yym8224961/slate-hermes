@@ -8,6 +8,16 @@ interface APIResponse<T> {
 
 type JSONHeaders = Record<string, string>;
 
+export class HTTPResponseError extends Error {
+  constructor(
+    message: string,
+    readonly status: number
+  ) {
+    super(message);
+    this.name = 'HTTPResponseError';
+  }
+}
+
 function unwrapAPIResponse<T>(value: unknown, label: string): T {
   if (value && typeof value === 'object' && 'code' in value) {
     const json = value as APIResponse<T>;
@@ -24,7 +34,7 @@ export async function fetchJSON<T>(url: string, init: RequestInit, label: string
   const res = await fetch(url, init);
   if (!res.ok) {
     const body = await readScriptErrorBody(res);
-    throw new Error(`${label} ${res.status}: ${body}`);
+    throw new HTTPResponseError(`${label} ${res.status}: ${body}`, res.status);
   }
 
   const json = (await res.json()) as unknown;

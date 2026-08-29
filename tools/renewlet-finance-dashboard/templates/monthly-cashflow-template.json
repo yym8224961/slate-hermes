@@ -1,0 +1,287 @@
+{
+  "version": 1,
+  "name": "Renewlet 本月现金流",
+  "canvas": "full",
+  "blocks": [
+    { "type": "rect", "x": 0, "y": 0, "w": 400, "h": 118, "stroke": false, "fill": "black" },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 9,
+      "w": 210,
+      "h": 18,
+      "value": "本月现金流",
+      "font_size": 16,
+      "color": "white",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 226,
+      "y": 11,
+      "w": 160,
+      "h": 16,
+      "value": "{monthly.month_label}",
+      "font_size": 12,
+      "align": "right",
+      "color": "white",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 36,
+      "w": 372,
+      "h": 34,
+      "value": "{monthly.net_amount_text}",
+      "font_size": 32,
+      "color": "white",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 88,
+      "w": 168,
+      "h": 16,
+      "value": "净现金流",
+      "font_size": 12,
+      "color": "white",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 190,
+      "y": 88,
+      "w": 196,
+      "h": 16,
+      "value": "{monthly.transaction_count_text}",
+      "font_size": 12,
+      "align": "right",
+      "color": "white",
+      "ellipsis": false
+    },
+
+    { "type": "line", "x1": 14, "y1": 128, "x2": 385, "y2": 128, "style": "solid" },
+    { "type": "line", "x1": 137, "y1": 136, "x2": 137, "y2": 181, "style": "solid" },
+    { "type": "line", "x1": 261, "y1": 136, "x2": 261, "y2": 181, "style": "solid" },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 139,
+      "w": 112,
+      "h": 16,
+      "value": "支出 {monthly.currency}",
+      "font_size": 12,
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 159,
+      "w": 112,
+      "h": 18,
+      "value": "{monthly.expense_amount}",
+      "font_size": 16,
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 149,
+      "y": 139,
+      "w": 101,
+      "h": 16,
+      "value": "收入 {monthly.currency}",
+      "font_size": 12,
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 149,
+      "y": 159,
+      "w": 101,
+      "h": 18,
+      "value": "{monthly.income_amount}",
+      "font_size": 16,
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 273,
+      "y": 139,
+      "w": 113,
+      "h": 16,
+      "value": "退款 {monthly.currency}",
+      "font_size": 12,
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 273,
+      "y": 159,
+      "w": 113,
+      "h": 18,
+      "value": "{monthly.refund_amount}",
+      "font_size": 16,
+      "ellipsis": false
+    },
+
+    { "type": "line", "x1": 14, "y1": 190, "x2": 385, "y2": 190, "style": "solid" },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 198,
+      "w": 120,
+      "h": 16,
+      "value": "支出前三",
+      "font_size": 12,
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 250,
+      "y": 198,
+      "w": 136,
+      "h": 16,
+      "value": "占本月支出",
+      "font_size": 12,
+      "align": "right",
+      "ellipsis": false
+    },
+
+    {
+      "type": "text",
+      "x": 14,
+      "y": 220,
+      "w": 150,
+      "h": 18,
+      "value": "{monthly.category1.name}",
+      "font_size": 16,
+      "visible": "{monthly.category1.visible}"
+    },
+    {
+      "type": "text",
+      "x": 174,
+      "y": 220,
+      "w": 122,
+      "h": 18,
+      "value": "{monthly.category1.amount}",
+      "font_size": 16,
+      "align": "right",
+      "visible": "{monthly.category1.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 310,
+      "y": 222,
+      "w": 76,
+      "h": 16,
+      "value": "{monthly.category1.share_text}",
+      "font_size": 12,
+      "align": "right",
+      "visible": "{monthly.category1.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 242,
+      "w": 150,
+      "h": 18,
+      "value": "{monthly.category2.name}",
+      "font_size": 16,
+      "visible": "{monthly.category2.visible}"
+    },
+    {
+      "type": "text",
+      "x": 174,
+      "y": 242,
+      "w": 122,
+      "h": 18,
+      "value": "{monthly.category2.amount}",
+      "font_size": 16,
+      "align": "right",
+      "visible": "{monthly.category2.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 310,
+      "y": 244,
+      "w": 76,
+      "h": 16,
+      "value": "{monthly.category2.share_text}",
+      "font_size": 12,
+      "align": "right",
+      "visible": "{monthly.category2.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 264,
+      "w": 150,
+      "h": 18,
+      "value": "{monthly.category3.name}",
+      "font_size": 16,
+      "visible": "{monthly.category3.visible}"
+    },
+    {
+      "type": "text",
+      "x": 174,
+      "y": 264,
+      "w": 122,
+      "h": 18,
+      "value": "{monthly.category3.amount}",
+      "font_size": 16,
+      "align": "right",
+      "visible": "{monthly.category3.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 310,
+      "y": 266,
+      "w": 76,
+      "h": 16,
+      "value": "{monthly.category3.share_text}",
+      "font_size": 12,
+      "align": "right",
+      "visible": "{monthly.category3.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 90,
+      "y": 236,
+      "w": 220,
+      "h": 18,
+      "value": "本月还没有支出流水",
+      "font_size": 16,
+      "align": "center",
+      "visible": "{monthly.show_empty_expenses}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 286,
+      "w": 228,
+      "h": 12,
+      "value": "{monthly.coverage_text}",
+      "font_size": 12
+    },
+    {
+      "type": "text",
+      "x": 248,
+      "y": 286,
+      "w": 138,
+      "h": 12,
+      "value": "{monthly.updated_text}",
+      "font_size": 12,
+      "align": "right",
+      "ellipsis": false
+    }
+  ]
+}

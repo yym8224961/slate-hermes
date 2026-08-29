@@ -1,0 +1,388 @@
+{
+  "version": 1,
+  "name": "Renewlet 最近消费",
+  "canvas": "full",
+  "blocks": [
+    { "type": "rect", "x": 0, "y": 0, "w": 400, "h": 62, "stroke": false, "fill": "black" },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 9,
+      "w": 180,
+      "h": 18,
+      "value": "最近消费",
+      "font_size": 16,
+      "color": "white",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 204,
+      "y": 11,
+      "w": 182,
+      "h": 16,
+      "value": "{recent.updated_text}",
+      "font_size": 12,
+      "align": "right",
+      "color": "white",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 35,
+      "w": 372,
+      "h": 18,
+      "value": "{recent.summary_text}",
+      "font_size": 16,
+      "color": "white",
+      "ellipsis": false
+    },
+
+    {
+      "type": "text",
+      "x": 14,
+      "y": 70,
+      "w": 48,
+      "h": 16,
+      "value": "日期",
+      "font_size": 12,
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 70,
+      "y": 70,
+      "w": 146,
+      "h": 16,
+      "value": "商户",
+      "font_size": 12,
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 224,
+      "y": 70,
+      "w": 70,
+      "h": 16,
+      "value": "分类",
+      "font_size": 12,
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 302,
+      "y": 70,
+      "w": 84,
+      "h": 16,
+      "value": "金额",
+      "font_size": 12,
+      "align": "right",
+      "ellipsis": false
+    },
+    { "type": "line", "x1": 14, "y1": 88, "x2": 385, "y2": 88, "style": "solid" },
+
+    {
+      "type": "text",
+      "x": 14,
+      "y": 98,
+      "w": 48,
+      "h": 18,
+      "value": "{recent.row1.date}",
+      "font_size": 16,
+      "visible": "{recent.row1.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 70,
+      "y": 98,
+      "w": 146,
+      "h": 18,
+      "value": "{recent.row1.merchant}",
+      "font_size": 16,
+      "visible": "{recent.row1.visible}"
+    },
+    {
+      "type": "text",
+      "x": 224,
+      "y": 98,
+      "w": 70,
+      "h": 18,
+      "value": "{recent.row1.category}",
+      "font_size": 16,
+      "visible": "{recent.row1.visible}"
+    },
+    {
+      "type": "text",
+      "x": 302,
+      "y": 100,
+      "w": 84,
+      "h": 16,
+      "value": "{recent.row1.amount}",
+      "font_size": 12,
+      "align": "right",
+      "visible": "{recent.row1.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "line",
+      "x1": 14,
+      "y1": 122,
+      "x2": 385,
+      "y2": 122,
+      "style": "dashed",
+      "visible": "{recent.row2.visible}"
+    },
+
+    {
+      "type": "text",
+      "x": 14,
+      "y": 132,
+      "w": 48,
+      "h": 18,
+      "value": "{recent.row2.date}",
+      "font_size": 16,
+      "visible": "{recent.row2.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 70,
+      "y": 132,
+      "w": 146,
+      "h": 18,
+      "value": "{recent.row2.merchant}",
+      "font_size": 16,
+      "visible": "{recent.row2.visible}"
+    },
+    {
+      "type": "text",
+      "x": 224,
+      "y": 132,
+      "w": 70,
+      "h": 18,
+      "value": "{recent.row2.category}",
+      "font_size": 16,
+      "visible": "{recent.row2.visible}"
+    },
+    {
+      "type": "text",
+      "x": 302,
+      "y": 134,
+      "w": 84,
+      "h": 16,
+      "value": "{recent.row2.amount}",
+      "font_size": 12,
+      "align": "right",
+      "visible": "{recent.row2.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "line",
+      "x1": 14,
+      "y1": 156,
+      "x2": 385,
+      "y2": 156,
+      "style": "dashed",
+      "visible": "{recent.row3.visible}"
+    },
+
+    {
+      "type": "text",
+      "x": 14,
+      "y": 166,
+      "w": 48,
+      "h": 18,
+      "value": "{recent.row3.date}",
+      "font_size": 16,
+      "visible": "{recent.row3.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 70,
+      "y": 166,
+      "w": 146,
+      "h": 18,
+      "value": "{recent.row3.merchant}",
+      "font_size": 16,
+      "visible": "{recent.row3.visible}"
+    },
+    {
+      "type": "text",
+      "x": 224,
+      "y": 166,
+      "w": 70,
+      "h": 18,
+      "value": "{recent.row3.category}",
+      "font_size": 16,
+      "visible": "{recent.row3.visible}"
+    },
+    {
+      "type": "text",
+      "x": 302,
+      "y": 168,
+      "w": 84,
+      "h": 16,
+      "value": "{recent.row3.amount}",
+      "font_size": 12,
+      "align": "right",
+      "visible": "{recent.row3.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "line",
+      "x1": 14,
+      "y1": 190,
+      "x2": 385,
+      "y2": 190,
+      "style": "dashed",
+      "visible": "{recent.row4.visible}"
+    },
+
+    {
+      "type": "text",
+      "x": 14,
+      "y": 200,
+      "w": 48,
+      "h": 18,
+      "value": "{recent.row4.date}",
+      "font_size": 16,
+      "visible": "{recent.row4.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 70,
+      "y": 200,
+      "w": 146,
+      "h": 18,
+      "value": "{recent.row4.merchant}",
+      "font_size": 16,
+      "visible": "{recent.row4.visible}"
+    },
+    {
+      "type": "text",
+      "x": 224,
+      "y": 200,
+      "w": 70,
+      "h": 18,
+      "value": "{recent.row4.category}",
+      "font_size": 16,
+      "visible": "{recent.row4.visible}"
+    },
+    {
+      "type": "text",
+      "x": 302,
+      "y": 202,
+      "w": 84,
+      "h": 16,
+      "value": "{recent.row4.amount}",
+      "font_size": 12,
+      "align": "right",
+      "visible": "{recent.row4.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "line",
+      "x1": 14,
+      "y1": 224,
+      "x2": 385,
+      "y2": 224,
+      "style": "dashed",
+      "visible": "{recent.row5.visible}"
+    },
+
+    {
+      "type": "text",
+      "x": 14,
+      "y": 234,
+      "w": 48,
+      "h": 18,
+      "value": "{recent.row5.date}",
+      "font_size": 16,
+      "visible": "{recent.row5.visible}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 70,
+      "y": 234,
+      "w": 146,
+      "h": 18,
+      "value": "{recent.row5.merchant}",
+      "font_size": 16,
+      "visible": "{recent.row5.visible}"
+    },
+    {
+      "type": "text",
+      "x": 224,
+      "y": 234,
+      "w": 70,
+      "h": 18,
+      "value": "{recent.row5.category}",
+      "font_size": 16,
+      "visible": "{recent.row5.visible}"
+    },
+    {
+      "type": "text",
+      "x": 302,
+      "y": 236,
+      "w": 84,
+      "h": 16,
+      "value": "{recent.row5.amount}",
+      "font_size": 12,
+      "align": "right",
+      "visible": "{recent.row5.visible}",
+      "ellipsis": false
+    },
+
+    {
+      "type": "text",
+      "x": 90,
+      "y": 144,
+      "w": 220,
+      "h": 18,
+      "value": "还没有消费流水",
+      "font_size": 16,
+      "align": "center",
+      "visible": "{recent.show_empty}",
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 80,
+      "y": 170,
+      "w": 240,
+      "h": 16,
+      "value": "新增支出后会自动出现在这里",
+      "font_size": 12,
+      "align": "center",
+      "visible": "{recent.show_empty}",
+      "ellipsis": false
+    },
+    { "type": "line", "x1": 14, "y1": 266, "x2": 385, "y2": 266, "style": "solid" },
+    {
+      "type": "text",
+      "x": 14,
+      "y": 278,
+      "w": 234,
+      "h": 16,
+      "value": "实际流水 · 不含预计续费",
+      "font_size": 12,
+      "ellipsis": false
+    },
+    {
+      "type": "text",
+      "x": 250,
+      "y": 278,
+      "w": 136,
+      "h": 16,
+      "value": "{recent.source_text}",
+      "font_size": 12,
+      "align": "right",
+      "ellipsis": false
+    }
+  ]
+}
