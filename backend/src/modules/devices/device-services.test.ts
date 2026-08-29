@@ -404,6 +404,7 @@ function createClaimService(
   service: DeviceManagementService;
   updates: { where: unknown; data: Partial<DeviceRecord> }[];
   getRecord: () => DeviceRecord | undefined;
+  invalidatedDeviceIds: string[];
 } {
   let current = record;
   const updates: { where: unknown; data: Partial<DeviceRecord> }[] = [];
@@ -461,14 +462,17 @@ function createClaimService(
         },
       ],
   };
+  const invalidatedDeviceIds: string[] = [];
   return {
     service: new DeviceManagementService(
       prisma as unknown as PrismaService,
       groups as unknown as GroupsService,
-      pairCodeStub()
+      pairCodeStub(),
+      { invalidateDevice: (id: string) => invalidatedDeviceIds.push(id) } as never
     ),
     updates,
     getRecord: () => current,
+    invalidatedDeviceIds,
   };
 }
 
@@ -484,7 +488,7 @@ function currentContentStub(): DeviceCurrentContentService {
 
 describe('DeviceManagementService.claimByPairCode', () => {
   it('claims an unowned device and assigns the first owner group', async () => {
-    const { service, getRecord } = createClaimService(
+    const { service, getRecord, invalidatedDeviceIds } = createClaimService(
       device({ ownerUserId: null, selectedGroupId: null })
     );
 
@@ -495,6 +499,7 @@ describe('DeviceManagementService.claimByPairCode', () => {
     expect(result.selected_group_id).toBe('group-1');
     expect(result.sort_order).toBe(2);
     expect(getRecord()?.pairCode).not.toBe('ABC234');
+    expect(invalidatedDeviceIds).toEqual(['device-1']);
   });
 
   it('leaves an empty selected_group_id when owner has no group yet', async () => {

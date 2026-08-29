@@ -23,6 +23,7 @@ describe('HermesTokenStore', () => {
     await store.onModuleInit();
 
     expect(store.get()).toBe(envToken);
+    expect(store.revision()).toBe(1);
   });
 
   it('writes a valid Token atomically with owner-only permissions and reloads it', async () => {
@@ -34,8 +35,21 @@ describe('HermesTokenStore', () => {
 
     const tokenPath = join(root, 'hermes-agent-token');
     expect(store.get()).toBe(fileToken);
+    expect(store.revision()).toBe(1);
     expect(await readFile(tokenPath, 'utf8')).toBe(`${fileToken}\n`);
     expect((await stat(tokenPath)).mode & 0o777).toBe(0o600);
+  });
+
+  it('increments its revision on every successful token rotation', async () => {
+    const root = await makeTempRoot();
+    const store = new HermesTokenStore(config(root, undefined));
+    await store.onModuleInit();
+
+    expect(store.revision()).toBe(0);
+    await store.set(fileToken);
+    expect(store.revision()).toBe(1);
+    await store.set(`next-${'b'.repeat(60)}`);
+    expect(store.revision()).toBe(2);
   });
 
   it('rejects short, whitespace, and punctuation outside the allowlist', async () => {

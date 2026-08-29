@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import bcrypt from 'bcryptjs';
-import { ConflictError, ValidationError } from '../../common/errors';
+import { ConflictError, ForbiddenError, ValidationError } from '../../common/errors';
 import { prismaUniqueTargetIncludes } from '../../common/db/prisma-utils';
 import { PrismaService } from '../../infra/prisma/prisma.service';
 
@@ -52,6 +52,54 @@ export class UsersService {
     });
   }
 
+  async isAdmin(id: string): Promise<boolean> {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { isAdmin: true },
+    });
+    return user?.isAdmin === true;
+  }
+
+  /**
+   * Public registration is only the one-time bootstrap path.  The serializable
+   * transaction prevents two concurrent requests from creating two admins.
+   */
+  async createInitialAdmin(
+    email: string,
+    username: string,
+    password: string
+  ): Promise<{ id: string; email: string; username: string | null }> {
+    const hash = await bcrypt.hash(password, PASSWORD_HASH_COST);
+    try {
+      return await this.prisma.$transaction(
+        async (tx) => {
+          const existing = await tx.user.findFirst({ select: { id: true } });
+          if (existing) {
+            throw new ForbiddenError('管理员账号已创建，公开注册已关闭', {
+              code: 'registration_closed',
+            });
+          }
+          return tx.user.create({
+            data: { email, username, password: hash, isAdmin: true },
+            select: { id: true, email: true, username: true },
+          });
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
+      );
+    } catch (err) {
+      if (err instanceof ForbiddenError) throw err;
+      if (err instanceof Prisma.PrismaClientKnownRequestError) {
+        if (err.code === 'P2034') {
+          throw new ForbiddenError('管理员账号已创建，公开注册已关闭', {
+            code: 'registration_closed',
+          });
+        }
+        this.mapUniqueConflict(err);
+      }
+      throw err;
+    }
+  }
+
   async create(
     email: string,
     username: string,
@@ -65,14 +113,18 @@ export class UsersService {
       });
     } catch (err) {
       if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
-        if (prismaUniqueTargetIncludes(err, 'email')) {
-          throw new ConflictError('该邮箱已被注册', { code: 'email_already_registered' });
-        }
-        if (prismaUniqueTargetIncludes(err, 'username')) {
-          throw new ConflictError('该用户名已被占用', { code: 'username_already_taken' });
-        }
+        this.mapUniqueConflict(err);
       }
       throw err;
+    }
+  }
+
+  private mapUniqueConflict(err: Prisma.PrismaClientKnownRequestError): never | void {
+    if (prismaUniqueTargetIncludes(err, 'email')) {
+      throw new ConflictError('该邮箱已被注册', { code: 'email_already_registered' });
+    }
+    if (prismaUniqueTargetIncludes(err, 'username')) {
+      throw new ConflictError('该用户名已被占用', { code: 'username_already_taken' });
     }
   }
 }

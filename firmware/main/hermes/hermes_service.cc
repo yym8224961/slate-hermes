@@ -14,15 +14,15 @@
 #include "bsp/config.h"
 #include "drivers/audio/audio_player.h"
 #include "events/event_bus.h"
+#include "hermes/hermes_limits.h"
 #include "network/cred_store.h"
 #include "storage/nvs/volume_store.h"
+#include "utils/utf8_utils.h"
 
 namespace {
 constexpr char   kTag[]              = "hermes";
-constexpr int    kMaxRecordSec       = 15;  // max recording duration
 constexpr int    kSampleRate         = 16000;
-constexpr int    kBufSizeBytes       = 4096;
-constexpr int    kHttpTimeoutMs      = 75000;
+constexpr int    kHttpTimeoutMs      = 120000;
 constexpr size_t kMaxReplyAudioBytes = static_cast<size_t>(kSampleRate) * AUDIO_PCM_BYTES_PER_SAMPLE * 20;
 constexpr size_t kMaxResponseBytes   = ((kMaxReplyAudioBytes + 2) / 3) * 4 + 8192;
 
@@ -73,6 +73,14 @@ bool HermesService::Start(AudioPlayer* player) {
         return true;
 
     saved_volume_ = vol::Get();
+    if (!record_done_)
+        record_done_ = xSemaphoreCreateBinary();
+    if (!send_done_)
+        send_done_ = xSemaphoreCreateBinary();
+    if (!record_done_ || !send_done_) {
+        ESP_LOGE(kTag, "failed to create Hermes task completion signals");
+        return false;
+    }
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
         snapshot_.volume = saved_volume_;
@@ -131,6 +139,10 @@ void HermesService::StartRecording() {
         SetError("上一条语音仍在处理");
         return;
     }
+    if (record_task_active_.load(std::memory_order_acquire)) {
+        SetError("上一次录音任务尚未结束");
+        return;
+    }
 
     // Take exclusive audio control
     if (!player_->BeginXiaozhi()) {
@@ -142,11 +154,14 @@ void HermesService::StartRecording() {
     {
         std::lock_guard<std::mutex> lock(pcm_mutex_);
         pcm_buffer_.clear();
-        pcm_buffer_.reserve(kSampleRate * kMaxRecordSec);  // pre-allocate
+        pcm_buffer_.reserve(kMaxRecordSamples);  // pre-allocate
     }
 
     record_stop_.store(false, std::memory_order_relaxed);
+    send_cancel_requested_.store(false, std::memory_order_relaxed);
     recording_.store(true, std::memory_order_relaxed);
+    record_task_active_.store(true, std::memory_order_release);
+    xSemaphoreTake(record_done_, 0);
 
     // Start recording task
     BaseType_t ok =
@@ -155,6 +170,7 @@ void HermesService::StartRecording() {
     if (ok != pdPASS) {
         ESP_LOGE(kTag, "record task create failed");
         recording_.store(false, std::memory_order_relaxed);
+        record_task_active_.store(false, std::memory_order_release);
         player_->EndXiaozhi();
         SetError("录音任务启动失败");
         return;
@@ -165,7 +181,7 @@ void HermesService::StartRecording() {
 }
 
 void HermesService::StopAndSend() {
-    if (!recording_.load(std::memory_order_relaxed))
+    if (!recording_.exchange(false, std::memory_order_acq_rel))
         return;
 
     ESP_LOGI(kTag, "stopping recording");
@@ -173,11 +189,19 @@ void HermesService::StopAndSend() {
     // Signal record task to stop
     record_stop_.store(true, std::memory_order_relaxed);
 
-    // Wait briefly for task to finish
-    vTaskDelay(pdMS_TO_TICKS(200));
+    // EndXiaozhi makes a pending codec read return, then wait for the record
+    // task's explicit completion signal before moving its PCM buffer.
+    if (player_ && player_->IsXiaozhiActive())
+        player_->EndXiaozhi();
+    if (!WaitForRecordTask(pdMS_TO_TICKS(2000))) {
+        SetError("录音停止超时，请重试");
+        return;
+    }
 
-    recording_.store(false, std::memory_order_relaxed);
+    FinalizeRecordingAndSend();
+}
 
+void HermesService::FinalizeRecordingAndSend() {
     // Get recorded PCM
     std::vector<int16_t> pcm;
     {
@@ -186,8 +210,7 @@ void HermesService::StopAndSend() {
         pcm_buffer_.clear();
     }
 
-    // Release audio hardware
-    if (player_)
+    if (player_ && player_->IsXiaozhiActive())
         player_->EndXiaozhi();
 
     if (pcm.empty()) {
@@ -198,22 +221,29 @@ void HermesService::StopAndSend() {
 
     ESP_LOGI(kTag, "recorded %d samples (%.1fs)", (int)pcm.size(), (float)pcm.size() / kSampleRate);
 
-    send_cancel_requested_.store(false, std::memory_order_relaxed);
-    auto* context = new (std::nothrow) SendTaskContext{this, std::move(pcm)};
-    if (!context) {
-        SetError("发送任务内存不足");
-        return;
-    }
+    {
+        std::lock_guard<std::mutex> lifecycle_lock(send_lifecycle_mutex_);
+        if (send_cancel_requested_.load(std::memory_order_relaxed)) {
+            SetState(HermesState::kIdle, "Hermes - 按确认说话");
+            return;
+        }
+        auto* context = new (std::nothrow) SendTaskContext{this, std::move(pcm)};
+        if (!context) {
+            SetError("发送任务内存不足");
+            return;
+        }
 
-    send_in_flight_.store(true, std::memory_order_relaxed);
-    SetState(HermesState::kSending, "发送中...");
-    const BaseType_t ok = xTaskCreatePinnedToCore(
-        &HermesService::SendTaskEntry, "hermes_send", 16 * 1024, context, 5, &send_task_, 0);
-    if (ok != pdPASS) {
-        send_in_flight_.store(false, std::memory_order_relaxed);
-        send_task_ = nullptr;
-        delete context;
-        SetError("发送任务启动失败");
+        send_in_flight_.store(true, std::memory_order_release);
+        xSemaphoreTake(send_done_, 0);
+        SetState(HermesState::kSending, "发送中...");
+        const BaseType_t ok = xTaskCreatePinnedToCore(
+            &HermesService::SendTaskEntry, "hermes_send", 16 * 1024, context, 5, &send_task_, 0);
+        if (ok != pdPASS) {
+            send_in_flight_.store(false, std::memory_order_release);
+            send_task_ = nullptr;
+            delete context;
+            SetError("发送任务启动失败");
+        }
     }
 }
 
@@ -241,9 +271,10 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
     {
         std::lock_guard<std::mutex> lock(snapshot_mutex_);
         for (const auto& msg : snapshot_.messages) {
+            const std::string content = LimitHistoryText(msg.text);
             cJSON* item = cJSON_CreateObject();
             cJSON_AddStringToObject(item, "role", msg.role.c_str());
-            cJSON_AddStringToObject(item, "content", msg.text.c_str());
+            cJSON_AddStringToObject(item, "content", content.c_str());
             cJSON_AddItemToArray(history, item);
         }
     }
@@ -288,6 +319,31 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
         return;
     }
 
+    {
+        std::lock_guard<std::mutex> lock(http_mutex_);
+        if (send_cancel_requested_.load(std::memory_order_relaxed)) {
+            free(body_str);
+            esp_http_client_cleanup(client);
+            return;
+        }
+        active_http_client_ = client;
+    }
+
+    auto cleanup_client = [&]() {
+        {
+            std::lock_guard<std::mutex> lock(http_mutex_);
+            if (active_http_client_ == client)
+                active_http_client_ = nullptr;
+        }
+        esp_http_client_close(client);
+        esp_http_client_cleanup(client);
+        free(body_str);
+    };
+
+    if (send_cancel_requested_.load(std::memory_order_relaxed)) {
+        cleanup_client();
+        return;
+    }
     SetState(HermesState::kThinking, "Hermes思考中...");
 
     const size_t body_len = strlen(body_str);
@@ -323,9 +379,7 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
             if (resp) {
                 if (send_cancel_requested_.load(std::memory_order_relaxed)) {
                     cJSON_Delete(resp);
-                    esp_http_client_close(client);
-                    esp_http_client_cleanup(client);
-                    free(body_str);
+                    cleanup_client();
                     return;
                 }
                 cJSON* text_item      = cJSON_GetObjectItem(resp, "text");
@@ -334,18 +388,17 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
 
                 std::string response_text;
                 if (text_item && cJSON_IsString(text_item) && text_item->valuestring)
-                    response_text = text_item->valuestring;
+                    response_text = LimitHistoryText(text_item->valuestring);
 
                 std::string user_text;
                 if (user_text_item && cJSON_IsString(user_text_item) && user_text_item->valuestring)
-                    user_text = user_text_item->valuestring;
+                    user_text = LimitHistoryText(user_text_item->valuestring);
 
                 if (!response_text.empty()) {
-                    if (user_text.empty())
-                        user_text = "（未识别到语音）";
                     {
                         std::lock_guard<std::mutex> lock(snapshot_mutex_);
-                        snapshot_.messages.push_back({"user", user_text});
+                        if (!user_text.empty())
+                            snapshot_.messages.push_back({"user", user_text});
                         snapshot_.messages.push_back({"assistant", response_text});
                         while (snapshot_.messages.size() > 20)
                             snapshot_.messages.erase(snapshot_.messages.begin());
@@ -364,22 +417,33 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
                                                             audio_b64_len);
                             if (ret == 0 && out_len > 0 && player_->BeginXiaozhi()) {
                                 pcm_data.resize(out_len);
-                                player_->WriteXiaozhiPcm(reinterpret_cast<const int16_t*>(pcm_data.data()),
-                                                         out_len / sizeof(int16_t));
+                                const auto* samples = reinterpret_cast<const int16_t*>(pcm_data.data());
+                                const size_t sample_count = out_len / sizeof(int16_t);
+                                size_t offset = 0;
+                                while (offset < sample_count &&
+                                       !send_cancel_requested_.load(std::memory_order_relaxed)) {
+                                    const size_t count = std::min<size_t>(512, sample_count - offset);
+                                    if (!player_->WriteXiaozhiPcm(samples + offset, count))
+                                        break;
+                                    offset += count;
+                                }
                                 player_->EndXiaozhi();
                                 ESP_LOGI(kTag, "tts played %d bytes", (int)out_len);
                             }
                         }
                     }
-                    SetState(HermesState::kIdle, response_text);
+                    if (!send_cancel_requested_.load(std::memory_order_relaxed))
+                        SetState(HermesState::kIdle, response_text);
                 } else {
                     SetState(HermesState::kIdle, "Hermes没听清，再说一次？");
                 }
                 cJSON_Delete(resp);
-            } else {
+            } else if (!send_cancel_requested_.load(std::memory_order_relaxed)) {
                 ESP_LOGW(kTag, "invalid or oversized JSON response");
                 SetError("后端响应异常");
             }
+        } else if (send_cancel_requested_.load(std::memory_order_relaxed)) {
+            // User cancelled while the request was active.
         } else if (status == 401) {
             SetError("设备认证失败");
         } else if (content_length > static_cast<int64_t>(kMaxResponseBytes)) {
@@ -389,38 +453,52 @@ void HermesService::SendAudioToBackend(const std::vector<int16_t>& pcm) {
             ESP_LOGW(kTag, "backend error %d", status);
             SetError("Hermes暂时连不上...");
         }
-    } else {
+    } else if (!send_cancel_requested_.load(std::memory_order_relaxed)) {
         ESP_LOGE(kTag, "http failed: %s", esp_err_to_name(err));
         SetError("网络连接失败");
     }
 
-    esp_http_client_close(client);
-    esp_http_client_cleanup(client);
-    free(body_str);
+    cleanup_client();
 }
 
 void HermesService::StopConversation() {
     ESP_LOGI(kTag, "stop conversation");
 
-    recording_.store(false, std::memory_order_relaxed);
+    recording_.store(false, std::memory_order_release);
     record_stop_.store(true, std::memory_order_relaxed);
     send_cancel_requested_.store(true, std::memory_order_relaxed);
 
-    // Clear PCM buffer
+    if (player_ && player_->IsXiaozhiActive())
+        player_->EndXiaozhi();
+    bool record_task_stopped = true;
+    if (record_task_active_.load(std::memory_order_acquire)) {
+        record_task_stopped = WaitForRecordTask(pdMS_TO_TICKS(2000));
+        if (!record_task_stopped)
+            ESP_LOGE(kTag, "record task did not stop before cancellation timeout");
+    }
+
+    // Synchronize with the short task-creation critical section. After this
+    // barrier either no send will start, or send_in_flight_ is observable and
+    // the new task sees send_cancel_requested_=true before doing network I/O.
     {
+        std::lock_guard<std::mutex> lifecycle_lock(send_lifecycle_mutex_);
+    }
+    CancelActiveHttpRequest();
+    if (send_in_flight_.load(std::memory_order_acquire))
+        WaitForSendTask(pdMS_TO_TICKS(3000));
+
+    // Do not clear a buffer that a stuck record task may still be writing.
+    if (record_task_stopped) {
         std::lock_guard<std::mutex> lock(pcm_mutex_);
         pcm_buffer_.clear();
     }
-
-    if (player_ && player_->IsXiaozhiActive())
-        player_->EndXiaozhi();
 
     if (CurrentState() != HermesState::kIdle)
         SetState(HermesState::kIdle, "Hermes - 按确认说话");
 }
 
 void HermesService::AdjustVolume(int delta) {
-    const int level = std::clamp(saved_volume_ + delta, 0, vol::kMax);
+    const int level = std::clamp(vol::Get() + delta, 0, vol::kMax);
     SetVolume(level);
 }
 
@@ -444,6 +522,24 @@ bool HermesService::BlocksSleep() const {
 void HermesService::SuspendForSleep() {
     in_mode_.store(false, std::memory_order_relaxed);
     StopConversation();
+}
+
+bool HermesService::WaitForRecordTask(TickType_t timeout) {
+    if (!record_task_active_.load(std::memory_order_acquire))
+        return true;
+    return record_done_ && xSemaphoreTake(record_done_, timeout) == pdTRUE;
+}
+
+bool HermesService::WaitForSendTask(TickType_t timeout) {
+    if (!send_in_flight_.load(std::memory_order_acquire))
+        return true;
+    return send_done_ && xSemaphoreTake(send_done_, timeout) == pdTRUE;
+}
+
+void HermesService::CancelActiveHttpRequest() {
+    std::lock_guard<std::mutex> lock(http_mutex_);
+    if (active_http_client_)
+        esp_http_client_cancel_request(active_http_client_);
 }
 
 HermesSnapshot HermesService::Snapshot() {
@@ -485,8 +581,16 @@ void HermesService::PostChanged() {
 
 void HermesService::RecordTaskEntry(void* arg) {
     auto* self = static_cast<HermesService*>(arg);
-    self->RecordTask();
+    const bool reached_limit = self->RecordTask();
     self->record_task_ = nullptr;
+    self->record_task_active_.store(false, std::memory_order_release);
+    if (self->record_done_)
+        xSemaphoreGive(self->record_done_);
+    if (reached_limit && self->recording_.exchange(false, std::memory_order_acq_rel)) {
+        if (self->player_ && self->player_->IsXiaozhiActive())
+            self->player_->EndXiaozhi();
+        self->FinalizeRecordingAndSend();
+    }
     vTaskDelete(nullptr);
 }
 
@@ -496,47 +600,51 @@ void HermesService::SendTaskEntry(void* arg) {
     self->SendAudioToBackend(context->pcm);
     delete context;
     self->send_task_ = nullptr;
-    self->send_in_flight_.store(false, std::memory_order_relaxed);
+    self->send_in_flight_.store(false, std::memory_order_release);
+    if (self->send_done_)
+        xSemaphoreGive(self->send_done_);
     vTaskDelete(nullptr);
 }
 
-void HermesService::RecordTask() {
+bool HermesService::RecordTask() {
     ESP_LOGI(kTag, "record task started");
-    std::vector<int16_t> chunk(512);  // 32ms at 16kHz
+    std::vector<int16_t> chunk(kRecordChunkSamples);  // 32ms at 16kHz
 
-    int       total_samples = 0;
-    const int max_samples   = kSampleRate * kMaxRecordSec;
+    size_t total_samples = 0;
 
-    while (!record_stop_.load(std::memory_order_relaxed) && total_samples < max_samples) {
+    while (!record_stop_.load(std::memory_order_relaxed) && total_samples < kMaxRecordSamples) {
         if (!player_ || !player_->IsXiaozhiActive()) {
             ESP_LOGW(kTag, "player not active during record");
             break;
         }
 
-        if (!player_->ReadXiaozhiPcm(chunk.data(), chunk.size())) {
+        const size_t capture_samples = CaptureSamplesForChunk(total_samples, chunk.size());
+        if (!player_->ReadXiaozhiPcm(chunk.data(), capture_samples)) {
             vTaskDelay(pdMS_TO_TICKS(10));
             continue;
         }
 
         {
             std::lock_guard<std::mutex> lock(pcm_mutex_);
-            pcm_buffer_.insert(pcm_buffer_.end(), chunk.begin(), chunk.end());
+            pcm_buffer_.insert(pcm_buffer_.end(), chunk.begin(), chunk.begin() + capture_samples);
         }
 
-        total_samples += chunk.size();
+        total_samples += capture_samples;
 
         // Update recording seconds
-        int sec = total_samples / kSampleRate;
+        int sec = static_cast<int>(total_samples / kSampleRate);
         {
             std::lock_guard<std::mutex> lock(snapshot_mutex_);
             snapshot_.record_sec = sec;
         }
         // Post change every second
-        if (sec > 0 && (total_samples % kSampleRate) < (int)chunk.size())
+        if (sec > 0 && (total_samples % kSampleRate) < capture_samples)
             PostChanged();
     }
 
-    ESP_LOGI(kTag, "record task stopped samples=%d sec=%d", total_samples, total_samples / kSampleRate);
+    ESP_LOGI(kTag, "record task stopped samples=%u sec=%u", (unsigned)total_samples,
+             (unsigned)(total_samples / kSampleRate));
+    return total_samples >= kMaxRecordSamples && !record_stop_.load(std::memory_order_relaxed);
 }
 
 }  // namespace hermes

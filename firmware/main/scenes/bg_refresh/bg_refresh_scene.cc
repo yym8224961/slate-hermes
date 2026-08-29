@@ -124,11 +124,8 @@ void BgRefreshScene::OnEvent(SceneContext& ctx, const UiEvent& e) {
         return;
     }
 
-    if (!previous_screen_seeded_) {
-        ESP_LOGW(kTag, "render skipped reason=previous_seed_incomplete");
-        Finish();
-        return;
-    }
+    if (!previous_screen_seeded_)
+        ESP_LOGW(kTag, "previous seed incomplete action=force_full_refresh");
 
     state_ = State::kRendering;
     if (!RenderChangedFrame(ctx)) {
@@ -248,7 +245,7 @@ bool BgRefreshScene::RenderChangedFrame(SceneContext& ctx) {
         const int h = FrameView::kHeight - y;
         ctx.epd->WriteRaw1bpp(0, y, FrameView::kWidth, h, raw.data() + y * kBpr, h * kBpr);
     }
-    if (previous_full_canvas_ != meta.full_canvas)
+    if (!previous_screen_seeded_ || previous_full_canvas_ != meta.full_canvas)
         ctx.epd->RequestUrgentFullRefresh();
     else
         ctx.epd->RequestUrgentPartialRefresh();

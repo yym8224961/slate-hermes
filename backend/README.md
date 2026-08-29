@@ -172,7 +172,7 @@ POST   /api/v1/hermes/token
 
 `GET /hermes/status` 返回 Hermes Gateway 接入状态：是否已配置 Token、最近 90 秒内是否有通过认证的 Gateway 长轮询，以及最近连接时间。该接口不会返回共享 Token。
 
-`POST /hermes/token` 接受登录态下由前端生成的 32–256 字符 Token，并以原子替换方式写入 `/data/hermes-agent-token`（实际路径为 `dirname(BLOB_DIR)/hermes-agent-token`，权限 `0600`）。接口只返回 `{ "configured": true }`。若文件不存在，服务启动时才回退读取 `HERMES_AGENT_TOKEN` 环境变量；因此 Docker 重建时仍会沿用 `/data` 卷中的 Token。
+`POST /hermes/token` 只接受数据库再确认为管理员的登录账号，将前端生成的 32–256 字符 Token 以原子替换方式写入 `/data/hermes-agent-token`（实际路径为 `dirname(BLOB_DIR)/hermes-agent-token`，权限 `0600`）。接口只返回 `{ "configured": true }`。Token 轮换会立即使旧长轮询失效、重置连接状态，并把处理中请求重新入队给新 Gateway。若文件不存在，服务启动时才回退读取 `HERMES_AGENT_TOKEN` 环境变量；因此 Docker 重建时仍会沿用 `/data` 卷中的 Token。
 
 `POST /groups/:groupId/contents` 和 `PATCH /contents/:contentId` 支持两种 content type：
 
@@ -209,6 +209,7 @@ manifest response：
     content_etag: string;
     frame_name: string | null;
     device_status_bar_text: string;
+    device_full_canvas: boolean;
     image_etag: string;
     audio_etag: string | null;
     image_size: number;
@@ -222,6 +223,8 @@ manifest response：
   }>;
 }
 ```
+
+`device_full_canvas` 只会为显式声明 `canvas: "full"` 的自定义 Dashboard 返回 `true`；其他内容均为 `false`。manifest 与设备 poll 的 `current_content` 共用该字段。旧服务端未下发时，新固件按 `false` 处理并保留顶部状态栏。
 
 ### Dashboard 外部数据推送
 
@@ -409,7 +412,7 @@ device secret 必须是 64 字符 hex bearer token；JWT 与 device secret 不�
 
 TTS 使用 OpenAI-compatible `/chat/completions`，请求 `audio: { format: 'pcm16', voice }` 并解析 SSE 中的 base64 PCM，源采样率按 24 kHz 处理，再重采样到设备 16 kHz。
 
-Hermes 设备语音的 STT 有两条路径：配置 `AI_BASE_URL` 与 `AI_API_KEY` 时由 Slate 直接调用 Whisper-compatible `/audio/transcriptions`；未配置或调用失败时，Slate 会把原始 PCM 音频随 Agent pending 请求转发给 Hermes Gateway，由 Gateway 自己的 VOICE/STT 管线识别。Slate 插件会把 Gateway 的转写正文随 Agent 回复回传，固件据此显示用户气泡。这样 Slate 不需要复制 Hermes 的语音服务密钥，也不会把失败误报成“没听清”。
+Hermes 设备语音的 STT 有两条路径：配置 `AI_BASE_URL` 与 `AI_API_KEY` 时由 Slate 直接调用 Whisper-compatible `/audio/transcriptions`；未配置或调用失败时，Slate 会把原始 PCM 音频随 Agent pending 请求转发给 Hermes Gateway，由 Gateway 标准 VOICE/STT 管线在后台会话中执行一次。插件在最终回复时从同一事件读取转写正文回传；流式预览、忙碌提示和中间消息不会提前消耗设备请求。固件因此显示 Hermes 实际听到的用户文字，Slate 也不需要复制 Hermes 的语音服务密钥。
 
 ## 环境变量
 

@@ -1,11 +1,18 @@
-import { Body, Controller, Get, HttpCode, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Query, Req, UseGuards } from '@nestjs/common';
+import type { FastifyRequest } from 'fastify';
 import { DeviceAuthGuard } from '../../common/nest/guards/device-auth.guard';
-import { Public } from '../../common/nest/decorators/auth-context.decorators';
+import { CurrentDevice, Public } from '../../common/nest/decorators/auth-context.decorators';
+import type { DeviceContext } from '../../common/nest/auth-context';
 import { HermesService } from './hermes.service';
 import type { HermesChatResponse } from './hermes.service';
 import { z } from 'zod';
 import type { HermesConnectionStatusT } from 'shared';
-import { HermesAgentAuthGuard } from './hermes-agent-auth.guard';
+import {
+  HERMES_AGENT_CONTEXT_KEY,
+  HermesAgentAuthGuard,
+  type HermesAgentContext,
+} from './hermes-agent-auth.guard';
+import { HermesAdminGuard } from './hermes-admin.guard';
 
 // ── Device endpoints (auth required) ──────────────────────────────────
 
@@ -35,8 +42,8 @@ class HermesChatDto implements z.infer<typeof HermesChatSchema> {
 
 const AgentResponseSchema = z.object({
   requestId: z.string().min(1).max(64),
-  text: z.string().min(1).max(2048),
-  userText: z.string().max(1024).optional(),
+  text: z.string().min(1).max(512),
+  userText: z.string().max(512).optional(),
 });
 
 const HermesAgentTokenSchema = z.object({
@@ -68,6 +75,7 @@ export class HermesController {
 
   @Post('token')
   @HttpCode(200)
+  @UseGuards(HermesAdminGuard)
   async configureToken(@Body() body: HermesAgentTokenDto): Promise<{ configured: true }> {
     await this.hermes.configureAgentToken(body.token);
     return { configured: true };
@@ -79,8 +87,11 @@ export class HermesController {
   @HttpCode(200)
   @Public()
   @UseGuards(DeviceAuthGuard)
-  async chat(@Body() body: HermesChatDto): Promise<HermesChatResponse> {
-    return this.hermes.chat(body);
+  async chat(
+    @Body() body: HermesChatDto,
+    @CurrentDevice() device: DeviceContext
+  ): Promise<HermesChatResponse> {
+    return this.hermes.chat(body, device);
   }
 
   // ── Agent: long-poll for next pending request ──────────────────────
@@ -88,14 +99,20 @@ export class HermesController {
   @Get('agent/pending')
   @Public()
   @UseGuards(HermesAgentAuthGuard)
-  async agentGetPending(@Query('timeout') timeout?: string): Promise<{
+  async agentGetPending(
+    @Query('timeout') timeout: string | undefined,
+    @Req()
+    request: FastifyRequest & { [HERMES_AGENT_CONTEXT_KEY]?: HermesAgentContext }
+  ): Promise<{
     requestId: string;
+    sessionId: string;
+    userId: string;
     text: string;
     audio?: string;
     history: Array<{ role: string; content: string }>;
   } | null> {
     const ms = Math.min(Math.max(parseInt(timeout ?? '30000', 10) || 30000, 1000), 60000);
-    return this.hermes.agentGetPending(ms);
+    return this.hermes.agentGetPending(ms, request[HERMES_AGENT_CONTEXT_KEY]?.tokenRevision ?? -1);
   }
 
   // ── Agent: submit response for a pending request ───────────────────
@@ -104,8 +121,15 @@ export class HermesController {
   @HttpCode(200)
   @Public()
   @UseGuards(HermesAgentAuthGuard)
-  async agentSubmitResponse(@Body() body: AgentResponseDto): Promise<{ ok: boolean }> {
-    const ok = this.hermes.agentSubmitResponse(body);
+  async agentSubmitResponse(
+    @Body() body: AgentResponseDto,
+    @Req()
+    request: FastifyRequest & { [HERMES_AGENT_CONTEXT_KEY]?: HermesAgentContext }
+  ): Promise<{ ok: boolean }> {
+    const ok = this.hermes.agentSubmitResponse(
+      body,
+      request[HERMES_AGENT_CONTEXT_KEY]?.tokenRevision ?? -1
+    );
     return { ok };
   }
 }

@@ -1,10 +1,17 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { HermesConnectionStatusT } from 'shared';
+import { AuthError, ConflictError, ForbiddenError, RateLimitedError } from '../../common/errors';
+import type { DeviceContext } from '../../common/nest/auth-context';
 import { TtsService } from '../tts/tts.service';
 import { HermesTokenStore } from './hermes-token.store';
 
 const MAX_DEVICE_REPLY_AUDIO_BYTES = 16000 * 2 * 20;
 const AGENT_CONNECTION_TTL_MS = 90_000;
+const PENDING_TIMEOUT_MS = 30_000;
+const AGENT_RESPONSE_TIMEOUT_MS = 60_000;
+const HERMES_TTS_TIMEOUT_MS = 15_000;
+const MAX_ACTIVE_DEVICE_REQUESTS = 32;
+const MAX_DEVICE_TEXT_LENGTH = 512;
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -23,6 +30,9 @@ export interface HermesChatResponse {
 
 interface PendingRequest {
   id: string;
+  deviceId: string;
+  sessionId: string;
+  userId: string;
   text: string;
   audio?: string;
   history: Array<{ role: 'user' | 'assistant'; content: string }>;
@@ -38,6 +48,22 @@ interface AgentResponse {
   userText?: string;
 }
 
+export interface HermesAgentPending {
+  requestId: string;
+  sessionId: string;
+  userId: string;
+  text: string;
+  audio?: string;
+  history: Array<{ role: string; content: string }>;
+}
+
+interface AgentWaiter {
+  tokenRevision: number;
+  resolve: (req: PendingRequest | null) => void;
+  reject: (err: Error) => void;
+  timer: ReturnType<typeof setTimeout>;
+}
+
 // ── Service ──────────────────────────────────────────────────────────
 
 @Injectable()
@@ -47,10 +73,9 @@ export class HermesService {
   // In-memory queue for pending requests waiting for Hermes Agent
   private pending: PendingRequest[] = [];
   // Long-poll waiters (Hermes Agent waiting for work)
-  private agentWaiters: Array<{
-    resolve: (req: PendingRequest | null) => void;
-    timer: ReturnType<typeof setTimeout>;
-  }> = [];
+  private agentWaiters: AgentWaiter[] = [];
+
+  private readonly activeDeviceIds = new Set<string>();
 
   private requestCounter = 0;
   private lastAgentSeenAt: number | null = null;
@@ -62,12 +87,40 @@ export class HermesService {
 
   async configureAgentToken(token: string): Promise<void> {
     await this.tokenStore.set(token);
+    this.lastAgentSeenAt = null;
+    this.invalidateStaleAgentWork();
   }
 
   // ── Device API ────────────────────────────────────────────────────
 
   /** Device sends audio/text; returns response when Hermes Agent replies. */
-  async chat(req: HermesChatRequest): Promise<HermesChatResponse> {
+  async chat(req: HermesChatRequest, device: DeviceContext): Promise<HermesChatResponse> {
+    if (!device.ownerUserId) {
+      throw new ForbiddenError('设备必须先绑定账号才能使用 Hermes');
+    }
+    if (this.activeDeviceIds.has(device.deviceId)) {
+      throw new ConflictError('该设备已有一条 Hermes 请求正在处理', {
+        code: 'hermes_device_busy',
+      });
+    }
+    if (this.activeDeviceIds.size >= MAX_ACTIVE_DEVICE_REQUESTS) {
+      throw new RateLimitedError('Hermes 当前请求过多，请稍后重试', {
+        code: 'hermes_capacity_reached',
+      });
+    }
+
+    this.activeDeviceIds.add(device.deviceId);
+    try {
+      return await this.chatForDevice(req, device);
+    } finally {
+      this.activeDeviceIds.delete(device.deviceId);
+    }
+  }
+
+  private async chatForDevice(
+    req: HermesChatRequest,
+    device: DeviceContext
+  ): Promise<HermesChatResponse> {
     let inputText = (req.text ?? '').trim();
     let inputAudio: string | undefined;
 
@@ -76,7 +129,7 @@ export class HermesService {
       try {
         const transcript = await this.transcribe(req.audio);
         if (transcript) {
-          inputText = transcript;
+          inputText = transcript.slice(0, MAX_DEVICE_TEXT_LENGTH);
           this.logger.log(`STT result: ${inputText.slice(0, 80)}`);
         } else {
           inputAudio = req.audio;
@@ -99,6 +152,9 @@ export class HermesService {
     return new Promise<HermesChatResponse>((resolve, reject) => {
       const pending: PendingRequest = {
         id: reqId,
+        deviceId: device.deviceId,
+        sessionId: `slate:${device.deviceId}`,
+        userId: device.ownerUserId!,
         text: inputText,
         audio: inputAudio,
         history: req.history ?? [],
@@ -117,9 +173,8 @@ export class HermesService {
         },
         reject,
         timer: setTimeout(() => {
-          this.removePending(reqId);
-          reject(new Error('Hermes Agent timeout'));
-        }, 45000),
+          this.expirePending(reqId, new Error('Hermes Agent timeout'));
+        }, PENDING_TIMEOUT_MS),
       };
 
       this.pending.push(pending);
@@ -132,6 +187,7 @@ export class HermesService {
       const pcm = await this.tts.synthesizeToDevicePcm({
         text: response.text,
         voice: this.tts.defaultVoice(),
+        timeoutMs: HERMES_TTS_TIMEOUT_MS,
       });
       if (pcm.byteLength > 0 && pcm.byteLength <= MAX_DEVICE_REPLY_AUDIO_BYTES) {
         response.audio = pcm.toString('base64');
@@ -154,12 +210,11 @@ export class HermesService {
    * Called by Hermes Agent to get the next pending request.
    * Blocks up to `timeoutMs` if no request is available.
    */
-  async agentGetPending(timeoutMs: number = 30000): Promise<{
-    requestId: string;
-    text: string;
-    audio?: string;
-    history: Array<{ role: string; content: string }>;
-  } | null> {
+  async agentGetPending(
+    timeoutMs: number = 30000,
+    tokenRevision: number = this.tokenStore.revision()
+  ): Promise<HermesAgentPending | null> {
+    this.assertCurrentTokenRevision(tokenRevision);
     this.markAgentSeen();
 
     // Check if there's already a pending request
@@ -167,53 +222,28 @@ export class HermesService {
       const existing = this.pending.shift()!;
       clearTimeout(existing.timer);
 
-      // Move to in-flight tracking
-      this.inFlight.set(existing.id, {
-        resolve: existing.resolve,
-        reject: existing.reject,
-        timer: setTimeout(() => {
-          this.inFlight.delete(existing.id);
-          existing.reject(new Error('Agent response timeout'));
-        }, 60000),
-      });
+      this.moveToInFlight(existing, tokenRevision);
 
       this.logger.log(`Agent got request ${existing.id} (immediate)`);
-      return {
-        requestId: existing.id,
-        text: existing.text,
-        audio: existing.audio,
-        history: existing.history,
-      };
+      return this.toAgentPending(existing);
     }
 
     // Wait for a new request via notifyAgent
-    return new Promise((resolve) => {
-      const waiter = {
+    return new Promise((resolve, reject) => {
+      const waiter: AgentWaiter = {
+        tokenRevision,
         resolve: (req: PendingRequest | null) => {
           if (req) {
-            clearTimeout(req.timer);
-
-            // Move to in-flight tracking
-            this.inFlight.set(req.id, {
-              resolve: req.resolve,
-              reject: req.reject,
-              timer: setTimeout(() => {
-                this.inFlight.delete(req.id);
-                req.reject(new Error('Agent response timeout'));
-              }, 60000),
-            });
+            this.assertCurrentTokenRevision(tokenRevision);
+            this.moveToInFlight(req, tokenRevision);
 
             this.logger.log(`Agent got request ${req.id} (via waiter)`);
-            resolve({
-              requestId: req.id,
-              text: req.text,
-              audio: req.audio,
-              history: req.history,
-            });
+            resolve(this.toAgentPending(req));
           } else {
             resolve(null);
           }
         },
+        reject,
         timer: setTimeout(() => {
           this.removeWaiter(waiter);
           resolve(null);
@@ -226,22 +256,13 @@ export class HermesService {
   /**
    * Called by Hermes Agent to submit a response for a pending request.
    */
-  agentSubmitResponse(response: AgentResponse): boolean {
+  agentSubmitResponse(
+    response: AgentResponse,
+    tokenRevision: number = this.tokenStore.revision()
+  ): boolean {
+    this.assertCurrentTokenRevision(tokenRevision);
     this.markAgentSeen();
 
-    // Find and resolve the matching pending request
-    // (The pending was already removed from the queue by agentGetPending,
-    //  but we keep a reference in the resolve/reject closures)
-    // Since we shift() the pending in agentGetPending, we need to track
-    // in-flight requests separately.
-
-    // Actually, let me redesign: keep requests in a Map by ID
-    // This is cleaner for async response handling.
-
-    // For now, the pending is already resolved via the closure from agentGetPending.
-    // But since we shifted it, we need to find the right resolve function.
-
-    // Let me store in-flight requests
     const inFlight = this.inFlight.get(response.requestId);
     if (!inFlight) {
       this.logger.warn(`Agent response for unknown request: ${response.requestId}`);
@@ -251,7 +272,7 @@ export class HermesService {
     this.inFlight.delete(response.requestId);
     clearTimeout(inFlight.timer);
     const userText = response.userText?.trim();
-    inFlight.resolve({
+    inFlight.request.resolve({
       text: response.text,
       ...(userText ? { user_text: userText } : {}),
     });
@@ -263,8 +284,8 @@ export class HermesService {
   private inFlight = new Map<
     string,
     {
-      resolve: (response: HermesChatResponse) => void;
-      reject: (err: Error) => void;
+      request: PendingRequest;
+      tokenRevision: number;
       timer: ReturnType<typeof setTimeout>;
     }
   >();
@@ -274,9 +295,13 @@ export class HermesService {
   private notifyAgent() {
     // Wake up waiting agent pollers with pending requests
     while (this.pending.length > 0 && this.agentWaiters.length > 0) {
-      const req = this.pending.shift()!;
       const waiter = this.agentWaiters.shift()!;
       clearTimeout(waiter.timer);
+      if (waiter.tokenRevision !== this.tokenStore.revision()) {
+        waiter.reject(new AuthError('Hermes Agent Token 已更换'));
+        continue;
+      }
+      const req = this.pending.shift()!;
       // inFlight tracking is handled by agentGetPending's waiter callback
       waiter.resolve(req);
     }
@@ -300,25 +325,79 @@ export class HermesService {
     this.lastAgentSeenAt = Date.now();
   }
 
-  private removePending(id: string) {
+  private expirePending(id: string, error: Error) {
     const idx = this.pending.findIndex((r) => r.id === id);
     if (idx >= 0) {
       const req = this.pending[idx]!;
       clearTimeout(req.timer);
       this.pending.splice(idx, 1);
-      req.reject(new Error('Request timeout'));
+      req.reject(error);
     }
   }
 
-  private removeWaiter(waiter: {
-    resolve: (r: PendingRequest | null) => void;
-    timer: ReturnType<typeof setTimeout>;
-  }) {
+  private removeWaiter(waiter: AgentWaiter) {
     const idx = this.agentWaiters.indexOf(waiter);
     if (idx >= 0) {
       clearTimeout(waiter.timer);
       this.agentWaiters.splice(idx, 1);
     }
+  }
+
+  private assertCurrentTokenRevision(tokenRevision: number): void {
+    if (tokenRevision !== this.tokenStore.revision()) {
+      throw new AuthError('Hermes Agent Token 已更换');
+    }
+  }
+
+  private toAgentPending(req: PendingRequest): HermesAgentPending {
+    return {
+      requestId: req.id,
+      sessionId: req.sessionId,
+      userId: req.userId,
+      text: req.text,
+      audio: req.audio,
+      history: req.history,
+    };
+  }
+
+  private moveToInFlight(req: PendingRequest, tokenRevision: number): void {
+    clearTimeout(req.timer);
+    this.inFlight.set(req.id, {
+      request: req,
+      tokenRevision,
+      timer: setTimeout(() => {
+        this.inFlight.delete(req.id);
+        req.reject(new Error('Agent response timeout'));
+      }, AGENT_RESPONSE_TIMEOUT_MS),
+    });
+  }
+
+  private invalidateStaleAgentWork(): void {
+    const currentRevision = this.tokenStore.revision();
+    const waiters = this.agentWaiters.splice(0);
+    for (const waiter of waiters) {
+      if (waiter.tokenRevision === currentRevision) {
+        this.agentWaiters.push(waiter);
+      } else {
+        clearTimeout(waiter.timer);
+        waiter.reject(new AuthError('Hermes Agent Token 已更换'));
+      }
+    }
+
+    const requeued: PendingRequest[] = [];
+    for (const [id, inFlight] of this.inFlight) {
+      if (inFlight.tokenRevision === currentRevision) continue;
+      clearTimeout(inFlight.timer);
+      this.inFlight.delete(id);
+      const request = inFlight.request;
+      request.createdAt = Date.now();
+      request.timer = setTimeout(() => {
+        this.expirePending(request.id, new Error('Hermes Agent timeout'));
+      }, PENDING_TIMEOUT_MS);
+      requeued.push(request);
+    }
+    this.pending.unshift(...requeued);
+    this.logger.log(`Hermes Agent Token rotated to revision ${currentRevision}`);
   }
 
   /** Transcribe audio via Whisper-compatible endpoint. */

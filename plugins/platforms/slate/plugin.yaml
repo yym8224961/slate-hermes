@@ -1,7 +1,7 @@
 name: slate-platform
 label: Slate
 kind: platform
-version: 0.2.0
+version: 0.3.2
 description: Connect Slate ink-screen devices and register their Hermes device skill.
 author: yym8224961
 requires_env:
@@ -19,6 +19,6 @@ optional_env:
     prompt: Slate poll timeout
     password: false
   - name: SLATE_STT_LANGUAGE
-    description: Voice transcription language hint (default zh; use auto to defer to Hermes)
+    description: Slate voice language hint (default zh; use auto to keep the provider language)
     prompt: Slate STT language
     password: false

@@ -16,7 +16,7 @@
 
 services:
   slate:
-    image: ghcr.io/yym8224961/slate:latest
+    image: ghcr.io/yym8224961/slate:master
     container_name: slate
     restart: unless-stopped
     depends_on:

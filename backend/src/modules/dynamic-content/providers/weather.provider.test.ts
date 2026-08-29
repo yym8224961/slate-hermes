@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import type { QweatherConfig } from './qweather.config';
-import { forecastLabel, WeatherProvider } from './weather.provider';
+import {
+  forecastLabel,
+  mapWttrCode,
+  translateWindDirection,
+  WeatherProvider,
+} from './weather.provider';
 
 const originalFetch = globalThis.fetch;
 
@@ -9,6 +14,13 @@ afterEach(() => {
 });
 
 describe('forecastLabel', () => {
+  it('maps wttr thunder and all 16-point wind directions to display-safe Chinese', () => {
+    expect(mapWttrCode('200')).toBe(302);
+    expect(translateWindDirection('NNE')).toBe('北东北风');
+    expect(translateWindDirection('WSW')).toBe('西南西风');
+    expect(translateWindDirection('东南')).toBe('东南风');
+  });
+
   it('labels forecast dates across year boundaries', () => {
     const now = new Date('2026-12-31T04:00:00.000Z');
 

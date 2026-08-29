@@ -1,5 +1,5 @@
 import type { FormEvent, ReactNode } from 'react';
-import { dashboardTemplateUsesFullCanvas, isAudioDynamicConfig, type DynamicTypeT } from 'shared';
+import { isAudioDynamicConfig, type DynamicTypeT } from 'shared';
 import { useToast } from '@/components/feedback/toast-context';
 import { FormActions } from '@/components/ui/FormActions';
 import { useCreateDynamicContent } from '@/features/dynamic/query/dynamic-content-queries';
@@ -8,6 +8,7 @@ import { DynamicContentFormShell } from '@/features/dynamic/components/DynamicCo
 import { DynamicFramePreview } from '@/features/dynamic/components/DynamicFramePreview';
 import { useDynamicContentForm } from '@/features/dynamic/hooks/useDynamicContentForm';
 import { DYNAMIC_TYPE_META } from '@/features/dynamic/model/type-meta';
+import { dynamicConfigUsesFullCanvas } from '@/features/dynamic/model/full-canvas';
 import { getApiErrorMessage } from '@/lib/api-errors';
 
 interface DynamicCreateFormProps {
@@ -26,11 +27,7 @@ export function DynamicCreateForm({ gid, type, form, header, onDone }: DynamicCr
   const showDynamicAudio = Boolean(
     dynamicMeta?.supportsAudio && form.config && isAudioDynamicConfig(form.config)
   );
-  const showStatusBar = !(
-    form.config?.type === 'dashboard' &&
-    form.config.template.kind === 'custom' &&
-    dashboardTemplateUsesFullCanvas(form.config.template.template)
-  );
+  const showStatusBar = !dynamicConfigUsesFullCanvas(form.config);
 
   async function submitContent() {
     const parsed = form.submitConfig();

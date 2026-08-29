@@ -61,7 +61,7 @@ frontend/src/
 | path | 页面 | 说明 |
 | --- | --- | --- |
 | `/login` | `LoginPage` | 邮箱/用户名 + 密码登录 |
-| `/register` | `RegisterPage` | 注册并保存 JWT |
+| `/register` | `RegisterPage` | 仅在空数据库创建初始管理员并保存 JWT |
 | `/` | `DashboardPage` | 设备与内容组总览 |
 | `/devices/:did` | `DashboardPage` | deep link 到设备弹窗 |
 | `/groups/:gid` | `GroupDetailPage` | 单个内容组内容列表、排序、编辑入口 |

@@ -6,6 +6,11 @@ import { extractBearerToken } from '../../common/nest/guards/http-token';
 import { AppConfig } from '../../infra/config/app.config';
 import { HermesTokenStore } from './hermes-token.store';
 
+export const HERMES_AGENT_CONTEXT_KEY = 'hermesAgentContext';
+export interface HermesAgentContext {
+  tokenRevision: number;
+}
+
 @Injectable()
 export class HermesAgentAuthGuard implements CanActivate {
   constructor(
@@ -14,13 +19,20 @@ export class HermesAgentAuthGuard implements CanActivate {
   ) {}
 
   canActivate(ctx: ExecutionContext): boolean {
+    const request = ctx
+      .switchToHttp()
+      .getRequest<FastifyRequest & { [HERMES_AGENT_CONTEXT_KEY]?: HermesAgentContext }>();
     const expected = this.tokenStore.get();
-    if (!expected && !this.config.isProd) return true;
+    if (!expected && !this.config.isProd) {
+      request[HERMES_AGENT_CONTEXT_KEY] = { tokenRevision: this.tokenStore.revision() };
+      return true;
+    }
 
-    const provided = extractBearerToken(ctx.switchToHttp().getRequest<FastifyRequest>());
+    const provided = extractBearerToken(request);
     if (!expected || !provided || !tokensEqual(provided, expected)) {
       throw new AuthError('Hermes Agent 认证失败');
     }
+    request[HERMES_AGENT_CONTEXT_KEY] = { tokenRevision: this.tokenStore.revision() };
     return true;
   }
 }

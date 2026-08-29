@@ -12,10 +12,12 @@ describe('Hermes Token helpers', () => {
 
   it('builds a placeholder or filled Hermes configuration template', () => {
     expect(buildHermesConfigTemplate('https://slate.example')).toContain(
-      'HERMES_AGENT_TOKEN=<至少 32 字符的共享 Token>'
+      'SLATE_AGENT_TOKEN=<至少 32 字符的共享 Token>'
     );
-    expect(buildHermesConfigTemplate('https://slate.example', 'f'.repeat(64))).toContain(
-      'SLATE_AGENT_TOKEN=' + 'f'.repeat(64)
-    );
+    const token = 'f'.repeat(64);
+    const template = buildHermesConfigTemplate('https://slate.example', token);
+    expect(template).toContain('SLATE_AGENT_TOKEN=' + token);
+    expect(template).not.toContain('HERMES_AGENT_TOKEN');
+    expect(template.split(token)).toHaveLength(2);
   });
 });

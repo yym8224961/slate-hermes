@@ -6,9 +6,13 @@ import binascii
 import io
 import logging
 import os
-import threading
+import signal
+import subprocess
+import tempfile
+import time
 import wave
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 try:
@@ -29,9 +33,11 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
-MAX_MESSAGE_LENGTH = 2048
+MAX_MESSAGE_LENGTH = 512
 RECONNECT_BACKOFF_SECONDS = (1, 2, 5, 10, 30)
-_STT_ENV_LOCK = threading.Lock()
+EVENT_CONTEXT_TTL_SECONDS = 10 * 60
+STT_ECHO_PREFIX = '🎙️ "'
+SLATE_STT_TIMEOUT_SECONDS = 25
 
 
 def _pcm16_base64_to_wav(audio_base64: str) -> bytes:
@@ -51,6 +57,238 @@ def _pcm16_base64_to_wav(audio_base64: str) -> bytes:
     return output.getvalue()
 
 
+def _stt_echo_transcript(content: str) -> str:
+    """Extract the raw transcript from Hermes' user-visible STT echo."""
+    stripped = content.strip()
+    if not stripped.startswith(STT_ECHO_PREFIX) or not stripped.endswith('"'):
+        return ""
+    return _clean_transcript(stripped[len(STT_ECHO_PREFIX) : -1])
+
+
+def _clean_transcript(value: Any) -> str:
+    """Return a displayable speech transcript, rejecting punctuation-only noise."""
+    if not isinstance(value, str):
+        return ""
+    transcript = value.strip()[:512]
+    return transcript if transcript and any(char.isalnum() for char in transcript) else ""
+
+
+def _stt_language() -> str:
+    value = os.getenv("SLATE_STT_LANGUAGE", "zh").strip()
+    return "" if value.lower() == "auto" else value
+
+
+async def _terminate_stt_process(proc: asyncio.subprocess.Process) -> None:
+    if os.name == "nt":
+        if proc.returncode is not None:
+            return
+        try:
+            proc.terminate()
+        except ProcessLookupError:
+            return
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=2)
+            return
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            return
+
+    process_group = proc.pid
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        return
+
+    # The shell can exit before descendants that ignore SIGTERM. Wait for the
+    # process *group*, not only the shell parent, then kill every survivor.
+    deadline = time.monotonic() + 0.5
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(process_group, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.05)
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        pass
+    else:
+        try:
+            os.killpg(process_group, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    if proc.returncode is None:
+        await proc.wait()
+
+
+async def _run_stt_process(
+    command: str, env: Dict[str, str], timeout: float
+) -> tuple[str, str, int, bool]:
+    """Run one command with a hard wall-clock timeout and process-group cleanup."""
+    process_options: Dict[str, Any] = {}
+    if os.name == "nt":
+        process_options["creationflags"] = getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+    else:
+        process_options["start_new_session"] = True
+    proc = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        stdin=asyncio.subprocess.DEVNULL,
+        env=env,
+        **process_options,
+    )
+    communicate_task = asyncio.create_task(proc.communicate())
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            asyncio.shield(communicate_task), timeout=timeout
+        )
+        return (
+            stdout_bytes.decode("utf-8", errors="replace"),
+            stderr_bytes.decode("utf-8", errors="replace"),
+            int(proc.returncode or 0),
+            False,
+        )
+    except asyncio.TimeoutError:
+        await _terminate_stt_process(proc)
+        stdout_bytes, stderr_bytes = await communicate_task
+        return (
+            stdout_bytes.decode("utf-8", errors="replace"),
+            stderr_bytes.decode("utf-8", errors="replace"),
+            int(proc.returncode or -1),
+            True,
+        )
+    except asyncio.CancelledError:
+        await asyncio.shield(_terminate_stt_process(proc))
+        await communicate_task
+        raise
+
+
+async def _run_bounded_command_stt(
+    transcription_tools: Any,
+    path: str,
+    provider: str,
+    command_config: Dict[str, Any],
+    stt_config: Dict[str, Any],
+    language_override: str,
+) -> Dict[str, Any]:
+    """Run Hermes' configured command provider with a hard total timeout."""
+    try:
+        from agent.delegation_context import delegated_child_subprocess_env
+        from tools.environments.local import hermes_subprocess_env
+
+        render_command = transcription_tools._render_command_stt_template
+        get_output_format = transcription_tools._get_command_stt_output_format
+        get_env_passthrough = transcription_tools._command_stt_env_passthrough
+        read_output = transcription_tools._read_command_stt_output
+    except (AttributeError, ImportError):
+        return {"success": False, "transcript": "", "compatible": False}
+
+    output_format = get_output_format(command_config)
+    provider_language = command_config.get("language")
+    if not provider_language:
+        resolve_language = getattr(transcription_tools, "_resolve_stt_language", None)
+        if callable(resolve_language):
+            provider_language = resolve_language(provider, stt_config)
+    language = language_override or provider_language or "en"
+    model = command_config.get("model") or ""
+
+    with tempfile.TemporaryDirectory(prefix=f"slate-stt-{provider}-") as tmpdir:
+        output_path = Path(tmpdir) / f"transcript.{output_format}"
+        placeholders = {
+            "input_path": str(Path(path).resolve()),
+            "output_path": str(output_path),
+            "output_dir": str(output_path.parent),
+            "format": output_format,
+            "language": str(language),
+            "model": str(model),
+        }
+        command = render_command(str(command_config.get("command") or ""), placeholders)
+        child_env = hermes_subprocess_env(inherit_credentials=False)
+        for key in get_env_passthrough(command_config):
+            value = os.environ.get(key)
+            if value is not None:
+                child_env[key] = value
+        child_env = delegated_child_subprocess_env(child_env)
+        stdout, stderr, returncode, timed_out = await _run_stt_process(
+            command, child_env, float(SLATE_STT_TIMEOUT_SECONDS)
+        )
+        if timed_out:
+            return {
+                "success": False,
+                "transcript": "",
+                "provider": provider,
+                "error": f"STT command exceeded {SLATE_STT_TIMEOUT_SECONDS}s total timeout",
+            }
+        if returncode:
+            detail = stderr.strip() or stdout.strip() or "no command output"
+            return {
+                "success": False,
+                "transcript": "",
+                "provider": provider,
+                "error": f"STT command exited with code {returncode}: {detail}",
+            }
+        try:
+            transcript = read_output(output_path, stdout, output_format)
+        except RuntimeError as exc:
+            return {
+                "success": False,
+                "transcript": "",
+                "provider": provider,
+                "error": str(exc),
+            }
+        return {"success": True, "transcript": transcript, "provider": provider}
+
+
+async def _transcribe_cached_audio(path: str) -> tuple[str, bool]:
+    """Return ``(transcript, definitive)`` from a compatible command STT."""
+    try:
+        from tools import transcription_tools
+    except ImportError:
+        logger.warning("[slate] Hermes STT module is unavailable")
+        return "", False
+
+    helpers = (
+        getattr(transcription_tools, "_load_stt_config", None),
+        getattr(transcription_tools, "_get_provider", None),
+        getattr(transcription_tools, "_resolve_command_stt_provider_config", None),
+    )
+    if not all(callable(helper) for helper in helpers):
+        return "", False
+    load_config, get_provider, resolve_command = helpers
+    try:
+        stt_config = load_config()
+        provider = get_provider(stt_config)
+        command_config = resolve_command(provider, stt_config)
+        if not isinstance(command_config, dict):
+            return "", False
+        result = await _run_bounded_command_stt(
+            transcription_tools,
+            path,
+            provider,
+            command_config,
+            stt_config,
+            _stt_language(),
+        )
+    except Exception as exc:
+        logger.warning("[slate] STT failed for %s: %s", path, exc)
+        return "", False
+
+    if not isinstance(result, dict) or not result.get("success"):
+        if isinstance(result, dict) and result.get("compatible") is False:
+            return "", False
+        if isinstance(result, dict):
+            logger.info(
+                "[slate] STT did not produce a transcript: %s",
+                result.get("error", "unknown error"),
+            )
+        return "", True
+    return _clean_transcript(result.get("transcript")), True
+
+
 def _settings(config: PlatformConfig) -> tuple[str, str, int]:
     extra = config.extra or {}
     backend = str(extra.get("backend") or os.getenv("SLATE_BACKEND", "")).strip().rstrip("/")
@@ -61,56 +299,6 @@ def _settings(config: PlatformConfig) -> tuple[str, str, int]:
     except (TypeError, ValueError):
         timeout = 30
     return backend, token, min(max(timeout, 1), 60)
-
-
-def _stt_language() -> str:
-    """Return the preferred language hint for Slate voice input.
-
-    Slate is a Chinese-first device. Hermes' local STT provider accepts the
-    legacy ``HERMES_LOCAL_STT_LANGUAGE`` escape hatch, so the plugin supplies
-    ``zh`` only when the operator has not already chosen a language. A value
-    of ``auto`` leaves Hermes' configured provider untouched.
-    """
-    value = os.getenv("SLATE_STT_LANGUAGE", "zh").strip()
-    return "" if value.lower() == "auto" else value
-
-
-def _transcribe_cached_audio(path: str) -> str:
-    """Use Hermes' configured STT once and return a clean transcript."""
-    try:
-        from tools import transcription_tools
-    except ImportError:
-        logger.warning("[slate] Hermes STT module is unavailable")
-        return ""
-
-    language = _stt_language()
-    previous_language = os.environ.get("HERMES_LOCAL_STT_LANGUAGE")
-    with _STT_ENV_LOCK:
-        try:
-            if language and previous_language is None:
-                os.environ["HERMES_LOCAL_STT_LANGUAGE"] = language
-            result = transcription_tools.transcribe_audio(path)
-            if (
-                isinstance(result, dict)
-                and not result.get("success")
-                and callable(getattr(transcription_tools, "transcribe_audio_local_fallback", None))
-            ):
-                result = transcription_tools.transcribe_audio_local_fallback(path)
-        except Exception as exc:
-            logger.warning("[slate] STT failed for %s: %s", path, exc)
-            return ""
-        finally:
-            if previous_language is None:
-                os.environ.pop("HERMES_LOCAL_STT_LANGUAGE", None)
-            else:
-                os.environ["HERMES_LOCAL_STT_LANGUAGE"] = previous_language
-
-    if not isinstance(result, dict) or not result.get("success"):
-        if isinstance(result, dict):
-            logger.info("[slate] STT did not produce a transcript: %s", result.get("error", "unknown error"))
-        return ""
-    transcript = result.get("transcript")
-    return transcript.strip()[:1024] if isinstance(transcript, str) else ""
 
 
 def check_requirements() -> bool:
@@ -140,7 +328,10 @@ class SlateAdapter(BasePlatformAdapter):
         self._backend, self._token, self._poll_timeout = _settings(config)
         self._client: Optional["httpx.AsyncClient"] = None
         self._poll_task: Optional[asyncio.Task] = None
-        self._transcripts: Dict[str, str] = {}
+        self._polling = False
+        self._events: Dict[str, MessageEvent] = {}
+        self._event_created_at: Dict[str, float] = {}
+        self._request_ids_by_chat: Dict[str, str] = {}
 
     async def connect(self, *, is_reconnect: bool = False) -> bool:
         if not HTTPX_AVAILABLE:
@@ -154,12 +345,13 @@ class SlateAdapter(BasePlatformAdapter):
             headers={"Authorization": f"Bearer {self._token}"},
             timeout=httpx.Timeout(connect=15, read=self._poll_timeout + 10, write=15, pool=15),
         )
-        self._mark_connected()
+        self._polling = True
         self._poll_task = asyncio.create_task(self._poll_loop())
-        logger.info("[slate] Connected to %s", self._backend)
+        logger.info("[slate] Polling %s", self._backend)
         return True
 
     async def disconnect(self) -> None:
+        self._polling = False
         self._mark_disconnected()
         if self._poll_task:
             self._poll_task.cancel()
@@ -171,16 +363,21 @@ class SlateAdapter(BasePlatformAdapter):
         if self._client:
             await self._client.aclose()
             self._client = None
+        self._events.clear()
+        self._event_created_at.clear()
+        self._request_ids_by_chat.clear()
         logger.info("[slate] Disconnected")
 
     async def _poll_loop(self) -> None:
         backoff_index = 0
-        while self._running:
+        while self._polling:
             try:
                 request = await self._get_pending()
-                backoff_index = 0
+                self._mark_connected()
                 if request:
                     await self._dispatch(request)
+                backoff_index = 0
+                continue
             except asyncio.CancelledError:
                 return
             except httpx.HTTPStatusError as exc:
@@ -188,6 +385,7 @@ class SlateAdapter(BasePlatformAdapter):
                 if status in (401, 403):
                     message = "Slate backend rejected SLATE_AGENT_TOKEN"
                     logger.error("[slate] %s", message)
+                    self._polling = False
                     self._set_fatal_error("slate_unauthorized", message, retryable=False)
                     return
                 logger.warning("[slate] Poll failed with HTTP %d", status)
@@ -196,7 +394,7 @@ class SlateAdapter(BasePlatformAdapter):
             except Exception:
                 logger.exception("[slate] Unexpected poll failure")
 
-            if not self._running:
+            if not self._polling:
                 return
             delay = RECONNECT_BACKOFF_SECONDS[
                 min(backoff_index, len(RECONNECT_BACKOFF_SECONDS) - 1)
@@ -228,6 +426,7 @@ class SlateAdapter(BasePlatformAdapter):
         return data
 
     async def _dispatch(self, request: Dict[str, Any]) -> None:
+        self._prune_event_contexts()
         request_id = str(request["requestId"])
         text = str(request.get("text") or "").strip()
         message_type = MessageType.TEXT
@@ -262,21 +461,40 @@ class SlateAdapter(BasePlatformAdapter):
             media_urls = [cached_path]
             media_types = ["audio/wav"]
 
-            # Transcribe here so the exact text used by Hermes is also
-            # available to Slate. Mark the event as already prepared using the
-            # Gateway's existing cache attributes; this prevents the normal
-            # inbound pipeline from running STT a second time.
-            transcript = await asyncio.to_thread(_transcribe_cached_audio, cached_path)
+            # Pre-transcribe exactly once with Slate's Chinese language hint.
+            # The private cache attributes are the Gateway's existing signal
+            # that the normal inbound pipeline must reuse this text instead of
+            # running STT a second time. A definitive but unusable result is
+            # returned as a retry prompt instead of asking the agent to answer
+            # invented text. Older runtimes without the bounded command API
+            # retain their normal Gateway fallback path.
+            transcript, stt_definitive = await _transcribe_cached_audio(cached_path)
             if transcript:
                 text = transcript
                 request["userText"] = transcript
-                self._transcripts[request_id] = transcript
+            elif stt_definitive:
+                logger.info(
+                    "[slate] Rejecting unrecognized voice request %s",
+                    request_id,
+                )
+                result = await self.send(
+                    "slate",
+                    "这段语音没有识别清楚，请再说一次。",
+                    reply_to=request_id,
+                )
+                if not result.success:
+                    logger.warning(
+                        "[slate] Failed to return STT error: %s", result.error
+                    )
+                return
 
+        session_id = str(request.get("sessionId") or f"slate:{request_id}")[:128]
+        user_id = str(request.get("userId") or "slate-owner")[:128]
         source = self.build_source(
-            chat_id="slate",
+            chat_id=session_id,
             chat_name="Slate ink screen",
             chat_type="dm",
-            user_id="slate-owner",
+            user_id=user_id,
             user_name="Slate owner",
         )
         event = MessageEvent(
@@ -289,9 +507,12 @@ class SlateAdapter(BasePlatformAdapter):
             media_urls=media_urls,
             media_types=media_types,
         )
+        self._events[request_id] = event
+        self._event_created_at[request_id] = time.monotonic()
+        self._request_ids_by_chat[session_id] = request_id
         if request.get("userText"):
             setattr(event, "_gateway_pending_stt_text", text)
-            setattr(event, "_gateway_pending_stt_transcripts", [str(request["userText"])])
+            setattr(event, "_gateway_pending_stt_transcripts", [text])
         logger.info("[slate] Dispatching request %s", request_id)
         await self.handle_message(event)
 
@@ -302,17 +523,37 @@ class SlateAdapter(BasePlatformAdapter):
         reply_to: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> SendResult:
-        del chat_id, metadata
         if not self._client:
             return SendResult(success=False, error="Slate HTTP client is not connected")
+        # Older Hermes Gateway releases expose the successful STT result only
+        # through their standard transcript echo. Cache that echo against the
+        # active Slate request, but never post it as the one-shot final reply.
+        # Newer releases also retain private event transcript attributes; the
+        # final path below supports both shapes without running STT twice.
+        transcript_echo = _stt_echo_transcript(content)
+        active_request_id = self._request_ids_by_chat.get(chat_id)
+        if not reply_to and transcript_echo and active_request_id:
+            event = self._events.get(active_request_id)
+            if event is not None and event.message_type == MessageType.VOICE:
+                setattr(event, "_slate_stt_echo_text", transcript_echo)
+                return SendResult(success=True, message_id=active_request_id)
+        # Gateway previews, edits, typing/busy acknowledgements and transcript
+        # echoes must not resolve the one-shot Slate request. Current Gateway
+        # final delivery is explicitly marked notify=True; metadata=None keeps
+        # compatibility with older final-only Gateway versions.
+        if metadata is not None and (
+            metadata.get("notify") is not True or metadata.get("expect_edits") is True
+        ):
+            return SendResult(success=True, message_id=reply_to)
         if not reply_to:
             return SendResult(success=False, error="Slate response has no request id")
 
+        self._prune_event_contexts()
         text = content.strip()[: self.MAX_MESSAGE_LENGTH]
         if not text:
             text = "我暂时没有生成可显示的回复。"
         payload = {"requestId": reply_to, "text": text}
-        transcript = self._transcripts.get(reply_to)
+        transcript = self._event_transcript(reply_to)
         if transcript:
             payload["userText"] = transcript
         try:
@@ -324,13 +565,65 @@ class SlateAdapter(BasePlatformAdapter):
             response.raise_for_status()
             data = response.json()
             if not isinstance(data, dict) or not data.get("ok"):
+                self._drop_event_context(reply_to)
                 return SendResult(success=False, error="Slate request is no longer pending")
-            self._transcripts.pop(reply_to, None)
+            self._drop_event_context(reply_to)
             return SendResult(success=True, message_id=reply_to)
         except httpx.TimeoutException:
             return SendResult(success=False, error="Timeout returning response to Slate")
+        except httpx.HTTPStatusError as exc:
+            if 400 <= exc.response.status_code < 500:
+                self._drop_event_context(reply_to)
+            return SendResult(
+                success=False,
+                error=str(exc),
+                retryable=exc.response.status_code >= 500,
+            )
         except httpx.HTTPError as exc:
             return SendResult(success=False, error=str(exc), retryable=True)
+        except (TypeError, ValueError) as exc:
+            return SendResult(success=False, error=str(exc), retryable=True)
+
+    def _event_transcript(self, request_id: str) -> str:
+        event = self._events.get(request_id)
+        if event is None:
+            return ""
+        transcripts = getattr(event, "_gateway_pending_stt_transcripts", None)
+        if isinstance(transcripts, (list, tuple)):
+            for transcript in reversed(transcripts):
+                cleaned = _clean_transcript(transcript)
+                if cleaned:
+                    return cleaned
+        echoed = getattr(event, "_slate_stt_echo_text", None)
+        cleaned_echo = _clean_transcript(echoed)
+        if cleaned_echo:
+            return cleaned_echo
+        prepared = getattr(event, "_gateway_pending_stt_text", None)
+        cleaned_prepared = _clean_transcript(prepared)
+        if cleaned_prepared:
+            return cleaned_prepared
+        return ""
+
+    def _drop_event_context(self, request_id: str) -> None:
+        self._events.pop(request_id, None)
+        self._event_created_at.pop(request_id, None)
+        stale_chats = [
+            chat_id
+            for chat_id, active_request_id in self._request_ids_by_chat.items()
+            if active_request_id == request_id
+        ]
+        for chat_id in stale_chats:
+            self._request_ids_by_chat.pop(chat_id, None)
+
+    def _prune_event_contexts(self) -> None:
+        cutoff = time.monotonic() - EVENT_CONTEXT_TTL_SECONDS
+        stale = [
+            request_id
+            for request_id, created_at in self._event_created_at.items()
+            if created_at < cutoff
+        ]
+        for request_id in stale:
+            self._drop_event_context(request_id)
 
     async def send_typing(self, chat_id: str, metadata=None) -> None:
         del chat_id, metadata
@@ -344,7 +637,10 @@ def _env_enablement() -> Optional[Dict[str, Any]]:
     token = os.getenv("SLATE_AGENT_TOKEN", "").strip()
     if not backend or not token:
         return None
-    return {"backend": backend, "token": token, "poll_timeout": 30}
+    _, _, poll_timeout = _settings(
+        PlatformConfig(extra={"backend": backend, "token": token})
+    )
+    return {"backend": backend, "token": token, "poll_timeout": poll_timeout}
 
 
 def register(ctx) -> None:

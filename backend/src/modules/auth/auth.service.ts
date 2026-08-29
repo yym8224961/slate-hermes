@@ -28,7 +28,7 @@ export class AuthService {
   }
 
   async register(input: RegisterRequestT): Promise<RegisterResponseT> {
-    const user = await this.users.create(input.email, input.username, input.password);
+    const user = await this.users.createInitialAdmin(input.email, input.username, input.password);
     const token = this.tokens.sign({
       sub: user.id,
       email: user.email,

@@ -9,6 +9,7 @@ const HERMES_AGENT_TOKEN_PATTERN = /^[A-Za-z0-9._~-]{32,256}$/;
 @Injectable()
 export class HermesTokenStore implements OnModuleInit {
   private token: string | undefined;
+  private tokenRevision = 0;
 
   constructor(private readonly config: AppConfig) {}
 
@@ -20,9 +21,11 @@ export class HermesTokenStore implements OnModuleInit {
         throw new Error('Hermes Agent Token file is invalid');
       }
       this.token = token;
+      this.tokenRevision = 1;
     } catch (err: unknown) {
       if (isNotFound(err)) {
         this.token = this.config.hermesAgentToken;
+        this.tokenRevision = this.token ? 1 : 0;
         return;
       }
       throw err;
@@ -31,6 +34,10 @@ export class HermesTokenStore implements OnModuleInit {
 
   get(): string | undefined {
     return this.token;
+  }
+
+  revision(): number {
+    return this.tokenRevision;
   }
 
   async set(token: string): Promise<void> {
@@ -47,6 +54,7 @@ export class HermesTokenStore implements OnModuleInit {
       await chmod(temporary, 0o600);
       await rename(temporary, target);
       this.token = token;
+      this.tokenRevision += 1;
     } catch (err: unknown) {
       await unlink(temporary).catch(() => undefined);
       throw err;

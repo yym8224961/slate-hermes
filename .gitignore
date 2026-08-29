@@ -5,6 +5,7 @@ node_modules/
 # === 构建输出 ===
 dist/
 build/
+tools/slate-quota-collector/.build/
 *.tsbuildinfo
 
 # === 环境变量 ===

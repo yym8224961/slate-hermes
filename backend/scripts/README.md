@@ -81,7 +81,7 @@ Sub2API 的 refresh token 是按会话单独存储和撤销的，多端登录可
 ```yaml
 services:
   slate-sub2api-usage-stats:
-    image: ghcr.io/yym8224961/slate:latest
+image: ghcr.io/yym8224961/slate:master
     restart: unless-stopped
     environment:
       SLATE_RUN_MODE: job

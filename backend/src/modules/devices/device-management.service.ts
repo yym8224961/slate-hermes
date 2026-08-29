@@ -8,6 +8,7 @@ import { validateOrderSet } from '../../common/db/order-validation';
 import { nextDeviceSortOrder } from '../../common/db/sort-order';
 import { prismaUniqueTargetIncludes } from '../../common/db/prisma-utils';
 import { PrismaService } from '../../infra/prisma/prisma.service';
+import { DeviceSecretAuthCacheService } from '../../infra/auth/device-secret-auth-cache.service';
 import { GroupsService } from '../groups/groups.service';
 import {
   DEVICE_CLAIM_SELECT,
@@ -24,7 +25,8 @@ export class DeviceManagementService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly groups: GroupsService,
-    private readonly pairCodes: PairCodeService
+    private readonly pairCodes: PairCodeService,
+    private readonly deviceSecrets: DeviceSecretAuthCacheService
   ) {}
 
   async listForOwner(ownerUserId: string): Promise<DeviceSummaryT[]> {
@@ -121,6 +123,7 @@ export class DeviceManagementService {
 
     const { device, freshlyClaimed } = result;
     if (freshlyClaimed) {
+      this.deviceSecrets.invalidateDevice(device.id);
       this.logger.log(
         `Device ${device.id} was claimed by owner ${ownerUserId}` +
           (device.selectedGroupId
@@ -155,6 +158,7 @@ export class DeviceManagementService {
         },
       });
     });
+    this.deviceSecrets.invalidateDevice(deviceId);
     this.logger.log(`Device ${deviceId} was unbound and received a new pair code.`);
   }
 

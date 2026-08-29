@@ -294,9 +294,12 @@
    294|content_etag
    295|image_etag
    296|audio_etag
-   297|has_ttl
+   297|full_canvas
+   298|has_ttl
    298|ttl_sec
    299|```
+   300|
+   301|`full_canvas=true` 表示该帧使用完整 400×300 画布并隐藏设备状态栏；旧缓存缺少该字段时按 `false` 读取，继续使用顶部 24px 状态栏与正文画布。
    300|
    301|完整 manifest 同步使用 per-group staging area：
    302|
@@ -391,7 +394,7 @@
    389|- 后端负责设备鉴权、请求排队和下行 TTS；若配置 `AI_BASE_URL`/`AI_API_KEY`，Slate 可直接做 STT，否则把 PCM 语音转交 Hermes Gateway 的 VOICE/STT 管线，再返回文本+音频。
    390|- 固件收到响应后在墨水屏显示文字，并通过 `AudioPlayer::WriteXiaozhiPcm()` 播放 TTS 音频。
    391|
-   392|进入方式：ENTER 双击打开 `HermesScene`。按确认键开始录音，再按确认键停止并发送。语音活动中阻止 deep sleep。
+   392|进入方式：ENTER 双击打开 `HermesScene`。按确认键开始录音，再按确认键停止并发送；到 15 秒上限时会精确截止在 240000 个样本并自动发送。停止、退出或休眠会等待录音任务结束并取消正在进行的 HTTP 请求，避免旧样本串入下一轮。语音活动中阻止 deep sleep。
    393|
    394|## 休眠与唤醒
    395|

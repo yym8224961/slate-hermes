@@ -4,7 +4,6 @@ import { useCallback, useMemo, type FormEvent } from 'react';
 import { Sparkles } from 'lucide-react';
 import {
   isAudioDynamicConfig,
-  dashboardTemplateUsesFullCanvas,
   type ContentDetailT,
   type DynamicConfigT,
   type DynamicTypeT,
@@ -16,6 +15,7 @@ import { FormActions } from '@/components/ui/FormActions';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { getApiErrorMessage } from '@/lib/api-errors';
 import { DYNAMIC_TYPE_META } from '@/features/dynamic/model/type-meta';
+import { dynamicConfigUsesFullCanvas } from '@/features/dynamic/model/full-canvas';
 import { useDynamicEditorBaselineSync } from '@/features/dynamic/hooks/useDynamicEditorBaselineSync';
 import { SavedOrLiveDynamicFramePreview } from '@/features/dynamic/components/DynamicFramePreview';
 import { useDynamicContentForm } from '@/features/dynamic/hooks/useDynamicContentForm';
@@ -85,11 +85,7 @@ export function DynamicContentEditor({
   const showAudio = Boolean(
     dynamicMeta?.supportsAudio && form.config && isAudioDynamicConfig(form.config)
   );
-  const showStatusBar = !(
-    form.config?.type === 'dashboard' &&
-    form.config.template.kind === 'custom' &&
-    dashboardTemplateUsesFullCanvas(form.config.template.template)
-  );
+  const showStatusBar = !dynamicConfigUsesFullCanvas(form.config);
 
   const onSubmit = useCallback(async () => {
     const parsed = form.submitConfig();
