@@ -13,7 +13,10 @@ const template = JSON.parse(
 );
 const envelope = JSON.parse(
   readFileSync(
-    new URL('../../../tools/slate-quota-collector/templates/initial-opencode-go-data.json', import.meta.url),
+    new URL(
+      '../../../tools/slate-quota-collector/templates/initial-opencode-go-data.json',
+      import.meta.url
+    ),
     'utf8'
   )
 ) as { version: number; data: Record<string, unknown> };
@@ -25,9 +28,7 @@ describe('OpenCode Go quota template', () => {
     expect(dashboardTemplateUsesFullCanvas(parsed)).toBe(true);
     expect(parsed.blocks[0]).toMatchObject({ type: 'rect', x: 0, y: 0, w: 400 });
     expect(
-      parsed.blocks.some(
-        (block) => block.type === 'text' && block.y === 282 && block.h === 16
-      )
+      parsed.blocks.some((block) => block.type === 'text' && block.y === 282 && block.h === 16)
     ).toBe(true);
   });
 
