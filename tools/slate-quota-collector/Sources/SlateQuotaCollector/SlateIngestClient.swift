@@ -204,7 +204,7 @@ enum SlateEndpointPolicy {
     }
 }
 
-struct SlateIngestClient: SlateIngesting, Sendable {
+struct SlateIngestClient: SlateIngesting, OpenCodeGoSlateIngesting, Sendable {
     typealias Sleep = @Sendable (Duration) async throws -> Void
 
     private let transport: any HTTPTransport
@@ -236,6 +236,29 @@ struct SlateIngestClient: SlateIngesting, Sendable {
 
         let body = try await perform(request)
         return try decodeDashboard(from: body)
+    }
+
+    func push(
+        _ envelope: OpenCodeGoSlateEnvelope,
+        capabilityURL: URL
+    ) async throws -> SlateIngestReceipt {
+        var request = URLRequest(url: try SlateEndpointPolicy.validate(capabilityURL))
+        request.httpMethod = "POST"
+        request.timeoutInterval = 15
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONEncoder.slate.encode(envelope)
+
+        let body = try await perform(request)
+        return try decode(SlateIngestReceipt.self, from: body)
+    }
+
+    func readCurrentOpenCodeGoData(capabilityURL: URL) async throws -> OpenCodeGoDashboardData {
+        var request = URLRequest(url: try SlateEndpointPolicy.validate(capabilityURL))
+        request.httpMethod = "GET"
+        request.timeoutInterval = 15
+
+        let body = try await perform(request)
+        return try decode(OpenCodeGoDashboardData.self, from: body)
     }
 
     private func perform(_ request: URLRequest) async throws -> Data {

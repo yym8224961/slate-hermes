@@ -200,7 +200,7 @@ struct FailurePolicy: Sendable {
             weekly: unavailableWindow(label: "本周"),
             monthly: unavailableWindow(label: "本月"),
             footerLeft: "下次重置 --",
-            footerRight: "余额接续 未提供"
+            footerRight: "官方用量 未提供"
         )
     }
 

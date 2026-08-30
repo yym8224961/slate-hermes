@@ -80,6 +80,44 @@ import Testing
         ])
     }
 
+    @Test func rolloutObserverBoundsLargeFilesToMetadataPrefixAndRecentTail() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let sessions = root.appendingPathComponent("sessions", isDirectory: true)
+        try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let rollout = sessions.appendingPathComponent("rollout-bounded.jsonl")
+        var contents = Data(#"{"type":"session_meta","payload":{"id":"parent"}}"#.utf8)
+        contents.append(0x0A)
+        contents.append(Data(repeating: UInt8(ascii: "x"), count: 96))
+        contents.append(0x0A)
+        contents.append(Data(#"{"type":"event_msg","payload":{"type":"task_complete","completed_at":1788003010,"error":null}}"#.utf8))
+        contents.append(0x0A)
+        contents.append(Data(repeating: UInt8(ascii: "y"), count: 256))
+        contents.append(0x0A)
+        contents.append(Data(#"{"type":"event_msg","payload":{"type":"task_started","started_at":1788003020}}"#.utf8))
+        contents.append(0x0A)
+        try contents.write(to: rollout, options: .atomic)
+
+        let observer = ReadonlyCodexRolloutObserver(
+            codexHome: root,
+            maximumCandidateFiles: 8,
+            prefixBytes: 64,
+            tailBytes: 128,
+            maximumLineBytes: 128
+        )
+
+        let events = try observer.observe(now: now)
+
+        #expect(events == [
+            .init(
+                correlationIDs: ["parent"],
+                kind: .running,
+                observedAt: Date(timeIntervalSince1970: 1_788_003_020)
+            ),
+        ])
+    }
+
     @Test func reducerMapsChildActivityToParentAndSortsLikeUpstream() {
         let metadata = [
             CodexTaskMetadata(id: "running", sessionID: "running-session", title: "执行中的任务", parentThreadID: nil),

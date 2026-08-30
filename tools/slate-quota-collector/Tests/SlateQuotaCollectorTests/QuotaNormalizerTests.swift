@@ -42,7 +42,7 @@ import Testing
         #expect(QuotaNormalizer.summary(forUsedPercent: used, serverLimited: false) == summary)
     }
 
-    @Test func openCodeUsesReceiveTimeForAllThreeResets() {
+    @Test func openCodeUsesOfficialAbsoluteResetTimes() {
         let raw = OpenCodeGoUsageResponse.fixture(rollingReset: 3600, weeklyReset: 7200, monthlyReset: 10_800)
         let value = QuotaNormalizer.shanghai.openCodeGo(raw, collectedAt: .fixtureNow)
 
@@ -50,11 +50,12 @@ import Testing
         #expect(value.weekly.resetAt == .fixtureNow.addingTimeInterval(7200))
         #expect(value.monthly.resetAt == .fixtureNow.addingTimeInterval(10_800))
         #expect(value.footerLeft == "下次重置 08-12 17:30")
+        #expect(value.footerRight == "官方用量 API")
     }
 
     @Test func openCodeRendersShanghaiResetAcrossMidnight() {
         let value = QuotaNormalizer.shanghai.openCodeGo(
-            .fixture(rollingReset: 5_400, weeklyReset: 7_200, monthlyReset: 10_800),
+            .fixture(base: .shanghaiAugust12At2330, rollingReset: 5_400, weeklyReset: 7_200, monthlyReset: 10_800),
             collectedAt: .shanghaiAugust12At2330
         )
 
@@ -64,7 +65,7 @@ import Testing
 
     @Test func openCodeRendersShanghaiResetAcrossMonthBoundary() {
         let value = QuotaNormalizer.shanghai.openCodeGo(
-            .fixture(rollingReset: 5_400, weeklyReset: 7_200, monthlyReset: 10_800),
+            .fixture(base: .shanghaiJanuary31At2330, rollingReset: 5_400, weeklyReset: 7_200, monthlyReset: 10_800),
             collectedAt: .shanghaiJanuary31At2330
         )
 
@@ -76,12 +77,10 @@ import Testing
         #expect(QuotaNormalizer.summary(forUsedPercent: 99.1, serverLimited: true) == "已耗尽")
     }
 
-    @Test func creditsAndBalanceLabelsAreNormalized() {
+    @Test func creditLabelsAreNormalized() {
         #expect(normalizeCredits(.init(unlimited: true, balance: nil)) == "Credits 无限")
         #expect(normalizeCredits(.init(unlimited: false, balance: 128.5)) == "Credits 128.50")
         #expect(normalizeCredits(nil) == "Credits —")
-        #expect(normalizeUseBalance(true) == "余额接续 开启")
-        #expect(normalizeUseBalance(false) == "余额接续 关闭")
     }
 
     @Test func codexUsesCreditsAndPlanFromSelectedCurrentLimit() {
@@ -185,12 +184,16 @@ private extension CodexRateLimit {
 }
 
 private extension OpenCodeGoUsageResponse {
-    static func fixture(rollingReset: Double, weeklyReset: Double, monthlyReset: Double) -> Self {
+    static func fixture(
+        base: Date = .fixtureNow,
+        rollingReset: Double,
+        weeklyReset: Double,
+        monthlyReset: Double
+    ) -> Self {
         Self(
-            useBalance: false,
-            rollingUsage: .init(status: .ok, resetInSec: rollingReset, usagePercent: 19),
-            weeklyUsage: .init(status: .ok, resetInSec: weeklyReset, usagePercent: 29),
-            monthlyUsage: .init(status: .ok, resetInSec: monthlyReset, usagePercent: 39)
+            rollingUsage: .init(status: .ok, resetAt: base.addingTimeInterval(rollingReset), usagePercent: 19),
+            weeklyUsage: .init(status: .ok, resetAt: base.addingTimeInterval(weeklyReset), usagePercent: 29),
+            monthlyUsage: .init(status: .ok, resetAt: base.addingTimeInterval(monthlyReset), usagePercent: 39)
         )
     }
 }

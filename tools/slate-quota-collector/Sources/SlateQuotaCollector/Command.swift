@@ -24,6 +24,7 @@ enum CollectorWorkerMode: String, Equatable, Sendable {
 
 enum CLIArguments: Equatable, Sendable {
     case setup
+    case setupOpenCodeGo
     case collect(RequestedCollectionMode)
     case pause
     case resume
@@ -39,6 +40,7 @@ enum CLIArguments: Equatable, Sendable {
     用法：slate-quota-collector <命令>
 
       setup                       安全配置本机采集器
+      setup-opencode-go           安全配置独立 OpenCode Go 监控
       collect --dry-run           采集并显示脱敏数据，不推送
       collect --once              立即采集并推送一次
       pause                       关闭每 5 分钟自动采集
@@ -51,6 +53,7 @@ enum CLIArguments: Equatable, Sendable {
     init(_ arguments: [String]) throws {
         self = switch arguments {
         case ["setup"]: .setup
+        case ["setup-opencode-go"]: .setupOpenCodeGo
         case ["collect", "--dry-run"]: .collect(.dryRun)
         case ["collect", "--once"]: .collect(.pushOnce)
         case ["pause"]: .pause
@@ -125,6 +128,26 @@ enum PushOnceProofFormatter {
     }
 }
 
+enum OpenCodeGoPushOnceProofFormatter {
+    static func render(_ report: OpenCodeGoCollectionReport) -> String? {
+        guard report.pushed,
+              report.readbackVerified,
+              let receipt = report.receipt,
+              receipt.id == "redacted",
+              receipt.imageEtag == "redacted",
+              receipt.manifestEtag == "redacted",
+              let envelope = report.envelope else {
+            return nil
+        }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return "OpenCode Go 推送成功：id=redacted image_etag=redacted manifest_etag=redacted "
+            + "rendered_at=\(formatter.string(from: receipt.renderedAt)) "
+            + "readback_verified=true schema_version=\(envelope.data.schemaVersion) "
+            + "opencode_go_status=\(envelope.data.opencodeGo.status.rawValue)"
+    }
+}
+
 enum CollectionPublicStatusFormatter {
     static func render(_ publicErrorCodes: [String: String]) -> String? {
         guard !publicErrorCodes.isEmpty else { return nil }
@@ -165,6 +188,7 @@ enum Command {
         case let value as InstallerError: value.publicCode
         case let value as LaunchctlError: value.publicCode
         case let value as SnapshotCacheError: value.publicCode
+        case let value as CollectorError: value.publicCode
         case let value as CLIError: value.publicCode
         default: "internal_failure"
         }
@@ -185,9 +209,14 @@ struct CommandRuntime: Sendable {
     private let supervisor: CollectorProcessSupervisor
     private let menuBarHarness: Bool
     private let setupInput: @Sendable () throws -> SetupValues
+    private let openCodeSetupInput: @Sendable (Bool) throws -> OpenCodeGoSetupValues
     private let codexLocator: @Sendable () throws -> URL
     private let setupPreflight: @Sendable (CollectorConfiguration, String) async throws -> Void
+    private let openCodeSetupPreflight: @Sendable (String) async throws -> Void
+    private let readExistingOpenCodeKey: @Sendable (CollectorConfiguration) -> String?
+    private let readExistingCodexSlateURL: @Sendable (CollectorConfiguration) throws -> String
     private let setupPersistence: any SetupPersisting
+    private let openCodeSetupPersistence: any OpenCodeGoSetupPersisting
 
     init(
         paths: InstallationPaths = .init(),
@@ -198,13 +227,27 @@ struct CommandRuntime: Sendable {
         setupInput: @escaping @Sendable () throws -> SetupValues = {
             try SecretTerminalReader().readSetupValues()
         },
+        openCodeSetupInput: @escaping @Sendable (Bool) throws -> OpenCodeGoSetupValues = {
+            try SecretTerminalReader().readOpenCodeGoSetupValues(hasExistingKey: $0)
+        },
         codexLocator: @escaping @Sendable () throws -> URL = CommandRuntime.locateCodexExecutable,
         setupPreflight: @escaping @Sendable (CollectorConfiguration, String) async throws -> Void = {
             configuration, _ in
             do { _ = try await CodexRateLimitClient(configuration: configuration).read() }
             catch { throw CLIError.setupPreflight(CommandRuntime.codexPreflightCode(error)) }
         },
-        setupPersistence: (any SetupPersisting)? = nil
+        openCodeSetupPreflight: @escaping @Sendable (String) async throws -> Void = { key in
+            do { _ = try await OpenCodeGoUsageClient().read(apiKey: key) }
+            catch { throw CLIError.setupPreflight(CommandRuntime.openCodePreflightCode(error)) }
+        },
+        readExistingOpenCodeKey: @escaping @Sendable (CollectorConfiguration) -> String? = {
+            try? KeychainStore(service: $0.keychainService).read(account: $0.openCodeKeyAccount)
+        },
+        readExistingCodexSlateURL: @escaping @Sendable (CollectorConfiguration) throws -> String = {
+            try KeychainStore(service: $0.keychainService).read(account: $0.slateURLAccount)
+        },
+        setupPersistence: (any SetupPersisting)? = nil,
+        openCodeSetupPersistence: (any OpenCodeGoSetupPersisting)? = nil
     ) {
         self.paths = paths
         self.launchctl = launchctl
@@ -212,11 +255,19 @@ struct CommandRuntime: Sendable {
         self.supervisor = supervisor
         self.menuBarHarness = menuBarHarness
         self.setupInput = setupInput
+        self.openCodeSetupInput = openCodeSetupInput
         self.codexLocator = codexLocator
         self.setupPreflight = setupPreflight
+        self.openCodeSetupPreflight = openCodeSetupPreflight
+        self.readExistingOpenCodeKey = readExistingOpenCodeKey
+        self.readExistingCodexSlateURL = readExistingCodexSlateURL
         self.setupPersistence = setupPersistence ?? TransactionalSetupPersistence(
             backend: SystemSetupMutationBackend(applicationSupportURL: paths.applicationSupportURL)
         )
+        self.openCodeSetupPersistence = openCodeSetupPersistence
+            ?? TransactionalOpenCodeGoSetupPersistence(
+                backend: SystemSetupMutationBackend(applicationSupportURL: paths.applicationSupportURL)
+            )
     }
 
     func run(_ command: CLIArguments) async throws {
@@ -225,6 +276,8 @@ struct CommandRuntime: Sendable {
             print(CLIArguments.visibleHelp)
         case .setup:
             try await setup()
+        case .setupOpenCodeGo:
+            try await setupOpenCodeGo()
         case let .collect(mode):
             let workerMode: CollectorWorkerMode = mode == .dryRun ? .dryRun : .pushOnceWithProof
             try await supervise(workerMode)
@@ -266,7 +319,6 @@ struct CommandRuntime: Sendable {
         }
         do { _ = try SlateEndpointPolicy.validate(slateURL) }
         catch { throw CLIError.setupPreflight("slate_endpoint_invalid") }
-
         let codexExecutable = try codexLocator()
         let configuration = CollectorConfiguration(
             schemaVersion: 1,
@@ -310,6 +362,55 @@ struct CommandRuntime: Sendable {
         }
     }
 
+    private func setupOpenCodeGo() async throws {
+        let configuration = try loadConfiguration()
+        let existingKey = readExistingOpenCodeKey(configuration)
+        let input = try openCodeSetupInput(existingKey != nil)
+        guard input.slateURL == input.confirmedSlateURL,
+              input.openCodeKey == input.confirmedOpenCodeKey else {
+            throw CLIError.setupMismatch
+        }
+
+        let slateText = input.slateURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let slateURL = URL(string: slateText), slateURL.absoluteString == slateText else {
+            throw CLIError.setupInput
+        }
+        do { _ = try SlateEndpointPolicy.validate(slateURL) }
+        catch { throw CLIError.setupPreflight("slate_endpoint_invalid") }
+        let codexSlateText: String
+        do {
+            codexSlateText = try readExistingCodexSlateURL(configuration)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        } catch {
+            throw CLIError.configuration
+        }
+        guard slateText != codexSlateText else {
+            throw CLIError.setupPreflight("slate_endpoint_conflict")
+        }
+
+        let enteredKey = input.openCodeKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveKey = enteredKey.isEmpty ? existingKey : enteredKey
+        guard let effectiveKey, !effectiveKey.isEmpty else { throw CLIError.setupInput }
+        try await openCodeSetupPreflight(effectiveKey)
+
+        do {
+            try openCodeSetupPersistence.commit(
+                service: configuration.keychainService,
+                apiKeyAccount: configuration.openCodeKeyAccount,
+                slateURLAccount: OpenCodeGoMonitorConfiguration.slateURLAccount,
+                apiKey: enteredKey.isEmpty ? nil : effectiveKey,
+                slateURL: slateText
+            )
+        } catch SetupTransactionError.rollback {
+            throw CLIError.setupRollback
+        } catch CLIError.setupExistingItem {
+            throw CLIError.setupExistingItem
+        } catch {
+            throw CLIError.configuration
+        }
+        print("OpenCode Go 配置完成，只读预检通过")
+    }
+
     private func runWorker(_ mode: CollectorWorkerMode) async throws {
         do { try WorkerParentAuthorization.consume(expectedMode: mode.rawValue) }
         catch { throw CLIError.workerAuthorization }
@@ -327,9 +428,21 @@ struct CommandRuntime: Sendable {
         } catch {
             throw CLIError.configuration
         }
+        let openCodeKey = try optionalSecret(
+            secrets,
+            account: configuration.openCodeKeyAccount
+        )
+        let openCodeSlateURL = try optionalSecret(
+            secrets,
+            account: OpenCodeGoMonitorConfiguration.slateURLAccount
+        )
         let snapshots = SanitizedSnapshotCache(
             applicationSupportURL: paths.applicationSupportURL,
-            sensitiveValues: [slateURL]
+            sensitiveValues: RuntimeSensitiveValues.values(
+                codexSlateURL: slateURL,
+                openCodeKey: openCodeKey,
+                openCodeSlateURL: openCodeSlateURL
+            )
         )
         let service = CollectorService(
             codex: CodexRateLimitClient(configuration: configuration),
@@ -348,18 +461,56 @@ struct CommandRuntime: Sendable {
             includeOpenCodeGo: false
         )
         let report = try await service.collect(mode: mode.serviceMode)
-        if mode == .dryRun, let envelope = report.envelope {
-            let data = try JSONEncoder.slate.encode(envelope)
-            guard let text = String(data: data, encoding: .utf8) else {
-                throw CLIError.workerFailure
+        let openCodeReport = try await OpenCodeGoCollectorService(
+            openCodeGo: OpenCodeGoUsageClient(),
+            normalizer: .shanghai,
+            secrets: secrets,
+            snapshots: snapshots,
+            slate: SlateIngestClient(),
+            openCodeKeyAccount: configuration.openCodeKeyAccount,
+            slateURLAccount: OpenCodeGoMonitorConfiguration.slateURLAccount
+        ).collect(mode: mode.serviceMode)
+        if mode == .dryRun {
+            for encoded in [
+                try report.envelope.map { try JSONEncoder.slate.encode($0) },
+                try openCodeReport.envelope.map { try JSONEncoder.slate.encode($0) },
+            ].compactMap({ $0 }) {
+                guard let text = String(data: encoded, encoding: .utf8) else {
+                    throw CLIError.workerFailure
+                }
+                print(text)
             }
-            print(text)
         }
         if mode == .pushOnceWithProof, let proof = PushOnceProofFormatter.render(report) {
             print(proof)
         }
-        if let status = CollectionPublicStatusFormatter.render(report.publicErrorCodes) {
+        if mode == .pushOnceWithProof,
+           let proof = OpenCodeGoPushOnceProofFormatter.render(openCodeReport) {
+            print(proof)
+        }
+        var publicCodes = report.publicErrorCodes
+        openCodeReport.publicErrorCodes.forEach { publicCodes[$0.key] = $0.value }
+        if let status = CollectionPublicStatusFormatter.render(publicCodes) {
             FileHandle.standardError.write(Data("\(status)\n".utf8))
+        }
+        guard CollectionWorkerCompletionPolicy.accepts(
+            mode: mode,
+            codexReadbackVerified: report.readbackVerified,
+            openCodeReadbackVerified: openCodeReport.readbackVerified
+        ) else {
+            throw CLIError.workerFailure
+        }
+    }
+
+    private func optionalSecret(_ store: KeychainStore, account: String) throws -> String? {
+        do {
+            let value = try store.read(account: account)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return value.isEmpty ? nil : value
+        } catch let error as KeychainError where error.status == errSecItemNotFound {
+            return nil
+        } catch {
+            throw CLIError.configuration
         }
     }
 
@@ -615,6 +766,7 @@ struct CommandRuntime: Sendable {
         print("菜单栏：\(menuLoaded ? "已加载" : "未加载")")
         print("定时采集：\(collectorLoaded ? "已加载" : "未加载")")
         print("Codex：\(MenuBarViewModel.safeProviderSummary(display.codexSummary))")
+        print("OpenCode Go：\(MenuBarViewModel.safeProviderSummary(display.openCodeGoSummary))")
         print("重置雷达：\(MenuBarViewModel.safeRadarSummary(display.resetRadarSummary))")
         print("最近成功：\(display.lastSuccessAt.map { MenuBarViewModel.dateText($0) } ?? "尚无记录")")
         print("最近推送：\(display.lastPushAt.map { MenuBarViewModel.dateText($0) } ?? "尚无记录")")
@@ -742,7 +894,7 @@ struct CommandRuntime: Sendable {
         }
     }
 
-    private static func openCodePreflightCode(_ error: any Error) -> String {
+    static func openCodePreflightCode(_ error: any Error) -> String {
         switch error as? OpenCodeGoClientError {
         case .unauthorized: "opencode_unauthorized"
         case .subscriptionRequired: "opencode_subscription_required"
@@ -750,6 +902,7 @@ struct CommandRuntime: Sendable {
         case .server: "opencode_server"
         case .timeout: "opencode_timeout"
         case .transport: "opencode_transport"
+        case .invalidResponse: "opencode_invalid_response"
         case .http: "opencode_http"
         case nil: "opencode_preflight_failed"
         }
@@ -761,6 +914,40 @@ struct SetupValues: Equatable, Sendable {
     let confirmedOpenCodeKey: String
     let slateURL: String
     let confirmedSlateURL: String
+}
+
+struct OpenCodeGoSetupValues: Equatable, Sendable {
+    let openCodeKey: String
+    let confirmedOpenCodeKey: String
+    let slateURL: String
+    let confirmedSlateURL: String
+}
+
+enum OpenCodeGoMonitorConfiguration {
+    static let slateURLAccount = "slate-opencode-go-push-url"
+}
+
+enum RuntimeSensitiveValues {
+    static func values(
+        codexSlateURL: String,
+        openCodeKey: String?,
+        openCodeSlateURL: String?
+    ) -> [String] {
+        [codexSlateURL, openCodeKey, openCodeSlateURL]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}
+
+enum CollectionWorkerCompletionPolicy {
+    static func accepts(
+        mode: CollectorWorkerMode,
+        codexReadbackVerified: Bool,
+        openCodeReadbackVerified: Bool
+    ) -> Bool {
+        if mode == .dryRun { return true }
+        return codexReadbackVerified && openCodeReadbackVerified
+    }
 }
 
 struct SetupSecretAttributes: Equatable, Sendable {
@@ -799,6 +986,16 @@ protocol SetupPersisting: Sendable {
     ) throws
     func commitCodexOnly(
         configuration: CollectorConfiguration,
+        slateURL: String
+    ) throws
+}
+
+protocol OpenCodeGoSetupPersisting: Sendable {
+    func commit(
+        service: String,
+        apiKeyAccount: String,
+        slateURLAccount: String,
+        apiKey: String?,
         slateURL: String
     ) throws
 }
@@ -923,6 +1120,49 @@ struct TransactionalSetupPersistence: SetupPersisting, Sendable {
             } catch { rollbackFailed = true }
             do { try backend.restoreConfiguration(previousConfiguration) }
             catch { rollbackFailed = true }
+            if rollbackFailed { throw SetupTransactionError.rollback }
+            throw error
+        }
+    }
+}
+
+struct TransactionalOpenCodeGoSetupPersistence: OpenCodeGoSetupPersisting, Sendable {
+    let backend: any SetupMutationBacking
+
+    func commit(
+        service: String,
+        apiKeyAccount: String,
+        slateURLAccount: String,
+        apiKey: String?,
+        slateURL: String
+    ) throws {
+        let previousKey = try apiKey.map { _ in
+            try backend.readSecret(service: service, account: apiKeyAccount)
+        }
+        let previousSlate = try backend.readSecret(service: service, account: slateURLAccount)
+        do {
+            if let apiKey {
+                try backend.writeSecretValue(apiKey, service: service, account: apiKeyAccount)
+            }
+            try backend.writeSecretValue(slateURL, service: service, account: slateURLAccount)
+        } catch {
+            var rollbackFailed = false
+            if let previousKey {
+                do {
+                    try backend.restoreSecret(
+                        previousKey,
+                        service: service,
+                        account: apiKeyAccount
+                    )
+                } catch { rollbackFailed = true }
+            }
+            do {
+                try backend.restoreSecret(
+                    previousSlate,
+                    service: service,
+                    account: slateURLAccount
+                )
+            } catch { rollbackFailed = true }
             if rollbackFailed { throw SetupTransactionError.rollback }
             throw error
         }
@@ -1250,6 +1490,34 @@ private func restoreSetupTerminalAndReraise(_ signalNumber: Int32) {
 
 private struct SecretTerminalReader {
     func readSetupValues() throws -> SetupValues {
+        try withHiddenInput {
+            SetupValues(
+                openCodeKey: "",
+                confirmedOpenCodeKey: "",
+                slateURL: try read("Slate 推送 URL（输入不会显示）："),
+                confirmedSlateURL: try read("再次输入 Slate 推送 URL：")
+            )
+        }
+    }
+
+    func readOpenCodeGoSetupValues(hasExistingKey: Bool) throws -> OpenCodeGoSetupValues {
+        try withHiddenInput {
+            let keyPrompt = hasExistingKey
+                ? "OpenCode Go API Key（留空则保留现有值）："
+                : "OpenCode Go API Key："
+            let confirmationPrompt = hasExistingKey
+                ? "再次输入 API Key（继续留空则保留现有值）："
+                : "再次输入 OpenCode Go API Key："
+            return OpenCodeGoSetupValues(
+                openCodeKey: try read(keyPrompt),
+                confirmedOpenCodeKey: try read(confirmationPrompt),
+                slateURL: try read("OpenCode Go 的 Slate 推送 URL："),
+                confirmedSlateURL: try read("再次输入 Slate 推送 URL：")
+            )
+        }
+    }
+
+    private func withHiddenInput<T>(_ body: () throws -> T) throws -> T {
         guard isatty(STDIN_FILENO) == 1 else { throw CLIError.setupInput }
         var original = termios()
         guard tcgetattr(STDIN_FILENO, &original) == 0 else { throw CLIError.setupInput }
@@ -1297,12 +1565,7 @@ private struct SecretTerminalReader {
             setupTerminalDescriptor = -1
             print("")
         }
-        return SetupValues(
-            openCodeKey: "",
-            confirmedOpenCodeKey: "",
-            slateURL: try read("Slate 推送 URL（输入不会显示）："),
-            confirmedSlateURL: try read("再次输入 Slate 推送 URL：")
-        )
+        return try body()
     }
 
     private func read(_ prompt: String) throws -> String {

@@ -32,15 +32,16 @@ enum CollectorError: Error, Equatable, Sendable, CustomStringConvertible {
     case cacheLoad(publicCode: String)
     case internalFailure
 
-    var description: String {
+    var publicCode: String {
         switch self {
-        case .collectionDeadlineExceeded:
-            "CollectorError(code: collection_deadline_exceeded)"
-        case let .cacheLoad(publicCode):
-            "CollectorError(code: \(publicCode))"
-        case .internalFailure:
-            "CollectorError(code: internal_failure)"
+        case .collectionDeadlineExceeded: "collection_deadline_exceeded"
+        case let .cacheLoad(publicCode): publicCode
+        case .internalFailure: "internal_failure"
         }
+    }
+
+    var description: String {
+        "CollectorError(code: \(publicCode))"
     }
 }
 
@@ -478,6 +479,7 @@ struct CollectorService: Sendable {
             case .server: .server
             case .timeout: .timeout
             case .transport: .transport(publicCode: "transport_error")
+            case .invalidResponse: .invalidData
             case let .http(status): .transport(publicCode: "http_\(status)")
             }
             return .failure(failure)

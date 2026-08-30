@@ -4,7 +4,7 @@ import Testing
 
 @Suite struct OpenCodeGoUsageClientTests {
     @Test func requestUsesOfficialEndpointAndBearerHeader() async throws {
-        let transport = RecordingHTTPTransport(status: 200, body: Self.validUsage)
+        let transport = RecordingHTTPTransport(status: 200, body: Self.officialUsage)
 
         _ = try await OpenCodeGoUsageClient(transport: transport).read(apiKey: "test-go-secret")
 
@@ -18,14 +18,13 @@ import Testing
 
     @Test func decodesThreeUsageWindows() async throws {
         let result = try await OpenCodeGoUsageClient(
-            transport: RecordingHTTPTransport(status: 200, body: Self.validUsage)
+            transport: RecordingHTTPTransport(status: 200, body: Self.officialUsage)
         ).read(apiKey: "secret")
 
-        #expect(result.useBalance == false)
         #expect(result.rollingUsage.status == .ok)
-        #expect(result.rollingUsage.resetInSec == 600)
+        #expect(result.rollingUsage.resetAt == Date(timeIntervalSince1970: 1_788_083_258.287))
         #expect(result.weeklyUsage.usagePercent == 29)
-        #expect(result.monthlyUsage.resetInSec == 2_592_000)
+        #expect(result.monthlyUsage.resetAt == Date(timeIntervalSince1970: 1_790_227_561.287))
     }
 
     @Test func acceptsSingleRateLimitedWindow() async throws {
@@ -79,10 +78,10 @@ import Testing
             transport: RecordingHTTPTransport(status: 200, body: Self.missingMonthlyUsage)
         )
 
-        await #expect(throws: DecodingError.self) {
+        await #expect(throws: OpenCodeGoClientError.invalidResponse) {
             try await nonJSONClient.read(apiKey: "secret")
         }
-        await #expect(throws: DecodingError.self) {
+        await #expect(throws: OpenCodeGoClientError.invalidResponse) {
             try await missingWindowClient.read(apiKey: "secret")
         }
     }
@@ -95,10 +94,10 @@ import Testing
             transport: RecordingHTTPTransport(status: 200, body: Self.unknownStatusUsage)
         )
 
-        await #expect(throws: DecodingError.self) {
+        await #expect(throws: OpenCodeGoClientError.invalidResponse) {
             try await negativeResetClient.read(apiKey: "secret")
         }
-        await #expect(throws: DecodingError.self) {
+        await #expect(throws: OpenCodeGoClientError.invalidResponse) {
             try await unknownStatusClient.read(apiKey: "secret")
         }
     }
@@ -108,7 +107,7 @@ import Testing
             transport: RecordingHTTPTransport(status: 200, body: Self.nonFiniteUsagePercent)
         )
 
-        await #expect(throws: DecodingError.self) {
+        await #expect(throws: OpenCodeGoClientError.invalidResponse) {
             try await client.read(apiKey: "secret")
         }
     }
@@ -137,66 +136,73 @@ import Testing
         }
     }
 
-    private static let validUsage = Data(#"""
+    private static let officialUsage = Data(#"""
     {
-      "useBalance": false,
-      "rollingUsage": { "status": "ok", "resetInSec": 600, "usagePercent": 19 },
-      "weeklyUsage": { "status": "ok", "resetInSec": 604800, "usagePercent": 29 },
-      "monthlyUsage": { "status": "ok", "resetInSec": 2592000, "usagePercent": 39 }
+      "usage": {
+        "rolling": { "status": "ok", "percent": 19, "resetsAt": "2026-08-30T09:47:38.287Z" },
+        "weekly": { "status": "ok", "percent": 29, "resetsAt": "2026-08-31T00:00:00.287Z" },
+        "monthly": { "status": "ok", "percent": 39, "resetsAt": "2026-09-24T05:26:01.287Z" }
+      }
     }
     """#.utf8)
 
     private static let rateLimitedUsage = Data(#"""
     {
-      "useBalance": true,
-      "rollingUsage": { "status": "ok", "resetInSec": 600, "usagePercent": 19 },
-      "weeklyUsage": { "status": "rate-limited", "resetInSec": 604800, "usagePercent": 100 },
-      "monthlyUsage": { "status": "ok", "resetInSec": 2592000, "usagePercent": 39 }
+      "usage": {
+        "rolling": { "status": "ok", "percent": 19, "resetsAt": "2026-08-30T09:47:38Z" },
+        "weekly": { "status": "rate-limited", "percent": 100, "resetsAt": "2026-08-31T00:00:00Z" },
+        "monthly": { "status": "ok", "percent": 39, "resetsAt": "2026-09-24T05:26:01Z" }
+      }
     }
     """#.utf8)
 
     private static let missingMonthlyUsage = Data(#"""
     {
-      "useBalance": false,
-      "rollingUsage": { "status": "ok", "resetInSec": 600, "usagePercent": 19 },
-      "weeklyUsage": { "status": "ok", "resetInSec": 604800, "usagePercent": 29 }
+      "usage": {
+        "rolling": { "status": "ok", "percent": 19, "resetsAt": "2026-08-30T09:47:38Z" },
+        "weekly": { "status": "ok", "percent": 29, "resetsAt": "2026-08-31T00:00:00Z" }
+      }
     }
     """#.utf8)
 
     private static let negativeResetUsage = Data(#"""
     {
-      "useBalance": false,
-      "rollingUsage": { "status": "ok", "resetInSec": -1, "usagePercent": 19 },
-      "weeklyUsage": { "status": "ok", "resetInSec": 604800, "usagePercent": 29 },
-      "monthlyUsage": { "status": "ok", "resetInSec": 2592000, "usagePercent": 39 }
+      "usage": {
+        "rolling": { "status": "ok", "percent": 19, "resetsAt": "not-a-date" },
+        "weekly": { "status": "ok", "percent": 29, "resetsAt": "2026-08-31T00:00:00Z" },
+        "monthly": { "status": "ok", "percent": 39, "resetsAt": "2026-09-24T05:26:01Z" }
+      }
     }
     """#.utf8)
 
     private static let unknownStatusUsage = Data(#"""
     {
-      "useBalance": false,
-      "rollingUsage": { "status": "delayed", "resetInSec": 600, "usagePercent": 19 },
-      "weeklyUsage": { "status": "ok", "resetInSec": 604800, "usagePercent": 29 },
-      "monthlyUsage": { "status": "ok", "resetInSec": 2592000, "usagePercent": 39 }
+      "usage": {
+        "rolling": { "status": "delayed", "percent": 19, "resetsAt": "2026-08-30T09:47:38Z" },
+        "weekly": { "status": "ok", "percent": 29, "resetsAt": "2026-08-31T00:00:00Z" },
+        "monthly": { "status": "ok", "percent": 39, "resetsAt": "2026-09-24T05:26:01Z" }
+      }
     }
     """#.utf8)
 
     private static let nonFiniteUsagePercent = Data(#"""
     {
-      "useBalance": false,
-      "rollingUsage": { "status": "ok", "resetInSec": 600, "usagePercent": 1e999 },
-      "weeklyUsage": { "status": "ok", "resetInSec": 604800, "usagePercent": 29 },
-      "monthlyUsage": { "status": "ok", "resetInSec": 2592000, "usagePercent": 39 }
+      "usage": {
+        "rolling": { "status": "ok", "percent": 1e999, "resetsAt": "2026-08-30T09:47:38Z" },
+        "weekly": { "status": "ok", "percent": 29, "resetsAt": "2026-08-31T00:00:00Z" },
+        "monthly": { "status": "ok", "percent": 39, "resetsAt": "2026-09-24T05:26:01Z" }
+      }
     }
     """#.utf8)
 
     private static let usageWithExtraFields = Data(#"""
     {
-      "useBalance": false,
       "ignored": "future field",
-      "rollingUsage": { "status": "ok", "resetInSec": 600, "usagePercent": 19, "next": true },
-      "weeklyUsage": { "status": "ok", "resetInSec": 604800, "usagePercent": 29 },
-      "monthlyUsage": { "status": "ok", "resetInSec": 2592000, "usagePercent": 39 }
+      "usage": {
+        "rolling": { "status": "ok", "percent": 19, "resetsAt": "2026-08-30T09:47:38Z", "next": true },
+        "weekly": { "status": "ok", "percent": 29, "resetsAt": "2026-08-31T00:00:00Z" },
+        "monthly": { "status": "ok", "percent": 39, "resetsAt": "2026-09-24T05:26:01Z" }
+      }
     }
     """#.utf8)
 }

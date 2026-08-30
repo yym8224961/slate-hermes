@@ -1,0 +1,148 @@
+{
+  "version": 1,
+  "name": "OpenCode Go 额度",
+  "canvas": "full",
+  "blocks": [
+    { "type": "rect", "x": 0, "y": 0, "w": 400, "h": 112, "stroke": false, "fill": "black" },
+    {
+      "type": "text", "x": 14, "y": 4, "w": 220, "h": 18,
+      "value": "{quota.heading}", "font_size": 16, "color": "white", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 236, "y": 5, "w": 150, "h": 16,
+      "value": "{quota.date_label}", "font_size": 12, "align": "right",
+      "color": "white", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 14, "y": 26, "w": 80, "h": 16,
+      "value": "{quota.primary.name}", "font_size": 12, "color": "white", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 14, "y": 34, "w": 120, "h": 50,
+      "value": "{quota.primary.remaining_text}", "font_size": 48, "color": "white", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 43, "y": 67, "w": 100, "h": 18,
+      "value": "% 剩余", "font_size": 16, "color": "white",
+      "visible": "{quota.primary.one_digit}", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 65, "y": 67, "w": 100, "h": 18,
+      "value": "% 剩余", "font_size": 16, "color": "white",
+      "visible": "{quota.primary.two_digits}", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 88, "y": 67, "w": 100, "h": 18,
+      "value": "% 剩余", "font_size": 16, "color": "white",
+      "visible": "{quota.primary.three_digits}", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 230, "y": 39, "w": 156, "h": 18,
+      "value": "{quota.primary.used_text}", "font_size": 16, "align": "right",
+      "color": "white", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 198, "y": 65, "w": 188, "h": 16,
+      "value": "{quota.primary.reset_text}", "font_size": 12, "align": "right",
+      "color": "white", "ellipsis": false
+    },
+    {
+      "type": "bar", "x": 14, "y": 88, "w": 372, "h": 10,
+      "percentage": "{quota.primary.remaining_percent}", "color": "white"
+    },
+    {
+      "type": "text", "x": 14, "y": 100, "w": 372, "h": 12,
+      "value": "{opencode_go.summary_label}", "font_size": 12, "align": "right",
+      "color": "white", "ellipsis": false
+    },
+
+    { "type": "line", "x1": 14, "y1": 122, "x2": 386, "y2": 122, "style": "solid" },
+    {
+      "type": "text", "x": 14, "y": 128, "w": 80, "h": 16,
+      "value": "{quota.weekly.name}", "font_size": 16, "color": "black", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 14, "y": 144, "w": 92, "h": 34,
+      "value": "{quota.weekly.remaining_text}", "font_size": 32, "color": "black", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 38, "y": 157, "w": 90, "h": 18,
+      "value": "% 剩余", "font_size": 16, "color": "black",
+      "visible": "{quota.weekly.one_digit}", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 58, "y": 157, "w": 90, "h": 18,
+      "value": "% 剩余", "font_size": 16, "color": "black",
+      "visible": "{quota.weekly.two_digits}", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 78, "y": 157, "w": 90, "h": 18,
+      "value": "% 剩余", "font_size": 16, "color": "black",
+      "visible": "{quota.weekly.three_digits}", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 230, "y": 137, "w": 156, "h": 18,
+      "value": "{quota.weekly.used_text}", "font_size": 16, "align": "right",
+      "color": "black", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 198, "y": 160, "w": 188, "h": 16,
+      "value": "{quota.weekly.reset_text}", "font_size": 12, "align": "right",
+      "color": "black", "ellipsis": false
+    },
+    {
+      "type": "bar", "x": 14, "y": 180, "w": 372, "h": 8,
+      "percentage": "{quota.weekly.remaining_percent}", "color": "black"
+    },
+
+    { "type": "line", "x1": 14, "y1": 199, "x2": 386, "y2": 199, "style": "solid" },
+    {
+      "type": "text", "x": 14, "y": 205, "w": 80, "h": 16,
+      "value": "{quota.monthly.name}", "font_size": 16, "color": "black", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 14, "y": 221, "w": 92, "h": 34,
+      "value": "{quota.monthly.remaining_text}", "font_size": 32, "color": "black", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 38, "y": 234, "w": 90, "h": 18,
+      "value": "% 剩余", "font_size": 16, "color": "black",
+      "visible": "{quota.monthly.one_digit}", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 58, "y": 234, "w": 90, "h": 18,
+      "value": "% 剩余", "font_size": 16, "color": "black",
+      "visible": "{quota.monthly.two_digits}", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 78, "y": 234, "w": 90, "h": 18,
+      "value": "% 剩余", "font_size": 16, "color": "black",
+      "visible": "{quota.monthly.three_digits}", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 230, "y": 214, "w": 156, "h": 18,
+      "value": "{quota.monthly.used_text}", "font_size": 16, "align": "right",
+      "color": "black", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 198, "y": 237, "w": 188, "h": 16,
+      "value": "{quota.monthly.reset_text}", "font_size": 12, "align": "right",
+      "color": "black", "ellipsis": false
+    },
+    {
+      "type": "bar", "x": 14, "y": 257, "w": 372, "h": 8,
+      "percentage": "{quota.monthly.remaining_percent}", "color": "black"
+    },
+
+    { "type": "line", "x1": 0, "y1": 276, "x2": 399, "y2": 276, "style": "solid" },
+    {
+      "type": "text", "x": 14, "y": 282, "w": 178, "h": 16,
+      "value": "{footer.balance_text}", "font_size": 12, "color": "black", "ellipsis": false
+    },
+    {
+      "type": "text", "x": 208, "y": 282, "w": 178, "h": 16,
+      "value": "{footer.update_text}", "font_size": 12, "align": "right",
+      "color": "black", "ellipsis": false
+    }
+  ]
+}

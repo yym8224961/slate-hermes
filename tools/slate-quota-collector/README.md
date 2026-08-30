@@ -1,8 +1,8 @@
-# Slate Codex 额度与重置雷达
+# Slate Codex 与 OpenCode Go 独立额度监控
 
-这是当前 Mac 专用的 Codex 采集器和菜单栏 App。它每 5 分钟读取一次 Codex 官方 App Server 的额度和本机任务活动，再把画面推送到 Slate。界面根据 [BarryBarrywu/codex-zectrix-dashboard](https://github.com/BarryBarrywu/codex-zectrix-dashboard) 移植：包含黑底额度区、重置雷达、三行任务状态和底部更新时间。
+这是当前 Mac 专用的额度采集器和菜单栏 App。它每 5 分钟分别读取 Codex 和 OpenCode Go，再推送到两个彼此独立的 Slate 内容。Codex 界面根据 [BarryBarrywu/codex-zectrix-dashboard](https://github.com/BarryBarrywu/codex-zectrix-dashboard) 移植；OpenCode Go 沿用同一套 400 × 300 黑白全屏视觉，单独显示 5 小时、本周、本月三档额度。
 
-本版只采集 Codex：不读取 OpenCode Go 钥匙，不请求 OpenCode Go 网络，不在 Slate 数据或画面中发送 `opencode_go`。如果旧版已在钥匙串中留有 OpenCode Go 项，升级时会原样保留，但本版不会使用或覆盖它。
+两个内容严格分离：Codex 数据包不发送 `opencode_go`；OpenCode Go 数据包也不发送 Codex、重置雷达或本机任务活动。一个菜单栏开关统一控制两条每 5 分钟采集链路。
 
 ## 数据来源和边界
 
@@ -10,6 +10,7 @@
 - **任务活动**：只读取 Codex 任务标题、父子关系和本机 session 中的生命周期事件。不保存或上传 prompt、response、reasoning、工具输出或项目路径。
 - **重置雷达**：最多每小时查询一次 `https://codex-resets.com/api/v1/status`，只保留“最新确认/活跃预测/概率/有效时间”等展示语义。这是第三方公开信号，不是 OpenAI 官方承诺，也不代表某个账户一定会在该时间重置。
 - **Slate**：只向使用者自己填入的 capability URL 推送脱敏 Dashboard data。推送后会 GET 回读并校验本轮数据一致性。
+- **OpenCode Go**：只请求官方 `https://opencode.ai/zen/go/v1/usage` 用量接口。API Key 仅存入 macOS 钥匙串，不进入模板、普通配置、日志或脱敏缓存。
 
 capability URL 是可读写凭据，不要发到聊天、写进 shell history 或普通配置文件。`setup` 会在本机终端无回显读取，并存入 macOS 钥匙串。
 
@@ -34,7 +35,7 @@ rtk swift build --package-path tools/slate-quota-collector -c release
 tools/slate-quota-collector/.build/release/slate-quota-collector
 ```
 
-## 2. 在 Slate 创建画面
+## 2. 在 Slate 创建两个独立画面
 
 1. 进入目标内容组，新建“外部数据”。
 2. 帧名称填“Codex 额度”。
@@ -42,6 +43,14 @@ tools/slate-quota-collector/.build/release/slate-quota-collector
 4. 把 [`templates/initial-data.json`](templates/initial-data.json) 的完整内容粘贴到初始数据。
 5. 刷新间隔选“5 分钟”。Slate 的刷新负责设备同步，Mac 采集器也由独立的 5 分钟调度器运行。
 6. 创建完成后复制 Slate 生成的 capability URL，只在下一步无回显输入。
+
+OpenCode Go 另建一个内容组和“外部数据”内容：
+
+1. 帧名称填“OpenCode Go 额度”。
+2. 自定义模板粘贴 [`templates/slate-opencode-go-dashboard-template.json`](templates/slate-opencode-go-dashboard-template.json)。
+3. 初始数据粘贴 [`templates/initial-opencode-go-data.json`](templates/initial-opencode-go-data.json)。
+4. 刷新间隔同样选“5 分钟”。
+5. 保存新内容生成第二条 capability URL；不要用 Codex 内容的 URL 代替。
 
 模板是 400 × 300、1bpp，并显式启用 `canvas: "full"`：Codex 额度画面从 `y=0` 开始占满墨水屏，设备状态栏不会再覆盖顶部内容，底部也只保留上游原版需要的少量呼吸空间。普通 Slate 模板仍使用默认的 `canvas: "content"` 并保留 24px 状态栏。单额度窗口和双额度窗口都有独立布局分支。
 
@@ -63,13 +72,25 @@ rtk tools/slate-quota-collector/.build/release/slate-quota-collector setup
 配置完成，只读预检通过
 ```
 
+### `setup-opencode-go`
+
+```bash
+rtk tools/slate-quota-collector/.build/release/slate-quota-collector setup-opencode-go
+```
+
+程序会无回显读取 OpenCode Go API Key 和第二条 Slate capability URL，并在落盘前完成只读额度预检。如果钥匙串保留了旧版 OpenCode Go API Key，可以在前两次提示中都直接回车，只配置新的 Slate URL。成功输出：
+
+```text
+OpenCode Go 配置完成，只读预检通过
+```
+
 ### `collect --dry-run`
 
 ```bash
 rtk tools/slate-quota-collector/.build/release/slate-quota-collector collect --dry-run
 ```
 
-成功时输出一份 `version: 1` 的脱敏 JSON envelope，不向 Slate POST。输出中应包含 `codex`、`quota`、`reset_radar`、`task_activity` 和 `footer`，不应出现 `opencode_go`。
+成功时输出两份互相独立的脱敏 JSON envelope，不向 Slate POST。Codex 数据不应出现 `opencode_go`；OpenCode Go 数据只包含 `opencode_go`、`quota` 和 `footer`。
 
 ### `collect --once`
 
@@ -104,7 +125,7 @@ rtk tools/slate-quota-collector/.build/release/slate-quota-collector install-lau
 
 ## 4. 菜单栏开关
 
-- 菜单栏显示 Codex 额度摘要、重置雷达状态和最后推送时间。
+- 菜单栏显示 Codex、OpenCode Go 额度摘要、重置雷达状态和最后推送时间。
 - “每 5 分钟自动采集”是可点击开关，状态会跨 App 重启、Mac 重启、注销和重新登录保留。
 - 关闭时只停止定时采集；菜单栏依然存在，Slate 当前画面、配置、钥匙串和脱敏缓存都保留。
 - 关闭状态下点“立即采集一次”仍会执行一轮，完成后自动开关仍为关闭。
@@ -124,13 +145,14 @@ rtk tools/slate-quota-collector/.build/release/slate-quota-collector resume
 rtk tools/slate-quota-collector/.build/release/slate-quota-collector status
 ```
 
-输出固定为八行：
+输出固定为九行：
 
 ```text
 自动采集：[已开启/已关闭]
 菜单栏：[已加载/未加载]
 定时采集：[已加载/未加载]
 Codex：[脱敏额度摘要]
+OpenCode Go：[脱敏额度摘要]
 重置雷达：[脱敏公开信号摘要]
 最近成功：[时间/尚无记录]
 最近推送：[时间/尚无记录]
@@ -155,7 +177,7 @@ Codex：[脱敏额度摘要]
 
 ### Slate push 404
 
-通常表示原内容已删除或 capability URL 已失效。在 Slate 重建“外部数据”，粘贴最新模板和初始数据，再重新执行 `setup`。
+通常表示原内容已删除或 capability URL 已失效。在 Slate 重建对应的“外部数据”，Codex 重新执行 `setup`，OpenCode Go 重新执行 `setup-opencode-go`。
 
 ## 7. 轮换 Slate URL
 
@@ -163,7 +185,7 @@ capability URL 泄漏后：
 
 1. 在 Slate 删除旧“外部数据”内容，使旧 URL 失效。
 2. 重建内容并粘贴最新模板与初始数据。
-3. 在本机重新执行 `setup`，无回显输入新 URL。
+3. Codex 内容重新执行 `setup`；OpenCode Go 内容重新执行 `setup-opencode-go`，无回显输入各自的新 URL。
 4. 运行 `collect --dry-run`、`collect --once` 和 `status`，确认新内容回读成功。
 
 ## 8. 卸载
@@ -174,7 +196,7 @@ rtk tools/slate-quota-collector/.build/release/slate-quota-collector uninstall-l
 
 这会停止并删除两个调度项、生成的 `.app`、稳定二进制和 plist；不删除钥匙串、配置、开关或脱敏历史。
 
-如果需要完全删除 Slate 凭据，打开 macOS“钥匙串访问”，搜索 service `com.yym8224961.slate-quota-collector`，核对并删除 account `slate-push-url`。旧版可能还有 `opencode-go-api-key`；本版不使用它，只有在确认其他工具也不需要时才手工删除。
+如果需要完全删除凭据，打开 macOS“钥匙串访问”，搜索 service `com.yym8224961.slate-quota-collector`，核对并删除 account `slate-push-url`、`slate-opencode-go-push-url` 和 `opencode-go-api-key`。
 
 ## 9. 验收边界
 

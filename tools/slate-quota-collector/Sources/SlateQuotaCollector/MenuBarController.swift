@@ -48,6 +48,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     private let automaticItem = NSMenuItem(title: "每 5 分钟自动采集", action: nil, keyEquivalent: "")
     private let collectItem = NSMenuItem(title: "立即采集一次", action: nil, keyEquivalent: "")
     private let codexItem = NSMenuItem(title: "Codex", action: nil, keyEquivalent: "")
+    private let openCodeGoItem = NSMenuItem(title: "OpenCode Go", action: nil, keyEquivalent: "")
     private let resetRadarItem = NSMenuItem(title: "重置雷达", action: nil, keyEquivalent: "")
     private let lastPushItem = NSMenuItem(title: "最后推送", action: nil, keyEquivalent: "")
     private let detailItem = NSMenuItem(title: "查看详细状态", action: nil, keyEquivalent: "")
@@ -140,6 +141,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         menu.delegate = self
         headerItem.isEnabled = false
         codexItem.isEnabled = false
+        openCodeGoItem.isEnabled = false
         resetRadarItem.isEnabled = false
         lastPushItem.isEnabled = false
 
@@ -159,6 +161,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
             collectItem,
             .separator(),
             codexItem,
+            openCodeGoItem,
             resetRadarItem,
             lastPushItem,
             .separator(),
@@ -236,6 +239,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         automaticItem.isEnabled = busy == nil
         collectItem.isEnabled = busy == nil
         codexItem.title = "Codex          \(value.codexLine)"
+        openCodeGoItem.title = "OpenCode Go    \(value.openCodeGoLine)"
         resetRadarItem.title = "重置雷达       \(value.resetRadarLine)"
         lastPushItem.title = "最后推送       \(value.lastPushLine)"
     }

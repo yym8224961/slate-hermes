@@ -996,7 +996,7 @@ private enum EndToEndOpenCodeHTTP {
     func makeTransport() -> RecordingHTTPTransport {
         switch self {
         case .threeWindows:
-            RecordingHTTPTransport(status: 200, body: Data(#"{"useBalance":false,"rollingUsage":{"status":"ok","resetInSec":300,"usagePercent":19},"weeklyUsage":{"status":"ok","resetInSec":600,"usagePercent":29},"monthlyUsage":{"status":"ok","resetInSec":900,"usagePercent":25}}"#.utf8))
+            RecordingHTTPTransport(status: 200, body: Data(#"{"usage":{"rolling":{"status":"ok","percent":19,"resetsAt":"2026-08-12T09:35:00Z"},"weekly":{"status":"ok","percent":29,"resetsAt":"2026-08-12T09:40:00Z"},"monthly":{"status":"ok","percent":25,"resetsAt":"2026-08-12T09:45:00Z"}}}"#.utf8))
         case let .serverFailures(count):
             RecordingHTTPTransport(responses: Array(
                 repeating: .success(.init(
@@ -1539,10 +1539,9 @@ private extension CodexRateLimitsReadResult {
 
 private extension OpenCodeGoUsageResponse {
     static let fixture = Self(
-        useBalance: false,
-        rollingUsage: .init(status: .ok, resetInSec: 300, usagePercent: 19),
-        weeklyUsage: .init(status: .ok, resetInSec: 600, usagePercent: 29),
-        monthlyUsage: .init(status: .ok, resetInSec: 900, usagePercent: 25)
+        rollingUsage: .init(status: .ok, resetAt: Date(timeIntervalSince1970: 1_786_523_700), usagePercent: 19),
+        weeklyUsage: .init(status: .ok, resetAt: Date(timeIntervalSince1970: 1_786_524_000), usagePercent: 29),
+        monthlyUsage: .init(status: .ok, resetAt: Date(timeIntervalSince1970: 1_786_524_300), usagePercent: 25)
     )
 }
 

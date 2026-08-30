@@ -47,7 +47,7 @@ struct QuotaNormalizer: Sendable {
             weekly: weekly,
             monthly: monthly,
             footerLeft: nextReset.map { "下次重置 \(dateText($0))" } ?? "下次重置 --",
-            footerRight: normalizeUseBalance(raw.useBalance)
+            footerRight: "官方用量 API"
         )
     }
 
@@ -127,7 +127,8 @@ struct QuotaNormalizer: Sendable {
 
     private func openCodeWindow(_ raw: OpenCodeGoUsageWindow, label: String, collectedAt: Date) -> QuotaWindow {
         let remaining = remaining(raw.usagePercent)
-        return QuotaWindow(label: label, remainingPercent: remaining, valueText: "剩余 \(remaining)%", resetAt: collectedAt.addingTimeInterval(raw.resetInSec))
+        _ = collectedAt
+        return QuotaWindow(label: label, remainingPercent: remaining, valueText: "剩余 \(remaining)%", resetAt: raw.resetAt)
     }
 
     private func dateText(_ date: Date) -> String {
@@ -151,8 +152,4 @@ func normalizeCredits(_ credits: CodexCredits?) -> String {
     if credits.unlimited { return "Credits 无限" }
     guard let balance = credits.balance else { return "Credits —" }
     return String(format: "Credits %.2f", locale: Locale(identifier: "en_US_POSIX"), balance)
-}
-
-func normalizeUseBalance(_ useBalance: Bool) -> String {
-    "余额接续 \(useBalance ? "开启" : "关闭")"
 }

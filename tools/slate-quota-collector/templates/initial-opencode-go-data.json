@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "data": {
+    "schema_version": 1,
+    "generated_at": "2026-08-30T08:30:00Z",
+    "opencode_go": {
+      "status": "ok",
+      "source_collected_at": "2026-08-30T08:30:00Z",
+      "header_left": "OPENCODE GO",
+      "summary_label": "最低剩余 62%",
+      "rolling": {
+        "label": "5 小时",
+        "remaining_percent": 86,
+        "value_text": "剩余 86%",
+        "reset_at": "2026-08-30T09:30:00Z"
+      },
+      "weekly": {
+        "label": "本周",
+        "remaining_percent": 74,
+        "value_text": "剩余 74%",
+        "reset_at": "2026-08-31T08:30:00Z"
+      },
+      "monthly": {
+        "label": "本月",
+        "remaining_percent": 62,
+        "value_text": "剩余 62%",
+        "reset_at": "2026-09-06T08:30:00Z"
+      },
+      "footer_left": "下次重置 08-30 17:30",
+      "footer_right": "官方用量 API"
+    },
+    "quota": {
+      "date_label": "8月30日 周日",
+      "heading": "OpenCode Go 额度",
+      "primary": {
+        "name": "5 小时",
+        "remaining_percent": 86,
+        "remaining_text": "86",
+        "used_text": "已用 14%",
+        "reset_text": "重置 1小时 0分",
+        "one_digit": false,
+        "two_digits": true,
+        "three_digits": false
+      },
+      "weekly": {
+        "name": "本周",
+        "remaining_percent": 74,
+        "remaining_text": "74",
+        "used_text": "已用 26%",
+        "reset_text": "重置 1天 0小时",
+        "one_digit": false,
+        "two_digits": true,
+        "three_digits": false
+      },
+      "monthly": {
+        "name": "本月",
+        "remaining_percent": 62,
+        "remaining_text": "62",
+        "used_text": "已用 38%",
+        "reset_text": "重置 7天 0小时",
+        "one_digit": false,
+        "two_digits": true,
+        "three_digits": false
+      }
+    },
+    "footer": {
+      "balance_text": "官方用量 API",
+      "update_text": "画面更新 16:30"
+    }
+  }
+}

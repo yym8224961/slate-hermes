@@ -144,7 +144,11 @@ private final class SpawnedCollectorProcessOwnership {
 
 struct CollectorProcessSupervisor: Sendable {
     static let workerAuthorizationDescriptor: Int32 = 198
-    static let productionWallClockLimit: Duration = .seconds(45)
+    // Codex owns a 45-second internal budget. The independent OpenCode Go
+    // provider and its POST + GET verification run afterward, so the parent
+    // must cover both pipelines plus retry/cleanup overhead while staying
+    // below the five-minute cadence.
+    static let productionWallClockLimit: Duration = .seconds(180)
     static let productionTerminationGrace: Duration = .seconds(2)
 
     let wallClockLimit: Duration

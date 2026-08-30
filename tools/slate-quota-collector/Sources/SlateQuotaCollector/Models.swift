@@ -165,6 +165,76 @@ struct SlateEnvelope: Codable, Equatable, Sendable {
     }
 }
 
+struct OpenCodeGoQuotaPanelWindow: Codable, Equatable, Sendable {
+    let name: String
+    let remainingPercent: Int
+    let remainingText: String
+    let usedText: String
+    let resetText: String
+    let oneDigit: Bool
+    let twoDigits: Bool
+    let threeDigits: Bool
+}
+
+struct OpenCodeGoQuotaPanel: Codable, Equatable, Sendable {
+    let dateLabel: String
+    let heading: String
+    let primary: OpenCodeGoQuotaPanelWindow
+    let weekly: OpenCodeGoQuotaPanelWindow
+    let monthly: OpenCodeGoQuotaPanelWindow
+}
+
+struct OpenCodeGoDashboardFooter: Codable, Equatable, Sendable {
+    let balanceText: String
+    let updateText: String
+}
+
+/// A deliberately separate Slate wire contract. OpenCode Go content never
+/// contains Codex, reset-radar, or local task-activity fields.
+struct OpenCodeGoDashboardData: Codable, Equatable, Sendable {
+    let schemaVersion: Int
+    let generatedAt: Date
+    let opencodeGo: OpenCodeGoDisplaySnapshot
+    let quota: OpenCodeGoQuotaPanel
+    let footer: OpenCodeGoDashboardFooter
+
+    init(
+        schemaVersion: Int,
+        generatedAt: Date,
+        opencodeGo: OpenCodeGoDisplaySnapshot
+    ) {
+        self.schemaVersion = schemaVersion
+        self.generatedAt = generatedAt
+        self.opencodeGo = opencodeGo
+        quota = OpenCodeGoDashboardProjection.quota(from: opencodeGo, now: generatedAt)
+        footer = OpenCodeGoDashboardProjection.footer(from: opencodeGo, now: generatedAt)
+    }
+
+    init(from decoder: any Decoder) throws {
+        enum CodingKeys: String, CodingKey {
+            case schemaVersion, generatedAt, opencodeGo, quota, footer
+        }
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        generatedAt = try container.decode(Date.self, forKey: .generatedAt)
+        opencodeGo = try container.decode(OpenCodeGoDisplaySnapshot.self, forKey: .opencodeGo)
+        quota = try container.decodeIfPresent(OpenCodeGoQuotaPanel.self, forKey: .quota)
+            ?? OpenCodeGoDashboardProjection.quota(from: opencodeGo, now: generatedAt)
+        footer = try container.decodeIfPresent(OpenCodeGoDashboardFooter.self, forKey: .footer)
+            ?? OpenCodeGoDashboardProjection.footer(from: opencodeGo, now: generatedAt)
+    }
+}
+
+struct OpenCodeGoSlateEnvelope: Codable, Equatable, Sendable {
+    let version: Int
+    let data: OpenCodeGoDashboardData
+
+    init(data: OpenCodeGoDashboardData) {
+        version = 1
+        self.data = data
+    }
+}
+
 struct CodexRateLimitWindow: Codable, Equatable, Sendable {
     let usedPercent: Double
     let windowDurationMins: Int
@@ -271,17 +341,16 @@ private extension CodexRateLimitWindow {
     }
 }
 
-struct OpenCodeGoUsageResponse: Codable, Equatable, Sendable {
-    let useBalance: Bool
+struct OpenCodeGoUsageResponse: Equatable, Sendable {
     let rollingUsage: OpenCodeGoUsageWindow
     let weeklyUsage: OpenCodeGoUsageWindow
     let monthlyUsage: OpenCodeGoUsageWindow
 }
 
-struct OpenCodeGoUsageWindow: Codable, Equatable, Sendable {
-    enum Status: String, Codable, Sendable { case ok, rateLimited = "rate-limited" }
+struct OpenCodeGoUsageWindow: Equatable, Sendable {
+    enum Status: String, Decodable, Sendable { case ok, rateLimited = "rate-limited" }
     let status: Status
-    let resetInSec: Double
+    let resetAt: Date
     let usagePercent: Double
 }
 
@@ -352,6 +421,14 @@ protocol SecretStoring: Sendable {
 protocol SlateIngesting: Sendable {
     func push(_ envelope: SlateEnvelope, capabilityURL: URL) async throws -> SlateIngestReceipt
     func readCurrentData(capabilityURL: URL) async throws -> SlateDashboardData
+}
+
+protocol OpenCodeGoSlateIngesting: Sendable {
+    func push(
+        _ envelope: OpenCodeGoSlateEnvelope,
+        capabilityURL: URL
+    ) async throws -> SlateIngestReceipt
+    func readCurrentOpenCodeGoData(capabilityURL: URL) async throws -> OpenCodeGoDashboardData
 }
 
 protocol SnapshotPersisting: Sendable {

@@ -106,6 +106,34 @@ struct SlateIngestClientTests {
         #expect(data == Self.dashboard)
     }
 
+    @Test func postsAndReadsTheIndependentOpenCodeGoWireContract() async throws {
+        let openCodeData = OpenCodeGoDashboardData(
+            schemaVersion: 1,
+            generatedAt: Date(timeIntervalSince1970: 1_723_456_789),
+            opencodeGo: .fixture()
+        )
+        let envelope = OpenCodeGoSlateEnvelope(data: openCodeData)
+        let postTransport = RecordingHTTPTransport(status: 200, body: Self.receipt)
+        let postClient = SlateIngestClient(transport: postTransport)
+
+        _ = try await postClient.push(envelope, capabilityURL: Self.privateURL)
+
+        let postRequest = try #require(await postTransport.lastRequest)
+        let postBody = try #require(postRequest.httpBody)
+        let postJSON = try #require(JSONSerialization.jsonObject(with: postBody) as? [String: Any])
+        let dataJSON = try #require(postJSON["data"] as? [String: Any])
+        #expect(dataJSON["opencode_go"] != nil)
+        #expect(dataJSON["codex"] == nil)
+
+        let getTransport = RecordingHTTPTransport(
+            status: 200,
+            body: try JSONEncoder.slate.encode(openCodeData)
+        )
+        let readback = try await SlateIngestClient(transport: getTransport)
+            .readCurrentOpenCodeGoData(capabilityURL: Self.privateURL)
+        #expect(readback == openCodeData)
+    }
+
     @Test func getsCodexOnlyDashboardDataWithoutOpenCodeGo() async throws {
         let expected = SlateDashboardData(
             schemaVersion: Self.dashboard.schemaVersion,

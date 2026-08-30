@@ -21,9 +21,10 @@ struct AppBundleInstallerTests {
         #expect(FileManager.default.fileExists(atPath: paths.stableExecutableURL.path))
     }
 
-    @Test("CLI exposes the eight approved commands and keeps internal entries hidden")
+    @Test("CLI exposes the approved commands and keeps internal entries hidden")
     func parsesApprovedCommandsAndRejectsSecretArguments() throws {
         #expect(try CLIArguments(["setup"]) == .setup)
+        #expect(try CLIArguments(["setup-opencode-go"]) == .setupOpenCodeGo)
         #expect(try CLIArguments(["collect", "--dry-run"]) == .collect(.dryRun))
         #expect(try CLIArguments(["collect", "--once"]) == .collect(.pushOnce))
         #expect(try CLIArguments(["collect", "--scheduled"]) == .collectScheduled)
@@ -50,7 +51,7 @@ struct AppBundleInstallerTests {
 
         let help = CLIArguments.visibleHelp
         for command in [
-            "setup", "collect --dry-run", "collect --once", "pause", "resume",
+            "setup", "setup-opencode-go", "collect --dry-run", "collect --once", "pause", "resume",
             "install-launch-agent", "status", "uninstall-launch-agent",
         ] {
             #expect(help.contains(command))
@@ -546,6 +547,121 @@ struct AppBundleInstallerTests {
 
         #expect(backend.generation.openCodeKey == oldOpenCode)
         #expect(backend.mutationCount == 2)
+    }
+
+    @Test("OpenCode Go setup can reuse the preserved API key and writes only its separate Slate URL")
+    func openCodeSetupReusesExistingKeyAndSeparateEndpoint() async throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        try ConfigurationStore(applicationSupportURL: paths.applicationSupportURL).save(.fixture)
+        let preflight = OpenCodeSetupPreflightRecorder()
+        let persistence = RecordingOpenCodeSetupPersistence()
+        let endpoint = "https://new.example.test/api/v1/contents/opencode/data"
+        let runtime = CommandRuntime(
+            paths: paths,
+            executableURL: URL(fileURLWithPath: "/bin/true"),
+            openCodeSetupInput: { hasExistingKey in
+                #expect(hasExistingKey)
+                return OpenCodeGoSetupValues(
+                    openCodeKey: "",
+                    confirmedOpenCodeKey: "",
+                    slateURL: endpoint,
+                    confirmedSlateURL: endpoint
+                )
+            },
+            openCodeSetupPreflight: { key in preflight.record(key) },
+            readExistingOpenCodeKey: { _ in "preserved-go-key" },
+            readExistingCodexSlateURL: { _ in
+                "https://codex.example.test/api/v1/contents/codex/data"
+            },
+            openCodeSetupPersistence: persistence
+        )
+
+        try await runtime.run(.setupOpenCodeGo)
+
+        #expect(preflight.value == "preserved-go-key")
+        #expect(persistence.apiKey == nil)
+        #expect(persistence.slateURL == endpoint)
+        #expect(persistence.slateURLAccount == OpenCodeGoMonitorConfiguration.slateURLAccount)
+    }
+
+    @Test("OpenCode Go setup rejects the Codex capability URL before preflight or mutation")
+    func openCodeSetupRejectsCodexEndpointReuse() async throws {
+        let root = try TemporaryDirectory()
+        let paths = InstallationPaths.fixture(root: root.url)
+        try ConfigurationStore(applicationSupportURL: paths.applicationSupportURL).save(.fixture)
+        let preflight = OpenCodeSetupPreflightRecorder()
+        let persistence = RecordingOpenCodeSetupPersistence()
+        let codexEndpoint = "https://same.example.test/api/v1/contents/codex/data"
+        let runtime = CommandRuntime(
+            paths: paths,
+            executableURL: URL(fileURLWithPath: "/bin/true"),
+            openCodeSetupInput: { _ in
+                OpenCodeGoSetupValues(
+                    openCodeKey: "new-go-key",
+                    confirmedOpenCodeKey: "new-go-key",
+                    slateURL: codexEndpoint,
+                    confirmedSlateURL: codexEndpoint
+                )
+            },
+            openCodeSetupPreflight: { key in preflight.record(key) },
+            readExistingOpenCodeKey: { _ in nil },
+            readExistingCodexSlateURL: { _ in codexEndpoint },
+            openCodeSetupPersistence: persistence
+        )
+
+        await #expect(throws: CLIError.setupPreflight("slate_endpoint_conflict")) {
+            try await runtime.run(.setupOpenCodeGo)
+        }
+        #expect(preflight.value == nil)
+        #expect(persistence.slateURL == nil)
+        #expect(persistence.apiKey == nil)
+    }
+
+    @Test("push workers require both independent Slate readbacks while dry-run remains offline")
+    func workerCompletionRequiresBothReadbacks() {
+        #expect(CollectionWorkerCompletionPolicy.accepts(
+            mode: .dryRun,
+            codexReadbackVerified: false,
+            openCodeReadbackVerified: false
+        ))
+        #expect(CollectionWorkerCompletionPolicy.accepts(
+            mode: .pushOnceWithProof,
+            codexReadbackVerified: true,
+            openCodeReadbackVerified: true
+        ))
+        #expect(CollectionWorkerCompletionPolicy.accepts(
+            mode: .scheduled,
+            codexReadbackVerified: true,
+            openCodeReadbackVerified: false
+        ) == false)
+        #expect(CollectionWorkerCompletionPolicy.accepts(
+            mode: .pushOnce,
+            codexReadbackVerified: false,
+            openCodeReadbackVerified: true
+        ) == false)
+    }
+
+    @Test("runtime cache guard includes all three credentials and removes blanks")
+    func runtimeSensitiveValuesCoverIndependentEndpointsAndKey() {
+        #expect(RuntimeSensitiveValues.values(
+            codexSlateURL: " codex-capability ",
+            openCodeKey: " go-key ",
+            openCodeSlateURL: " opencode-capability "
+        ) == ["codex-capability", "go-key", "opencode-capability"])
+        #expect(RuntimeSensitiveValues.values(
+            codexSlateURL: "codex-capability",
+            openCodeKey: " ",
+            openCodeSlateURL: nil
+        ) == ["codex-capability"])
+    }
+
+    @Test("OpenCode Go setup reports an explicit code when the official response shape is invalid")
+    func openCodeSetupMapsInvalidResponsePrecisely() {
+        #expect(
+            CommandRuntime.openCodePreflightCode(OpenCodeGoClientError.invalidResponse)
+                == "opencode_invalid_response"
+        )
     }
 
     @Test("system setup backend accepts only one canonical tool-owned Keychain item")
@@ -1264,6 +1380,37 @@ private func secretSnapshot(_ value: String, label: String) -> SetupSecretAttrib
         label: label,
         comment: "fixture-comment"
     )
+}
+
+private final class OpenCodeSetupPreflightRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: String?
+    var value: String? { lock.withLock { storage } }
+    func record(_ value: String) { lock.withLock { storage = value } }
+}
+
+private final class RecordingOpenCodeSetupPersistence: OpenCodeGoSetupPersisting, @unchecked Sendable {
+    private let lock = NSLock()
+    private var apiKeyStorage: String?
+    private var slateURLStorage: String?
+    private var slateURLAccountStorage: String?
+    var apiKey: String? { lock.withLock { apiKeyStorage } }
+    var slateURL: String? { lock.withLock { slateURLStorage } }
+    var slateURLAccount: String? { lock.withLock { slateURLAccountStorage } }
+
+    func commit(
+        service _: String,
+        apiKeyAccount _: String,
+        slateURLAccount: String,
+        apiKey: String?,
+        slateURL: String
+    ) throws {
+        lock.withLock {
+            apiKeyStorage = apiKey
+            slateURLStorage = slateURL
+            slateURLAccountStorage = slateURLAccount
+        }
+    }
 }
 
 private final class RecordingSetupSecurityBackend: SetupSecurityItemBacking, @unchecked Sendable {

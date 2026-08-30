@@ -42,6 +42,7 @@ final class StatusWindowController {
             "",
             "自动采集：\(automaticText)",
             "Codex：\(MenuBarViewModel.safeProviderSummary(snapshot.codexSummary))",
+            "OpenCode Go：\(MenuBarViewModel.safeProviderSummary(snapshot.openCodeGoSummary))",
             "重置雷达：\(MenuBarViewModel.safeRadarSummary(snapshot.resetRadarSummary))",
             "最近成功：\(successText)",
             "最近推送：\(pushText)",

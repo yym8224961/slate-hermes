@@ -116,6 +116,44 @@ import Testing
         #expect(decoded.data.footer.showUpdated)
     }
 
+    @Test func openCodeGoEnvelopeUsesASeparateSchemaAndThreeQuotaWindows() throws {
+        let generatedAt = Date(timeIntervalSince1970: 1_788_003_600)
+        let data = OpenCodeGoDashboardData(
+            schemaVersion: 1,
+            generatedAt: generatedAt,
+            opencodeGo: .fixture()
+        )
+
+        let encoded = try JSONEncoder.slate.encode(OpenCodeGoSlateEnvelope(data: data))
+        let json = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        let body = try #require(json["data"] as? [String: Any])
+        #expect(body["codex"] == nil)
+        #expect(body["reset_radar"] == nil)
+        #expect(body["task_activity"] == nil)
+        #expect(body["opencode_go"] != nil)
+        let quota = try #require(body["quota"] as? [String: Any])
+        #expect((quota["primary"] as? [String: Any])?["name"] as? String == "5 小时")
+        #expect((quota["weekly"] as? [String: Any])?["name"] as? String == "本周")
+        #expect((quota["monthly"] as? [String: Any])?["name"] as? String == "本月")
+    }
+
+    @Test func shippedOpenCodeGoInitialDataDecodesAsIndependentDashboard() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let bytes = try Data(contentsOf: packageRoot.appendingPathComponent(
+            "templates/initial-opencode-go-data.json"
+        ))
+        let decoded = try JSONDecoder.slate.decode(OpenCodeGoSlateEnvelope.self, from: bytes)
+
+        #expect(decoded.data.opencodeGo.status == .ok)
+        #expect(decoded.data.quota.primary.name == "5 小时")
+        #expect(decoded.data.quota.weekly.name == "本周")
+        #expect(decoded.data.quota.monthly.name == "本月")
+        #expect(decoded.data.footer.updateText.hasPrefix("画面更新 "))
+    }
+
     @Test func configurationRejectsSecretFields() throws {
         let bytes = Data(#"{"schemaVersion":1,"codexExecutablePath":"/usr/local/bin/codex","timezoneIdentifier":"Asia/Shanghai","opencodeGoApiKey":"secret"}"#.utf8)
         #expect(throws: ConfigurationError.self) {

@@ -22,6 +22,7 @@ enum OpenCodeGoClientError: Error, Equatable, Sendable, LocalizedError {
     case http(status: Int)
     case timeout
     case transport
+    case invalidResponse
 
     var publicCode: String {
         switch self {
@@ -32,6 +33,7 @@ enum OpenCodeGoClientError: Error, Equatable, Sendable, LocalizedError {
         case let .http(status): "http_\(status)"
         case .timeout: "timeout"
         case .transport: "transport_error"
+        case .invalidResponse: "invalid_response"
         }
     }
 
@@ -67,9 +69,14 @@ struct OpenCodeGoUsageClient: OpenCodeGoUsageReading, Sendable {
             throw Self.error(for: response.statusCode)
         }
 
-        let usage = try JSONDecoder().decode(OpenCodeGoUsageResponse.self, from: data)
-        try Self.validate(usage)
-        return usage
+        do {
+            let wire = try JSONDecoder().decode(OpenCodeGoWireResponse.self, from: data)
+            let usage = try Self.normalized(wire)
+            try Self.validate(usage)
+            return usage
+        } catch {
+            throw OpenCodeGoClientError.invalidResponse
+        }
     }
 
     private static func error(for status: Int) -> OpenCodeGoClientError {
@@ -84,12 +91,55 @@ struct OpenCodeGoUsageClient: OpenCodeGoUsageReading, Sendable {
 
     private static func validate(_ usage: OpenCodeGoUsageResponse) throws {
         for window in [usage.rollingUsage, usage.weeklyUsage, usage.monthlyUsage] {
-            guard window.resetInSec.isFinite, window.resetInSec >= 0,
-                  window.usagePercent.isFinite else {
-                throw DecodingError.dataCorrupted(
-                    .init(codingPath: [], debugDescription: "usage windows must contain finite values and a nonnegative reset")
-                )
+            guard window.resetAt.timeIntervalSinceReferenceDate.isFinite,
+                  window.usagePercent.isFinite,
+                  (0 ... 100).contains(window.usagePercent) else {
+                throw OpenCodeGoClientError.invalidResponse
             }
         }
     }
+
+    private static func normalized(_ wire: OpenCodeGoWireResponse) throws -> OpenCodeGoUsageResponse {
+        OpenCodeGoUsageResponse(
+            rollingUsage: try normalized(wire.usage.rolling),
+            weeklyUsage: try normalized(wire.usage.weekly),
+            monthlyUsage: try normalized(wire.usage.monthly)
+        )
+    }
+
+    private static func normalized(_ wire: OpenCodeGoWireWindow) throws -> OpenCodeGoUsageWindow {
+        guard let resetAt = parseDate(wire.resetsAt) else {
+            throw OpenCodeGoClientError.invalidResponse
+        }
+        return OpenCodeGoUsageWindow(
+            status: wire.status,
+            resetAt: resetAt,
+            usagePercent: wire.percent
+        )
+    }
+
+    private static func parseDate(_ text: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let value = fractional.date(from: text) { return value }
+        let ordinary = ISO8601DateFormatter()
+        ordinary.formatOptions = [.withInternetDateTime]
+        return ordinary.date(from: text)
+    }
+}
+
+private struct OpenCodeGoWireResponse: Decodable {
+    let usage: OpenCodeGoWireUsage
+}
+
+private struct OpenCodeGoWireUsage: Decodable {
+    let rolling: OpenCodeGoWireWindow
+    let weekly: OpenCodeGoWireWindow
+    let monthly: OpenCodeGoWireWindow
+}
+
+private struct OpenCodeGoWireWindow: Decodable {
+    let status: OpenCodeGoUsageWindow.Status
+    let percent: Double
+    let resetsAt: String
 }

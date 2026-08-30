@@ -186,9 +186,27 @@ enum CodexRolloutParser {
 struct ReadonlyCodexRolloutObserver: Sendable {
     private static let lookback: TimeInterval = 24 * 60 * 60
     private let codexHome: URL
+    private let maximumCandidateFiles: Int
+    private let prefixBytes: Int
+    private let tailBytes: Int
+    private let maximumLineBytes: Int
 
-    init(codexHome: URL) {
+    init(
+        codexHome: URL,
+        maximumCandidateFiles: Int = 64,
+        prefixBytes: Int = 64 * 1_024,
+        tailBytes: Int = 512 * 1_024,
+        maximumLineBytes: Int = 64 * 1_024
+    ) {
+        precondition(maximumCandidateFiles > 0)
+        precondition(prefixBytes > 0)
+        precondition(tailBytes > 0)
+        precondition(maximumLineBytes > 0)
         self.codexHome = codexHome
+        self.maximumCandidateFiles = maximumCandidateFiles
+        self.prefixBytes = prefixBytes
+        self.tailBytes = tailBytes
+        self.maximumLineBytes = maximumLineBytes
     }
 
     func observe(now: Date) throws -> [CodexTaskLifecycleEvent] {
@@ -204,8 +222,9 @@ struct ReadonlyCodexRolloutObserver: Sendable {
             throw CodexClientError.invalidResponse
         }
 
-        var paths: [URL] = []
+        var candidates: [(url: URL, modifiedAt: Date)] = []
         for case let url as URL in enumerator {
+            try Task.checkCancellation()
             let values = try url.resourceValues(forKeys: Set(properties))
             if values.isSymbolicLink == true {
                 if values.isDirectory == true { enumerator.skipDescendants() }
@@ -216,37 +235,100 @@ struct ReadonlyCodexRolloutObserver: Sendable {
                   url.pathExtension == "jsonl",
                   let modifiedAt = values.contentModificationDate,
                   now.timeIntervalSince(modifiedAt) <= Self.lookback else { continue }
-            paths.append(url)
+            candidates.append((url, modifiedAt))
         }
-        paths.sort { $0.path < $1.path }
-        return try paths.flatMap(Self.readEvents)
+        candidates.sort {
+            if $0.modifiedAt != $1.modifiedAt { return $0.modifiedAt > $1.modifiedAt }
+            return $0.url.path < $1.url.path
+        }
+
+        var events: [CodexTaskLifecycleEvent] = []
+        for candidate in candidates.prefix(maximumCandidateFiles) {
+            try Task.checkCancellation()
+            events.append(contentsOf: try readEvents(candidate.url))
+        }
+        return events
     }
 
-    private static func readEvents(_ url: URL) throws -> [CodexTaskLifecycleEvent] {
+    /// Rollout JSONL may contain multi-megabyte tool output lines. Lifecycle
+    /// state only needs the small session metadata at the start and the newest
+    /// events at the end, so never rescan an unbounded file on the five-minute
+    /// collector path.
+    private func readEvents(_ url: URL) throws -> [CodexTaskLifecycleEvent] {
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        var buffer = Data()
+        let fileSize = try handle.seekToEnd()
+        try Task.checkCancellation()
         var correlations: [String] = []
         var events: [CodexTaskLifecycleEvent] = []
-        while let chunk = try handle.read(upToCount: 64 * 1_024), !chunk.isEmpty {
-            buffer.append(chunk)
-            while let newline = buffer.firstIndex(of: 0x0A) {
-                CodexRolloutParser.parseLine(
-                    Data(buffer[..<newline]),
-                    correlations: &correlations,
-                    events: &events
-                )
-                buffer.removeSubrange(...newline)
-            }
+
+        if fileSize <= UInt64(prefixBytes + tailBytes) {
+            try handle.seek(toOffset: 0)
+            let data = try handle.read(upToCount: Int(fileSize)) ?? Data()
+            try parseLines(
+                data,
+                droppingLeadingPartialLine: false,
+                droppingTrailingPartialLine: false,
+                correlations: &correlations,
+                events: &events
+            )
+            return events
         }
-        if !buffer.isEmpty {
+
+        try handle.seek(toOffset: 0)
+        let prefix = try handle.read(upToCount: prefixBytes) ?? Data()
+        try parseLines(
+            prefix,
+            droppingLeadingPartialLine: false,
+            droppingTrailingPartialLine: true,
+            correlations: &correlations,
+            events: &events
+        )
+
+        // Include the byte immediately before the tail window. Discarding
+        // through its first newline then works whether the window begins in a
+        // line or exactly at a line boundary.
+        let tailStart = fileSize - UInt64(tailBytes)
+        try handle.seek(toOffset: tailStart - 1)
+        let tail = try handle.read(upToCount: tailBytes + 1) ?? Data()
+        try parseLines(
+            tail,
+            droppingLeadingPartialLine: true,
+            droppingTrailingPartialLine: false,
+            correlations: &correlations,
+            events: &events
+        )
+        return events
+    }
+
+    private func parseLines(
+        _ data: Data,
+        droppingLeadingPartialLine: Bool,
+        droppingTrailingPartialLine: Bool,
+        correlations: inout [String],
+        events: inout [CodexTaskLifecycleEvent]
+    ) throws {
+        guard !data.isEmpty else { return }
+        let lines = data.split(separator: 0x0A, omittingEmptySubsequences: false)
+        var lowerBound = droppingLeadingPartialLine ? 1 : 0
+        var upperBound = lines.count
+        if droppingTrailingPartialLine, data.last != 0x0A {
+            upperBound -= 1
+        }
+        if data.last == 0x0A, upperBound > 0 {
+            upperBound -= 1
+        }
+        lowerBound = min(lowerBound, upperBound)
+        for index in lowerBound ..< upperBound {
+            try Task.checkCancellation()
+            let line = lines[index]
+            guard !line.isEmpty, line.count <= maximumLineBytes else { continue }
             CodexRolloutParser.parseLine(
-                buffer,
+                Data(line),
                 correlations: &correlations,
                 events: &events
             )
         }
-        return events
     }
 }
 
