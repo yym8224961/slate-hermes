@@ -264,7 +264,7 @@ struct ReadonlyCodexRolloutObserver: Sendable {
 
         if fileSize <= UInt64(prefixBytes + tailBytes) {
             try handle.seek(toOffset: 0)
-            let data = try handle.read(upToCount: Int(fileSize)) ?? Data()
+            let data = try readBounded(handle, byteCount: Int(fileSize))
             try parseLines(
                 data,
                 droppingLeadingPartialLine: false,
@@ -276,7 +276,7 @@ struct ReadonlyCodexRolloutObserver: Sendable {
         }
 
         try handle.seek(toOffset: 0)
-        let prefix = try handle.read(upToCount: prefixBytes) ?? Data()
+        let prefix = try readBounded(handle, byteCount: prefixBytes)
         try parseLines(
             prefix,
             droppingLeadingPartialLine: false,
@@ -290,7 +290,7 @@ struct ReadonlyCodexRolloutObserver: Sendable {
         // line or exactly at a line boundary.
         let tailStart = fileSize - UInt64(tailBytes)
         try handle.seek(toOffset: tailStart - 1)
-        let tail = try handle.read(upToCount: tailBytes + 1) ?? Data()
+        let tail = try readBounded(handle, byteCount: tailBytes + 1)
         try parseLines(
             tail,
             droppingLeadingPartialLine: true,
@@ -299,6 +299,19 @@ struct ReadonlyCodexRolloutObserver: Sendable {
             events: &events
         )
         return events
+    }
+
+    private func readBounded(_ handle: FileHandle, byteCount: Int) throws -> Data {
+        var data = Data()
+        data.reserveCapacity(byteCount)
+        while data.count < byteCount {
+            try Task.checkCancellation()
+            let remaining = byteCount - data.count
+            let chunk = try handle.read(upToCount: min(64 * 1_024, remaining)) ?? Data()
+            guard !chunk.isEmpty else { break }
+            data.append(chunk)
+        }
+        return data
     }
 
     private func parseLines(
