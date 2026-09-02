@@ -15,14 +15,13 @@ struct MenuBarControllerTests {
 
         let items = controller.menuItemsForTesting
         #expect(items.map(\.isSeparatorItem) == [
-            false, true, false, false, true, false, false, false, false, true, false, false,
+            false, true, false, false, true, false, false, false, true, false, false,
         ])
         #expect(items.filter { !$0.isSeparatorItem }.map(\.title) == [
             "Slate 额度监控",
             "每 5 分钟自动采集",
             "立即采集一次",
             "Codex          正常 · 剩余 91%",
-            "OpenCode Go    注意 · 剩余 18%",
             "重置雷达       活跃预测 · 70%",
             "最后推送       今天 17:16",
             "查看详细状态",
@@ -35,18 +34,18 @@ struct MenuBarControllerTests {
         #expect(items[5].isEnabled == false)
         #expect(items[6].isEnabled == false)
         #expect(items[7].isEnabled == false)
+        #expect(items[9].isEnabled)
         #expect(items[10].isEnabled)
-        #expect(items[11].isEnabled)
-        for index in [0, 5, 6, 7, 8] {
+        for index in [0, 5, 6, 7] {
             #expect(items[index].action == nil)
             #expect(items[index].target == nil)
         }
         expectAction(items[2], selector: "toggleAutomaticCollection", target: controller)
         expectAction(items[3], selector: "collectOnce", target: controller)
-        expectAction(items[10], selector: "showDetailedStatus", target: controller)
-        expectAction(items[11], selector: "quitMenuBar", target: controller)
+        expectAction(items[9], selector: "showDetailedStatus", target: controller)
+        expectAction(items[10], selector: "quitMenuBar", target: controller)
 
-        invoke(items[11])
+        invoke(items[10])
 
         #expect(actions.pauseCount == 0)
         #expect(actions.quitCount == 1)
@@ -70,8 +69,8 @@ struct MenuBarControllerTests {
         #expect(actions.resumeCount == 0)
 
         let busyItems = controller.menuItemsForTesting
+        invoke(busyItems[9])
         invoke(busyItems[10])
-        invoke(busyItems[11])
         #expect(actions.showCount == 1)
         #expect(actions.quitCount == 1)
 
@@ -117,8 +116,8 @@ struct MenuBarControllerTests {
         #expect(actions.collectCount == 1)
 
         let busyItems = controller.menuItemsForTesting
+        invoke(busyItems[9])
         invoke(busyItems[10])
-        invoke(busyItems[11])
         #expect(actions.showCount == 1)
         #expect(actions.quitCount == 1)
 
@@ -186,7 +185,6 @@ struct MenuBarControllerTests {
         let forbidden = "https://slate.local/api/v1/contents/private-id/data"
         let snapshot = MenuBarStatusSnapshot(
             codexSummary: "正常 · 剩余 91%",
-            openCodeGoSummary: "无可信数据",
             resetRadarSummary: "暂无活跃预测",
             lastSuccessAt: Date(timeIntervalSince1970: 1_754_990_140),
             lastPushAt: Date(timeIntervalSince1970: 1_754_990_200),
@@ -205,7 +203,7 @@ struct MenuBarControllerTests {
 
         #expect(statusWindow.renderedText.contains("自动采集：已关闭"))
         #expect(statusWindow.renderedText.contains("Codex：正常 · 剩余 91%"))
-        #expect(statusWindow.renderedText.contains("OpenCode Go：无可信数据"))
+        #expect(statusWindow.renderedText.contains("OpenCode Go") == false)
         #expect(statusWindow.renderedText.contains("重置雷达：暂无活跃预测"))
         #expect(statusWindow.renderedText.contains("reset_radar：rate_limited"))
         #expect(statusWindow.renderedText.contains("internal_failure"))
@@ -244,10 +242,10 @@ struct MenuBarControllerTests {
         #expect(items[2].isEnabled == false)
         #expect(items[3].isEnabled == false)
         #expect(items[2].title == controller.busyLine)
+        #expect(items[9].isEnabled)
         #expect(items[10].isEnabled)
-        #expect(items[11].isEnabled)
-        expectAction(items[10], selector: "showDetailedStatus", target: controller)
-        expectAction(items[11], selector: "quitMenuBar", target: controller)
+        expectAction(items[9], selector: "showDetailedStatus", target: controller)
+        expectAction(items[10], selector: "quitMenuBar", target: controller)
     }
 
     private func invoke(_ item: NSMenuItem) {
@@ -261,7 +259,6 @@ struct MenuBarControllerTests {
 private extension MenuBarStatusSnapshot {
     static let fixture = Self(
         codexSummary: "正常 · 剩余 91%",
-        openCodeGoSummary: "注意 · 剩余 18%",
         resetRadarSummary: "活跃预测 · 70%",
         lastSuccessAt: Date(timeIntervalSince1970: 1_754_990_140),
         lastPushAt: Date(timeIntervalSince1970: 1_754_990_200),

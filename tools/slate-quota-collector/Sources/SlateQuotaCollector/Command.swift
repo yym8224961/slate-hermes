@@ -40,7 +40,6 @@ enum CLIArguments: Equatable, Sendable {
     用法：slate-quota-collector <命令>
 
       setup                       安全配置本机采集器
-      setup-opencode-go           安全配置独立 OpenCode Go 监控
       collect --dry-run           采集并显示脱敏数据，不推送
       collect --once              立即采集并推送一次
       pause                       关闭每 5 分钟自动采集
@@ -428,20 +427,12 @@ struct CommandRuntime: Sendable {
         } catch {
             throw CLIError.configuration
         }
-        let openCodeKey = try optionalSecret(
-            secrets,
-            account: configuration.openCodeKeyAccount
-        )
-        let openCodeSlateURL = try optionalSecret(
-            secrets,
-            account: OpenCodeGoMonitorConfiguration.slateURLAccount
-        )
         let snapshots = SanitizedSnapshotCache(
             applicationSupportURL: paths.applicationSupportURL,
             sensitiveValues: RuntimeSensitiveValues.values(
                 codexSlateURL: slateURL,
-                openCodeKey: openCodeKey,
-                openCodeSlateURL: openCodeSlateURL
+                openCodeKey: nil,
+                openCodeSlateURL: nil
             )
         )
         let service = CollectorService(
@@ -461,56 +452,25 @@ struct CommandRuntime: Sendable {
             includeOpenCodeGo: false
         )
         let report = try await service.collect(mode: mode.serviceMode)
-        let openCodeReport = try await OpenCodeGoCollectorService(
-            openCodeGo: OpenCodeGoUsageClient(),
-            normalizer: .shanghai,
-            secrets: secrets,
-            snapshots: snapshots,
-            slate: SlateIngestClient(),
-            openCodeKeyAccount: configuration.openCodeKeyAccount,
-            slateURLAccount: OpenCodeGoMonitorConfiguration.slateURLAccount
-        ).collect(mode: mode.serviceMode)
-        if mode == .dryRun {
-            for encoded in [
-                try report.envelope.map { try JSONEncoder.slate.encode($0) },
-                try openCodeReport.envelope.map { try JSONEncoder.slate.encode($0) },
-            ].compactMap({ $0 }) {
-                guard let text = String(data: encoded, encoding: .utf8) else {
-                    throw CLIError.workerFailure
-                }
-                print(text)
+        if mode == .dryRun,
+           let envelope = report.envelope {
+            let encoded = try JSONEncoder.slate.encode(envelope)
+            guard let text = String(data: encoded, encoding: .utf8) else {
+                throw CLIError.workerFailure
             }
+            print(text)
         }
         if mode == .pushOnceWithProof, let proof = PushOnceProofFormatter.render(report) {
             print(proof)
         }
-        if mode == .pushOnceWithProof,
-           let proof = OpenCodeGoPushOnceProofFormatter.render(openCodeReport) {
-            print(proof)
-        }
-        var publicCodes = report.publicErrorCodes
-        openCodeReport.publicErrorCodes.forEach { publicCodes[$0.key] = $0.value }
-        if let status = CollectionPublicStatusFormatter.render(publicCodes) {
+        if let status = CollectionPublicStatusFormatter.render(report.publicErrorCodes) {
             FileHandle.standardError.write(Data("\(status)\n".utf8))
         }
         guard CollectionWorkerCompletionPolicy.accepts(
             mode: mode,
-            codexReadbackVerified: report.readbackVerified,
-            openCodeReadbackVerified: openCodeReport.readbackVerified
+            codexReadbackVerified: report.readbackVerified
         ) else {
             throw CLIError.workerFailure
-        }
-    }
-
-    private func optionalSecret(_ store: KeychainStore, account: String) throws -> String? {
-        do {
-            let value = try store.read(account: account)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            return value.isEmpty ? nil : value
-        } catch let error as KeychainError where error.status == errSecItemNotFound {
-            return nil
-        } catch {
-            throw CLIError.configuration
         }
     }
 
@@ -766,7 +726,6 @@ struct CommandRuntime: Sendable {
         print("菜单栏：\(menuLoaded ? "已加载" : "未加载")")
         print("定时采集：\(collectorLoaded ? "已加载" : "未加载")")
         print("Codex：\(MenuBarViewModel.safeProviderSummary(display.codexSummary))")
-        print("OpenCode Go：\(MenuBarViewModel.safeProviderSummary(display.openCodeGoSummary))")
         print("重置雷达：\(MenuBarViewModel.safeRadarSummary(display.resetRadarSummary))")
         print("最近成功：\(display.lastSuccessAt.map { MenuBarViewModel.dateText($0) } ?? "尚无记录")")
         print("最近推送：\(display.lastPushAt.map { MenuBarViewModel.dateText($0) } ?? "尚无记录")")
@@ -942,11 +901,10 @@ enum RuntimeSensitiveValues {
 enum CollectionWorkerCompletionPolicy {
     static func accepts(
         mode: CollectorWorkerMode,
-        codexReadbackVerified: Bool,
-        openCodeReadbackVerified: Bool
+        codexReadbackVerified: Bool
     ) -> Bool {
         if mode == .dryRun { return true }
-        return codexReadbackVerified && openCodeReadbackVerified
+        return codexReadbackVerified
     }
 }
 

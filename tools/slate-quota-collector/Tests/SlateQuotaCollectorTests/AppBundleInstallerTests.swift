@@ -51,11 +51,12 @@ struct AppBundleInstallerTests {
 
         let help = CLIArguments.visibleHelp
         for command in [
-            "setup", "setup-opencode-go", "collect --dry-run", "collect --once", "pause", "resume",
+            "setup", "collect --dry-run", "collect --once", "pause", "resume",
             "install-launch-agent", "status", "uninstall-launch-agent",
         ] {
             #expect(help.contains(command))
         }
+        #expect(help.contains("setup-opencode-go") == false)
         #expect(help.contains("--worker") == false)
         #expect(help.contains("--scheduled") == false)
         #expect(help.contains("--menu-bar") == false)
@@ -618,27 +619,23 @@ struct AppBundleInstallerTests {
         #expect(persistence.apiKey == nil)
     }
 
-    @Test("push workers require both independent Slate readbacks while dry-run remains offline")
-    func workerCompletionRequiresBothReadbacks() {
+    @Test("push workers require only the Codex Slate readback while dry-run remains offline")
+    func workerCompletionRequiresOnlyCodexReadback() {
         #expect(CollectionWorkerCompletionPolicy.accepts(
             mode: .dryRun,
-            codexReadbackVerified: false,
-            openCodeReadbackVerified: false
+            codexReadbackVerified: false
         ))
         #expect(CollectionWorkerCompletionPolicy.accepts(
             mode: .pushOnceWithProof,
-            codexReadbackVerified: true,
-            openCodeReadbackVerified: true
+            codexReadbackVerified: true
         ))
         #expect(CollectionWorkerCompletionPolicy.accepts(
             mode: .scheduled,
-            codexReadbackVerified: true,
-            openCodeReadbackVerified: false
-        ) == false)
+            codexReadbackVerified: true
+        ))
         #expect(CollectionWorkerCompletionPolicy.accepts(
             mode: .pushOnce,
-            codexReadbackVerified: false,
-            openCodeReadbackVerified: true
+            codexReadbackVerified: false
         ) == false)
     }
 

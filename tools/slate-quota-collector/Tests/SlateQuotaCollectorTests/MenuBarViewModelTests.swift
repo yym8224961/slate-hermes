@@ -18,7 +18,6 @@ struct MenuBarViewModelTests {
         #expect(value.iconSystemName == "chart.bar.fill")
         #expect(value.automaticCollectionChecked)
         #expect(value.codexLine == "正常 · 剩余 91%")
-        #expect(value.openCodeGoLine == "注意 · 剩余 18%")
         #expect(value.lastPushLine == "今天 16:30")
     }
 
@@ -50,9 +49,7 @@ struct MenuBarViewModelTests {
         )
 
         #expect(value.codexLine == "无可信数据")
-        #expect(value.openCodeGoLine == "无可信数据")
         #expect(value.codexLine.contains("耗尽") == false)
-        #expect(value.openCodeGoLine.contains("耗尽") == false)
     }
 
     @Test("busy copy is explicit while status values remain visible")
@@ -68,7 +65,7 @@ struct MenuBarViewModelTests {
         #expect(value.codexLine == "正常 · 剩余 91%")
     }
 
-    @Test("status reader derives only display-safe state from sanitized cache")
+    @Test("status reader excludes legacy OpenCode errors from the Codex-only monitor")
     func statusReaderUsesSanitizedSnapshotBundle() throws {
         let persisted = CollectorSnapshot(
             schemaVersion: 1,
@@ -93,8 +90,7 @@ struct MenuBarViewModelTests {
         let value = try reader.readStatus()
 
         #expect(value.codexSummary == "正常 · 剩余 91%")
-        #expect(value.openCodeGoSummary == "注意 · 剩余 18%")
-        #expect(value.publicErrorCodes == ["opencode_go": "rate_limited"])
+        #expect(value.publicErrorCodes.isEmpty)
     }
 
     @Test("status reader ignores unavailable window sentinels before choosing remaining quota")
@@ -124,7 +120,6 @@ struct MenuBarViewModelTests {
         let value = try reader.readStatus()
 
         #expect(value.codexSummary == "正常 · 剩余 91%")
-        #expect(value.openCodeGoSummary == "注意 · 剩余 71%")
     }
 
     @Test("status reader reports no trusted data when every provider window is unavailable")
@@ -152,7 +147,6 @@ struct MenuBarViewModelTests {
         let value = try reader.readStatus()
 
         #expect(value.codexSummary == "无可信数据")
-        #expect(value.openCodeGoSummary == "无可信数据")
     }
 }
 
@@ -160,7 +154,6 @@ private extension MenuBarStatusSnapshot {
     static func healthy(lastPushAt: Date?) -> Self {
         Self(
             codexSummary: "正常 · 剩余 91%",
-            openCodeGoSummary: "注意 · 剩余 18%",
             lastSuccessAt: Date(timeIntervalSince1970: 1_754_990_140),
             lastPushAt: lastPushAt,
             publicErrorCodes: [:]
@@ -169,7 +162,6 @@ private extension MenuBarStatusSnapshot {
 
     static let providerError = Self(
         codexSummary: "数据过期 · 最后可信 91%",
-        openCodeGoSummary: "注意 · 剩余 18%",
         lastSuccessAt: nil,
         lastPushAt: nil,
         publicErrorCodes: ["codex": "timeout"]
@@ -177,7 +169,6 @@ private extension MenuBarStatusSnapshot {
 
     static let noTrustedData = Self(
         codexSummary: "无可信数据",
-        openCodeGoSummary: "无可信数据",
         lastSuccessAt: nil,
         lastPushAt: nil,
         publicErrorCodes: ["codex": "unauthenticated", "opencode_go": "unconfigured"]

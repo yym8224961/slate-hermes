@@ -5,7 +5,7 @@ import Testing
 
 @Suite("Collector process supervisor", .serialized)
 struct CollectorProcessSupervisorTests {
-    @Test("production hard limit covers both sequential collectors with a two-second grace")
+    @Test("production hard limit covers Codex and Slate verification with a two-second grace")
     func productionDurationsAreExact() {
         #expect(CollectorProcessSupervisor.productionWallClockLimit == .seconds(180))
         #expect(CollectorProcessSupervisor.productionTerminationGrace == .seconds(2))

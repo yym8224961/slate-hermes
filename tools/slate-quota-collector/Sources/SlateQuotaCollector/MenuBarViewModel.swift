@@ -5,7 +5,6 @@ struct MenuBarPresentation: Equatable, Sendable {
     let automaticCollectionChecked: Bool
     let automaticCollectionTitle: String
     let codexLine: String
-    let openCodeGoLine: String
     let resetRadarLine: String
     let lastPushLine: String
     let busyLine: String?
@@ -29,7 +28,6 @@ enum MenuBarBusyState: Equatable, Sendable {
 
 struct MenuBarStatusSnapshot: Equatable, Sendable {
     let codexSummary: String
-    let openCodeGoSummary: String
     var resetRadarSummary: String = "信号不可用"
     let lastSuccessAt: Date?
     let lastPushAt: Date?
@@ -37,7 +35,6 @@ struct MenuBarStatusSnapshot: Equatable, Sendable {
 
     static let unavailable = Self(
         codexSummary: "无可信数据",
-        openCodeGoSummary: "无可信数据",
         resetRadarSummary: "信号不可用",
         lastSuccessAt: nil,
         lastPushAt: nil,
@@ -63,14 +60,12 @@ struct SnapshotMenuBarStatusReader: MenuBarStatusReading, Sendable {
                 snapshot: snapshot.lastGood.codex,
                 status: snapshot.runtimeState.providerStatuses["codex"]
             ),
-            openCodeGoSummary: Self.openCodeGoSummary(
-                snapshot: snapshot.lastGood.openCodeGo,
-                status: snapshot.runtimeState.providerStatuses["opencode_go"]
-            ),
             resetRadarSummary: Self.resetRadarSummary(snapshot.resetRadar),
             lastSuccessAt: snapshot.runtimeState.lastSuccessAt,
             lastPushAt: snapshot.runtimeState.lastPushAt,
-            publicErrorCodes: snapshot.runtimeState.lastErrorCodes
+            publicErrorCodes: snapshot.runtimeState.lastErrorCodes.filter {
+                !["opencode_go", "slate_opencode_go"].contains($0.key)
+            }
         )
     }
 
@@ -93,19 +88,6 @@ struct SnapshotMenuBarStatusReader: MenuBarStatusReading, Sendable {
     ) -> String {
         guard let snapshot,
               let remaining = trustedRemaining(in: [snapshot.rolling, snapshot.weekly]) else {
-            return "无可信数据"
-        }
-        return providerSummary(status: status ?? snapshot.status, remaining: remaining)
-    }
-
-    private static func openCodeGoSummary(
-        snapshot: OpenCodeGoDisplaySnapshot?,
-        status: ProviderStatus?
-    ) -> String {
-        guard let snapshot,
-              let remaining = trustedRemaining(in: [
-                  snapshot.rolling, snapshot.weekly, snapshot.monthly,
-              ]) else {
             return "无可信数据"
         }
         return providerSummary(status: status ?? snapshot.status, remaining: remaining)
@@ -153,7 +135,6 @@ struct MenuBarViewModel: Sendable {
             automaticCollectionChecked: enabled,
             automaticCollectionTitle: "每 5 分钟自动采集",
             codexLine: Self.safeProviderSummary(snapshot.codexSummary),
-            openCodeGoLine: Self.safeProviderSummary(snapshot.openCodeGoSummary),
             resetRadarLine: Self.safeRadarSummary(snapshot.resetRadarSummary),
             lastPushLine: Self.dateText(snapshot.lastPushAt, now: now),
             busyLine: busy?.displayText
